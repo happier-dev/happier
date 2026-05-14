@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { Platform, type View } from 'react-native';
+import type { View } from 'react-native';
 
-import { Popover } from '@/components/ui/popover';
 import { t } from '@/text';
 import {
     getPermissionModeTitleForAgentType,
@@ -9,19 +8,29 @@ import {
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { EffectivePermissionModeDescription } from '@/sync/domains/permissions/describeEffectivePermissionMode';
 import { AgentInputAutocomplete } from './AgentInputAutocomplete';
+import type { AgentInputAutocompleteItem } from './AgentInputAutocomplete';
 import { AgentInputContentPopover, type AgentInputContentPopoverConfig } from './AgentInputContentPopover';
 import { AgentInputActionMenuPopoverContent } from './AgentInputActionMenuPopoverContent';
 import { AgentInputChipPickerPopover } from './AgentInputChipPickerPopover';
 import { shouldShowAgentInputChipPickerRail } from './AgentInputChipPickerLayout';
-import { AgentInputSimpleOptionsPopover } from './AgentInputSimpleOptionsPopover';
+import { AgentInputSelectionListPopover } from './AgentInputSelectionListPopover';
+import { AgentInputSelectionPopover } from '../selection/AgentInputSelectionPopover';
 import { PermissionModePicker, type PermissionModePickerOption } from './PermissionModePicker';
+import type { PermissionModePickerStyles } from './permissionModePickerStyles';
 import type { AgentInputExtraActionChip, AgentInputPopoverAnchor } from '../agentInputContracts';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { AgentInputChipPickerOption } from './AgentInputChipPickerTypes';
+import type { SelectionListStep } from '@/components/ui/selectionList';
+
+const noopAutocompleteRequestClose = () => {};
 
 type SuggestionItem = Readonly<{
     key: string;
+    text: string;
+    label?: string;
+    description?: string;
     component?: React.ElementType;
+    rowHeight?: number;
 }>;
 
 type SimpleOption = Readonly<{
@@ -34,11 +43,16 @@ type SimpleOption = Readonly<{
     rightAdornment?: React.ReactNode;
 }>;
 
-type ProfileOrEnvPopoverLike = Readonly<{
+type SharedContentPopoverLike = Readonly<{
     renderContent: AgentInputContentPopoverConfig['renderContent'];
     boundaryRef?: AgentInputContentPopoverConfig['boundaryRef'];
     maxHeightCap?: AgentInputContentPopoverConfig['maxHeightCap'];
     maxWidthCap?: AgentInputContentPopoverConfig['maxWidthCap'];
+    scrollEnabled?: AgentInputContentPopoverConfig['scrollEnabled'];
+    keyboardShouldPersistTaps?: AgentInputContentPopoverConfig['keyboardShouldPersistTaps'];
+    edgeFades?: AgentInputContentPopoverConfig['edgeFades'];
+    edgeIndicators?: AgentInputContentPopoverConfig['edgeIndicators'];
+    initialVisibility?: AgentInputContentPopoverConfig['initialVisibility'];
 }>;
 
 type AgentInputContentPopoverEntry = Readonly<{
@@ -65,6 +79,29 @@ function resolvePopoverAnchorRef(
     return anchor === 'chip' ? chipAnchorRef : actionMenuAnchorRef;
 }
 
+function buildAutocompleteItem(suggestion: SuggestionItem): AgentInputAutocompleteItem | null {
+    if (suggestion.label) {
+        return {
+            id: suggestion.key,
+            label: suggestion.label,
+            subtitle: suggestion.description,
+            minHeight: suggestion.rowHeight,
+        };
+    }
+
+    if (typeof suggestion.component !== 'function') {
+        return null;
+    }
+
+    const Component = suggestion.component;
+    return {
+        id: suggestion.key,
+        label: suggestion.text,
+        minHeight: suggestion.rowHeight,
+        content: <Component />,
+    };
+}
+
 function renderContentPopover(entry: AgentInputContentPopoverEntry): React.ReactNode {
     if (!entry.open) return null;
     return (
@@ -86,6 +123,31 @@ function renderContentPopover(entry: AgentInputContentPopoverEntry): React.React
     );
 }
 
+function resolveSharedContentPopoverOptions(
+    popover: SharedContentPopoverLike,
+): Pick<
+    AgentInputContentPopoverEntry,
+    | 'boundaryRef'
+    | 'maxHeightCap'
+    | 'maxWidthCap'
+    | 'scrollEnabled'
+    | 'keyboardShouldPersistTaps'
+    | 'edgeFades'
+    | 'edgeIndicators'
+    | 'initialVisibility'
+> {
+    return {
+        boundaryRef: popover.boundaryRef as React.RefObject<View | null> | null | undefined,
+        maxHeightCap: popover.maxHeightCap,
+        maxWidthCap: popover.maxWidthCap,
+        scrollEnabled: popover.scrollEnabled,
+        keyboardShouldPersistTaps: popover.keyboardShouldPersistTaps,
+        edgeFades: popover.edgeFades,
+        edgeIndicators: popover.edgeIndicators,
+        initialVisibility: popover.initialVisibility,
+    };
+}
+
 export function AgentInputOverlayLayer(props: Readonly<{
     suggestions: readonly SuggestionItem[];
     overlayAnchorRef: React.RefObject<View | null>;
@@ -102,7 +164,14 @@ export function AgentInputOverlayLayer(props: Readonly<{
     effectivePermissionMode: PermissionMode;
     effectivePermissionLabel: string;
     effectivePermissionPolicy: EffectivePermissionModeDescription;
-    styles: any;
+    // FR4-16: typed style contract forwarded to `PermissionModePicker`.
+    // The parent `AgentInput.tsx` passes a Unistyles-produced styles object;
+    // because Unistyles' inferred output type may not structurally match this
+    // narrow contract, the call site uses a documented boundary cast
+    // (`as unknown as PermissionModePickerStyles`). This is the only place in
+    // the overlay routing where styles are forwarded, so the contract narrows
+    // an otherwise opaque object to exactly the fields the picker reads.
+    styles: PermissionModePickerStyles;
 
     showActionMenu: boolean;
     hasActionMenuPopoverSections: boolean;
@@ -140,31 +209,31 @@ export function AgentInputOverlayLayer(props: Readonly<{
     showMachinePopover: boolean;
     machinePopoverAnchor: AgentInputPopoverAnchor;
     machineChipAnchorRef: React.RefObject<View | null>;
-    machinePopover?: ProfileOrEnvPopoverLike;
+    machinePopover?: SharedContentPopoverLike;
     onMachinePopoverRequestClose: () => void;
 
     showProfilePopover: boolean;
     profilePopoverAnchor: AgentInputPopoverAnchor;
     profileChipAnchorRef: React.RefObject<View | null>;
-    profilePopover?: ProfileOrEnvPopoverLike;
+    profilePopover?: SharedContentPopoverLike;
     onProfilePopoverRequestClose: () => void;
 
     showPathPopover: boolean;
     pathPopoverAnchor: AgentInputPopoverAnchor;
     pathChipAnchorRef: React.RefObject<View | null>;
-    pathPopover?: ProfileOrEnvPopoverLike;
+    pathPopover?: SharedContentPopoverLike;
     onPathPopoverRequestClose: () => void;
 
     showResumePopover: boolean;
     resumePopoverAnchor: AgentInputPopoverAnchor;
     resumeChipAnchorRef: React.RefObject<View | null>;
-    resumePopover?: ProfileOrEnvPopoverLike;
+    resumePopover?: SharedContentPopoverLike;
     onResumePopoverRequestClose: () => void;
 
     showEnvVarsPopover: boolean;
     envVarsPopoverAnchor: AgentInputPopoverAnchor;
     envVarsChipAnchorRef: React.RefObject<View | null>;
-    envVarsPopover?: ProfileOrEnvPopoverLike;
+    envVarsPopover?: SharedContentPopoverLike;
     onEnvVarsPopoverRequestClose: () => void;
 }>): React.ReactNode {
     const sharedContentPopovers: AgentInputContentPopoverEntry[] = [
@@ -232,9 +301,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
             anchorRef: resolvePopoverAnchorRef(props.machinePopoverAnchor, props.machineChipAnchorRef, props.actionMenuAnchorRef),
             content: props.machinePopover.renderContent,
             onRequestClose: props.onMachinePopoverRequestClose,
-            boundaryRef: props.machinePopover.boundaryRef as React.RefObject<View | null> | null | undefined,
-            maxHeightCap: props.machinePopover.maxHeightCap,
-            maxWidthCap: props.machinePopover.maxWidthCap,
+            ...resolveSharedContentPopoverOptions(props.machinePopover),
         });
     }
 
@@ -245,9 +312,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
             anchorRef: resolvePopoverAnchorRef(props.profilePopoverAnchor, props.profileChipAnchorRef, props.actionMenuAnchorRef),
             content: props.profilePopover.renderContent,
             onRequestClose: props.onProfilePopoverRequestClose,
-            boundaryRef: props.profilePopover.boundaryRef as React.RefObject<View | null> | null | undefined,
-            maxHeightCap: props.profilePopover.maxHeightCap,
-            maxWidthCap: props.profilePopover.maxWidthCap,
+            ...resolveSharedContentPopoverOptions(props.profilePopover),
         });
     }
 
@@ -258,9 +323,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
             anchorRef: resolvePopoverAnchorRef(props.pathPopoverAnchor, props.pathChipAnchorRef, props.actionMenuAnchorRef),
             content: props.pathPopover.renderContent,
             onRequestClose: props.onPathPopoverRequestClose,
-            boundaryRef: props.pathPopover.boundaryRef as React.RefObject<View | null> | null | undefined,
-            maxHeightCap: props.pathPopover.maxHeightCap,
-            maxWidthCap: props.pathPopover.maxWidthCap,
+            ...resolveSharedContentPopoverOptions(props.pathPopover),
         });
     }
 
@@ -271,9 +334,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
             anchorRef: resolvePopoverAnchorRef(props.resumePopoverAnchor, props.resumeChipAnchorRef, props.actionMenuAnchorRef),
             content: props.resumePopover.renderContent,
             onRequestClose: props.onResumePopoverRequestClose,
-            boundaryRef: props.resumePopover.boundaryRef as React.RefObject<View | null> | null | undefined,
-            maxHeightCap: props.resumePopover.maxHeightCap,
-            maxWidthCap: props.resumePopover.maxWidthCap,
+            ...resolveSharedContentPopoverOptions(props.resumePopover),
         });
     }
 
@@ -284,39 +345,32 @@ export function AgentInputOverlayLayer(props: Readonly<{
             anchorRef: resolvePopoverAnchorRef(props.envVarsPopoverAnchor, props.envVarsChipAnchorRef, props.actionMenuAnchorRef),
             content: props.envVarsPopover.renderContent,
             onRequestClose: props.onEnvVarsPopoverRequestClose,
-            boundaryRef: props.envVarsPopover.boundaryRef as React.RefObject<View | null> | null | undefined,
-            maxHeightCap: props.envVarsPopover.maxHeightCap,
-            maxWidthCap: props.envVarsPopover.maxWidthCap,
+            ...resolveSharedContentPopoverOptions(props.envVarsPopover),
         });
     }
 
     return (
         <>
             {props.suggestions.length > 0 && (
-                <Popover
+                <AgentInputSelectionPopover
                     open={props.suggestions.length > 0}
                     anchorRef={props.overlayAnchorRef}
-                    placement="top"
-                    gap={8}
                     maxHeightCap={240}
                     maxWidthCap={props.maxWidthCap}
-                    backdrop={false}
-                    containerStyle={{ paddingHorizontal: props.screenWidth > 700 ? 0 : 8 }}
+                    onRequestClose={noopAutocompleteRequestClose}
                 >
                     {({ maxHeight }) => (
                         <AgentInputAutocomplete
                             maxHeight={maxHeight}
-                            suggestions={props.suggestions.flatMap((suggestion) => {
-                                if (typeof suggestion.component !== 'function') return [];
-                                const Component = suggestion.component;
-                                return [<Component key={suggestion.key} />];
+                            items={props.suggestions.flatMap((suggestion) => {
+                                const item = buildAutocompleteItem(suggestion);
+                                return item === null ? [] : [item];
                             })}
                             selectedIndex={props.autocompleteSelectedIndex}
                             onSelect={props.onAutocompleteSelect}
-                            itemHeight={Platform.select({ ios: 42, default: 34 }) ?? 34}
                         />
                     )}
-                </Popover>
+                </AgentInputSelectionPopover>
             )}
 
             {sharedContentPopovers.map(renderContentPopover)}
@@ -341,20 +395,36 @@ export function AgentInputOverlayLayer(props: Readonly<{
                 />
             ) : null}
 
-            {props.showSessionModePicker && props.shouldRenderSessionModeChip ? (
-                <AgentInputSimpleOptionsPopover
-                    open={props.showSessionModePicker}
-                    anchorRef={props.sessionModePickerAnchor === 'chip' ? props.sessionModeChipAnchorRef : props.actionMenuAnchorRef}
-                    title={t('agentInput.mode.sectionTitle')}
-                    options={props.sessionModePickerOptions}
-                    selectedOptionId={props.sessionModeSelectedOptionId ?? null}
-                    onSelect={(selectedId) => {
-                        props.onSessionModeSelect?.(selectedId);
-                    }}
-                    onRequestClose={props.onSessionModeRequestClose}
-                    maxHeightCap={360}
-                />
-            ) : null}
+            {props.showSessionModePicker && props.shouldRenderSessionModeChip ? (() => {
+                const sessionModeRootStep: SelectionListStep = {
+                    id: 'session-mode-root',
+                    title: t('agentInput.mode.sectionTitle'),
+                    sections: [
+                        {
+                            kind: 'static',
+                            id: 'session-mode',
+                            options: props.sessionModePickerOptions.map((option) => ({
+                                id: option.id,
+                                label: option.label,
+                                subtitle: option.description,
+                            })),
+                        },
+                    ],
+                };
+                return (
+                    <AgentInputSelectionListPopover
+                        open={props.showSessionModePicker}
+                        anchorRef={props.sessionModePickerAnchor === 'chip' ? props.sessionModeChipAnchorRef : props.actionMenuAnchorRef}
+                        rootStep={sessionModeRootStep}
+                        selectedOptionId={props.sessionModeSelectedOptionId ?? null}
+                        onSelect={(selectedId) => {
+                            props.onSessionModeSelect?.(selectedId);
+                        }}
+                        onRequestClose={props.onSessionModeRequestClose}
+                        maxHeightCap={360}
+                    />
+                );
+            })() : null}
 
             {props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover ? (() => {
                 const popover = props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover;
@@ -362,23 +432,71 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     ? (props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key] ?? props.actionMenuAnchorRef)
                     : props.actionMenuAnchorRef;
 
-                if (popover.presentation === 'simple') {
+                if (popover.presentation === 'list') {
+                    // R5's discriminated union enforces `rootStep` is present
+                    // when `presentation === 'list'`, but R16d (Fix 4) adds a
+                    // dev-only runtime guard so dynamic plugins / generic
+                    // settings that erase the type at the boundary cannot
+                    // crash the routing site by passing a structurally invalid
+                    // descriptor. Returning null defensively (no UI) is better
+                    // than rendering an empty/broken popover.
+                    if (!popover.rootStep) {
+                        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+                            // eslint-disable-next-line no-console
+                            console.warn(
+                                "[AgentInputOverlayLayer] collapsedOptionsPopover with presentation: 'list' is missing required `rootStep`; rendering nothing. This indicates a dynamic descriptor bypassed the discriminated union at the type boundary.",
+                            );
+                        }
+                        return null;
+                    }
+                    // FR4-W1-CHIP: `AgentInputSelectionListPopover` is the
+                    // SINGLE close-after-select owner. It calls per-row
+                    // `SelectionListOption.onSelect` synchronously (the
+                    // canonical action source for list-mode chips), then
+                    // defers `onRequestClose` on web through
+                    // `deferAgentInputPopoverClose` internally. The action-
+                    // menu list branch therefore:
+                    //   - passes a NO-OP `onSelect` (per-option callbacks
+                    //     inside the SelectionList carry the action; the
+                    //     descriptor-level `onSelect` is intentionally a
+                    //     no-op for list-mode chips, see e.g.
+                    //     `useNewSessionCheckoutActionChip.tsx`),
+                    //   - passes `onRequestClose` directly so the wrapper's
+                    //     deferred close path is the ONE close path.
+                    // Calling `deferAgentInputPopoverClose(...)` here as well
+                    // would schedule a duplicate close on top of the
+                    // wrapper's own deferred close.
                     return (
-                        <AgentInputSimpleOptionsPopover
+                        <AgentInputSelectionListPopover
                             open
                             anchorRef={anchorRef}
-                            title={popover.title}
-                            options={popover.options}
+                            rootStep={popover.rootStep}
                             selectedOptionId={popover.selectedOptionId ?? null}
-                            onSelect={(selectedId) => {
-                                props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover?.onSelect(selectedId);
-                                props.onActiveExtraCollapsedPopoverChipClose();
+                            onSelect={() => {
+                                // Documented no-op: the wrapper handles
+                                // close-after-select via `onRequestClose`
+                                // (deferred internally on web). Per-row
+                                // mutations live on
+                                // `SelectionListOption.onSelect`.
                             }}
                             onRequestClose={props.onActiveExtraCollapsedPopoverChipClose}
-                            maxHeightCap={popover.maxHeightCap ?? 360}
-                            maxWidthCap={popover.maxWidthCap ?? 320}
+                            maxHeightCap={popover.maxHeightCap}
+                            maxWidthCap={popover.maxWidthCap}
+                            heightBehavior={popover.heightBehavior}
                         />
                     );
+                }
+
+                // R16d (Fix 4): defensive runtime guard for the 'picker'
+                // branch — same rationale as the 'list' branch above.
+                if (!popover.options) {
+                    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+                        // eslint-disable-next-line no-console
+                        console.warn(
+                            "[AgentInputOverlayLayer] collapsedOptionsPopover with presentation: 'picker' is missing required `options`; rendering nothing. This indicates a dynamic descriptor bypassed the discriminated union at the type boundary.",
+                        );
+                    }
+                    return null;
                 }
 
                 return (

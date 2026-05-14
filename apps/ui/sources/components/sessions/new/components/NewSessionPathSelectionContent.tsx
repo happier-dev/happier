@@ -1,10 +1,14 @@
 import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
 
-import { ItemList } from '@/components/ui/lists/ItemList';
 import { layout } from '@/components/ui/layout/layout';
+import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
+import {
+    resolveDirectoryFavoriteComparisonKey,
+    toggleHomeAwareDirectoryFavorite,
+} from '@/utils/sessions/favoriteDirectoriesToggle';
 
-import { PathSelector } from './PathSelector';
+import { PathSelectionList } from './PathSelectionList';
 
 export type NewSessionPathSelectionContentProps = Readonly<{
     machineHomeDir: string;
@@ -13,8 +17,8 @@ export type NewSessionPathSelectionContentProps = Readonly<{
     onChangeDraftSelectedPath?: (path: string) => void;
     onSubmitSelectedPath?: (path: string) => void;
     onBeforeBrowseMachinePath?: () => void | Promise<void>;
-    submitBehavior?: React.ComponentProps<typeof PathSelector>['submitBehavior'];
-    commitDraftOnBlur?: React.ComponentProps<typeof PathSelector>['commitDraftOnBlur'];
+    submitBehavior?: 'showRow' | 'confirm';
+    commitDraftOnBlur?: boolean;
     recentPaths: ReadonlyArray<string>;
     usePickerSearch: boolean;
     searchQuery: string;
@@ -22,34 +26,52 @@ export type NewSessionPathSelectionContentProps = Readonly<{
     favoriteDirectories: ReadonlyArray<string>;
     onChangeFavoriteDirectories: (dirs: string[]) => void;
     focusInputOnSelect?: boolean;
-    machineBrowse?: React.ComponentProps<typeof PathSelector>['machineBrowse'];
+    machineBrowse?: Readonly<{
+        enabled: boolean;
+        machineId: string | null;
+        serverId?: string | null;
+        title?: string;
+    }>;
+    machinePlatform?: string | null;
+    maxHeight?: number;
 }>;
 
 export function NewSessionPathSelectionContent(props: NewSessionPathSelectionContentProps) {
+    const machineId = props.machineBrowse?.enabled === true ? props.machineBrowse.machineId : null;
+    const favoriteKeys = React.useMemo(() => new Set(
+        props.favoriteDirectories.map((path) =>
+            resolveDirectoryFavoriteComparisonKey(path, props.machineHomeDir)
+        ),
+    ), [props.favoriteDirectories, props.machineHomeDir]);
     return (
-        <ItemList style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
-            <View style={styles.contentWrapper}>
-                <PathSelector
-                    machineHomeDir={props.machineHomeDir}
-                    selectedPath={props.selectedPath}
-                    onChangeSelectedPath={props.onChangeSelectedPath}
-                    onChangeDraftSelectedPath={props.onChangeDraftSelectedPath}
-                    submitBehavior={props.submitBehavior}
-                    onSubmitSelectedPath={props.onSubmitSelectedPath}
-                    onBeforeBrowseMachinePath={props.onBeforeBrowseMachinePath}
-                    commitDraftOnBlur={props.commitDraftOnBlur}
-                    recentPaths={props.recentPaths}
-                    usePickerSearch={props.usePickerSearch}
-                    searchVariant="belowInput"
-                    searchQuery={props.searchQuery}
-                    onChangeSearchQuery={props.onChangeSearchQuery}
-                    favoriteDirectories={props.favoriteDirectories}
-                    onChangeFavoriteDirectories={props.onChangeFavoriteDirectories}
-                    focusInputOnSelect={props.focusInputOnSelect}
-                    machineBrowse={props.machineBrowse}
-                />
-            </View>
-        </ItemList>
+        <View style={styles.contentWrapper}>
+            <PathSelectionList
+                initialValue={props.selectedPath}
+                machineHomeDir={props.machineHomeDir}
+                favorites={props.favoriteDirectories.map((path) => ({ path }))}
+                recents={props.recentPaths.map((path, index) => ({ path, lastUsedAt: index }))}
+                machineId={machineId}
+                serverId={props.machineBrowse?.serverId ?? null}
+                machinePlatform={machineMetadataPlatformToTarget(props.machinePlatform)}
+                onCommit={(path) => {
+                    props.onChangeDraftSelectedPath?.(path);
+                    props.onChangeSelectedPath(path);
+                    props.onSubmitSelectedPath?.(path);
+                }}
+                onChangeDraftPath={props.onChangeDraftSelectedPath}
+                onRequestClose={() => {}}
+                onBeforeBrowseMachinePath={props.onBeforeBrowseMachinePath}
+                isFavorite={(path) => favoriteKeys.has(resolveDirectoryFavoriteComparisonKey(path, props.machineHomeDir))}
+                onToggleFavorite={(path) => {
+                    props.onChangeFavoriteDirectories([...toggleHomeAwareDirectoryFavorite(
+                        props.favoriteDirectories,
+                        path,
+                        props.machineHomeDir,
+                    )]);
+                }}
+                maxHeight={props.maxHeight}
+            />
+        </View>
     );
 }
 

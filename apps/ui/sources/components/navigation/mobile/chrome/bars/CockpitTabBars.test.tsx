@@ -47,7 +47,7 @@ installNavigationCommonModuleMocks({
         });
     },
     storage: async () => ({
-        useSession: () => ({ id: 'sess_1', metadata: sessionMetadataState.metadata }),
+        useSessionMetadata: () => sessionMetadataState.metadata,
     }),
 });
 

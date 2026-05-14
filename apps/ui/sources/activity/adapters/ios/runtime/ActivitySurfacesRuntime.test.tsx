@@ -753,6 +753,51 @@ describe('ActivitySurfacesRuntime', () => {
         });
     });
 
+    it('keeps the app running when one native widget bridge rejects a snapshot update', async () => {
+        focusWidgetUpdateSnapshot.mockImplementationOnce(() => {
+            throw new Error('native widget bridge unavailable');
+        });
+        sessionsState.value = [
+            createSessionFixture({
+                id: 'permission',
+                serverId: 'server-a',
+                seq: 10,
+                lastViewedSessionSeq: 10,
+                active: true,
+                presence: 'online',
+                pendingPermissionRequestCount: 1,
+                metadata: {
+                    path: '/Users/tester/project/permission',
+                    host: 'tester.local',
+                    homeDir: '/Users/tester',
+                    summary: { text: 'Permission work', updatedAt: 1 },
+                },
+            }),
+        ];
+
+        const { ActivitySurfacesRuntime } = await import('./ActivitySurfacesRuntime');
+        const screen = await renderScreen(React.createElement(ActivitySurfacesRuntime));
+
+        await act(async () => {});
+
+        expect(focusWidgetUpdateSnapshot).toHaveBeenCalledTimes(1);
+        expect(sessionsWidgetUpdateSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+            sessions: expect.arrayContaining([
+                expect.objectContaining({ sessionId: 'permission' }),
+            ]),
+        }));
+        expect(liveActivityStart).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionId: 'permission',
+            }),
+            '/session/permission?serverId=server-a',
+        );
+
+        await act(async () => {
+            screen.tree.unmount();
+        });
+    });
+
     it('lets widgets opt into previews without exposing live-activity lock-screen text', async () => {
         localSettingsState.value = createLocalSettingsState({
             attentionDeviceOverridesV1: {

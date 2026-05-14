@@ -6,6 +6,7 @@ import {
     reconcileSessionSplitCanvasRouteAnchor,
     reduceSessionSplitCanvasState,
     resolveSessionSplitCanvasState,
+    resolveSessionSplitCanvasKeyboardTarget,
     runSessionSplitCanvasCommand,
 } from './sessionSplitCanvasState';
 
@@ -200,4 +201,117 @@ describe('sessionSplitCanvasState', () => {
             },
         }));
     });
+
+    it('resolves keyboard command target from focused visible leaf before last interaction and route anchor', () => {
+        const state = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
+            sessionId: 'sess_a',
+            maxLeaves: 8,
+        }), {
+            type: 'openSessionInSplit',
+            sessionId: 'sess_b',
+            direction: 'right',
+        });
+
+        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
+            routeSessionId: 'sess_a',
+            lastInteractedLeafId: 'session-leaf:sess_a',
+            targetKind: 'session',
+        })).toEqual({
+            leafId: 'session-leaf:sess_b',
+            sessionId: 'sess_b',
+            source: 'focused',
+        });
+    });
+
+    it('falls back to the last-interacted visible leaf when no focused leaf is visible', () => {
+        const split = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
+            sessionId: 'sess_a',
+            maxLeaves: 8,
+        }), {
+            type: 'openSessionInSplit',
+            sessionId: 'sess_b',
+            direction: 'right',
+        });
+        const state = {
+            ...split,
+            focusedLeafId: null,
+        };
+
+        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
+            routeSessionId: 'sess_a',
+            lastInteractedLeafId: 'session-leaf:sess_b',
+            targetKind: 'session',
+        })).toEqual({
+            leafId: 'session-leaf:sess_b',
+            sessionId: 'sess_b',
+            source: 'lastInteracted',
+        });
+    });
+
+    it('falls back to the active route session when focus and last interaction are unavailable', () => {
+        const split = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
+            sessionId: 'sess_a',
+            maxLeaves: 8,
+        }), {
+            type: 'openSessionInSplit',
+            sessionId: 'sess_b',
+            direction: 'right',
+        });
+        const state = {
+            ...split,
+            focusedLeafId: null,
+        };
+
+        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
+            routeSessionId: 'sess_a',
+            lastInteractedLeafId: 'missing-leaf',
+            targetKind: 'session',
+        })).toEqual({
+            leafId: 'session-leaf:sess_a',
+            sessionId: 'sess_a',
+            source: 'route',
+        });
+    });
+
+    it('does not target an arbitrary leaf when no active route session is available', () => {
+        const state = {
+            ...resolveSessionSplitCanvasState({
+                sessionId: 'sess_a',
+                maxLeaves: 8,
+            }),
+            focusedLeafId: null,
+        };
+
+        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
+            routeSessionId: '',
+            lastInteractedLeafId: 'missing-leaf',
+            targetKind: 'session',
+        })).toBeNull();
+    });
+
+    it('keeps composer-targeted commands scoped to the composer-owning visible leaf', () => {
+        const split = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
+            sessionId: 'sess_a',
+            maxLeaves: 8,
+        }), {
+            type: 'openSessionInSplit',
+            sessionId: 'sess_b',
+            direction: 'right',
+        });
+        const state = {
+            ...split,
+            focusedLeafId: 'session-leaf:sess_b',
+        };
+
+        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
+            routeSessionId: 'sess_a',
+            composerOwningLeafId: 'session-leaf:sess_a',
+            targetKind: 'composer',
+        })).toEqual({
+            leafId: 'session-leaf:sess_a',
+            sessionId: 'sess_a',
+            source: 'composer',
+        });
+    });
+
 });

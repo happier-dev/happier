@@ -48,6 +48,41 @@ function resolveOptionalMaxBytes(value: unknown): number | null {
     return Math.floor(value);
 }
 
+function resolveFileReadTimeoutMs(): number {
+    const configured = config.filesPreviewReadTimeoutMs;
+    if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) {
+        return Math.floor(configured);
+    }
+    return 15_000;
+}
+
+async function withFileReadTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    onTimeout: () => T,
+): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<T>((resolve) => {
+        timeoutId = setTimeout(() => {
+            timeoutId = null;
+            resolve(onTimeout());
+        }, timeoutMs);
+    });
+
+    try {
+        return await Promise.race([
+            promise.catch((error) => {
+                throw error;
+            }),
+            timeoutPromise,
+        ]);
+    } finally {
+        if (timeoutId != null) {
+            clearTimeout(timeoutId);
+        }
+    }
+}
+
 export async function refreshWorkspaceFileDetails(input: Readonly<{
     scope: WorkspaceScopeBase;
     filePath: string;
@@ -135,15 +170,31 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
             };
         }
 
-        const readResponse = await downloadDaemonWorkspaceFileToBase64({
-            machineId: input.scope.machineId,
-            serverId: input.scope.serverId,
-            rootPath: input.scope.rootPath,
-            path: input.filePath,
-            maxBytes: maxPreviewBytes ?? 256 * 1024,
-        });
+        const readResponse = await withFileReadTimeout(
+            downloadDaemonWorkspaceFileToBase64({
+                machineId: input.scope.machineId,
+                serverId: input.scope.serverId,
+                rootPath: input.scope.rootPath,
+                path: input.filePath,
+                maxBytes: maxPreviewBytes ?? 256 * 1024,
+            }),
+            resolveFileReadTimeoutMs(),
+            () => ({
+                ok: false as const,
+                error: t('files.fileReadFailed'),
+            }),
+        );
         if (!readResponse.ok) {
             failedReadError = readResponse.error || t('files.fileReadFailed');
+            if (diffContent != null) {
+                return {
+                    status: 'ready',
+                    error: null,
+                    diffContent,
+                    fileContent: null,
+                    fileWriteSupported: false,
+                };
+            }
             error = failedReadError;
             fileContent = null;
             return {

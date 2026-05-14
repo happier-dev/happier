@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, Pressable, ActivityIndicator, Platform, KeyboardAvoidingView as RNKeyboardAvoidingView } from 'react-native';
+import { View, ScrollView, Pressable, Platform, KeyboardAvoidingView as RNKeyboardAvoidingView } from 'react-native';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -10,6 +10,7 @@ import { sync } from '@/sync/sync';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useArtifact } from '@/sync/domains/state/storage';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -184,7 +185,7 @@ export default function EditArtifactScreen() {
             disabled={!hasChanges || isSaving}
         >
             {isSaving ? (
-                <ActivityIndicator size="small" color={theme.colors.chrome.header.foreground} />
+                <ActivitySpinner size="small" color={theme.colors.chrome.header.foreground} />
             ) : (
                 <Text style={styles.headerButtonText}>
                     {t('common.save')}
@@ -239,7 +240,7 @@ export default function EditArtifactScreen() {
                     options={loadingScreenOptions}
                 />
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" />
+                    <ActivitySpinner size="large" />
                 </View>
             </View>
         );

@@ -38,6 +38,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
 type ProfileAvailability = Readonly<{ available: boolean; reason?: string }>;
 
@@ -230,6 +231,38 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         params.selectedMachine?.revokedAt,
     ]);
 
+    const selectedMachineSpawnReadiness = React.useMemo(() => {
+        const rpcAvailable =
+            selectedMachineCapabilities.status === 'loaded'
+                ? true
+                : selectedMachineCapabilities.status === 'loading'
+                    ? 'probing'
+                    : selectedMachineCapabilities.status === 'error'
+                        ? 'unknown'
+                        : selectedMachineOnline
+                            ? 'unknown'
+                            : undefined;
+        const keyAvailable = rpcAvailable === true
+            ? true
+            : rpcAvailable === 'probing'
+                ? 'probing'
+                : rpcAvailable === 'unknown'
+                    ? 'unknown'
+                    : undefined;
+        return resolveMachineSpawnReadiness({
+            selectedMachineId: params.selectedMachineId,
+            machine: params.selectedMachine,
+            rpcAvailable,
+            keyAvailable,
+            requireExactSpawnReadiness: true,
+        });
+    }, [
+        params.selectedMachine,
+        params.selectedMachineId,
+        selectedMachineCapabilities.status,
+        selectedMachineOnline,
+    ]);
+
     const initialRefreshKey = React.useMemo(() => {
         const machineId = String(params.selectedMachineId ?? '').trim();
         if (!machineId) return null;
@@ -364,6 +397,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         cliAvailability,
         selectedMachineCapabilities,
         selectedMachineCapabilitiesSnapshot,
+        selectedMachineSpawnReadiness,
         tmuxRequested,
         showResumePicker,
         wizardInstallableDeps,

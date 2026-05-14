@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Platform, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
@@ -38,6 +38,7 @@ import {
     type ProviderSetupQueueState,
 } from './providerSetupQueue';
 import { useProviderCliInstallQueue, type ProviderCliInstallStatus } from './useProviderCliInstallQueue';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function supportsDirectProviderSetup(providerId: AgentId | null | undefined): providerId is AgentId {
     return isAgentId(providerId) && Boolean(getProviderCliRuntimeSpec(providerId).binaryName);
@@ -422,7 +423,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                                 rightElement={
                                     installQueue.state.hasStarted
                                         ? installStatus === 'installing'
-                                            ? <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                                            ? <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                             : installStatus === 'installed'
                                                 ? <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent.blue} />
                                                 : installStatus === 'failed'
@@ -596,7 +597,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                                     </Text>
                                 </View>
                                 {status === 'installing' ? (
-                                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                 ) : status === 'installed' ? (
                                     <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent.blue} />
                                 ) : status === 'failed' ? (

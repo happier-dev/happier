@@ -45,16 +45,9 @@ export default function SessionLogScreen() {
         return raw.length > 0 ? raw : null;
     }, [session?.metadata]);
 
-    const machineIdFromSession = React.useMemo(() => {
-        const raw = session?.metadata && typeof (session.metadata as any).machineId === 'string'
-            ? (session.metadata as any).machineId.trim()
-            : '';
-        return raw.length > 0 ? raw : null;
-    }, [session?.metadata]);
-
     const resolvedMachineId = React.useMemo(() => {
-        return machineIdFromSession || (session?.id ? readMachineTargetForSession(session.id)?.machineId ?? null : null);
-    }, [machineIdFromSession, session?.id]);
+        return session?.id ? readMachineTargetForSession(session.id)?.machineId ?? null : null;
+    }, [session?.id, session?.updatedAt, session?.metadata]);
 
     const [tailText, setTailText] = React.useState('');
     const [resolvedLogPath, setResolvedLogPath] = React.useState<string | null>(null);

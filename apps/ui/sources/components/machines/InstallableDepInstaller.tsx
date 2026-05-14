@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator } from 'react-native';
+
 import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -10,6 +10,7 @@ import { t } from '@/text';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { isInstallableDepUpdateAvailable } from '@/capabilities/installablesUpdateAvailable';
 import { useUnistyles } from 'react-native-unistyles';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type InstallableDepData = {
     installed: boolean;
@@ -159,7 +160,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                         ],
                     );
                 }}
-                rightElement={isInstalling ? <ActivityIndicator size="small" color={theme.colors.text.secondary} /> : undefined}
+                rightElement={isInstalling ? <ActivitySpinner size="small" color={theme.colors.text.secondary} /> : undefined}
             />
 
             {props.depStatus?.lastInstallLogPath && (

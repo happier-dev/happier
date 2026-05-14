@@ -1,5 +1,6 @@
 import {
     SCM_OPERATION_ERROR_CODES,
+    SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
     type ScmWorktree,
     type ScmWorktreeCreateResponse,
     type ScmWorktreePruneResponse,
@@ -9,11 +10,16 @@ import {
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';
 import { machineScmWorktreeCreate, machineScmWorktreePrune, machineScmWorktreeRemove } from '@/sync/ops/scm/machineScm';
+import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { generateWorktreeName } from '@/utils/worktree/generateWorktreeName';
 import { resolveRepoScmMachinePathRequest } from './resolveRepoScmMachinePathRequest';
 
-function normalizePath(value: unknown): string | null {
-    return normalizeFileSystemPath(value);
+function normalizePath(value: unknown, homeDir?: string | null): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    return normalizeFileSystemPath(resolveAbsolutePath(value, homeDir || undefined));
 }
 
 function isPathAtOrWithinWorktree(path: string | null, worktreePath: string | null): boolean {
@@ -35,24 +41,66 @@ function resolveSelectedBranchName(params: Readonly<{
     return params.selectedBaseRef?.trim() || params.currentBranch?.trim() || null;
 }
 
+function resolveRemoteNames(snapshot: ScmWorkingSnapshot | null): ReadonlyArray<string> {
+    const names = new Set<string>();
+    for (const remote of snapshot?.repo.remotes ?? []) {
+        const name = remote.name.trim();
+        if (name.length > 0) {
+            names.add(name);
+        }
+    }
+
+    return (names.size > 0 ? [...names] : ['origin'])
+        .sort((left, right) => right.length - left.length || left.localeCompare(right));
+}
+
+function stripKnownRemotePrefix(branchName: string, remoteNames: ReadonlyArray<string>): string {
+    for (const remoteName of remoteNames) {
+        const prefix = `${remoteName}/`;
+        if (branchName.startsWith(prefix) && branchName.length > prefix.length) {
+            return branchName.slice(prefix.length);
+        }
+    }
+
+    return branchName;
+}
+
+function worktreeBranchMatchesSelectedRef(params: Readonly<{
+    worktreeBranch: string | null;
+    selectedBranchName: string;
+    remoteNames: ReadonlyArray<string>;
+}>): boolean {
+    if (params.worktreeBranch === params.selectedBranchName) {
+        return true;
+    }
+
+    return params.worktreeBranch === stripKnownRemotePrefix(params.selectedBranchName, params.remoteNames);
+}
+
 export function findReusableRepoWorktreeForBranch(params: Readonly<{
     snapshot: ScmWorkingSnapshot | null;
     selectedBaseRef: string | null;
     currentBranch: string | null;
     currentPath: string | null;
+    machineHomeDir?: string | null;
 }>): ScmWorktree | null {
     const selectedBranchName = resolveSelectedBranchName(params);
     if (!selectedBranchName) {
         return null;
     }
 
-    const currentPath = normalizePath(params.currentPath);
+    const currentPath = normalizePath(params.currentPath, params.machineHomeDir);
+    const remoteNames = resolveRemoteNames(params.snapshot);
     for (const worktree of params.snapshot?.repo.worktrees ?? []) {
-        const worktreePath = normalizePath(worktree.path);
+        const worktreePath = normalizePath(worktree.path, params.machineHomeDir);
         if (!worktreePath) {
             continue;
         }
-        if (worktree.branch !== selectedBranchName) {
+        if (!worktreeBranchMatchesSelectedRef({
+            worktreeBranch: worktree.branch,
+            selectedBranchName,
+            remoteNames,
+        })) {
             continue;
         }
         if (isPathAtOrWithinWorktree(currentPath, worktreePath)) {
@@ -109,6 +157,8 @@ export class RepoScmWorktreeService {
         return await machineScmWorktreeRemove(request.machineId, {
             cwd: request.resolvedPath,
             worktreePath: input.worktreePath,
+            confirmed: true,
+            authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
         });
     }
 

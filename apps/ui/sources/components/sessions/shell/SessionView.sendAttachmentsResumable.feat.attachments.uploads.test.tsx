@@ -33,6 +33,9 @@ const reviewCommentDraftsState = vi.hoisted(() => ({
     current: [] as any[],
 }));
 const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
+const resolveReviewCommentDraftAnchorsForPromptSpy = vi.hoisted(() => vi.fn(async (input: {
+    drafts: readonly any[];
+}) => [...input.drafts]));
 
 const pendingFireAndForget: Promise<unknown>[] = [];
 
@@ -103,6 +106,9 @@ vi.mock('@/components/voice/surface/VoiceSurface', () => ({
 }));
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
     AttachmentFilePicker: () => null,
+}));
+vi.mock('@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt', () => ({
+    resolveReviewCommentDraftAnchorsForPrompt: resolveReviewCommentDraftAnchorsForPromptSpy,
 }));
 
 vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
@@ -521,6 +527,21 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
         deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        resolveReviewCommentDraftAnchorsForPromptSpy.mockReset();
+        resolveReviewCommentDraftAnchorsForPromptSpy.mockImplementation(async (input: {
+            drafts: readonly any[];
+        }) => input.drafts.map((draft) => ({
+            ...draft,
+            anchorResolution: {
+                id: draft.id,
+                filePath: draft.filePath,
+                originalAnchor: draft.anchor,
+                resolvedAnchor: { kind: 'line', filePath: draft.filePath, line: 1 },
+                status: 'exact',
+                confidence: 1,
+                preview: draft.snapshot,
+            },
+        })));
         pendingFireAndForget.length = 0;
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -642,6 +663,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await pendingFireAndForget[0];
 
             expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+            expect(resolveReviewCommentDraftAnchorsForPromptSpy).toHaveBeenCalledWith(expect.objectContaining({
+                reviewScope: expect.objectContaining({ serverId: 'server-1', machineId: 'm1', rootPath: '/tmp' }),
+            }));
             const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = sendMessageSpy.mock.calls[0] ?? [];
             expect(sentSessionId).toBe('s1');
             expect(String(sentText)).toContain('Review comments:');

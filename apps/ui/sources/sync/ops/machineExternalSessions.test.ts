@@ -1,10 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const storageState = vi.hoisted(() => ({
+    value: {
+        machines: {},
+    },
+}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        storage: {
+            getState: () => storageState.value,
+        },
+    });
+});
 
 const directSource = {
     kind: 'codexHome' as const,
@@ -14,6 +28,7 @@ const directSource = {
 describe('machine direct sessions ops server-scoped routing', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        storageState.value = { machines: {} };
     });
 
     it('routes direct session candidate listing through server-scoped machine rpc', async () => {
@@ -267,6 +282,51 @@ describe('machine direct sessions ops server-scoped routing', () => {
             method: 'daemon.externalSessions.takeover',
             payload: {
                 machineId: 'machine-1',
+                linkedSessionId: 'happy-session-1',
+                targetRuntimeMode: 'terminal',
+                storageMode: 'persisted',
+                forceStop: true,
+            },
+        }));
+    });
+
+    it('routes external session RPCs to a replacement machine while preserving linked metadata identity', async () => {
+        storageState.value = {
+            machines: {
+                'machine-old': {
+                    id: 'machine-old',
+                    active: false,
+                    replacedByMachineId: 'machine-new',
+                    replacedAt: 123,
+                },
+                'machine-new': {
+                    id: 'machine-new',
+                    active: true,
+                },
+            },
+        };
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            ok: true,
+            sessionId: 'happy-session-1',
+            targetRuntimeMode: 'terminal',
+            storageMode: 'persisted',
+            converted: true,
+        });
+        const { machineExternalSessionTakeoverPersist } = await import('./machineExternalSessions');
+
+        const result = await machineExternalSessionTakeoverPersist({
+            machineId: 'machine-old',
+            sessionId: 'happy-session-1',
+            forceStop: true,
+        }, { serverId: 'server-a' });
+
+        expect(result).toMatchObject({ ok: true, converted: true });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-new',
+            serverId: 'server-a',
+            method: 'daemon.externalSessions.takeover',
+            payload: {
+                machineId: 'machine-old',
                 linkedSessionId: 'happy-session-1',
                 targetRuntimeMode: 'terminal',
                 storageMode: 'persisted',

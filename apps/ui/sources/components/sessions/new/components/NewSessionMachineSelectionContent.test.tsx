@@ -15,6 +15,7 @@ type CapturedServerScopedMachineSelectorProps = Readonly<Record<string, unknown>
 
 const capturedMachineSelectorProps: CapturedMachineSelectorProps[] = [];
 const capturedServerScopedMachineSelectorProps: CapturedServerScopedMachineSelectorProps[] = [];
+const capturedItemListStyles: unknown[] = [];
 
 installNewSessionComponentsCommonModuleMocks({
     text: async () => {
@@ -24,7 +25,10 @@ installNewSessionComponentsCommonModuleMocks({
 });
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+    ItemList: ({ children, style }: { children?: React.ReactNode; style?: unknown }) => {
+        capturedItemListStyles.push(style);
+        return React.createElement(React.Fragment, null, children);
+    },
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -159,6 +163,39 @@ describe('NewSessionMachineSelectionContent', () => {
         });
         expect(typeof capturedMachineSelectorProps[0]?.onSelect).toBe('function');
         expect(typeof capturedMachineSelectorProps[0]?.onToggleFavorite).toBe('function');
+    });
+
+    it('bounds the embedded list to the popover content height', async () => {
+        const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
+
+        capturedItemListStyles.length = 0;
+
+        await renderScreen(React.createElement(NewSessionMachineSelectionContent, {
+            groups: [
+                {
+                    serverId: 'server-b',
+                    serverName: 'Server B',
+                    loading: false,
+                    signedOut: false,
+                    machines: [baseScopedMachine],
+                },
+            ],
+            selectedMachine: baseMachine,
+            selectedServerId: 'server-b',
+            recentMachines: [baseMachine],
+            favoriteMachines: [],
+            onSelectMachine: vi.fn(),
+            onSelectScopedMachine: vi.fn(),
+            maxHeight: 320,
+        }));
+
+        expect(capturedItemListStyles.at(-1)).toMatchObject({
+            maxHeight: 320,
+            minHeight: 0,
+            flex: 0,
+            flexGrow: 0,
+            flexShrink: 1,
+        });
     });
 
     it('forwards the machine-search visibility flag to the single-server popover selector', async () => {

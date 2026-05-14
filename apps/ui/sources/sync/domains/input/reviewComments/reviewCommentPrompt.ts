@@ -1,4 +1,10 @@
-import type { ReviewCommentDraft } from './reviewCommentTypes';
+import type { WorkspaceAnchorResolutionV1 } from '@happier-dev/protocol';
+
+import type { ReviewCommentAnchor, ReviewCommentDraft, ReviewCommentSnapshot } from './reviewCommentTypes';
+import {
+    formatReviewCommentDraftAnchorLabel,
+    getReviewCommentDraftAnchorPrimaryLine,
+} from './anchors/reviewCommentDraftAnchor';
 
 export function isReviewCommentDraftIncludedInPrompt(draft: ReviewCommentDraft): boolean {
     return draft.includeInPrompt !== false;
@@ -9,14 +15,38 @@ export function filterReviewCommentDraftsIncludedInPrompt(drafts: readonly Revie
 }
 
 function formatAnchor(draft: ReviewCommentDraft): string {
-    const lineHash = draft.anchor.lineHash ? ` ${draft.anchor.lineHash}` : '';
-    if (draft.anchor.kind === 'fileLine') {
-        return `L${draft.anchor.startLine}${lineHash}`;
-    }
-    const side = draft.anchor.side;
-    const line = side === 'after' ? draft.anchor.newLine : draft.anchor.oldLine;
-    const lineText = typeof line === 'number' ? `L${line}` : 'L?';
-    return `${side} ${lineText}${lineHash}`;
+    return formatReviewCommentDraftAnchorLabel(draft.anchor);
+}
+
+function formatResolvedAnchor(anchor: WorkspaceAnchorResolutionV1['resolvedAnchor']): string | null {
+    if (!anchor) return null;
+    return formatReviewCommentDraftAnchorLabel(anchor as ReviewCommentAnchor);
+}
+
+function formatSnapshot(snapshot: ReviewCommentSnapshot): string {
+    const snapshotLines = [
+        ...snapshot.beforeContext,
+        ...snapshot.selectedLines,
+        ...snapshot.afterContext,
+    ];
+    return snapshotLines.length > 0
+        ? `   - snippet:\n${snapshotLines.map((l) => `     ${l}`).join('\n')}\n`
+        : '';
+}
+
+function formatResolution(resolution: WorkspaceAnchorResolutionV1 | undefined): string {
+    if (!resolution) return '';
+    const resolvedAnchor = formatResolvedAnchor(resolution.resolvedAnchor);
+    const statusLine = resolvedAnchor
+        ? `   - resolved: ${resolution.status} ${resolvedAnchor}`
+        : `   - resolved: ${resolution.status}`;
+    const details = [
+        statusLine,
+        `   - confidence: ${resolution.confidence}`,
+        resolution.reason ? `   - reason: ${resolution.reason}` : '',
+        resolution.preview ? formatSnapshot(resolution.preview).trimEnd() : '',
+    ].filter(Boolean);
+    return details.length > 0 ? details.join('\n') : '';
 }
 
 export function buildReviewCommentsPromptText(params: {
@@ -26,24 +56,18 @@ export function buildReviewCommentsPromptText(params: {
 }): string {
     const drafts = filterReviewCommentDraftsIncludedInPrompt(params.drafts).sort((a, b) => {
         if (a.filePath !== b.filePath) return a.filePath.localeCompare(b.filePath);
-        const aLine = a.anchor.kind === 'fileLine' ? a.anchor.startLine : (a.anchor.newLine ?? a.anchor.oldLine ?? 0);
-        const bLine = b.anchor.kind === 'fileLine' ? b.anchor.startLine : (b.anchor.newLine ?? b.anchor.oldLine ?? 0);
+        const aLine = getReviewCommentDraftAnchorPrimaryLine(a.anchor) ?? 0;
+        const bLine = getReviewCommentDraftAnchorPrimaryLine(b.anchor) ?? 0;
         if (aLine !== bLine) return aLine - bLine;
         return a.createdAt - b.createdAt;
     });
 
     const header = 'Review comments:\n';
     const blocks = drafts.map((draft, index) => {
-        const snapshotLines = [
-            ...draft.snapshot.beforeContext,
-            ...draft.snapshot.selectedLines,
-            ...draft.snapshot.afterContext,
-        ];
-        const snapshot = snapshotLines.length > 0
-            ? `   - snippet:\n${snapshotLines.map((l) => `     ${l}`).join('\n')}\n`
-            : '';
+        const snapshot = formatSnapshot(draft.snapshot);
         return [
             `${index + 1}) ${draft.filePath} (${formatAnchor(draft)})`,
+            formatResolution(draft.anchorResolution),
             snapshot.trimEnd(),
             `   - comment: ${draft.body}`,
         ].filter(Boolean).join('\n');

@@ -113,6 +113,17 @@ function createEmptyWidgetSnapshot(snapshot: ActivitySurfaceSnapshot): ActivityS
     };
 }
 
+function updateWidgetSnapshotSafely(
+    widget: Readonly<{ updateSnapshot: (snapshot: ActivitySurfaceSnapshot) => void }>,
+    snapshot: ActivitySurfaceSnapshot,
+): void {
+    try {
+        widget.updateSnapshot(snapshot);
+    } catch {
+        // Widget bridge failures must not surface as app-level runtime errors.
+    }
+}
+
 async function endLiveActivityHandle(
     handle: LiveActivityHandle,
     dismissalPolicy: LiveActivityDismissalPolicy,
@@ -611,8 +622,8 @@ export function ActivitySurfacesRuntime(): React.ReactElement | null {
 
             if (widgetBridgeFingerprintRef.current !== widgetBridgeFingerprint) {
                 widgetBridgeFingerprintRef.current = widgetBridgeFingerprint;
-                modules.HappierFocusWidget.updateSnapshot(snapshotToApply);
-                modules.HappierSessionsWidget.updateSnapshot(snapshotToApply);
+                updateWidgetSnapshotSafely(modules.HappierFocusWidget, snapshotToApply);
+                updateWidgetSnapshotSafely(modules.HappierSessionsWidget, snapshotToApply);
             }
 
             const liveActivityFactory = modules.HappierFocusLiveActivity;
@@ -848,8 +859,8 @@ export function ActivitySurfacesRuntime(): React.ReactElement | null {
             const liveActivityPushTokenSubscriptions = liveActivityPushTokenSubscriptionsRef.current;
             const liveActivityRemoteTargetRegistry = liveActivityRemoteTargetRegistryRef.current;
 
-            modules.HappierFocusWidget.updateSnapshot(clearSnapshot);
-            modules.HappierSessionsWidget.updateSnapshot(clearSnapshot);
+            updateWidgetSnapshotSafely(modules.HappierFocusWidget, clearSnapshot);
+            updateWidgetSnapshotSafely(modules.HappierSessionsWidget, clearSnapshot);
 
             void (async () => {
                 const activityHandles = new Set<LiveActivityHandle>([

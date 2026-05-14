@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -12,6 +12,7 @@ import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForR
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export default function SessionNewRunScreen() {
     const { theme } = useUnistyles();
@@ -72,7 +73,7 @@ export default function SessionNewRunScreen() {
                 {!sessionId ? (
                     <Text style={{ color: theme.colors.text.primary }}>{t('errors.sessionDeleted')}</Text>
                 ) : !hydrateReady ? (
-                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 ) : (
                     <SessionExecutionRunLauncherView
                         sessionId={sessionId}

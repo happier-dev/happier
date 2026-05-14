@@ -199,7 +199,7 @@ describe('SessionItem context menu press suppression', () => {
         expect(navigateToSessionSpy).toHaveBeenCalledWith('sess_1', undefined);
     });
 
-    it('keeps row long-press actions enabled when reorder is handle-scoped on native', async () => {
+    it('disables row fallback long-press actions when native inline drag owns long-press', async () => {
         vi.useFakeTimers();
 
         const { SessionItem } = await import('./SessionItem');
@@ -239,13 +239,7 @@ describe('SessionItem context menu press suppression', () => {
         );
 
         const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_2' });
-        expect(typeof itemPressable.props.onLongPress).toBe('function');
-
-        await act(async () => {
-            itemPressable.props.onLongPress?.();
-        });
-
-        expect(onNativeContextMenuOpenChange).toHaveBeenCalledWith(true);
+        expect(itemPressable.props.onLongPress).toBeUndefined();
     });
 
     it('adds Android ripple feedback to the session row pressable', async () => {

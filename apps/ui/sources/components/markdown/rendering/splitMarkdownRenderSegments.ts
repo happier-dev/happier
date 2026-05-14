@@ -5,7 +5,9 @@ import {
     type MarkdownBlockSource,
 } from '../streaming/splitMarkdownIntoBlockSources';
 import type { MarkdownBlock } from '../parseMarkdown';
+import type { MarkdownSourceRange } from '../parseMarkdown';
 import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
+import { normalizeLooseListContinuations } from './normalizeLooseListContinuations';
 
 type LocatedMarkdownBlockSource = MarkdownBlockSource & Readonly<{
     sourceStart: number;
@@ -19,6 +21,7 @@ type PendingEnrichedGroup = Readonly<{
     sourceStart: number;
     sourceLength: number;
     sourceHash: string;
+    sourceRange: MarkdownSourceRange;
 }>;
 
 type DraftMarkdownRenderSegment =
@@ -70,7 +73,7 @@ function buildGroupMarkdown(markdown: string, sources: readonly LocatedMarkdownB
     if (!firstSource || !lastSource) return '';
 
     const end = lastSource.sourceStart + lastSource.sourceLength;
-    return markdown.slice(firstSource.sourceStart, end).trim();
+    return markdown.slice(firstSource.sourceStart, end);
 }
 
 function buildGroup(markdown: string, sources: readonly LocatedMarkdownBlockSource[]): PendingEnrichedGroup | null {
@@ -89,7 +92,20 @@ function buildGroup(markdown: string, sources: readonly LocatedMarkdownBlockSour
         sourceStart,
         sourceLength,
         sourceHash: hashMarkdownSource(groupMarkdown),
+        sourceRange: resolveSourceRange(markdown, sourceStart, sourceLength),
     };
+}
+
+function countNewlines(value: string): number {
+    return (value.match(/\n/g) ?? []).length;
+}
+
+function resolveSourceRange(markdown: string, sourceStart: number, sourceLength: number): MarkdownSourceRange {
+    const before = markdown.slice(0, Math.max(0, sourceStart));
+    const source = markdown.slice(sourceStart, sourceStart + Math.max(0, sourceLength));
+    const startLine = countNewlines(before) + 1;
+    const endLine = startLine + countNewlines(source);
+    return { startLine, endLine };
 }
 
 function applyFirstLast(segments: readonly DraftMarkdownRenderSegment[]): MarkdownRenderSegment[] {
@@ -127,9 +143,10 @@ export function splitMarkdownRenderSegments(params: Readonly<{
         if (cached) return cached;
     }
 
-    const renderMarkdown = params.streamingMode === 'streaming' && params.streamingRepair !== 'prepared'
+    const repairedMarkdown = params.streamingMode === 'streaming' && params.streamingRepair !== 'prepared'
         ? preprocessStreamingMarkdown(params.markdown)
         : params.markdown;
+    const renderMarkdown = normalizeLooseListContinuations(repairedMarkdown);
     const locatedSources = locateSources(renderMarkdown, splitMarkdownIntoBlockSources(renderMarkdown));
     const segments: DraftMarkdownRenderSegment[] = [];
     let pendingEnrichedSources: LocatedMarkdownBlockSource[] = [];
@@ -151,6 +168,7 @@ export function splitMarkdownRenderSegments(params: Readonly<{
             sourceStart: group.sourceStart,
             sourceLength: group.sourceLength,
             sourceHash: group.sourceHash,
+            sourceRange: group.sourceRange,
             markdown: group.markdown,
         });
     };
@@ -169,6 +187,8 @@ export function splitMarkdownRenderSegments(params: Readonly<{
             sourceStart: source.sourceStart,
             sourceLength: source.sourceLength,
             sourceHash: source.sourceHash,
+            sourceRange: resolveSourceRange(renderMarkdown, source.sourceStart, source.sourceLength),
+            markdown: source.source,
             blocks,
         });
     }

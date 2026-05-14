@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
@@ -36,6 +36,7 @@ import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveIna
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { Text } from '@/components/ui/text/Text';
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export const ToolTimelineRow = React.memo((props: {
     tool: ToolCall;
@@ -226,7 +227,7 @@ export const ToolTimelineRow = React.memo((props: {
                 </View>
             )
             : showTaskRunningIndicator && toolForRendering.state === 'running'
-                ? <ActivityIndicator size="small" />
+                ? <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 : null;
     const headerPrimaryActions = headerActions ?? null;
     const headerRightElement =

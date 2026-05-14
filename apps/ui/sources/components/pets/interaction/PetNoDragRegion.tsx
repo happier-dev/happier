@@ -1,10 +1,5 @@
 import * as React from 'react';
-import {
-    View,
-    type LayoutChangeEvent,
-    type StyleProp,
-    type ViewStyle,
-} from 'react-native';
+import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 
 export type PetNoDragRegionRect = Readonly<{
     id: string;

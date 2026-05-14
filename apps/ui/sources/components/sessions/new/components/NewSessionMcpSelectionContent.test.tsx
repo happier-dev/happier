@@ -345,6 +345,13 @@ describe('NewSessionMcpSelectionContent', () => {
 
         const detected = capturedItems.find((item) => item.testID === 'new-session.mcp.detected.sequential-thinking');
         expect(detected?.subtitle).toBe('Scope · Auth');
+        expect(detected?.detail).toBeUndefined();
+        expect(React.isValidElement(detected?.rightElement)).toBe(true);
+        expect(detected?.rightElement).toEqual(expect.objectContaining({
+            props: expect.objectContaining({
+                testID: 'new-session.mcp.detected.sequential-thinking.status',
+            }),
+        }));
     });
 
     it('does not render an extra empty-state row when Happier servers exist but preview resolves empty', async () => {

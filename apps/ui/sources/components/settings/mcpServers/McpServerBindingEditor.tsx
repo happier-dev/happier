@@ -111,6 +111,7 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
             props: {
                 machineId: target.machineId,
                 machineHomeDir: homeDir,
+                machinePlatform: machine?.metadata?.platform ?? null,
                 selectedPath: target.workspaceRoot,
                 onSelectPath: setWorkspaceRoot,
                 favoriteDirectories,

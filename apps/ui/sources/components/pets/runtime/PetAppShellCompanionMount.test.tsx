@@ -149,6 +149,14 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
     const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+    const readAccountSettings = (): typeof settingsDefaults => ({
+        ...settingsDefaults,
+        ...settingsState.account,
+    });
+    const readLocalSettings = (): typeof localSettingsDefaults => ({
+        ...localSettingsDefaults,
+        ...settingsState.local,
+    });
     return createStorageModuleMock({
         importOriginal,
         overrides: {
@@ -166,14 +174,10 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 } as StorageState;
                 return typeof selector === 'function' ? selector(snapshot) : snapshot;
             }) as typeof actual.storage,
-            useSettings: () => ({
-                ...settingsDefaults,
-                ...settingsState.account,
-            }),
-            useLocalSettings: () => ({
-                ...localSettingsDefaults,
-                ...settingsState.local,
-            }),
+            useSettings: readAccountSettings,
+            useSetting: ((name) => readAccountSettings()[name]) as typeof actual.useSetting,
+            useLocalSettings: readLocalSettings,
+            useLocalSetting: ((name) => readLocalSettings()[name]) as typeof actual.useLocalSetting,
             useAllSessions: () => activityState.sessions,
         },
     });

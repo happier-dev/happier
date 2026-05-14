@@ -1,6 +1,6 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform, View } from 'react-native';
+import { Appearance, Platform } from 'react-native';
 import { setStatusBarStyle } from 'expo-status-bar';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -8,20 +8,49 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { useSettingMutable, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { useRouter } from 'expo-router';
 import * as Localization from 'expo-localization';
-import { useUnistyles, UnistylesRuntime } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Appearance } from 'react-native';
-import * as SystemUI from 'expo-system-ui';
-import { darkTheme, lightTheme } from '@/theme';
+import { ThemeSelectionDropdown } from '@/components/settings/appearance/themeProfiles/ThemeSelectionDropdown';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { resolveStatusBarStyleForThemePreference } from '@/components/ui/layout/statusBarStyle';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { runThemePreferenceChange } from '@/components/settings/appearance/themePreferenceTransition';
+import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime';
+import { getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from '@/theme/profiles/builtInThemeProfiles';
+import { DEFAULT_THEME_PROFILES_LOCAL_STATE, findThemeProfileById } from '@/theme/profiles/themeProfilePersistence';
+import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 
 // Define known avatar styles for this version of the app
 type KnownAvatarStyle = 'pixelated' | 'gradient' | 'brutalist';
+
+const UI_FONT_SCALE_PRESETS = {
+    xxsmall: 0.8,
+    xsmall: 0.85,
+    small: 0.93,
+    default: 1,
+    large: 1.1,
+    xlarge: 1.2,
+    xxlarge: 1.3,
+} as const;
+
+type UiFontScalePresetId = keyof typeof UI_FONT_SCALE_PRESETS;
+type UiItemDensity = LocalSettings['uiItemDensity'];
+type DetailsPaneTabsBehavior = LocalSettings['detailsPaneTabsBehavior'];
+
+const isUiFontScalePresetId = (value: string): value is UiFontScalePresetId => (
+    Object.prototype.hasOwnProperty.call(UI_FONT_SCALE_PRESETS, value)
+);
+
+const isUiItemDensity = (value: string): value is UiItemDensity => (
+    value === 'comfortable' || value === 'cozy' || value === 'compact'
+);
+
+const isDetailsPaneTabsBehavior = (value: string): value is DetailsPaneTabsBehavior => (
+    value === 'preview' || value === 'persistent'
+);
 
 const isKnownAvatarStyle = (style: string): style is KnownAvatarStyle => {
     return style === 'pixelated' || style === 'gradient' || style === 'brutalist';
@@ -35,6 +64,7 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [avatarStyle, setAvatarStyle] = useSettingMutable('avatarStyle');
     const [showFlavorIcons, setShowFlavorIcons] = useSettingMutable('showFlavorIcons');
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
+    const [themeProfiles, setThemeProfiles] = useLocalSettingMutable('themeProfiles');
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
     const [uiContentWidthMode, setUiContentWidthMode] = useLocalSettingMutable('uiContentWidthMode');
     const [uiItemDensity, setUiItemDensity] = useLocalSettingMutable('uiItemDensity');
@@ -43,25 +73,18 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
     const [settingsNavSidebarEnabled, setSettingsNavSidebarEnabled] = useLocalSettingMutable('settingsNavSidebarEnabled');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
+    const [openThemeMenu, setOpenThemeMenu] = React.useState(false);
     const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
     const [openContentWidthMenu, setOpenContentWidthMenu] = React.useState(false);
     const [openItemDensityMenu, setOpenItemDensityMenu] = React.useState(false);
     const [openDetailsTabsMenu, setOpenDetailsTabsMenu] = React.useState(false);
     const reduceMotion = useReducedMotionPreference();
-
-    const uiFontScalePresets = React.useMemo(() => {
-        return {
-            xxsmall: 0.8,
-            xsmall: 0.85,
-            small: 0.93,
-            default: 1,
-            large: 1.1,
-            xlarge: 1.2,
-            xxlarge: 1.3,
-        } as const;
-    }, []);
-
-    const textSizeMenuItems = React.useMemo(() => {
+    const safeThemeProfiles = themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE;
+    const activeThemeProfile = React.useMemo(
+        () => findThemeProfileById(safeThemeProfiles, safeThemeProfiles.activeProfileId),
+        [safeThemeProfiles],
+    );
+    const textSizeMenuItems = React.useMemo((): readonly DropdownMenuItem[] => {
         return [
             { id: 'xxsmall', title: t('settingsAppearance.textSizeOptions.xxsmall') },
             { id: 'xsmall', title: t('settingsAppearance.textSizeOptions.xsmall') },
@@ -121,8 +144,8 @@ export default React.memo(function AppearanceSettingsScreen() {
     }, []);
 
     const selectedTextSizeId = React.useMemo(() => {
-        const entries = Object.entries(uiFontScalePresets) as Array<[keyof typeof uiFontScalePresets, number]>;
-        let best: keyof typeof uiFontScalePresets = 'default';
+        const entries = Object.entries(UI_FONT_SCALE_PRESETS) as Array<[UiFontScalePresetId, number]>;
+        let best: UiFontScalePresetId = 'default';
         let bestDist = Number.POSITIVE_INFINITY;
         for (const [id, scale] of entries) {
             const dist = Math.abs((uiFontScale ?? 1) - scale);
@@ -132,13 +155,49 @@ export default React.memo(function AppearanceSettingsScreen() {
             }
         }
         return best;
-    }, [uiFontScale, uiFontScalePresets]);
+    }, [uiFontScale]);
 
     const selectUiFontSize = React.useCallback((itemId: string) => {
-        const next = (uiFontScalePresets as any)[itemId];
-        if (typeof next !== 'number') return;
-        setUiFontScale(next as any);
-    }, [setUiFontScale, uiFontScalePresets]);
+        if (!isUiFontScalePresetId(itemId)) return;
+        setUiFontScale(UI_FONT_SCALE_PRESETS[itemId]);
+    }, [setUiFontScale]);
+
+    const applyThemeSelection = React.useCallback((
+        nextThemePreference: 'adaptive' | 'light' | 'dark',
+        nextThemeProfiles: ThemeProfilesLocalStateV1,
+    ) => {
+        const systemTheme = Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
+        void runThemePreferenceChange({
+            currentPreference: themePreference,
+            nextPreference: nextThemePreference,
+            platform: Platform.OS,
+            reduceMotion,
+            forceAnimate: true,
+            systemTheme,
+            mutation: () => {
+                setThemePreference(nextThemePreference);
+                setThemeProfiles(nextThemeProfiles);
+                applyThemeRuntimeSelection({
+                    themePreference: nextThemePreference,
+                    themeProfiles: nextThemeProfiles,
+                    systemTheme,
+                });
+                setStatusBarStyle(resolveStatusBarStyleForThemePreference(nextThemePreference, systemTheme), true);
+            },
+        });
+    }, [reduceMotion, setThemePreference, setThemeProfiles, themePreference]);
+
+    const selectBaseTheme = React.useCallback((nextThemePreference: 'adaptive' | 'light' | 'dark') => {
+        applyThemeSelection(nextThemePreference, { ...safeThemeProfiles, activeProfileId: null });
+    }, [applyThemeSelection, safeThemeProfiles]);
+
+    const selectThemeProfile = React.useCallback((profileId: string) => {
+        const builtInDefinition = isBuiltInThemeProfilePresetId(profileId) ? getBuiltInThemeProfileDefinition(profileId) : undefined;
+        const nextThemePreference = isBuiltInThemeProfilePresetId(profileId)
+            ? builtInDefinition?.preferredMode ?? 'light'
+            : themePreference;
+        applyThemeSelection(nextThemePreference, { ...safeThemeProfiles, activeProfileId: profileId });
+    }, [applyThemeSelection, safeThemeProfiles, themePreference]);
 
     // Ensure we have a valid style for display, defaulting to gradient for unknown values
     const displayStyle: KnownAvatarStyle = isKnownAvatarStyle(avatarStyle) ? avatarStyle : 'gradient';
@@ -162,42 +221,21 @@ export default React.memo(function AppearanceSettingsScreen() {
 
             {/* Theme Settings */}
             <ItemGroup title={t('settingsAppearance.theme')} footer={t('settingsAppearance.themeDescription')}>
+                <ThemeSelectionDropdown
+                    open={openThemeMenu}
+                    onOpenChange={setOpenThemeMenu}
+                    themePreference={themePreference}
+                    themeProfiles={safeThemeProfiles}
+                    onSelectBaseTheme={selectBaseTheme}
+                    onSelectProfile={selectThemeProfile}
+                />
                 <Item
-                    testID="settings-appearance-themePreference-cycle"
-                    title={t('settings.appearance')}
-                    subtitle={themePreference === 'adaptive' ? t('settingsAppearance.themeDescriptions.adaptive') : themePreference === 'light' ? t('settingsAppearance.themeDescriptions.light') : t('settingsAppearance.themeDescriptions.dark')}
-                    icon={<Ionicons name="contrast-outline" size={29} color={theme.colors.status.connecting} />}
-                    detail={themePreference === 'adaptive' ? t('settingsAppearance.themeOptions.adaptive') : themePreference === 'light' ? t('settingsAppearance.themeOptions.light') : t('settingsAppearance.themeOptions.dark')}
-                    onPress={() => {
-                        const currentIndex = themePreference === 'adaptive' ? 0 : themePreference === 'light' ? 1 : 2;
-                        const nextIndex = (currentIndex + 1) % 3;
-                        const nextTheme = nextIndex === 0 ? 'adaptive' : nextIndex === 1 ? 'light' : 'dark';
-                        const systemTheme = Appearance.getColorScheme() ?? 'light';
-                        void runThemePreferenceChange({
-                            currentPreference: themePreference,
-                            mutation: () => {
-                                setThemePreference(nextTheme);
-
-                                if (nextTheme === 'adaptive') {
-                                    UnistylesRuntime.setAdaptiveThemes(true);
-                                    const color = systemTheme === 'dark' ? darkTheme.colors.background.canvas : lightTheme.colors.background.canvas;
-                                    UnistylesRuntime.setRootViewBackgroundColor(color);
-                                    SystemUI.setBackgroundColorAsync(color);
-                                } else {
-                                    UnistylesRuntime.setAdaptiveThemes(false);
-                                    UnistylesRuntime.setTheme(nextTheme);
-                                    const color = nextTheme === 'dark' ? darkTheme.colors.background.canvas : lightTheme.colors.background.canvas;
-                                    UnistylesRuntime.setRootViewBackgroundColor(color);
-                                    SystemUI.setBackgroundColorAsync(color);
-                                }
-                                setStatusBarStyle(resolveStatusBarStyleForThemePreference(nextTheme, systemTheme), true);
-                            },
-                            nextPreference: nextTheme,
-                            platform: Platform.OS,
-                            reduceMotion,
-                            systemTheme,
-                        });
-                    }}
+                    testID="settings-appearance-themeProfiles"
+                    title={t('settingsAppearance.themeProfiles.title')}
+                    subtitle={activeThemeProfile?.name ?? t('settingsAppearance.themeProfiles.defaultThemeSubtitle')}
+                    icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.indigo} />}
+                    detail={activeThemeProfile ? t('settingsAppearance.themeProfiles.active') : t('settingsAppearance.themeProfiles.defaultTheme')}
+                    onPress={() => router.push('/settings/appearance/themes')}
                 />
             </ItemGroup>
 
@@ -218,7 +256,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                     onOpenChange={setOpenTextSizeMenu}
                     variant="selectable"
                     search={false}
-                    selectedId={selectedTextSizeId as any}
+                    selectedId={selectedTextSizeId}
                     showCategoryTitles={false}
                     matchTriggerWidth={true}
                     connectToTrigger={true}
@@ -229,7 +267,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                         icon: <Ionicons name="text-outline" size={29} color={theme.colors.accent.orange} />,
                         showSelectedSubtitle: false,
                     }}
-                    items={textSizeMenuItems as any}
+                    items={textSizeMenuItems}
                     onSelect={selectUiFontSize}
                 />
                 <DropdownMenu
@@ -237,7 +275,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                     onOpenChange={setOpenItemDensityMenu}
                     variant="selectable"
                     search={false}
-                    selectedId={uiItemDensity as any}
+                    selectedId={uiItemDensity}
                     showCategoryTitles={false}
                     matchTriggerWidth={true}
                     connectToTrigger={true}
@@ -248,33 +286,13 @@ export default React.memo(function AppearanceSettingsScreen() {
                         icon: <Ionicons name="list-outline" size={29} color={theme.colors.accent.orange} />,
                         showSelectedSubtitle: false,
                     }}
-                    items={itemDensityMenuItems as any}
+                    items={itemDensityMenuItems}
                     onSelect={(itemId) => {
-                        if (itemId !== 'comfortable' && itemId !== 'cozy' && itemId !== 'compact') return;
-                        setUiItemDensity(itemId as any);
+                        if (!isUiItemDensity(itemId)) return;
+                        setUiItemDensity(itemId);
                     }}
                 />
             </ItemGroup>
-
-            {/* Text Settings */}
-            {/* <ItemGroup title="Text" footer="Adjust text size and font preferences">
-                <Item
-                    title="Text Size"
-                    subtitle="Make text larger or smaller"
-                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.orange} />}
-                    detail="Default"
-                    onPress={() => { }}
-                    disabled
-                />
-                <Item
-                    title="Font"
-                    subtitle="Choose your preferred font"
-                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.orange} />}
-                    detail="System"
-                    onPress={() => { }}
-                    disabled
-                />
-            </ItemGroup> */}
 
             {/* Layout */}
             <ItemGroup title={t('settingsAppearance.display')} footer={t('settingsAppearance.displayDescription')}>
@@ -348,7 +366,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                     onOpenChange={setOpenDetailsTabsMenu}
                     variant="selectable"
                     search={false}
-                    selectedId={detailsPaneTabsBehavior as any}
+                    selectedId={detailsPaneTabsBehavior}
                     showCategoryTitles={false}
                     matchTriggerWidth={true}
                     connectToTrigger={true}
@@ -360,10 +378,10 @@ export default React.memo(function AppearanceSettingsScreen() {
                         showSelectedSubtitle: false,
                         itemProps: { disabled: !panelsSupported },
                     }}
-                    items={detailsTabsMenuItems as any}
+                    items={detailsTabsMenuItems}
                     onSelect={(itemId) => {
-                        if (itemId !== 'preview' && itemId !== 'persistent') return;
-                        setDetailsPaneTabsBehavior(itemId as any);
+                        if (!isDetailsPaneTabsBehavior(itemId)) return;
+                        setDetailsPaneTabsBehavior(itemId);
                     }}
                 />
             </ItemGroup>
@@ -393,43 +411,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                         />
                     }
                 />
-                {/* <Item
-                    title="Compact Mode"
-                    subtitle="Reduce spacing between elements"
-                    icon={<Ionicons name="contract-outline" size={29} color={theme.colors.accent.indigo} />}
-                    disabled
-                    rightElement={
-                        <Switch
-                            value={false}
-                            disabled
-                        />
-                    }
-                />
-                <Item
-                    title="Show Avatars"
-                    subtitle="Display user and assistant avatars"
-                    icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.indigo} />}
-                    disabled
-                    rightElement={
-                        <Switch
-                            value={true}
-                            disabled
-                        />
-                    }
-                /> */}
             </ItemGroup>
-
-            {/* Colors */}
-            {/* <ItemGroup title="Colors" footer="Customize accent colors and highlights">
-                <Item
-                    title="Accent Color"
-                    subtitle="Choose your accent color"
-                    icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.state.danger.foreground} />}
-                    detail="Blue"
-                    onPress={() => { }}
-                    disabled
-                />
-            </ItemGroup> */}
         </ItemList>
     );
 });

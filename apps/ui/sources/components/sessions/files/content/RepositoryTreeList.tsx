@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, View, type ScrollViewProps } from 'react-native';
+import { Platform, View, type ScrollViewProps, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
+import type { FilesystemBrowserRowRenderInput } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
 import { FilesystemBrowserRow } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Text } from '@/components/ui/text/Text';
@@ -19,6 +20,7 @@ import { useRepositoryTreeRowActions } from '@/components/sessions/files/reposit
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
 import { useSessionFileTransferAvailabilityState } from '@/components/sessions/files/useSessionFileTransferAvailability';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type RepositoryTreeWebDropTarget = Readonly<{
     destinationDir: string;
@@ -45,6 +47,13 @@ type RepositoryTreeListProps = {
     onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
     onScroll?: ScrollViewProps['onScroll'];
     scrollEventThrottle?: number;
+};
+
+const repositoryTreeListStyle: ViewStyle = { flex: 1, minHeight: 0 };
+const repositoryTreeContentContainerStyle: ViewStyle = { paddingBottom: 20 };
+const repositoryTreeWebItemLayout = (_data: unknown, index: number) => {
+    const length = 38;
+    return { length, offset: length * index, index };
 };
 
 function isDirectoryNode(node: { type: 'file' | 'directory' | 'error' | 'info' }): boolean {
@@ -118,6 +127,241 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
         onRequestDownload: props.onRequestDownload ?? null,
     });
 
+    const rowRenderState = React.useMemo(() => ({
+        badgeIndex,
+        canDownload,
+        detailsMode,
+        onOpenFile,
+        onOpenFilePinned: props.onOpenFilePinned,
+        onRequestDownload: props.onRequestDownload,
+        onWebDropTargetChange: props.onWebDropTargetChange,
+        retryDirectory,
+        rowActions,
+        scmSnapshot: props.scmSnapshot,
+        theme,
+        toggleDirectory,
+        webDropHoverPath: props.webDropHoverPath,
+        writeActionsEnabled,
+    }), [
+        badgeIndex,
+        canDownload,
+        detailsMode,
+        onOpenFile,
+        props.onOpenFilePinned,
+        props.onRequestDownload,
+        props.onWebDropTargetChange,
+        retryDirectory,
+        rowActions,
+        props.scmSnapshot,
+        theme,
+        toggleDirectory,
+        props.webDropHoverPath,
+        writeActionsEnabled,
+    ]);
+    const rowRenderStateRef = React.useRef(rowRenderState);
+    rowRenderStateRef.current = rowRenderState;
+    const rowVisualExtraData = React.useMemo(() => ({
+        badgeIndex,
+        detailsMode,
+        onRequestDownload: props.onRequestDownload,
+        scmSnapshot: props.scmSnapshot,
+        transferAvailable: transferAvailability.available,
+        webDropHoverPath: props.webDropHoverPath,
+        writeActionsEnabled,
+    }), [
+        badgeIndex,
+        detailsMode,
+        props.onRequestDownload,
+        props.scmSnapshot,
+        transferAvailability.available,
+        props.webDropHoverPath,
+        writeActionsEnabled,
+    ]);
+
+    const renderRow = React.useCallback(({ node, showDivider }: FilesystemBrowserRowRenderInput) => {
+        const rowState = rowRenderStateRef.current;
+        const safePath = toTestIdSafeValue(node.path);
+        const rowTestId = `repository-tree-row-${safePath}`;
+        const badge = (() => {
+            if (!rowState.scmSnapshot || !rowState.badgeIndex) return null;
+            if (node.type === 'file') return rowState.badgeIndex.getFileBadge(node.path);
+            if (node.type === 'directory') return rowState.badgeIndex.getDirectoryBadge(node.path);
+            return null;
+        })();
+
+        const showDetailsInline = node.type !== 'error' && rowState.detailsMode && Platform.OS === 'web';
+        const detailsSize =
+            node.type === 'file' && typeof node.sizeBytes === 'number'
+                ? formatByteSize(node.sizeBytes)
+                : node.type === 'directory'
+                    ? ''
+                    : '';
+        const detailsModified =
+            typeof node.modifiedMs === 'number'
+                ? new Date(node.modifiedMs).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : '';
+
+        const menu = (() => {
+            if (node.type !== 'file' && node.type !== 'directory') return null;
+            const actionTarget: Readonly<{ path: string; type: 'file' | 'directory' }> = {
+                path: node.path,
+                type: node.type,
+            };
+            const transferSizeBytes = node.type === 'file' && typeof node.sizeBytes === 'number'
+                ? node.sizeBytes
+                : null;
+            return (
+                <RepositoryTreeRowActionsMenu
+                    path={node.path}
+                    kind={node.type}
+                    disableWriteActions={!rowState.writeActionsEnabled}
+                    downloadActionsEnabled={rowState.onRequestDownload != null && rowState.canDownload(transferSizeBytes)}
+                    onSelect={(itemId: RepositoryTreeRowActionMenuItemId) => rowState.rowActions.onSelectRowMenuItem(actionTarget, itemId)}
+                />
+            );
+        })();
+
+        const shouldShowRight = showDetailsInline || Boolean(badge) || (isDirectoryNode(node) && node.isLoadingChildren) || Boolean(menu);
+        const right = shouldShowRight ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                {showDetailsInline ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <Text
+                            style={{
+                                width: 74,
+                                textAlign: 'right',
+                                fontSize: 12,
+                                color: rowState.theme.colors.text.secondary,
+                                ...Typography.mono(),
+                            }}
+                            numberOfLines={1}
+                        >
+                            {detailsSize}
+                        </Text>
+                        <Text
+                            style={{
+                                width: 132,
+                                textAlign: 'right',
+                                fontSize: 12,
+                                color: rowState.theme.colors.text.secondary,
+                                ...Typography.mono(),
+                            }}
+                            numberOfLines={1}
+                        >
+                            {detailsModified}
+                        </Text>
+                    </View>
+                ) : null}
+                {badge ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                        <Text style={{ fontSize: 12, color: rowState.theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
+                            {node.type === 'directory' ? `${badge.kindLetter}${badge.changedCount}` : badge.kindLetter}
+                        </Text>
+                        {badge.added > 0 ? (
+                            <Text style={{ fontSize: 12, color: rowState.theme.colors.state.success.foreground, ...Typography.mono('semiBold') }}>
+                                {`+${badge.added}`}
+                            </Text>
+                        ) : null}
+                        {badge.removed > 0 ? (
+                            <Text
+                                style={{
+                                    fontSize: 12,
+                                    color: rowState.theme.colors.state.danger.foreground ?? rowState.theme.colors.state.neutral.foreground,
+                                    ...Typography.mono('semiBold'),
+                                }}
+                            >
+                                {`-${badge.removed}`}
+                            </Text>
+                        ) : null}
+                    </View>
+                ) : null}
+                {isDirectoryNode(node) && node.isLoadingChildren ? (
+                    <ActivitySpinner size="small" color={rowState.theme.colors.text.secondary} />
+                ) : null}
+                {menu}
+            </View>
+        ) : undefined;
+
+        const subtitle = (() => {
+            if (node.type === 'error') {
+                return t('errors.tryAgain');
+            }
+            if (node.type === 'info') {
+                return undefined;
+            }
+            if (!rowState.detailsMode || Platform.OS === 'web') return undefined;
+            const parts: string[] = [];
+            if (node.type === 'file' && typeof node.sizeBytes === 'number') {
+                parts.push(formatByteSize(node.sizeBytes));
+            }
+            if (typeof node.modifiedMs === 'number') {
+                parts.push(new Date(node.modifiedMs).toLocaleString());
+            }
+            return parts.length > 0 ? parts.join(' · ') : undefined;
+        })();
+
+        return (
+            <FilesystemBrowserRow
+                node={node}
+                title={node.type === 'directory' ? `${node.name}/` : node.name}
+                subtitle={subtitle}
+                icon={renderEntryIcon(node, rowState.theme)}
+                density="tight"
+                showDivider={showDivider}
+                rightElement={right}
+                testID={rowTestId}
+                errorTitle={t('files.repositoryFolderLoadFailed')}
+                errorSubtitle={t('errors.tryAgain')}
+                onRetryError={(errorNode) => {
+                    if (errorNode.parentDirectoryPath) {
+                        void rowState.retryDirectory(errorNode.parentDirectoryPath);
+                    }
+                }}
+                onPress={
+                    node.type === 'error'
+                        ? undefined
+                        : node.type === 'file'
+                            ? () => rowState.onOpenFile(node.path)
+                            : () => {
+                                void rowState.toggleDirectory(node.path);
+                            }
+                }
+                onDoublePress={
+                    node.type === 'file'
+                        ? () => (rowState.onOpenFilePinned ?? rowState.onOpenFile)(node.path)
+                        : undefined
+                }
+                paddingRight={8}
+                style={{
+                    backgroundColor: rowState.webDropHoverPath === node.path ? rowState.theme.colors.surface.pressed : undefined,
+                    borderRadius: 10,
+                }}
+                wrapContent={
+                    Platform.OS === 'web' && (node.type === 'directory' || node.type === 'file') && rowState.onWebDropTargetChange
+                        ? ({ content }) => {
+                            const dropTarget = buildWebDropTarget(node);
+                            return (
+                                <WebDropTargetView
+                                    onDragEnter={(event) => {
+                                        if (!isWebFileDragEvent(event)) return;
+                                        rowState.onWebDropTargetChange?.(dropTarget);
+                                    }}
+                                    onDragOver={(event) => {
+                                        if (!isWebFileDragEvent(event)) return;
+                                        event.preventDefault?.();
+                                        rowState.onWebDropTargetChange?.(dropTarget);
+                                    }}
+                                >
+                                    {content}
+                                </WebDropTargetView>
+                            );
+                        }
+                        : null
+                }
+            />
+        );
+    }, []);
+
     if (rootError && nodes.length === 0) {
         return (
             <View testID="repository-tree-error" style={{ flex: 1 }}>
@@ -142,190 +386,10 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
             listHeaderTestID="repository-tree-error-inline"
             emptyTestID="repository-tree-empty"
             emptyLabel={t('files.noFilesInProject')}
-            style={{ flex: 1, minHeight: 0 }}
-            contentContainerStyle={{ paddingBottom: 20 }}
-            renderRow={({ node, showDivider }) => {
-                const safePath = toTestIdSafeValue(node.path);
-                const rowTestId = `repository-tree-row-${safePath}`;
-                const badge = (() => {
-                    if (!props.scmSnapshot || !badgeIndex) return null;
-                    if (node.type === 'file') return badgeIndex.getFileBadge(node.path);
-                    if (node.type === 'directory') return badgeIndex.getDirectoryBadge(node.path);
-                    return null;
-                })();
-
-                const showDetailsInline = node.type !== 'error' && detailsMode && Platform.OS === 'web';
-                const detailsSize =
-                    node.type === 'file' && typeof node.sizeBytes === 'number'
-                        ? formatByteSize(node.sizeBytes)
-                        : node.type === 'directory'
-                            ? ''
-                            : '';
-                const detailsModified =
-                    typeof node.modifiedMs === 'number'
-                        ? new Date(node.modifiedMs).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                        : '';
-
-                const menu = (() => {
-                    if (node.type !== 'file' && node.type !== 'directory') return null;
-                    const actionTarget: Readonly<{ path: string; type: 'file' | 'directory' }> = {
-                        path: node.path,
-                        type: node.type,
-                    };
-                    const transferSizeBytes = node.type === 'file' && typeof node.sizeBytes === 'number'
-                        ? node.sizeBytes
-                        : null;
-                    return (
-                        <RepositoryTreeRowActionsMenu
-                            path={node.path}
-                            kind={node.type}
-                            disableWriteActions={!writeActionsEnabled}
-                            downloadActionsEnabled={props.onRequestDownload != null && canDownload(transferSizeBytes)}
-                            onSelect={(itemId: RepositoryTreeRowActionMenuItemId) => rowActions.onSelectRowMenuItem(actionTarget, itemId)}
-                        />
-                    );
-                })();
-
-                const shouldShowRight = showDetailsInline || Boolean(badge) || (isDirectoryNode(node) && node.isLoadingChildren) || Boolean(menu);
-                const right = shouldShowRight ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        {showDetailsInline ? (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                                <Text
-                                    style={{
-                                        width: 74,
-                                        textAlign: 'right',
-                                        fontSize: 12,
-                                        color: theme.colors.text.secondary,
-                                        ...Typography.mono(),
-                                    }}
-                                    numberOfLines={1}
-                                >
-                                    {detailsSize}
-                                </Text>
-                                <Text
-                                    style={{
-                                        width: 132,
-                                        textAlign: 'right',
-                                        fontSize: 12,
-                                        color: theme.colors.text.secondary,
-                                        ...Typography.mono(),
-                                    }}
-                                    numberOfLines={1}
-                                >
-                                    {detailsModified}
-                                </Text>
-                            </View>
-                        ) : null}
-                        {badge ? (
-                            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                                <Text style={{ fontSize: 12, color: theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
-                                    {node.type === 'directory' ? `${badge.kindLetter}${badge.changedCount}` : badge.kindLetter}
-                                </Text>
-                                {badge.added > 0 ? (
-                                    <Text style={{ fontSize: 12, color: theme.colors.state.success.foreground, ...Typography.mono('semiBold') }}>
-                                        {`+${badge.added}`}
-                                    </Text>
-                                ) : null}
-                                {badge.removed > 0 ? (
-                                    <Text
-                                        style={{
-                                            fontSize: 12,
-                                            color: theme.colors.state.danger.foreground ?? theme.colors.state.danger.foreground ?? theme.colors.state.neutral.foreground,
-                                            ...Typography.mono('semiBold'),
-                                        }}
-                                    >
-                                        {`-${badge.removed}`}
-                                    </Text>
-                                ) : null}
-                            </View>
-                        ) : null}
-                        {isDirectoryNode(node) && node.isLoadingChildren ? (
-                            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
-                        ) : null}
-                        {menu}
-                    </View>
-                ) : undefined;
-
-                const subtitle = (() => {
-                    if (node.type === 'error') {
-                        return t('errors.tryAgain');
-                    }
-                    if (node.type === 'info') {
-                        return undefined;
-                    }
-                    if (!detailsMode || Platform.OS === 'web') return undefined;
-                    const parts: string[] = [];
-                    if (node.type === 'file' && typeof node.sizeBytes === 'number') {
-                        parts.push(formatByteSize(node.sizeBytes));
-                    }
-                    if (typeof node.modifiedMs === 'number') {
-                        parts.push(new Date(node.modifiedMs).toLocaleString());
-                    }
-                    return parts.length > 0 ? parts.join(' · ') : undefined;
-                })();
-
-                return (
-                    <FilesystemBrowserRow
-                        node={node}
-                        title={node.type === 'directory' ? `${node.name}/` : node.name}
-                        subtitle={subtitle}
-                        icon={renderEntryIcon(node, theme)}
-                        density="tight"
-                        showDivider={showDivider}
-                        rightElement={right}
-                        testID={rowTestId}
-                        errorTitle={t('files.repositoryFolderLoadFailed')}
-                        errorSubtitle={t('errors.tryAgain')}
-                        onRetryError={(errorNode) => {
-                            if (errorNode.parentDirectoryPath) {
-                                void retryDirectory(errorNode.parentDirectoryPath);
-                            }
-                        }}
-                        onPress={
-                            node.type === 'error'
-                                ? undefined
-                                : node.type === 'file'
-                                    ? () => onOpenFile(node.path)
-                                    : () => {
-                                        void toggleDirectory(node.path);
-                                    }
-                        }
-                        onDoublePress={
-                            node.type === 'file'
-                                ? () => (props.onOpenFilePinned ?? onOpenFile)(node.path)
-                                : undefined
-                        }
-                        paddingRight={8}
-                        style={{
-                            backgroundColor: props.webDropHoverPath === node.path ? theme.colors.surface.pressed : undefined,
-                            borderRadius: 10,
-                        }}
-                        wrapContent={
-                            Platform.OS === 'web' && (node.type === 'directory' || node.type === 'file') && props.onWebDropTargetChange
-                                ? ({ content }) => {
-                                    const dropTarget = buildWebDropTarget(node);
-                                    return (
-                                        <WebDropTargetView
-                                            onDragEnter={(event) => {
-                                                if (!isWebFileDragEvent(event)) return;
-                                                props.onWebDropTargetChange?.(dropTarget);
-                                            }}
-                                            onDragOver={(event) => {
-                                                if (!isWebFileDragEvent(event)) return;
-                                                event.preventDefault?.();
-                                                props.onWebDropTargetChange?.(dropTarget);
-                                            }}
-                                        >
-                                            {content}
-                                        </WebDropTargetView>
-                                    );
-                                }
-                                : null
-                        }
-                    />
-                );
-            }}
+            style={repositoryTreeListStyle}
+            contentContainerStyle={repositoryTreeContentContainerStyle}
+            renderRow={renderRow}
+            extraData={rowVisualExtraData}
             initialNumToRender={Math.min(32, nodes.length)}
             maxToRenderPerBatch={32}
             windowSize={7}
@@ -334,14 +398,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
             onContentSizeChange={props.onContentSizeChange}
             onScroll={props.onScroll}
             scrollEventThrottle={props.scrollEventThrottle ?? 16}
-            getItemLayout={
-                Platform.OS === 'web'
-                    ? (_data, index) => {
-                        const length = 38;
-                        return { length, offset: length * index, index };
-                    }
-                    : undefined
-            }
+            getItemLayout={Platform.OS === 'web' ? repositoryTreeWebItemLayout : undefined}
         />
     );
 }

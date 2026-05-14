@@ -12,6 +12,7 @@ import { isLoopbackServerUrl } from './serverUrlClassification';
 export function resolveEffectiveServerUrlOverride(params: Readonly<{
     requestedServerUrl: string | null | undefined;
     activeServerUrl: string | null | undefined;
+    allowLoopbackOverride?: boolean;
 }>): string | null {
     const requested = canonicalizeServerUrl(String(params.requestedServerUrl ?? ''));
     if (!requested) return null;
@@ -28,7 +29,7 @@ export function resolveEffectiveServerUrlOverride(params: Readonly<{
     // Loopback targets are only safe when they resolve to the same active server.
     // This avoids treating a forwarded web origin as if it could reach a different
     // machine-local relay just because both URLs are loopback-shaped.
-    if (isLoopbackServerUrl(requested) && requestedKey !== activeKey) {
+    if (isLoopbackServerUrl(requested) && requestedKey !== activeKey && params.allowLoopbackOverride !== true) {
         return null;
     }
     return requested;

@@ -588,6 +588,97 @@ describe('SessionItem server-scoped mutations', () => {
         expect(readStateSpy).toHaveBeenCalledWith('sess_read', 'unread', { serverId: 'server_read' });
     });
 
+    it('offers session folder move targets in the context menu', async () => {
+        const moveToFolder = vi.fn();
+        const { SessionItem } = await import('./SessionItem');
+        type FolderAwareSessionItemProps = React.ComponentProps<typeof SessionItem> & {
+            folderMoveTargets?: ReadonlyArray<{
+                id: string;
+                folderId: string | null;
+                title: string;
+                depth: number;
+                disabled?: boolean;
+            }>;
+            onMoveToSessionFolder?: (folderId: string | null) => void;
+        };
+        const FolderAwareSessionItem = SessionItem as React.ComponentType<FolderAwareSessionItemProps>;
+
+        const session = {
+            id: 'sess_folder_move',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'offline',
+        } as any;
+
+        const screen = await renderScreen(
+            <FolderAwareSessionItem
+                session={session}
+                serverId="server_folder"
+                serverName="Server Folder"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                folderMoveTargets={[
+                    {
+                        id: 'session-folder-move-root',
+                        folderId: null,
+                        title: 'Workspace root',
+                        depth: 0,
+                        disabled: false,
+                    },
+                    {
+                        id: 'session-folder-move-planning',
+                        folderId: 'planning',
+                        title: 'Planning',
+                        depth: 0,
+                        disabled: false,
+                    },
+                ]}
+                onMoveToSessionFolder={moveToFolder}
+            />,
+        );
+
+        const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session-folder-move-planning'),
+        );
+        expect(contextMenu).toBeTruthy();
+        expect(contextMenu!.props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'session-folder-move-root',
+                title: 'Workspace root',
+                category: 'sessionsList.moveToFolder',
+            }),
+            expect.objectContaining({
+                id: 'session-folder-move-planning',
+                title: 'Planning',
+                category: 'sessionsList.moveToFolder',
+            }),
+        ]));
+
+        await act(async () => {
+            contextMenu!.props.onSelect('session-folder-move-planning');
+        });
+        expect(moveToFolder).toHaveBeenCalledWith('planning');
+
+        await act(async () => {
+            contextMenu!.props.onSelect('session-folder-move-root');
+        });
+        expect(moveToFolder).toHaveBeenCalledWith(null);
+    });
+
     it('hides manual read-state actions for archived sessions', async () => {
         const { SessionItem } = await import('./SessionItem');
 

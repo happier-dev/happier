@@ -97,6 +97,17 @@ describe('suggestionCommands', () => {
         expect(commands.some((c) => c.command === 'foo')).toBe(true);
     });
 
+    it('includes built-in prompt commands when the session has no metadata', async () => {
+        storage.setState({
+            sessions: {},
+            settings: { experiments: false, featureToggles: {} },
+        } as any);
+
+        const { getAllCommands } = await import('./suggestionCommands');
+        const commands = getAllCommands('__new_session__');
+        expect(commands.some((c) => c.command === 'happier-diagnose')).toBe(true);
+    });
+
     it('dedupes prompt template tokens against existing action/default commands', async () => {
         storage.setState({
             sessions: { s1: { metadata: undefined } },

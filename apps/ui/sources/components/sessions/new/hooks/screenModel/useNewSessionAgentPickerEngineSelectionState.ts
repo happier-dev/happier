@@ -4,6 +4,10 @@ import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2 } from '@happi
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import {
+    readRememberedEngineSelectionForTargetKey,
+    type RememberedEngineSelectionsByScopeV1,
+} from '@/sync/domains/session/authoring/rememberedEngineSelections';
 
 import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
 
@@ -17,6 +21,14 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
     setAcpSessionModeId: React.Dispatch<React.SetStateAction<string | null>>;
     setSessionConfigOptionOverrides: React.Dispatch<React.SetStateAction<ReturnType<typeof buildAcpConfigOptionOverridesV1> | null>>;
+    rememberEngineSelectionsEnabled?: boolean;
+    rememberedEngineSelectionsByScope?: RememberedEngineSelectionsByScopeV1 | null;
+    rememberedEngineSelectionServerId?: string | null;
+    onRememberEngineSelection?: (backendTarget: BackendTargetRefV2, selection: {
+        modelId: string;
+        acpSessionModeId: string | null;
+        sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
+    }) => void;
 }>;
 
 function areConfigOverridesEqual(
@@ -53,21 +65,48 @@ export function useNewSessionAgentPickerEngineSelectionState(
     } | null>(null);
     const selectedTargetKey = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
 
-    const buildInitialEngineSelection = React.useCallback((targetKey: string): NewSessionAgentPickerSelection => ({
-        modelId: targetKey === selectedTargetKey ? String(params.modelMode) : 'default',
-        sessionModeId: targetKey === selectedTargetKey
-            ? (params.acpSessionModeId ?? 'default')
-            : 'default',
-        configOverrides: targetKey === selectedTargetKey
-            ? Object.fromEntries(
-                Object.entries(params.sessionConfigOptionOverrides?.overrides ?? {})
-                    .map(([configId, override]) => [configId, typeof override?.value === 'string' ? override.value.trim() : ''])
-                    .filter(([, value]) => value.length > 0),
-            )
-            : {},
-    }), [
+    const buildInitialEngineSelection = React.useCallback((targetKey: string): NewSessionAgentPickerSelection => {
+        if (targetKey === selectedTargetKey) {
+            return {
+                modelId: String(params.modelMode),
+                sessionModeId: params.acpSessionModeId ?? 'default',
+                configOverrides: Object.fromEntries(
+                    Object.entries(params.sessionConfigOptionOverrides?.overrides ?? {})
+                        .map(([configId, override]) => [configId, typeof override?.value === 'string' ? override.value.trim() : ''])
+                        .filter(([, value]) => value.length > 0),
+                ),
+            };
+        }
+
+        const remembered = readRememberedEngineSelectionForTargetKey({
+            enabled: params.rememberEngineSelectionsEnabled === true,
+            selectionsByScope: params.rememberedEngineSelectionsByScope,
+            serverId: params.rememberedEngineSelectionServerId,
+            targetKey,
+        });
+        if (remembered) {
+            return {
+                modelId: remembered.modelId,
+                sessionModeId: remembered.acpSessionModeId ?? 'default',
+                configOverrides: Object.fromEntries(
+                    Object.entries(remembered.sessionConfigOptionOverrides?.overrides ?? {})
+                        .map(([configId, override]) => [configId, typeof override?.value === 'string' ? override.value.trim() : ''])
+                        .filter(([, value]) => value.length > 0),
+                ),
+            };
+        }
+
+        return {
+            modelId: 'default',
+            sessionModeId: 'default',
+            configOverrides: {},
+        };
+    }, [
         params.acpSessionModeId,
         params.modelMode,
+        params.rememberEngineSelectionsEnabled,
+        params.rememberedEngineSelectionServerId,
+        params.rememberedEngineSelectionsByScope,
         params.sessionConfigOptionOverrides?.overrides,
         selectedTargetKey,
     ]);
@@ -95,7 +134,11 @@ export function useNewSessionAgentPickerEngineSelectionState(
     }, [buildInitialEngineSelection]);
 
     const applyEngineSelection = React.useCallback((entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => {
-        const nextConfigOverrides: Readonly<Record<string, string>> = selection.configOverrides ?? {};
+        const nextConfigOverrides: Readonly<Record<string, string>> = Object.fromEntries(
+            Object.entries(selection.configOverrides ?? {})
+                .map(([configId, value]) => [configId, typeof value === 'string' ? value.trim() : ''])
+                .filter(([, value]) => value.length > 0),
+        );
         pendingAppliedSelectionRef.current = {
             targetKey: entry.backendTargetKey,
             selection,
@@ -103,12 +146,17 @@ export function useNewSessionAgentPickerEngineSelectionState(
         params.setBackendTarget(entry.backendTarget);
         params.setModelMode(selection.modelId as ModelMode);
         params.setAcpSessionModeId(selection.sessionModeId);
+        const updatedAt = Date.now();
         if (Object.keys(nextConfigOverrides).length === 0) {
             params.setSessionConfigOptionOverrides(null);
+            params.onRememberEngineSelection?.(entry.backendTarget, {
+                modelId: selection.modelId,
+                acpSessionModeId: selection.sessionModeId,
+                sessionConfigOptionOverrides: null,
+            });
             return;
         }
-        const updatedAt = Date.now();
-        params.setSessionConfigOptionOverrides(buildAcpConfigOptionOverridesV1({
+        const sessionConfigOptionOverrides = buildAcpConfigOptionOverridesV1({
             updatedAt,
             overrides: Object.fromEntries(
                 Object.entries(nextConfigOverrides).map(([configId, value]) => [
@@ -116,7 +164,13 @@ export function useNewSessionAgentPickerEngineSelectionState(
                     { updatedAt, value },
                 ]),
             ),
-        }));
+        });
+        params.setSessionConfigOptionOverrides(sessionConfigOptionOverrides);
+        params.onRememberEngineSelection?.(entry.backendTarget, {
+            modelId: selection.modelId,
+            acpSessionModeId: selection.sessionModeId,
+            sessionConfigOptionOverrides,
+        });
     }, [params]);
 
     const selectEngineSelection = React.useCallback((entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => {

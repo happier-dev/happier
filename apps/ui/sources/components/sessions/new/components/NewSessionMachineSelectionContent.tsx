@@ -26,6 +26,7 @@ export type NewSessionMachineSelectionContentProps = Readonly<{
     testIdPrefix?: string;
     showCliGlyphs?: boolean;
     autoDetectCliGlyphs?: boolean;
+    maxHeight?: number;
 }>;
 
 export function NewSessionMachineSelectionContent(props: NewSessionMachineSelectionContentProps) {
@@ -34,8 +35,19 @@ export function NewSessionMachineSelectionContent(props: NewSessionMachineSelect
     const hasAnyLoadingGroups = props.groups.some((group) => group.loading);
     const showEmptyState = props.groups.length === 0 || (!hasAnyMachines && !hasAnyLoadingGroups);
 
+    const boundedListStyle = props.maxHeight === undefined
+        ? { paddingTop: 0 }
+        : {
+            paddingTop: 0,
+            maxHeight: props.maxHeight,
+            minHeight: 0,
+            flex: 0,
+            flexGrow: 0,
+            flexShrink: 1,
+        };
+
     return (
-        <ItemList style={{ paddingTop: 0 }}>
+        <ItemList style={boundedListStyle}>
             {showEmptyState ? (
                 <Text style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
                     {t('newSession.noMachinesFound')}

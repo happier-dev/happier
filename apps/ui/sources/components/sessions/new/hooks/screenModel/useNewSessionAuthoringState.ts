@@ -20,6 +20,7 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
 type PersistedDraft = ReturnType<typeof buildPersistedNewSessionDraftFromAuthoringDraft>;
 type BuildResolvedInputs = Parameters<typeof buildNewSessionAuthoringDraftFromResolvedInputs>[0];
@@ -30,6 +31,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     automationFeatureEnabled: boolean;
     selectedMachineId: string | null;
     selectedMachine: Machine | null;
+    selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
     selectedPath: string;
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     sessionPrompt: string;
@@ -132,6 +134,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         automationFeatureEnabled: params.automationFeatureEnabled,
         selectedMachineId: params.selectedMachineId,
         selectedMachine: params.selectedMachine,
+        selectedMachineSpawnReadiness: params.selectedMachineSpawnReadiness ?? null,
         selectedPath: params.selectedPath,
         automationEditId: params.automationEditId,
         buildDraft: buildCurrentAuthoringDraft,
@@ -141,6 +144,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.automationEditId,
         params.automationFeatureEnabled,
         params.selectedMachine,
+        params.selectedMachineSpawnReadiness,
         params.selectedMachineId,
         params.selectedPath,
     ]);

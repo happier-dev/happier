@@ -123,7 +123,7 @@ describe('sync.sendMessage wake-after-send', () => {
             emitWithAck: vi.fn(async () => ({
                 ok: true,
                 id: 'm1',
-                seq: 1,
+                seq: 37,
                 localId: null,
                 didWrite: true,
             })) as any,
@@ -138,6 +138,7 @@ describe('sync.sendMessage wake-after-send', () => {
                 sessionId,
                 machineId: 'm1',
                 directory: '/tmp/project',
+                initialTranscriptAfterSeq: 36,
             }),
         );
     });

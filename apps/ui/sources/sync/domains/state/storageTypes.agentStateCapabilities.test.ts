@@ -5,10 +5,16 @@ import { AgentStateSchema } from './storageTypes';
 describe('AgentStateSchema capabilities', () => {
     it('preserves inFlightSteer capability when present', () => {
         const parsed = AgentStateSchema.parse({
-            capabilities: { inFlightSteer: true },
+            capabilities: {
+                inFlightSteer: true,
+                inFlightSteerSupported: true,
+                inFlightSteerAvailable: false,
+            },
         });
 
         expect(parsed.capabilities?.inFlightSteer).toBe(true);
+        expect(parsed.capabilities?.inFlightSteerSupported).toBe(true);
+        expect(parsed.capabilities?.inFlightSteerAvailable).toBe(false);
     });
 
     it('preserves localPermissionBridgeInLocalMode capability when present', () => {

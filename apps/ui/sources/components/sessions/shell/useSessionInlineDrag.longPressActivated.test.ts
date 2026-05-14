@@ -87,6 +87,13 @@ vi.mock('react-native-gesture-handler', () => ({
 }));
 
 describe('useSessionInlineDrag (onLongPressActivated)', () => {
+    it('uses a translucent lifted row while dragging so drop targets remain visible', async () => {
+        const { DRAGGED_SESSION_ROW_OPACITY } = await import('./useSessionInlineDrag');
+
+        expect(DRAGGED_SESSION_ROW_OPACITY).toBeLessThanOrEqual(0.42);
+        expect(DRAGGED_SESSION_ROW_OPACITY).toBeGreaterThanOrEqual(0.3);
+    });
+
     it('fires onLongPressActivated from a LongPress gesture (not Pan onStart)', async () => {
         const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
 
@@ -145,6 +152,81 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
         }));
 
         expect(hook.getCurrent().gesture).toBeUndefined();
+        await hook.unmount();
+    });
+
+    it('passes absolute pointer coordinates to drag-end handlers', async () => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+
+        const onDragEnd = vi.fn();
+        const hook = await renderHook(() => useSessionInlineDrag({
+            sessionKey: 's1',
+            groupKey: 'g1',
+            rowHeight: 80,
+            dataIndex: 1,
+            totalItemCount: 10,
+            dropIndicatorIdx: { value: -1 } as any,
+            dropIndicatorEdge: { value: 0 } as any,
+            onDragStart: () => {},
+            onDragEnd,
+        }));
+
+        const gesture = hook.getCurrent().gesture as unknown as MockGesture;
+        gesture.handlers.onStart?.();
+        gesture.handlers.onUpdate?.({
+            translationY: 90,
+            absoluteX: 24,
+            absoluteY: 320,
+        });
+        gesture.handlers.onEnd?.({
+            absoluteX: 26,
+            absoluteY: 324,
+        });
+
+        expect(onDragEnd).toHaveBeenCalledWith('s1', 'g1', 1, {
+            absoluteX: 26,
+            absoluteY: 324,
+            positionDelta: 1,
+            dataIndex: 1,
+        });
+
+        await hook.unmount();
+    });
+
+    it('reports pointer updates while the row is actively dragging', async () => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+
+        const onDragUpdate = vi.fn();
+        const hook = await renderHook(() => useSessionInlineDrag({
+            sessionKey: 's1',
+            groupKey: 'g1',
+            rowHeight: 80,
+            dataIndex: 1,
+            totalItemCount: 10,
+            dropIndicatorIdx: { value: -1 } as any,
+            dropIndicatorEdge: { value: 0 } as any,
+            onDragStart: () => {},
+            onDragEnd: () => {},
+            onDragUpdate,
+        }));
+
+        const gesture = hook.getCurrent().gesture as unknown as MockGesture;
+        gesture.handlers.onStart?.();
+        gesture.handlers.onUpdate?.({
+            translationY: 90,
+            absoluteX: 24,
+            absoluteY: 320,
+        });
+
+        expect(onDragUpdate).toHaveBeenCalledWith({
+            sessionKey: 's1',
+            groupKey: 'g1',
+            positionDelta: 1,
+            dataIndex: 1,
+            absoluteX: 24,
+            absoluteY: 320,
+        });
+
         await hook.unmount();
     });
 });

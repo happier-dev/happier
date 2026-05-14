@@ -133,6 +133,12 @@ describe('SessionItem pin hover affordance (web)', () => {
         return screen.findByTestId(`session-list-item-${sessionId}`) as any;
     }
 
+    function findSessionRowContainer(screen: Awaited<ReturnType<typeof renderSessionItem>>, sessionId: string) {
+        const row = findSessionRow(screen, sessionId);
+        if (!row.parent) throw new Error(`expected session row container for ${sessionId}`);
+        return row.parent as any;
+    }
+
     function findPinActions(row: ReturnType<typeof findSessionRow>) {
         return row.findAllByProps({ accessibilityLabel: 'sessionInfo.pinSession' });
     }
@@ -151,6 +157,19 @@ describe('SessionItem pin hover affordance (web)', () => {
 
     function findRightArea(screen: Awaited<ReturnType<typeof renderSessionItem>>) {
         return screen.findByTestId('session-item-right-area') as any;
+    }
+
+    function flattenStyleValue(style: unknown, key: string): unknown {
+        if (Array.isArray(style)) {
+            return style.reduce<unknown>((value, entry) => {
+                const next = flattenStyleValue(entry, key);
+                return next === undefined ? value : next;
+            }, undefined);
+        }
+        if (style && typeof style === 'object' && key in style) {
+            return (style as Record<string, unknown>)[key];
+        }
+        return undefined;
     }
 
     afterEach(() => {
@@ -172,17 +191,18 @@ describe('SessionItem pin hover affordance (web)', () => {
         });
 
         const row = findSessionRow(screen, 'sess_1');
+        const container = findSessionRowContainer(screen, 'sess_1');
 
         expect(findPinActions(row)).toHaveLength(0);
 
         await act(async () => {
-            triggerHoverEnter(row);
+            triggerHoverEnter(container);
         });
 
         expect(findPinActions(row)).toHaveLength(1);
 
         await act(async () => {
-            triggerHoverLeave(row);
+            triggerHoverLeave(container);
         });
 
         expect(findPinActions(row)).toHaveLength(0);
@@ -205,22 +225,22 @@ describe('SessionItem pin hover affordance (web)', () => {
         });
 
         const row = findSessionRow(screen, 'sess_3');
+        const container = findSessionRowContainer(screen, 'sess_3');
         expect(findPinActions(row)).toHaveLength(0);
 
         await act(async () => {
-            triggerHoverEnter(row);
+            triggerHoverEnter(container);
         });
         expect(findPinActions(row)).toHaveLength(1);
 
         const rightArea = findRightArea(screen);
         await act(async () => {
-            triggerHoverLeave(row);
             triggerHoverEnter(rightArea);
         });
         expect(findPinActions(row)).toHaveLength(1);
 
         await act(async () => {
-            triggerHoverLeave(rightArea);
+            triggerHoverLeave(container);
         });
         expect(findPinActions(row)).toHaveLength(0);
 
@@ -242,16 +262,79 @@ describe('SessionItem pin hover affordance (web)', () => {
         });
 
         const row = findSessionRow(screen, 'sess_2');
+        const container = findSessionRowContainer(screen, 'sess_2');
 
         await act(async () => {
-            triggerHoverEnter(row);
+            triggerHoverEnter(container);
         });
         expect(findPinActions(row)).toHaveLength(1);
 
         await act(async () => {
-            triggerHoverLeave(row);
+            triggerHoverLeave(container);
         });
         expect(findPinActions(row)).toHaveLength(0);
+
+        await screen.unmount();
+    });
+
+    it('keeps actions reachable when the pointer moves from row content to the action icons', async () => {
+        const screen = await renderSessionItem({
+            session: createSession('sess_5'),
+            serverId: 'server_a',
+            pinned: false,
+            onTogglePinned: vi.fn(),
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
+        });
+
+        const row = findSessionRow(screen, 'sess_5');
+        const container = findSessionRowContainer(screen, 'sess_5');
+        const rightArea = findRightArea(screen);
+        expect(row.props.onHoverIn).toBeUndefined();
+        expect(row.props.onHoverOut).toBeUndefined();
+        expect(typeof container.props.onPointerEnter).toBe('function');
+        expect(typeof container.props.onPointerLeave).toBe('function');
+
+        await act(async () => {
+            triggerHoverEnter(container);
+            triggerHoverEnter(rightArea);
+        });
+        expect(findPinActions(row)).toHaveLength(1);
+
+        await act(async () => {
+            triggerHoverLeave(rightArea);
+        });
+        expect(findPinActions(row)).toHaveLength(1);
+
+        await act(async () => {
+            triggerHoverLeave(container);
+        });
+        expect(findPinActions(row)).toHaveLength(0);
+
+        await screen.unmount();
+    });
+
+    it('indents the full row chrome for sessions inside folders', async () => {
+        const screen = await renderSessionItem({
+            session: createSession('sess_6'),
+            serverId: 'server_a',
+            pinned: false,
+            onTogglePinned: vi.fn(),
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
+            folderDepth: 1,
+        });
+
+        const row = findSessionRow(screen, 'sess_6');
+        expect(flattenStyleValue(row.parent?.props.style, 'marginLeft')).toBe(50);
 
         await screen.unmount();
     });
@@ -279,8 +362,9 @@ describe('SessionItem pin hover affordance (web)', () => {
         });
 
         const row = findSessionRow(screen, 'sess_4');
+        const container = findSessionRowContainer(screen, 'sess_4');
         await act(async () => {
-            triggerHoverEnter(row);
+            triggerHoverEnter(container);
         });
 
         const tagDropdown = screen.findAllByType('DropdownMenu' as any).find((dropdown: any) => dropdown.props.search === true);

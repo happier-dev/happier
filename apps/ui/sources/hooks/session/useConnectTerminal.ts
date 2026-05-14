@@ -19,6 +19,7 @@ import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport'
 interface UseConnectTerminalOptions {
     onSuccess?: () => void;
     onError?: (error: any) => void;
+    allowLoopbackServerOverride?: boolean;
 }
 
 function resolveTerminalProvisioningContentPrivateKey(credentials: AuthCredentials): Uint8Array {
@@ -55,6 +56,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             const effectiveParsedServerUrl = resolveEffectiveServerUrlOverride({
                 requestedServerUrl: parsed.serverUrl,
                 activeServerUrl: currentServerUrl,
+                allowLoopbackOverride: options?.allowLoopbackServerOverride === true,
             });
 
             if (effectiveParsedServerUrl) {
@@ -118,9 +120,9 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 await Modal.alertAsync(t('common.success'), t('modals.terminalConnectedSuccessfully'), [
                     {
                         text: t('common.ok'),
-                        onPress: () => options?.onSuccess?.()
                     }
                 ]);
+                options?.onSuccess?.();
                 return true;
             }
 

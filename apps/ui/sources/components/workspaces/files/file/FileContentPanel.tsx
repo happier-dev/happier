@@ -4,10 +4,11 @@ import { ScrollView, useWindowDimensions, View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
-import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { MarkdownView, type MarkdownSourceRange, type MarkdownSourceRangeAction } from '@/components/markdown/MarkdownView';
 import { HorizontalOverflowScrollView } from '@/components/ui/scroll/HorizontalOverflowScrollView';
 import { buildCodeLinesFromFile } from '@/components/ui/code/model/buildCodeLinesFromFile';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
+import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
 import { Typography } from '@/constants/Typography';
 import type { ReviewCommentAnchor, ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -19,8 +20,13 @@ import { resolveInlineCodeVirtualization } from '@/components/ui/code/diff/resol
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { useIntraLineWordDiffConfig } from '@/components/ui/code/diff/useIntraLineWordDiffConfig';
 import { buildSelectedDiffLineKey } from '@/scm/scmPatchSelection';
-import { formatReviewCommentCodeLineContent } from '@/components/ui/code/reviewComments/buildReviewCommentDraftFromCodeLine';
-import { computeLineContentHash, findLineIndexByContentHash } from '@/utils/text/lineContentHash';
+import {
+    buildReviewCommentDraftFromMarkdownRange,
+    formatReviewCommentCodeLineContent,
+} from '@/components/ui/code/reviewComments/buildReviewCommentDraftFromCodeLine';
+import { ReviewCommentInlineComposer } from '@/components/ui/code/reviewComments/ReviewCommentInlineComposer';
+import { computeLineContentHash, findLineIndexByContentHash, type LineContentHash } from '@/utils/text/lineContentHash';
+import { isWorkspaceFileReferenceAnchorForFile } from '@/utils/workspaceFileReferences/resolveWorkspaceFileReference';
 import type { FileDisplayMode } from './FileActionToolbar';
 
 const MARKDOWN_PREVIEW_WIDE_VIEWPORT_WIDTH = 768;
@@ -45,16 +51,153 @@ type FileContentPanelProps = {
     showLineNumbers?: boolean;
     showPrefix?: boolean;
     reviewCommentsEnabled?: boolean;
+    reviewCommentModeActive?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
+    rangeSelectionActive?: boolean;
     jumpToAnchor?: ReviewCommentAnchor | null;
     scrollTestID?: string;
     onLayout?: (e: any) => void;
     onContentSizeChange?: (width: number, height: number) => void;
     onScroll?: (e: any) => void;
 };
+
+function getNormalizedAnchorStartLine(anchor: Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>): number {
+    return anchor.kind === 'line' ? anchor.line : anchor.startLine;
+}
+
+function getNormalizedAnchorStartLineHash(anchor: Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>) {
+    return anchor.kind === 'line' ? anchor.lineHash : anchor.startLineHash;
+}
+
+function getNormalizedAnchorEndLine(anchor: Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>): number {
+    return anchor.kind === 'line' ? anchor.line : anchor.endLine;
+}
+
+function getNormalizedAnchorEndLineHash(anchor: Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>) {
+    return anchor.kind === 'line' ? anchor.lineHash : anchor.endLineHash;
+}
+
+type ResolvedJumpHighlight = Readonly<{
+    scrollToLineId: string;
+    highlightLineIds: ReadonlySet<string>;
+}>;
+
+function resolveLineIdRange(params: Readonly<{
+    lines: readonly CodeLine[];
+    startLineId: string;
+    endLineId: string;
+}>): ReadonlySet<string> {
+    const startIndex = params.lines.findIndex((line) => line.id === params.startLineId);
+    const endIndex = params.lines.findIndex((line) => line.id === params.endLineId);
+    if (startIndex < 0 || endIndex < 0) return new Set([params.startLineId]);
+
+    const from = Math.min(startIndex, endIndex);
+    const to = Math.max(startIndex, endIndex);
+    const ids = new Set<string>();
+    for (const line of params.lines.slice(from, to + 1)) {
+        if (!line.renderIsHeaderLine) ids.add(line.id);
+    }
+    if (ids.size === 0) ids.add(params.startLineId);
+    return ids;
+}
+
+function buildSingleLineJumpHighlight(lineId: string | null): ResolvedJumpHighlight | null {
+    return lineId ? { scrollToLineId: lineId, highlightLineIds: new Set([lineId]) } : null;
+}
+
+function buildRangeJumpHighlight(params: Readonly<{
+    lines: readonly CodeLine[];
+    startLineId: string | null;
+    endLineId: string | null;
+}>): ResolvedJumpHighlight | null {
+    if (!params.startLineId) return null;
+    return {
+        scrollToLineId: params.startLineId,
+        highlightLineIds: resolveLineIdRange({
+            lines: params.lines,
+            startLineId: params.startLineId,
+            endLineId: params.endLineId ?? params.startLineId,
+        }),
+    };
+}
+
+function resolveFileLineJumpTarget(params: Readonly<{
+    lines: readonly CodeLine[];
+    line: number;
+    lineHash?: LineContentHash;
+}>): string | null {
+    const exactTarget = params.lines.find((line) => {
+        if (line.renderIsHeaderLine || line.newLine !== params.line) return false;
+        if (!params.lineHash) return true;
+        return computeLineContentHash(formatReviewCommentCodeLineContent({ source: 'file', line })) === params.lineHash;
+    });
+    if (exactTarget) return exactTarget.id;
+
+    const hashIndex = findLineIndexByContentHash({
+        lines: params.lines,
+        lineHash: params.lineHash,
+        isCandidate: (line) => !line.renderIsHeaderLine,
+        getLineContent: (line) => formatReviewCommentCodeLineContent({ source: 'file', line }),
+    });
+    return hashIndex >= 0 ? params.lines[hashIndex]?.id ?? null : null;
+}
+
+function resolveLegacyDiffLineJumpTarget(params: Readonly<{
+    lines: readonly CodeLine[];
+    anchor: Extract<ReviewCommentAnchor, { kind: 'diffLine' }>;
+}>): string | null {
+    const side = params.anchor.side === 'before' ? 'before' : 'after';
+    const isSideCandidate = (line: CodeLine) => {
+        if (line.renderIsHeaderLine) return false;
+        return (line.kind === 'remove' ? 'before' : 'after') === side;
+    };
+    const exactTarget = params.lines.find((line) => {
+        if (!isSideCandidate(line) || (line.sourceIndex + 1) !== params.anchor.startLine) return false;
+        if (!params.anchor.lineHash) return true;
+        return computeLineContentHash(formatReviewCommentCodeLineContent({ source: 'diff', line })) === params.anchor.lineHash;
+    });
+    if (exactTarget) return exactTarget.id;
+
+    const hashIndex = findLineIndexByContentHash({
+        lines: params.lines,
+        lineHash: params.anchor.lineHash,
+        isCandidate: isSideCandidate,
+        getLineContent: (line) => formatReviewCommentCodeLineContent({ source: 'diff', line }),
+    });
+    return hashIndex >= 0 ? params.lines[hashIndex]?.id ?? null : null;
+}
+
+function resolveNormalizedDiffLineJumpTarget(params: Readonly<{
+    lines: readonly CodeLine[];
+    line: number;
+    side?: 'before' | 'after';
+    lineHash?: LineContentHash;
+}>): string | null {
+    const side = params.side === 'before' ? 'before' : 'after';
+    const isSideCandidate = (line: CodeLine) => {
+        if (line.renderIsHeaderLine) return false;
+        return (line.kind === 'remove' ? 'before' : 'after') === side;
+    };
+    const exactTarget = params.lines.find((line) => {
+        if (!isSideCandidate(line)) return false;
+        const renderedLine = side === 'before' ? line.oldLine : line.newLine;
+        if (renderedLine !== params.line) return false;
+        if (!params.lineHash) return true;
+        return computeLineContentHash(formatReviewCommentCodeLineContent({ source: 'diff', line })) === params.lineHash;
+    });
+    if (exactTarget) return exactTarget.id;
+
+    const hashIndex = findLineIndexByContentHash({
+        lines: params.lines,
+        lineHash: params.lineHash,
+        isCandidate: isSideCandidate,
+        getLineContent: (line) => formatReviewCommentCodeLineContent({ source: 'diff', line }),
+    });
+    return hashIndex >= 0 ? params.lines[hashIndex]?.id ?? null : null;
+}
 
 export function FileContentPanel({
     theme,
@@ -72,10 +215,12 @@ export function FileContentPanel({
     showLineNumbers,
     showPrefix,
     reviewCommentsEnabled,
+    reviewCommentModeActive,
     reviewCommentDrafts,
     onUpsertReviewCommentDraft,
     onDeleteReviewCommentDraft,
     onReviewCommentError,
+    rangeSelectionActive,
     jumpToAnchor,
     scrollTestID,
     onLayout,
@@ -99,7 +244,14 @@ export function FileContentPanel({
 
     const needsDiffCodeLines = displayMode === 'diff'
         && typeof diffContent === 'string'
-        && (lineSelectionEnabled === true || reviewCommentsEnabled === true || jumpToAnchor?.kind === 'diffLine');
+        && (
+            lineSelectionEnabled === true
+            || selectedLineKeys.size > 0
+            || reviewCommentsEnabled === true
+            || jumpToAnchor?.kind === 'diffLine'
+            || jumpToAnchor?.kind === 'line'
+            || jumpToAnchor?.kind === 'range'
+        );
 
     const lines = React.useMemo(() => {
         if (displayMode === 'diff' && typeof diffContent === 'string') {
@@ -137,10 +289,18 @@ export function FileContentPanel({
         onDeleteDraft: onDeleteReviewCommentDraft,
         onError: onReviewCommentError,
     });
+    const reviewCommentLineActionsEnabled = reviewCommentsEnabled === true
+        && reviewCommentModeActive === true
+        && Boolean(reviewCommentControls);
+    const markdownSourceRangeActionsEnabled = reviewCommentsEnabled === true
+        && reviewCommentModeActive === true
+        && displayMode === 'markdown';
+    const [activeMarkdownRange, setActiveMarkdownRange] = React.useState<MarkdownSourceRange | null>(null);
+    const [activeMarkdownEditingDraftId, setActiveMarkdownEditingDraftId] = React.useState<string | null>(null);
+    const [markdownCommentBody, setMarkdownCommentBody] = React.useState('');
 
     const selectedLineIds = React.useMemo(() => {
         if (displayMode !== 'diff') return undefined;
-        if (!lineSelectionEnabled) return undefined;
         if (!selectedLineKeys || selectedLineKeys.size === 0) return undefined;
         const ids = new Set<string>();
         for (const line of lines) {
@@ -154,53 +314,200 @@ export function FileContentPanel({
             if (selectedLineKeys.has(key)) ids.add(line.id);
         }
         return ids;
-    }, [displayMode, lineSelectionEnabled, lines, selectedLineKeys]);
+    }, [displayMode, lines, selectedLineKeys]);
 
-    const jumpToLineId = React.useMemo(() => {
+    const jumpHighlight = React.useMemo((): ResolvedJumpHighlight | null => {
         const anchor = jumpToAnchor ?? null;
         if (!anchor) return null;
 
         if (displayMode === 'file' && anchor.kind === 'fileLine') {
-            const exactTarget = lines.find((l) => {
-                if (l.renderIsHeaderLine || l.newLine !== anchor.startLine) return false;
-                if (!anchor.lineHash) return true;
-                return computeLineContentHash(formatReviewCommentCodeLineContent({ source: 'file', line: l })) === anchor.lineHash;
-            });
-            if (exactTarget) return exactTarget.id;
-
-            const hashIndex = findLineIndexByContentHash({
+            return buildSingleLineJumpHighlight(resolveFileLineJumpTarget({
                 lines,
                 lineHash: anchor.lineHash,
-                isCandidate: (line) => !line.renderIsHeaderLine,
-                getLineContent: (line) => formatReviewCommentCodeLineContent({ source: 'file', line }),
+                line: anchor.startLine,
+            }));
+        }
+
+        if (
+            displayMode === 'file'
+            && (anchor.kind === 'line' || anchor.kind === 'range')
+            && isWorkspaceFileReferenceAnchorForFile({ anchor, filePath })
+        ) {
+            const startLineId = resolveFileLineJumpTarget({
+                lines,
+                line: getNormalizedAnchorStartLine(anchor),
+                lineHash: getNormalizedAnchorStartLineHash(anchor),
             });
-            return hashIndex >= 0 ? lines[hashIndex]?.id ?? null : null;
+            if (anchor.kind === 'line') return buildSingleLineJumpHighlight(startLineId);
+            const endLineId = resolveFileLineJumpTarget({
+                lines,
+                line: getNormalizedAnchorEndLine(anchor),
+                lineHash: getNormalizedAnchorEndLineHash(anchor),
+            });
+            return buildRangeJumpHighlight({ lines, startLineId, endLineId });
         }
 
         if (displayMode === 'diff' && anchor.kind === 'diffLine') {
-            const side = anchor.side === 'before' ? 'before' : 'after';
-            const isSideCandidate = (line: typeof lines[number]) => {
-                if (line.renderIsHeaderLine) return false;
-                return (line.kind === 'remove' ? 'before' : 'after') === side;
-            };
-            const exactTarget = lines.find((l) => {
-                if (!isSideCandidate(l) || (l.sourceIndex + 1) !== anchor.startLine) return false;
-                if (!anchor.lineHash) return true;
-                return computeLineContentHash(formatReviewCommentCodeLineContent({ source: 'diff', line: l })) === anchor.lineHash;
-            });
-            if (exactTarget) return exactTarget.id;
-
-            const hashIndex = findLineIndexByContentHash({
+            return buildSingleLineJumpHighlight(resolveLegacyDiffLineJumpTarget({
                 lines,
-                lineHash: anchor.lineHash,
-                isCandidate: isSideCandidate,
-                getLineContent: (line) => formatReviewCommentCodeLineContent({ source: 'diff', line }),
+                anchor,
+            }));
+        }
+
+        if (
+            displayMode === 'diff'
+            && (anchor.kind === 'line' || anchor.kind === 'range')
+            && isWorkspaceFileReferenceAnchorForFile({ anchor, filePath })
+        ) {
+            const startLineId = resolveNormalizedDiffLineJumpTarget({
+                lines,
+                line: getNormalizedAnchorStartLine(anchor),
+                side: anchor.side,
+                lineHash: getNormalizedAnchorStartLineHash(anchor),
             });
-            return hashIndex >= 0 ? lines[hashIndex]?.id ?? null : null;
+            if (anchor.kind === 'line') return buildSingleLineJumpHighlight(startLineId);
+            const endLineId = resolveNormalizedDiffLineJumpTarget({
+                lines,
+                line: getNormalizedAnchorEndLine(anchor),
+                side: anchor.side,
+                lineHash: getNormalizedAnchorEndLineHash(anchor),
+            });
+            return buildRangeJumpHighlight({ lines, startLineId, endLineId });
         }
 
         return null;
-    }, [displayMode, jumpToAnchor, lines]);
+    }, [displayMode, filePath, jumpToAnchor, lines]);
+
+    const markdownHighlightRange = React.useMemo<MarkdownSourceRange | null>(() => {
+        if (displayMode !== 'markdown') return null;
+        const anchor = jumpToAnchor ?? null;
+        if (!anchor) return null;
+        if (anchor.kind === 'fileLine') return { startLine: anchor.startLine, endLine: anchor.startLine };
+        if (anchor.kind === 'line') return { startLine: anchor.line, endLine: anchor.line };
+        if (anchor.kind === 'range') return { startLine: anchor.startLine, endLine: anchor.endLine };
+        return null;
+    }, [displayMode, jumpToAnchor]);
+
+    const findMarkdownDraftsForRange = React.useCallback((range: MarkdownSourceRange): ReviewCommentDraft[] => {
+        return draftsForThisView.filter((draft) => {
+            const anchor = draft.anchor;
+            if (anchor.kind === 'fileLine') {
+                return anchor.startLine >= range.startLine && anchor.startLine <= range.endLine;
+            }
+            if (anchor.kind === 'line') {
+                return anchor.line >= range.startLine && anchor.line <= range.endLine;
+            }
+            if (anchor.kind === 'range') {
+                return anchor.startLine <= range.endLine && range.startLine <= anchor.endLine;
+            }
+            return false;
+        });
+    }, [draftsForThisView]);
+
+    const onPressMarkdownSourceRange = React.useCallback((action: MarkdownSourceRangeAction) => {
+        if (!markdownSourceRangeActionsEnabled) return;
+        const existingDraft = findMarkdownDraftsForRange(action.sourceRange)[0] ?? null;
+        setActiveMarkdownRange((previous) => (
+            previous?.startLine === action.sourceRange.startLine && previous?.endLine === action.sourceRange.endLine
+                ? null
+                : action.sourceRange
+        ));
+        setActiveMarkdownEditingDraftId(existingDraft?.id ?? null);
+        setMarkdownCommentBody(existingDraft?.body ?? '');
+    }, [findMarkdownDraftsForRange, markdownSourceRangeActionsEnabled]);
+
+    const renderAfterMarkdownSourceRange = React.useCallback((action: MarkdownSourceRangeAction) => {
+        if (reviewCommentsEnabled !== true) return null;
+        const drafts = findMarkdownDraftsForRange(action.sourceRange);
+        const isActive = activeMarkdownRange?.startLine === action.sourceRange.startLine
+            && activeMarkdownRange?.endLine === action.sourceRange.endLine;
+        if (!isActive && drafts.length === 0) return null;
+
+        const existing = activeMarkdownEditingDraftId
+            ? drafts.find((draft) => draft.id === activeMarkdownEditingDraftId) ?? null
+            : null;
+        const borderColor = theme.colors.border?.default ?? theme.colors.borderDefault ?? theme.colors.text.secondary;
+        const backgroundColor = theme.colors.surface?.elevated ?? theme.colors.surfaceElevated ?? theme.colors.surface?.base;
+
+        return (
+            <View style={{ marginTop: 6, marginBottom: 8, gap: 6 }}>
+                {drafts.length > 0 && !isActive ? (
+                    <View style={{ gap: 6 }}>
+                        {drafts.map((draft) => (
+                            <View
+                                key={draft.id}
+                                style={{
+                                    padding: 10,
+                                    borderRadius: 10,
+                                    borderWidth: 1,
+                                    borderColor,
+                                    backgroundColor,
+                                }}
+                            >
+                                <Text style={{ ...Typography.default(), fontSize: 13, color: theme.colors.text.primary }}>
+                                    {draft.body}
+                                </Text>
+                            </View>
+                        ))}
+                    </View>
+                ) : null}
+                {isActive ? (
+                    <ReviewCommentInlineComposer
+                        value={markdownCommentBody}
+                        onChange={setMarkdownCommentBody}
+                        onCancel={() => {
+                            setActiveMarkdownRange(null);
+                            setActiveMarkdownEditingDraftId(null);
+                            setMarkdownCommentBody('');
+                        }}
+                        onDelete={existing ? () => {
+                            onDeleteReviewCommentDraft?.(existing.id);
+                            setActiveMarkdownRange(null);
+                            setActiveMarkdownEditingDraftId(null);
+                            setMarkdownCommentBody('');
+                        } : undefined}
+                        onSave={() => {
+                            const body = markdownCommentBody.trim();
+                            if (!body) {
+                                onReviewCommentError?.(t('files.reviewComments.errors.empty'));
+                                return;
+                            }
+                            const draft = buildReviewCommentDraftFromMarkdownRange({
+                                filePath,
+                                markdown: fileContent ?? '',
+                                sourceRange: action.sourceRange,
+                                body,
+                                contextRadius: 2,
+                                existing: existing ? { id: existing.id, createdAt: existing.createdAt } : null,
+                            });
+                            onUpsertReviewCommentDraft?.(draft);
+                            setActiveMarkdownRange(null);
+                            setActiveMarkdownEditingDraftId(null);
+                            setMarkdownCommentBody('');
+                        }}
+                    />
+                ) : null}
+            </View>
+        );
+    }, [
+        activeMarkdownEditingDraftId,
+        activeMarkdownRange,
+        fileContent,
+        filePath,
+        findMarkdownDraftsForRange,
+        markdownCommentBody,
+        onDeleteReviewCommentDraft,
+        onReviewCommentError,
+        onUpsertReviewCommentDraft,
+        reviewCommentsEnabled,
+        theme.colors.border?.default,
+        theme.colors.borderDefault,
+        theme.colors.surface?.base,
+        theme.colors.surface?.elevated,
+        theme.colors.surfaceElevated,
+        theme.colors.text.primary,
+        theme.colors.text.secondary,
+    ]);
 
     const handlePressLine = React.useCallback((line: any) => {
         if (!lineSelectionEnabled) return;
@@ -214,6 +521,24 @@ export function FileContentPanel({
         if (!key) return;
         onToggleLine(key);
     }, [lineSelectionEnabled, onToggleLine]);
+
+    const handlePressLineRange = React.useCallback((rangeLines: readonly CodeLine[]) => {
+        if (lineSelectionEnabled) {
+            for (const line of rangeLines) {
+                handlePressLine(line);
+            }
+            return;
+        }
+        if (reviewCommentLineActionsEnabled) {
+            reviewCommentControls?.onPressAddCommentRange(rangeLines);
+        }
+    }, [handlePressLine, lineSelectionEnabled, reviewCommentControls, reviewCommentLineActionsEnabled]);
+
+    const codeLineInteractionMode = lineSelectionEnabled
+        ? 'commitSelection'
+        : reviewCommentLineActionsEnabled
+            ? 'comment'
+            : 'read';
 
     const { lineThreshold, byteThreshold } = useInlineDiffVirtualizationThresholds();
     const virtualized = React.useMemo(() => {
@@ -241,14 +566,20 @@ export function FileContentPanel({
         ? (
             <CodeLinesView
                 lines={lines}
-                onPressAddComment={reviewCommentControls?.onPressAddComment}
+                interactionMode={codeLineInteractionMode}
+                rangeSelectionActive={rangeSelectionActive}
+                onPressLine={reviewCommentLineActionsEnabled ? reviewCommentControls?.onPressAddComment : undefined}
+                onPressLineRange={reviewCommentLineActionsEnabled ? handlePressLineRange : undefined}
+                pressLineWhenNotSelectable={reviewCommentLineActionsEnabled}
+                onPressAddComment={reviewCommentLineActionsEnabled ? reviewCommentControls?.onPressAddComment : undefined}
                 isCommentActive={reviewCommentControls?.isCommentActive}
                 renderAfterLine={reviewCommentControls?.renderAfterLine}
                 contentPaddingHorizontal={16}
                 contentPaddingVertical={16}
                 virtualized={virtualized}
-                scrollToLineId={jumpToLineId ?? undefined}
-                highlightLineId={jumpToLineId ?? undefined}
+                scrollToLineId={jumpHighlight?.scrollToLineId}
+                highlightLineId={jumpHighlight?.scrollToLineId}
+                highlightLineIds={jumpHighlight?.highlightLineIds}
                 wrapLines={effectiveWrapLines}
                 showLineNumbers={effectiveShowLineNumbers}
                 showPrefix={effectiveShowPrefix}
@@ -278,15 +609,20 @@ export function FileContentPanel({
                         filePath={filePath}
                         unifiedDiff={diffContent}
                         selectedLineIds={selectedLineIds}
-                        onPressLine={handlePressLine}
-                        onPressAddComment={reviewCommentControls?.onPressAddComment}
+                        interactionMode={codeLineInteractionMode}
+                        rangeSelectionActive={rangeSelectionActive}
+                        onPressLine={lineSelectionEnabled ? handlePressLine : reviewCommentLineActionsEnabled ? reviewCommentControls?.onPressAddComment : undefined}
+                        onPressLineRange={lineSelectionEnabled || reviewCommentLineActionsEnabled ? handlePressLineRange : undefined}
+                        pressLineWhenNotSelectable={!lineSelectionEnabled && reviewCommentLineActionsEnabled}
+                        onPressAddComment={reviewCommentLineActionsEnabled ? reviewCommentControls?.onPressAddComment : undefined}
                         isCommentActive={reviewCommentControls?.isCommentActive}
                         renderAfterLine={reviewCommentControls?.renderAfterLine}
                         contentPaddingHorizontal={16}
                         contentPaddingVertical={16}
-                        virtualized={jumpToLineId ? false : virtualized}
-                        scrollToLineId={jumpToLineId ?? undefined}
-                        highlightLineId={jumpToLineId ?? undefined}
+                        virtualized={jumpHighlight ? false : virtualized}
+                        scrollToLineId={jumpHighlight?.scrollToLineId}
+                        highlightLineId={jumpHighlight?.scrollToLineId}
+                        highlightLineIds={jumpHighlight?.highlightLineIds}
                         wrapLines={effectiveWrapLines}
                         showLineNumbers={effectiveShowLineNumbers}
                         showPrefix={effectiveShowPrefix}
@@ -315,6 +651,9 @@ export function FileContentPanel({
                                 profile="default"
                                 streamingMode="static"
                                 selectable
+                                onPressSourceRange={markdownSourceRangeActionsEnabled ? onPressMarkdownSourceRange : undefined}
+                                renderAfterSourceRange={reviewCommentsEnabled === true ? renderAfterMarkdownSourceRange : undefined}
+                                highlightSourceRange={markdownHighlightRange}
                             />
                         </View>
                     </ScrollView>

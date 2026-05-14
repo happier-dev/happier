@@ -42,7 +42,13 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 vi.mock('./sync/domains/state/persistence', () => ({
-    loadThemePreference: () => loadThemePreferenceMock(),
+    loadThemeRuntimeLocalState: () => ({
+        themePreference: loadThemePreferenceMock(),
+        themeProfiles: {
+            profiles: [],
+            activeProfileId: null,
+        },
+    }),
 }));
 
 describe('unistyles overlay background bootstrap', () => {

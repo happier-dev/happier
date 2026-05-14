@@ -15,6 +15,11 @@ function parseOptionalInt(value: string | null): number | null {
     return Number.isFinite(n) ? n : null;
 }
 
+function getAnchorStartLine(anchor: ReviewCommentAnchor): number {
+    if (anchor.kind === 'line') return anchor.line;
+    return anchor.startLine;
+}
+
 export function buildSessionFileDeepLink(params: {
     sessionId: string;
     filePath: string;
@@ -28,7 +33,7 @@ export function buildSessionFileDeepLink(params: {
     const parts: string[] = [
         `source=${encodeURIComponent(params.source)}`,
         `anchor=${encodeURIComponent(anchor.kind)}`,
-        `startLine=${encodeURIComponent(String(anchor.startLine))}`,
+        `startLine=${encodeURIComponent(String(getAnchorStartLine(anchor)))}`,
     ];
 
     if (anchor.kind === 'diffLine') {
@@ -36,8 +41,17 @@ export function buildSessionFileDeepLink(params: {
         if (typeof anchor.oldLine === 'number') parts.push(`oldLine=${encodeURIComponent(String(anchor.oldLine))}`);
         if (typeof anchor.newLine === 'number') parts.push(`newLine=${encodeURIComponent(String(anchor.newLine))}`);
     }
-    if (anchor.lineHash) {
+    if (anchor.kind === 'line' && anchor.side) {
+        parts.push(`side=${encodeURIComponent(anchor.side)}`);
+    }
+    if ((anchor.kind === 'fileLine' || anchor.kind === 'diffLine' || anchor.kind === 'line') && anchor.lineHash) {
         parts.push(`lineHash=${encodeURIComponent(anchor.lineHash)}`);
+    }
+    if (anchor.kind === 'range') {
+        parts.push(`endLine=${encodeURIComponent(String(anchor.endLine))}`);
+        if (anchor.side) parts.push(`side=${encodeURIComponent(anchor.side)}`);
+        if (anchor.startLineHash) parts.push(`startLineHash=${encodeURIComponent(anchor.startLineHash)}`);
+        if (anchor.endLineHash) parts.push(`endLineHash=${encodeURIComponent(anchor.endLineHash)}`);
     }
 
     return `${base}&${parts.join('&')}`;
@@ -54,6 +68,7 @@ export function parseSessionFileDeepLinkAnchor(params: ExpoLocalSearchParams): {
     if (!anchorKind || !startLine || startLine <= 0) return null;
 
     const source: ReviewCommentSource = sourceRaw;
+    const filePath = firstString(params.path) ?? '';
     const lineHashRaw = firstString(params.lineHash);
     const lineHash = isLineContentHash(lineHashRaw) ? lineHashRaw : undefined;
 
@@ -75,6 +90,35 @@ export function parseSessionFileDeepLinkAnchor(params: ExpoLocalSearchParams): {
                 oldLine,
                 newLine,
                 lineHash,
+            },
+        };
+    }
+
+    if (anchorKind === 'line') {
+        const sideRaw = firstString(params.side);
+        const side = sideRaw === 'before' || sideRaw === 'after' ? sideRaw : undefined;
+        return { source, anchor: { kind: 'line', filePath, line: startLine, ...(side ? { side } : {}), ...(lineHash ? { lineHash } : {}) } };
+    }
+
+    if (anchorKind === 'range') {
+        const endLine = parseOptionalInt(firstString(params.endLine));
+        if (!endLine || endLine < startLine) return null;
+        const sideRaw = firstString(params.side);
+        const side = sideRaw === 'before' || sideRaw === 'after' ? sideRaw : undefined;
+        const startLineHashRaw = firstString(params.startLineHash);
+        const endLineHashRaw = firstString(params.endLineHash);
+        const startLineHash = isLineContentHash(startLineHashRaw) ? startLineHashRaw : undefined;
+        const endLineHash = isLineContentHash(endLineHashRaw) ? endLineHashRaw : undefined;
+        return {
+            source,
+            anchor: {
+                kind: 'range',
+                filePath,
+                startLine,
+                endLine,
+                ...(side ? { side } : {}),
+                ...(startLineHash ? { startLineHash } : {}),
+                ...(endLineHash ? { endLineHash } : {}),
             },
         };
     }

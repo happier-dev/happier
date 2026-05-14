@@ -128,7 +128,7 @@ describe('ChatList safe area', () => {
         resetTranscriptCommonModuleMockState();
     });
 
-    it('uses the chrome-safe area fallback (initialWindowMetrics) when safe-area provider returns zeros', async () => {
+    it('uses a compact transcript gutter instead of chrome-safe area inside the list header', async () => {
         const { ChatList } = await import('./ChatList');
 
         const session = {
@@ -143,6 +143,6 @@ describe('ChatList safe area', () => {
         } as any;
 
         await renderScreen(<ChatList session={session} />);
-        expect(capturedHeaderSpacerHeight).toBe(40 + 22 + 32);
+        expect(capturedHeaderSpacerHeight).toBe(12);
     });
 });

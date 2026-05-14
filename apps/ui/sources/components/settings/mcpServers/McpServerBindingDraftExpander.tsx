@@ -87,6 +87,7 @@ export const McpServerBindingDraftExpander = React.memo(function McpServerBindin
             props: {
                 machineId: target.machineId,
                 machineHomeDir: homeDir,
+                machinePlatform: machine?.metadata?.platform ?? null,
                 selectedPath: target.workspaceRoot,
                 onSelectPath: (workspaceRoot: string) =>
                     updateDraftBinding((current) => {

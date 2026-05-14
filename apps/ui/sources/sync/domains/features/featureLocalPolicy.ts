@@ -35,6 +35,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'files.syntaxHighlighting.advanced': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.syntaxHighlighting.advanced'),
     'memory.search': (settings) => resolveUiFeatureToggleEnabled(settings, 'memory.search'),
     'terminal.embeddedPty': (settings) => resolveUiFeatureToggleEnabled(settings, 'terminal.embeddedPty'),
+    'sessions.folders': (settings) => resolveUiFeatureToggleEnabled(settings, 'sessions.folders'),
     'sessions.direct': (settings) => resolveUiFeatureToggleEnabled(settings, 'sessions.direct'),
     'zen.navigation': (settings) => resolveUiFeatureToggleEnabled(settings, 'zen.navigation'),
     'usage.reporting': (settings) => resolveUiFeatureToggleEnabled(settings, 'usage.reporting'),

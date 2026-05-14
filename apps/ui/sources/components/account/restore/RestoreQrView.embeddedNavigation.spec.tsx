@@ -126,6 +126,35 @@ afterEach(() => {
 });
 
 describe('RestoreQrView (embedded navigation)', () => {
+    it('cancels QR restore polling after unmount', async () => {
+        vi.resetModules();
+        let shouldCancel: (() => boolean) | undefined;
+        restoreQrViewState.authQRWaitSpy.mockImplementationOnce(async (_keypair, _onProgress, cancel) => {
+            shouldCancel = cancel;
+            return null;
+        });
+
+        const { RestoreQrView } = await import('./RestoreQrView');
+
+        let tree!: renderer.ReactTestRenderer;
+        try {
+            await act(async () => {
+                tree = renderer.create(<RestoreQrView embedded />);
+            });
+            await act(async () => {});
+
+            expect(restoreQrViewState.authQRWaitSpy).toHaveBeenCalled();
+            expect(shouldCancel).toBeTypeOf('function');
+            expect(shouldCancel?.()).toBe(false);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+
+        expect(shouldCancel?.()).toBe(true);
+    });
+
     it('renders an explicit scan action when an embedded scanner callback is available', async () => {
         vi.resetModules();
         const onOpenScanQr = vi.fn();

@@ -7,6 +7,7 @@ export interface StatusDotProps {
     isPulsing?: boolean;
     size?: number;
     style?: ViewStyle;
+    testID?: string;
 }
 
 export const StatusDot = React.memo((props: StatusDotProps) => {
@@ -16,7 +17,7 @@ export const StatusDot = React.memo((props: StatusDotProps) => {
     return <NativeStatusDot {...props} />;
 });
 
-function WebStatusDot({ color, isPulsing, size = 6, style }: StatusDotProps) {
+function WebStatusDot({ color, isPulsing, size = 6, style, testID }: StatusDotProps) {
     const baseStyle: ViewStyle = {
         width: size,
         height: size,
@@ -26,6 +27,7 @@ function WebStatusDot({ color, isPulsing, size = 6, style }: StatusDotProps) {
 
     return (
         <View
+            testID={testID}
             style={[
                 baseStyle,
                 isPulsing ? webPulseStyle : null,
@@ -35,7 +37,7 @@ function WebStatusDot({ color, isPulsing, size = 6, style }: StatusDotProps) {
     );
 }
 
-function NativeStatusDot({ color, isPulsing, size = 6, style }: StatusDotProps) {
+function NativeStatusDot({ color, isPulsing, size = 6, style, testID }: StatusDotProps) {
     const opacity = useSharedValue(1);
 
     React.useEffect(() => {
@@ -65,6 +67,7 @@ function NativeStatusDot({ color, isPulsing, size = 6, style }: StatusDotProps) 
 
     return (
         <Animated.View
+            testID={testID}
             style={[
                 baseStyle,
                 animatedStyle,

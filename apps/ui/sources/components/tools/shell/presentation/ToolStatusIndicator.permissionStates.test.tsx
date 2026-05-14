@@ -20,11 +20,12 @@ installToolShellPresentationCommonModuleMocks({
         return createUnistylesMock({
             theme: {
                 colors: {
-                    accent: { blue: '#09f' },
-                    success: '#0a0',
-                    warning: '#f90',
-                    warningCritical: '#c00',
-                    textSecondary: '#555',
+                    text: {
+                        secondary: '#555555',
+                    },
+                    state: {
+                        neutral: { foreground: '#666666' },
+                    },
                 },
             },
         });
@@ -74,5 +75,27 @@ describe('ToolStatusIndicator (permission states)', () => {
 
         const icons = tree!.findAllByType('Ionicons' as any);
         expect(icons.some((n) => n.props.name === 'remove-circle-outline')).toBe(true);
+    });
+
+    it('uses the neutral loading color while running', async () => {
+        const { ToolStatusIndicator } = await import('./ToolStatusIndicator');
+
+        const screen = await renderScreen(
+            <ToolStatusIndicator
+                tool={{
+                    name: 'edit',
+                    state: 'running',
+                    input: {},
+                    createdAt: 1,
+                    startedAt: 1,
+                    completedAt: null,
+                    description: null,
+                    result: null,
+                } as any}
+            />,
+        );
+
+        const spinner = screen.findByType('ActivityIndicator' as any);
+        expect(spinner?.props?.color).toBe('#555555');
     });
 });

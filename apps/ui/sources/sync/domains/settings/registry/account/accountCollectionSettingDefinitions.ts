@@ -2,6 +2,7 @@ import { buildSettingArtifacts, defineSettingDefinitions, WorkspaceRefV1Schema }
 import { z } from 'zod';
 
 import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
+import { SessionFoldersV1Schema } from '@/sync/domains/session/folders';
 import { SessionSplitCanvasLayoutsSchema } from '@/sync/domains/session/sessionSplitCanvasPersistence';
 
 function objectKeyCount(value: unknown): number {
@@ -240,6 +241,25 @@ export const ACCOUNT_COLLECTION_SETTING_DEFINITIONS = defineSettingDefinitions({
             privacy: 'count_only',
             identityScope: 'person',
             serializeCurrentProperties: buildSessionListGroupOrderSummaryProperties,
+        },
+    },
+    sessionFoldersV1: {
+        schema: SessionFoldersV1Schema.default({ v: 1, folders: [] }),
+        default: { v: 1, folders: [] },
+        description: 'User-defined folders for organizing synced sessions',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrent: (value: unknown) => {
+                const folders = value && typeof value === 'object' && !Array.isArray(value)
+                    ? (value as Record<string, unknown>).folders
+                    : null;
+                return Array.isArray(folders) ? folders.length : 0;
+            },
         },
     },
     sessionSplitCanvasLayoutsV1: {

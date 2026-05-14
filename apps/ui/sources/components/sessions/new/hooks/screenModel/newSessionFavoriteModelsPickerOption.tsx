@@ -85,6 +85,13 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
         label: t('profiles.groups.favorites'),
         icon: <FavoriteModelsPickerIcon />,
         closeOnSelectImmediate: false,
+        deferRenderDetailContent: true,
+        deferredDetailContentCacheKey: [
+            'new-session-favorite-models',
+            params.capabilityServerId,
+            params.selectedMachineId ?? '',
+            params.selectedPath ?? '',
+        ].join(':'),
         preserveFocusOnExternalSelectionChange: true,
         onSelectImmediate: () => {},
         renderDetailContent: () => (

@@ -4718,6 +4718,15 @@
     color "^4.2.3"
     sf-symbols-typescript "^2.1.0"
 
+"@react-navigation/bottom-tabs@^7.4.0":
+  version "7.16.0"
+  resolved "https://registry.yarnpkg.com/@react-navigation/bottom-tabs/-/bottom-tabs-7.16.0.tgz#8309f993210d8a3c4e2dbd90e729921595ee678e"
+  integrity sha512-ShHaAR2mQxsSzL2kDRWfquomRsFfG+bm+UBRgu8D9ScbNBnnetzwOBestz/1DugVj89WtNapWJuHbMdgyCZEyQ==
+  dependencies:
+    "@react-navigation/elements" "^2.9.17"
+    color "^4.2.3"
+    sf-symbols-typescript "^2.1.0"
+
 "@react-navigation/core@^7.17.2":
   version "7.17.2"
   resolved "https://registry.npmjs.org/@react-navigation/core/-/core-7.17.2.tgz"
@@ -4746,6 +4755,15 @@
   version "2.9.14"
   resolved "https://registry.npmjs.org/@react-navigation/elements/-/elements-2.9.14.tgz"
   integrity sha512-lKqzu+su2pI/YIZmR7L7xdOs4UL+rVXKJAMpRMBrwInEy96SjIFst6QDGpE89Dunnu3VjVpjWfByo9f2GWBHDQ==
+  dependencies:
+    color "^4.2.3"
+    use-latest-callback "^0.2.4"
+    use-sync-external-store "^1.5.0"
+
+"@react-navigation/elements@^2.9.17":
+  version "2.9.17"
+  resolved "https://registry.yarnpkg.com/@react-navigation/elements/-/elements-2.9.17.tgz#2ad61b9e7b5441ce9ae039b51cfc779515dd3256"
+  integrity sha512-Prax9RDS6l32npcl4PzvL88VoXe9HdtcIUP2+rim3DLVSZceD6oreA+cmPBUjeLFjsnxKlU3pTRby3RpYJ5/xw==
   dependencies:
     color "^4.2.3"
     use-latest-callback "^0.2.4"
@@ -9894,10 +9912,10 @@ expo-image-loader@~55.0.0:
   resolved "https://registry.npmjs.org/expo-image-loader/-/expo-image-loader-55.0.0.tgz"
   integrity sha512-NOjp56wDrfuA5aiNAybBIjqIn1IxKeGJ8CECWZncQ/GzjZfyTYAHTCyeApYkdKkMBLHINzI4BbTGSlbCa0fXXQ==
 
-expo-image-picker@~55.0.16:
-  version "55.0.16"
-  resolved "https://registry.npmjs.org/expo-image-picker/-/expo-image-picker-55.0.16.tgz"
-  integrity sha512-V0SMNlEdopFlt8drPDuIDcjHab0J+VD73MsTGuz0E/9zoWR6sozZPtTycPTwLifu23zJksG7pppkqFQoID1eFA==
+expo-image-picker@~55.0.20:
+  version "55.0.20"
+  resolved "https://registry.yarnpkg.com/expo-image-picker/-/expo-image-picker-55.0.20.tgz#42660178a00371df03f5633856dbaad36fec96ee"
+  integrity sha512-lfWt/0rPWdKz8AdDEGmGHZIJSNlVc720Dlx5bfou10FU16ZV5wAbTU63nm2jkXd8hbXke4a/2Ha1dzxCVA+LQQ==
   dependencies:
     expo-image-loader "~55.0.0"
 
@@ -15710,6 +15728,11 @@ real-require@^0.2.0:
   version "0.2.0"
   resolved "https://registry.npmjs.org/real-require/-/real-require-0.2.0.tgz"
   integrity sha512-57frrGM/OCTLqLOAh0mhVA9VBMHd+9U7Zb2THMGdBUoZVOtGbJzjxsYGDJ3A9AYYCP4hn6y1TVbaOfzWtm5GFg==
+
+reanimated-color-picker@4.2.0:
+  version "4.2.0"
+  resolved "https://registry.yarnpkg.com/reanimated-color-picker/-/reanimated-color-picker-4.2.0.tgz#1a6647238f027b820d4758ae649faf9be170f50f"
+  integrity sha512-nDG/OiQu7hcvVJw3IP0rIdhw+x0rSNxhmfnrXC2je6kqlLSs4txbSVCqDA0kTnVjbD0o2CBvw9/LjY8aq2Lelw==
 
 rechoir@^0.6.2:
   version "0.6.2"

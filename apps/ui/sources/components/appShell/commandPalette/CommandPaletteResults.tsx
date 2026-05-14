@@ -6,6 +6,7 @@ import { CommandPaletteItem } from './CommandPaletteItem';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 
@@ -96,9 +97,9 @@ export function CommandPaletteResults({
 
                 return (
                     <View key={category.id}>
-                        <Text style={[styles.categoryTitle, Typography.default('semiBold')]}>
+                        <Eyebrow style={styles.categoryTitle}>
                             {category.title}
-                        </Text>
+                        </Eyebrow>
                         {categoryCommands}
                     </View>
                 );
@@ -126,10 +127,6 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 32,
         paddingTop: 16,
         paddingBottom: 8,
-        fontSize: 12,
         color: theme.colors.input.placeholder,
-        textTransform: 'uppercase',
-        letterSpacing: 0.8,
-        fontWeight: '600',
     },
 }));

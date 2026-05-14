@@ -76,13 +76,14 @@ export function useNewSessionInputPopovers(params: Readonly<{
     });
 
     const pathPopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
-        renderContent: ({ requestClose }) => (
+        renderContent: ({ maxHeight, requestClose }) => (
             <NewSessionPathSelectionContent
                 machineHomeDir={params.selectedMachine?.metadata?.homeDir || '/home'}
                 selectedPath={params.selectedPath}
                 onChangeSelectedPath={params.setSelectedPath}
                 onChangeDraftSelectedPath={params.setDraftSelectedPath}
-                onBeforeBrowseMachinePath={requestClose}
+                // Keep the path popover mounted under the tree-browser modal so
+                // dismissing the browser returns to the same picker state.
                 submitBehavior="confirm"
                 commitDraftOnBlur={true}
                 onSubmitSelectedPath={(nextPath) => {
@@ -100,11 +101,15 @@ export function useNewSessionInputPopovers(params: Readonly<{
                     enabled: true,
                     machineId: params.selectedMachine?.id ?? null,
                     serverId: params.targetServerId ?? null,
-                    webPortalTarget: modalPortalTarget,
                 }}
+                maxHeight={maxHeight}
             />
         ),
         ...LARGE_PICKER_LAYOUT,
+        scrollEnabled: false,
+        edgeFades: undefined,
+        edgeIndicators: undefined,
+        initialVisibility: undefined,
     }), [
         modalPortalTarget,
         params.favoriteDirectories,
@@ -122,7 +127,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
     ]);
 
     const machinePopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
-        renderContent: ({ requestClose }) => (
+        renderContent: ({ maxHeight, requestClose }) => (
             <NewSessionMachineSelectionContent
                 groups={machinePopoverGroups}
                 selectedMachine={params.selectedMachine}
@@ -143,6 +148,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
                 showSearch={params.useMachinePickerSearch}
                 searchPlacement="header"
                 testIdPrefix="new-session-machine"
+                maxHeight={maxHeight}
             />
         ),
         ...LARGE_PICKER_LAYOUT,

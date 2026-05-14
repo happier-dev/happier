@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { FlashList, type FlashListRef } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -29,6 +29,7 @@ import {
     restoreWebTranscriptPrependAnchor,
     type WebTranscriptScrollMetrics,
 } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type ChainTranscriptLoadOlderResult = Readonly<{
     loaded: number;
@@ -552,7 +553,7 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
                 <>
                     {items.length === 0 ? (
                         <View style={{ paddingVertical: 12 }}>
-                            <ActivityIndicator size="small" />
+                            <ActivitySpinner size="small" />
                         </View>
                     ) : null}
                     {props.footer ? <View>{props.footer}</View> : null}

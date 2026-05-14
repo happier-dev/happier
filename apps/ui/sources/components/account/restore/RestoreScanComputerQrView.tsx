@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
@@ -23,6 +23,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { trackAccountRestored } from '@/track';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -278,7 +279,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     <Text style={styles.subtitle}>{t('common.loading')}</Text>
 
                     <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
-                        <ActivityIndicator size="small" color={theme.colors.text.primary} />
+                        <ActivitySpinner size="small" color={theme.colors.text.primary} />
                     </View>
 
                     <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
@@ -456,7 +457,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 <Text style={styles.subtitle}>{statusText}</Text>
 
                 <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
-                    <ActivityIndicator size="small" color={theme.colors.text.primary} />
+                    <ActivitySpinner size="small" color={theme.colors.text.primary} />
                     {confirmCode ? (
                         <>
                             <Text style={styles.codeLabel}>{t('connect.confirmCodeLabel')}</Text>

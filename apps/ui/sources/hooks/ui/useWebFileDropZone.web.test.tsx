@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { useWebFileDropZone } from './useWebFileDropZone.web';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -63,5 +63,22 @@ describe('useWebFileDropZone.web', () => {
         });
 
         expect(onFileDragActiveChange.mock.calls).toEqual([[true], [false]]);
+    });
+
+    it('keeps handlers stable across unchanged parent rerenders', async () => {
+        const onFilesDropped = vi.fn();
+        const onFileDragActiveChange = vi.fn();
+
+        const hook = await renderHook(() => useWebFileDropZone({
+            enabled: true,
+            onFilesDropped,
+            onFileDragActiveChange,
+        }));
+
+        const initialHandlers = hook.getCurrent();
+
+        await hook.rerender();
+
+        expect(hook.getCurrent()).toBe(initialHandlers);
     });
 });

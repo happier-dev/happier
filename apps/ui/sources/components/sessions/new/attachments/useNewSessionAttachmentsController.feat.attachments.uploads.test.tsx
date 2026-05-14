@@ -37,6 +37,9 @@ const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
 const reviewDraftHandlerScopeSpy = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalShowSpy = vi.hoisted(() => vi.fn());
+const resolveReviewCommentDraftAnchorsForPromptSpy = vi.hoisted(() => vi.fn(async (input: {
+    drafts: Array<Record<string, unknown>>;
+}) => input.drafts));
 const readCachedSnapshotForMachinePathMock = vi.hoisted(() => vi.fn((_input: Readonly<{
     machineId: string;
     path: string;
@@ -75,6 +78,10 @@ vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () 
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
     followUpSpawnedSessionWithServerScope: followUpSpawnedSessionWithServerScopeSpy,
+}));
+
+vi.mock('@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt', () => ({
+    resolveReviewCommentDraftAnchorsForPrompt: resolveReviewCommentDraftAnchorsForPromptSpy,
 }));
 
 vi.mock('@/scm/scmRepositoryService', () => ({
@@ -166,6 +173,10 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         reviewDraftHandlerScopeSpy.mockReset();
         modalAlertSpy.mockReset();
         modalShowSpy.mockReset();
+        resolveReviewCommentDraftAnchorsForPromptSpy.mockReset();
+        resolveReviewCommentDraftAnchorsForPromptSpy.mockImplementation(async (input: {
+            drafts: Array<Record<string, unknown>>;
+        }) => input.drafts);
         readCachedSnapshotForMachinePathMock.mockReset();
         readCachedSnapshotForMachinePathMock.mockImplementation(() => null);
     });
@@ -485,6 +496,13 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const followUpCall = followUpSpawnedSessionWithServerScopeSpy.mock.calls.at(0);
         expect(followUpCall).toBeDefined();
         const followUpPayload = followUpCall?.[0] as { initialMessageText: string } | undefined;
+        expect(resolveReviewCommentDraftAnchorsForPromptSpy).toHaveBeenCalledWith(expect.objectContaining({
+            reviewScope: {
+                serverId: 'server-b',
+                machineId: 'machine-1',
+                rootPath: '/repo/worktree-a',
+            },
+        }));
         expect(followUpPayload?.initialMessageText).toContain('Review comments:');
         expect(followUpPayload?.initialMessageText).toContain('src/a.ts');
         expect(followUpPayload?.initialMessageText).not.toContain('src/b.ts');

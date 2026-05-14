@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View } from "react-native";
+import { View } from 'react-native';
 
 const ELEMENTS = 64;
 const GRID_SIZE = 8; // 8x8 grid

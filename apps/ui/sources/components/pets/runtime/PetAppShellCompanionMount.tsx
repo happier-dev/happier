@@ -1,9 +1,5 @@
 import * as React from 'react';
-import {
-    Platform,
-    View,
-    type ViewStyle,
-} from 'react-native';
+import { Platform, View, type ViewStyle } from 'react-native';
 
 import { DEFAULT_BUILT_IN_PET_ID } from '@/components/pets/builtIns/builtInPetRegistry';
 import {
@@ -27,7 +23,7 @@ import {
     PET_COMPANION_ACTIVITY_TRAY_MAX_HEIGHT,
     PET_COMPANION_ACTIVITY_TRAY_WIDTH,
 } from '@/components/pets/tray/petCompanionActivityTrayGeometry';
-import { useLocalSettings } from '@/sync/domains/state/storage';
+import { useLocalSetting } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
@@ -64,10 +60,10 @@ function useAppShellPetDrag(): {
     pointerHandlers: ReturnType<typeof usePetPointerDragSession>['pointerHandlers'];
     shouldSuppressPress: ReturnType<typeof usePetPointerDragSession>['shouldSuppressPress'];
 } {
-    const localSettings = useLocalSettings();
+    const petsCompanionSizeScale = useLocalSetting('petsCompanionSizeScale');
     const metrics = React.useMemo(
-        () => resolvePetCompanionOverlayMetrics(localSettings.petsCompanionSizeScale),
-        [localSettings.petsCompanionSizeScale],
+        () => resolvePetCompanionOverlayMetrics(petsCompanionSizeScale),
+        [petsCompanionSizeScale],
     );
     const [offset, setOffset] = React.useState<PetDragOffset>({ x: 0, y: 0 });
     const handleMove = React.useCallback((move: PetPointerDragMove) => {

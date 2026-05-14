@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -24,6 +24,7 @@ import { trackAccountCreated, trackAccountRestored } from '@/track';
 
 import { WizardModalShell } from '@/components/onboarding';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 function paramString(params: Record<string, unknown>, key: string): string | null {
@@ -746,7 +747,7 @@ export default function OAuthProviderReturn() {
                 </Text>
             </Pressable>
 
-            {busy ? <ActivityIndicator size="small" /> : null}
+            {busy ? <ActivitySpinner size="small" /> : null}
         </View>
     ) : usernameHint != null ? (
         <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: 12 }}>
@@ -799,11 +800,11 @@ export default function OAuthProviderReturn() {
                     <Text style={{ color: theme.colors.button.primary.tint }}>{t('common.save')}</Text>
                 </Pressable>
             </View>
-            {busy ? <ActivityIndicator size="small" /> : null}
+            {busy ? <ActivitySpinner size="small" /> : null}
         </View>
     ) : (
         <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-            {busy ? <ActivityIndicator size="small" /> : null}
+            {busy ? <ActivitySpinner size="small" /> : null}
         </View>
     );
 

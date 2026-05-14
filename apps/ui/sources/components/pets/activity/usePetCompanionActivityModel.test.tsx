@@ -26,6 +26,8 @@ function createSessionMessages(messages: readonly Message[]): SessionMessages {
         reducerState: createReducer(),
         latestThinkingMessageId: null,
         latestThinkingMessageActivityAtMs: null,
+        latestReadyEventSeq: null,
+        latestReadyEventAt: null,
         messagesVersion: messages.length,
         isLoaded: true,
     };
@@ -116,6 +118,109 @@ describe('usePetCompanionActivityModel', () => {
                     }),
                 ],
             });
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState, true);
+        }
+    });
+
+    it('does not recompute activity when unrelated storage state changes', async () => {
+        const previousState = storage.getState();
+        const session = createSessionFixture({
+            id: 'stable-session',
+            active: true,
+            seq: 1,
+            createdAt: 1_000,
+            updatedAt: 2_000,
+            activeAt: 2_000,
+            lastViewedSessionSeq: 1,
+            thinking: false,
+            thinkingAt: 0,
+        });
+
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessions: { [session.id]: session },
+                ...buildSessionListProjection([session]),
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return usePetCompanionActivityModel();
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const renderCountBeforeUnrelatedUpdate = renderCount;
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    settings: state.settings,
+                }));
+            });
+
+            expect(renderCount).toBe(renderCountBeforeUnrelatedUpdate);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState, true);
+        }
+    });
+
+    it('ignores transcript updates outside the companion session scope', async () => {
+        const previousState = storage.getState();
+        const session = createSessionFixture({
+            id: 'scoped-session',
+            active: true,
+            seq: 1,
+            createdAt: 1_000,
+            updatedAt: 2_000,
+            activeAt: 2_000,
+            lastViewedSessionSeq: 1,
+            thinking: false,
+            thinkingAt: 0,
+        });
+        const unrelatedMessage: Message = {
+            kind: 'agent-text',
+            id: 'unrelated-message',
+            localId: null,
+            createdAt: 3_000,
+            text: 'Background session streamed a token',
+        };
+
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessions: { [session.id]: session },
+                ...buildSessionListProjection([session]),
+                sessionMessages: {},
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return usePetCompanionActivityModel();
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const renderCountBeforeUnrelatedTranscriptUpdate = renderCount;
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionMessages: {
+                        ...state.sessionMessages,
+                        'unrelated-session': createSessionMessages([unrelatedMessage]),
+                    },
+                }));
+            });
+
+            expect(renderCount).toBe(renderCountBeforeUnrelatedTranscriptUpdate);
 
             await hook.unmount();
         } finally {

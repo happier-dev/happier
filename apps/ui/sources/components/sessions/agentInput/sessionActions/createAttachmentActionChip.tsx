@@ -3,12 +3,49 @@ import * as React from 'react';
 import { Pressable, View, Platform } from 'react-native';
 
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
+import type { SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { t } from '@/text';
 import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 
 const WEB_PICKER_DOUBLE_OPEN_COOLDOWN_MS = 500;
+
+function buildAttachmentRootStep(params: Readonly<{
+    onPickFile: () => void;
+    onPickImage: () => void;
+    onPasteImage?: () => void;
+}>): SelectionListStep {
+    return {
+        id: 'attachments-add-root',
+        title: '',
+        sections: [
+            {
+                kind: 'static',
+                id: 'attachments',
+                options: [
+                    ...(params.onPasteImage
+                        ? [{
+                            id: 'paste-image',
+                            label: t('common.pasteImage'),
+                            onSelect: () => params.onPasteImage?.(),
+                        }]
+                        : []),
+                    {
+                        id: 'add-image',
+                        label: t('common.addImage'),
+                        onSelect: () => params.onPickImage(),
+                    },
+                    {
+                        id: 'add-file',
+                        label: t('common.addFile'),
+                        onSelect: () => params.onPickFile(),
+                    },
+                ],
+            },
+        ],
+    };
+}
 
 export function createAttachmentActionChip(params: Readonly<{
     onPickFile: () => void;
@@ -47,28 +84,18 @@ export function createAttachmentActionChip(params: Readonly<{
         labelPolicy: 'auto-hide',
         ...(showChooser ? {
             collapsedOptionsPopover: {
-                presentation: 'simple',
+                presentation: 'list',
                 title: '',
                 label: t('common.attach'),
                 icon: (tint: string) =>
                     normalizeNodeForView(<Ionicons name="attach-outline" size={16} color={tint} />),
-                options: [
-                    ...(params.onPasteImage ? [{ id: 'paste-image', label: t('common.pasteImage') }] : []),
-                    { id: 'add-image', label: t('common.addImage') },
-                    { id: 'add-file', label: t('common.addFile') },
-                ],
-                onSelect: (selectedId) => {
-                    if (selectedId === 'paste-image') {
-                        params.onPasteImage?.();
-                        return;
-                    }
-                    if (selectedId === 'add-image') {
-                        params.onPickImage();
-                        return;
-                    }
-                    if (selectedId === 'add-file') {
-                        params.onPickFile();
-                    }
+                rootStep: buildAttachmentRootStep({
+                    onPickFile: params.onPickFile,
+                    onPickImage: params.onPickImage,
+                    onPasteImage: params.onPasteImage,
+                }),
+                onSelect: () => {
+                    // List-mode option actions live on SelectionListOption.onSelect.
                 },
                 maxWidthCap: 360,
                 maxHeightCap: 260,

@@ -20,6 +20,10 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
+vi.mock('@/hooks/session/useNavigateToSession', () => ({
+    useNavigateToSession: () => vi.fn(),
+}));
+
 const routerPushSpy = vi.fn();
 const setPinnedSessionKeysV1 = vi.fn();
 const setSessionListGroupOrderV1 = vi.fn();
@@ -28,8 +32,11 @@ const setSessionListActiveGroupingV1 = vi.fn();
 const setSessionListInactiveGroupingV1 = vi.fn();
 const setHideInactiveSessions = vi.fn();
 const setSessionTagsV1 = vi.fn();
+const setSessionFoldersV1 = vi.fn();
 const recoveryBannerMountSpy = vi.fn();
 const recoveryBannerUnmountSpy = vi.fn();
+const getCredentialsForServerUrlSpy = vi.hoisted(() => vi.fn(async () => ({ token: 'folder-token', secret: 'folder-secret' })));
+const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 let pinnedSessionKeysV1: string[] = [];
 let sessionListGroupOrderV1: Record<string, string[]> = {};
@@ -38,6 +45,23 @@ let sessionListActiveGroupingV1: 'project' | 'date' = 'project';
 let sessionListInactiveGroupingV1: 'project' | 'date' = 'date';
 let hideInactiveSessions = false;
 let sessionTagsV1: Record<string, string[]> = {};
+const workspaceA = {
+    t: 'workspaceScope' as const,
+    serverId: 'server_a',
+    machineId: 'machine_a',
+    rootPath: '/p',
+};
+let sessionFoldersV1 = {
+    v: 1 as const,
+    folders: [] as Array<{
+        id: string;
+        workspace: typeof workspaceA;
+        parentId: string | null;
+        name: string;
+        createdAt: number;
+        updatedAt: number;
+    }>,
+};
 type DropdownMenuTriggerParams = {
     open: boolean;
     toggle: ReturnType<typeof vi.fn>;
@@ -109,6 +133,7 @@ installSessionShellCommonModuleMocks({
             if (key === 'sessionListActiveGroupingV1') return sessionListActiveGroupingV1;
             if (key === 'sessionListInactiveGroupingV1') return sessionListInactiveGroupingV1;
             if (key === 'hideInactiveSessions') return hideInactiveSessions;
+            if (key === 'sessionFoldersV1') return sessionFoldersV1;
             return null;
         },
         useSettingMutable: (key: string) => {
@@ -119,6 +144,7 @@ installSessionShellCommonModuleMocks({
             if (key === 'sessionListInactiveGroupingV1') return [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1];
             if (key === 'hideInactiveSessions') return [hideInactiveSessions, setHideInactiveSessions];
             if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
+            if (key === 'sessionFoldersV1') return [sessionFoldersV1, setSessionFoldersV1];
             return [null, vi.fn()];
         },
     }),
@@ -139,6 +165,32 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
             : null;
         return React.createElement('DropdownMenu', props, triggerResult);
     },
+}));
+
+vi.mock('@/auth/storage/tokenStorage', () => ({
+    TokenStorage: {
+        getCredentialsForServerUrl: getCredentialsForServerUrlSpy,
+    },
+}));
+
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getActiveServerSnapshot: () => ({
+        activeServerId: 'server_a',
+        profiles: [
+            { id: 'server_a', name: 'Server A', serverUrl: 'https://server-a.example.test' },
+        ],
+    }),
+    listServerProfiles: () => [
+        { id: 'server_a', name: 'Server A', serverUrl: 'https://server-a.example.test' },
+    ],
+}));
+
+vi.mock('@/sync/ops/sessionFolders', () => ({
+    setSessionFolderAssignment: setSessionFolderAssignmentSpy,
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => featureId === 'sessions.folders',
 }));
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
@@ -191,6 +243,9 @@ const mockVisibleSessionListViewData: any[] = [
     { type: 'session', session: sessionB, groupKey: inactiveGroupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
 ];
 const mockVisibleSessionListIndex = buildSessionListIndexFromViewData(mockVisibleSessionListViewData);
+if (mockVisibleSessionListIndex?.[1]?.type === 'session') {
+    (mockVisibleSessionListIndex[1] as any).workspace = workspaceA;
+}
 
 vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
     useVisibleSessionListPaneState: () => ({
@@ -223,6 +278,7 @@ describe('SessionsList (inline reorder)', () => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
+        sessionFoldersV1 = { v: 1, folders: [] };
         dropdownMenuCaptures.length = 0;
         requestReviewSpy.mockClear();
         useSessionInlineDragSpy.mockClear();
@@ -233,6 +289,9 @@ describe('SessionsList (inline reorder)', () => {
         setSessionListGroupOrderV1.mockClear();
         setSessionListOrderingModeV1.mockClear();
         setSessionTagsV1.mockClear();
+        setSessionFoldersV1.mockClear();
+        getCredentialsForServerUrlSpy.mockClear();
+        setSessionFolderAssignmentSpy.mockClear();
         recoveryBannerMountSpy.mockClear();
         recoveryBannerUnmountSpy.mockClear();
     });
@@ -346,6 +405,7 @@ describe('SessionsList (inline reorder)', () => {
             'activeGroupingDate',
             'inactiveGroupingProject',
             'inactiveGroupingDate',
+            'sessionFolderViewModeTree',
             'hideInactiveSessions',
         ]));
         expect(menuProps?.items?.map((item: any) => item?.category)).toEqual([
@@ -356,6 +416,7 @@ describe('SessionsList (inline reorder)', () => {
             'settingsFeatures.sessionListActiveGrouping',
             'settingsFeatures.sessionListInactiveGrouping',
             'settingsFeatures.sessionListInactiveGrouping',
+            'settingsSession.sessionList.menuSections.show',
             'settingsSession.sessionList.menuSections.show',
         ]);
         const activeGroupingProjectItem = menuProps?.items?.find((item: any) => item?.id === 'activeGroupingProject');
@@ -382,6 +443,41 @@ describe('SessionsList (inline reorder)', () => {
         expect(setSessionListInactiveGroupingV1).toHaveBeenCalledWith('project');
         rerenderedMenuProps?.onSelect?.('hideInactiveSessions');
         expect(setHideInactiveSessions).toHaveBeenCalledWith(true);
+    });
+
+    it('moves a session to a folder through the row menu with server-scoped credentials', async () => {
+        sessionFoldersV1 = {
+            v: 1,
+            folders: [{
+                id: 'folder-a',
+                workspace: workspaceA,
+                parentId: null,
+                name: 'Planning',
+                createdAt: 1,
+                updatedAt: 1,
+            }],
+        };
+        const { SessionsList } = await import('./SessionsList');
+
+        const screen = await renderScreen(<SessionsList />);
+        const items = screen.findAll((node) => String(node.type) === 'SessionItem');
+        expect(items[0].props.folderMoveTargets).toEqual(expect.arrayContaining([
+            expect.objectContaining({ folderId: null, title: 'sessionsList.workspaceRoot' }),
+            expect.objectContaining({ folderId: 'folder-a', title: 'Planning' }),
+        ]));
+
+        await act(async () => {
+            await items[0].props.onMoveToSessionFolder('folder-a');
+        });
+
+        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith('https://server-a.example.test', { serverId: 'server_a' });
+        expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith({
+            credentials: { token: 'folder-token', secret: 'folder-secret' },
+            serverId: 'server_a',
+            serverUrl: 'https://server-a.example.test',
+            sessionId: 'sess_a',
+            folderId: 'folder-a',
+        });
     });
 
     it('renders ordering triggers on the active and inactive section headers and keeps stopPropagation bound', async () => {

@@ -14,7 +14,15 @@ const shared = vi.hoisted(() => ({
 installUiListsCommonModuleMocks();
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: {
+        default: () => ({}),
+        eyebrow: () => ({
+            fontSize: 12,
+            lineHeight: 16,
+            letterSpacing: 0.8,
+            textTransform: 'uppercase',
+        }),
+    },
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {

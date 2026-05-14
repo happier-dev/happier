@@ -6,10 +6,6 @@ import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
-import {
-    clearPendingMobileSurfaceTransition,
-    resolvePendingMobileSurfaceTransitionStackOptions,
-} from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -54,7 +50,6 @@ vi.hoisted(async () => {
 
 afterEach(() => {
     routerPushSpy.mockReset();
-    clearPendingMobileSurfaceTransition();
 });
 
 describe('LinkedWorkspaceFilesRow', () => {
@@ -119,11 +114,6 @@ describe('LinkedWorkspaceFilesRow', () => {
         await pressTestInstanceAsync(fileChip!, 'linked-workspace-file:src/api.ts');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/file?path=src%2Fapi.ts');
-        expect(resolvePendingMobileSurfaceTransitionStackOptions({
-            routeName: 'session/[id]/file',
-        })).toEqual({
-            animation: 'slide_from_right',
-        });
         expect(observedState?.details?.isOpen ?? false).toBe(false);
     });
 

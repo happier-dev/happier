@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ScrollView, ActivityIndicator } from 'react-native';
+import { View, ScrollView } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     useAllSessionListAttentionRows,
@@ -32,6 +32,7 @@ import { InboxSessionAttentionGroupCard } from '@/components/inbox/sessionAttent
 import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { buildInboxSessionState } from '@/hooks/inbox/buildInboxSessionState';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -133,7 +134,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                 )}
                 <RecoveryKeyReminderBanner />
                 <View style={styles.emptyContainer}>
-                    <ActivityIndicator size="large" color={theme.colors.text.secondary} />
+                    <ActivitySpinner size="large" color={theme.colors.text.secondary} />
                 </View>
             </View>
         );

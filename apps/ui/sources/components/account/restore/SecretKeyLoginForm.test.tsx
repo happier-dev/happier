@@ -7,6 +7,7 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 const loginSpy = vi.hoisted(() => vi.fn(async () => {}));
 const replaceSpy = vi.hoisted(() => vi.fn());
+const dismissToSpy = vi.hoisted(() => vi.fn());
 const trackAccountRestoredSpy = vi.hoisted(() => vi.fn());
 const authGetTokenSpy = vi.hoisted(() => vi.fn<(secret: Uint8Array) => Promise<string>>(async (_secret) => 'tok_restore'));
 const activateStackRuntimeServerSpy = vi.hoisted(() => vi.fn());
@@ -14,6 +15,7 @@ const activateStackRuntimeServerSpy = vi.hoisted(() => vi.fn());
 const expoRouterMock = createExpoRouterMock({
     router: {
         replace: (value: unknown) => replaceSpy(value),
+        dismissTo: (value: unknown) => dismissToSpy(value),
     },
 });
 
@@ -103,6 +105,7 @@ describe('SecretKeyLoginForm', () => {
     beforeEach(() => {
         loginSpy.mockReset();
         replaceSpy.mockReset();
+        dismissToSpy.mockReset();
         trackAccountRestoredSpy.mockReset();
         authGetTokenSpy.mockReset();
         authGetTokenSpy.mockResolvedValue('tok_restore');
@@ -131,7 +134,8 @@ describe('SecretKeyLoginForm', () => {
 
         expect(loginSpy).toHaveBeenCalledWith('tok_restore', 'secret-key');
         expect(trackAccountRestoredSpy).toHaveBeenCalledTimes(1);
-        expect(replaceSpy).toHaveBeenCalledWith('/');
+        expect(replaceSpy).not.toHaveBeenCalled();
+        expect(dismissToSpy).toHaveBeenCalledWith('/');
     });
 
     it('re-anchors the active server to the stack runtime server before completing restore login', async () => {

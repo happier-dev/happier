@@ -332,9 +332,10 @@ installSessionShellCommonModuleMocks({
 	      useSession: () => sessionState.session,
 	      useIsDataReady: () => true,
 	      useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-	      useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: true }),
+      useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: true }),
       useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
       useSessionPendingMessages: () => ({ messages: [] }),
+      useSessionSubagentSourceMessages: () => sessionMessagesState.messages,
       useSessionReviewCommentsDrafts: () => [],
       useWorkspaceReviewCommentsDrafts: () => [],
       useSessionUsage: () => null,
@@ -559,6 +560,7 @@ describe('SessionView header action menu visibility', () => {
     sessionState.session = {
       ...sessionState.session,
       metadata: sessionState.session.metadata,
+      updatedAt: (sessionState.session.updatedAt ?? 0) + 1,
     } as any;
 
     await renderSessionView();

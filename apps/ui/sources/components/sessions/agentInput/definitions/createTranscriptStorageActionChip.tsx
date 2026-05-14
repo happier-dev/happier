@@ -4,8 +4,9 @@ import { Pressable, View } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
-import { AgentInputSimpleOptionsPopover } from '@/components/sessions/agentInput/components/AgentInputSimpleOptionsPopover';
+import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
+import type { SelectionListStep } from '@/components/ui/selectionList';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -26,6 +27,36 @@ function buildTranscriptStorageOptions(): ReadonlyArray<AgentInputChipPickerOpti
     ];
 }
 
+/**
+ * Shared root-step builder used by BOTH the chip-definition factory (action-menu
+ * route) and the inline `TranscriptStorageChip` (direct chip route).
+ * Per-option `onSelect` callbacks are the canonical action source for
+ * `presentation: 'list'` descriptors.
+ */
+export function buildTranscriptStorageRootStep(params: Readonly<{
+    onSelect?: (selectedId: NewSessionTranscriptStorage) => void;
+}> = {}): SelectionListStep {
+    const options = buildTranscriptStorageOptions();
+    return {
+        id: 'transcript-storage-root',
+        title: t('settingsSession.defaultStorage.title'),
+        sections: [
+            {
+                kind: 'static',
+                id: 'transcript-storage',
+                options: options.map((option) => ({
+                    id: option.id,
+                    label: option.label,
+                    subtitle: option.subtitle,
+                    onSelect: params.onSelect && (option.id === 'direct' || option.id === 'persisted')
+                        ? () => params.onSelect!(option.id as NewSessionTranscriptStorage)
+                        : undefined,
+                })),
+            },
+        ],
+    };
+}
+
 type TranscriptStorageChipProps = Readonly<{
     transcriptStorage: NewSessionTranscriptStorage;
     onStorageChange: (next: NewSessionTranscriptStorage) => void;
@@ -36,7 +67,10 @@ const TranscriptStorageChip = React.memo(function TranscriptStorageChip(props: T
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const isDirect = props.transcriptStorage === 'direct';
-    const options = React.useMemo(() => buildTranscriptStorageOptions(), []);
+    const rootStep = React.useMemo(
+        () => buildTranscriptStorageRootStep({ onSelect: props.onStorageChange }),
+        [props.onStorageChange],
+    );
 
     return (
         <>
@@ -66,17 +100,20 @@ const TranscriptStorageChip = React.memo(function TranscriptStorageChip(props: T
                 </Pressable>
             </View>
 
-            <AgentInputSimpleOptionsPopover
+            <AgentInputSelectionListPopover
                 open={open}
                 anchorRef={anchorRef}
-                title={t('settingsSession.defaultStorage.title')}
-                options={options}
+                rootStep={rootStep}
                 selectedOptionId={props.transcriptStorage}
-                onSelect={(selectedId) => {
-                    if (selectedId === 'direct' || selectedId === 'persisted') {
-                        props.onStorageChange(selectedId);
-                    }
-                    setOpen(false);
+                onSelect={() => {
+                    // FR4-W1-CHIP: documented no-op. Per-row
+                    // `SelectionListOption.onSelect` inside `rootStep`
+                    // dispatched the storage mutation. The wrapper
+                    // `AgentInputSelectionListPopover` owns the close path and
+                    // defers `onRequestClose` on web internally — calling
+                    // `setOpen(false)` here would close the popover
+                    // synchronously and allow the click to fall through to
+                    // the chip anchor (re-opening it).
                 }}
                 onRequestClose={() => setOpen(false)}
                 maxHeightCap={320}
@@ -90,13 +127,13 @@ export function createTranscriptStorageActionChip(params: Readonly<{
     onStorageChange: (next: NewSessionTranscriptStorage) => void;
 }>): AgentInputExtraActionChip {
     const isDirect = params.transcriptStorage === 'direct';
-    const options = buildTranscriptStorageOptions();
+    const rootStep = buildTranscriptStorageRootStep({ onSelect: params.onStorageChange });
 
     return {
         key: 'new-session-storage',
         controlId: 'storage',
         collapsedOptionsPopover: {
-            presentation: 'simple',
+            presentation: 'list',
             title: t('settingsSession.defaultStorage.title'),
             label: isDirect
                 ? t('sessionsList.storageDirectTab')
@@ -108,12 +145,13 @@ export function createTranscriptStorageActionChip(params: Readonly<{
                     color={tint}
                 />,
             ),
-            options,
+            rootStep,
             selectedOptionId: params.transcriptStorage,
-            onSelect: (selectedId) => {
-                if (selectedId === 'direct' || selectedId === 'persisted') {
-                    params.onStorageChange(selectedId);
-                }
+            onSelect: () => {
+                // List-mode option mutations live on per-option SelectionListOption.onSelect
+                // (set inside `buildTranscriptStorageRootStep`). The overlay route
+                // closes on selection but does NOT call this descriptor-level callback.
+                // Documented no-op for parity with the chip-picker contract.
             },
             maxHeightCap: 320,
         },

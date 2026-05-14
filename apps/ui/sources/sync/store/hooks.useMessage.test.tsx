@@ -11,6 +11,78 @@ afterEach(() => {
 });
 
 describe('useMessage', () => {
+    it('does not re-render a different message when another message changes', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById: Record<string, any> = {
+                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'first' },
+                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'second', isThinking: false },
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-1', 'm-2'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return useMessage('s-1', 'm-1') as any;
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const initialRenderCount = renderCount;
+
+            expect(hook.getCurrent()?.text).toBe('first');
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const session = state.sessionMessages['s-1'];
+                    if (!session) return state;
+                    const nextMessagesById = {
+                        ...session.messagesById,
+                        'm-2': {
+                            ...session.messagesById['m-2'],
+                            text: 'second updated',
+                        },
+                    };
+                    return {
+                        ...state,
+                        sessionMessages: {
+                            ...state.sessionMessages,
+                            's-1': {
+                                ...session,
+                                messagesById: nextMessagesById,
+                                messagesMap: nextMessagesById,
+                                messagesVersion: session.messagesVersion + 1,
+                            },
+                        },
+                    };
+                });
+                await flushHookEffects({ cycles: 1, turns: 4 });
+            });
+
+            expect(hook.getCurrent()?.text).toBe('first');
+            expect(renderCount).toBe(initialRenderCount);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('re-renders when the message is mutated in-place but messagesVersion increments', async () => {
         const previousState = storage.getState();
         try {

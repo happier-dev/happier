@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -31,6 +31,7 @@ import {
 } from './scmStashRetry';
 
 import type { ScmStashEntry } from '@happier-dev/protocol';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type StashDiffState = Readonly<{
     stashRef: string | null;
@@ -432,7 +433,7 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
     if (isLoadingStashes && stashes.length === 0) {
         return (
             <View testID={rootTestId} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 24 }}>
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text style={{ marginTop: 12, fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.loading')}
                 </Text>
@@ -565,7 +566,7 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
 
             {diffState.loading ? (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 24 }}>
-                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                     <Text style={{ marginTop: 12, fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
                         {t('common.loading')}
                     </Text>

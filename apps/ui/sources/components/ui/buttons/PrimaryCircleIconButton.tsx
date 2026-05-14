@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, StyleProp, View, ViewStyle } from 'react-native';
+import { Pressable, StyleProp, View, ViewStyle } from 'react-native';
 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
   root: {
@@ -78,7 +79,7 @@ export const PrimaryCircleIconButton = React.memo(
             />
           ) : null}
           {props.loading ? (
-            <ActivityIndicator size="small" color={tintColor} />
+            <ActivitySpinner size="small" color={tintColor} />
           ) : (
             normalizeNodeForView(props.children)
           )}

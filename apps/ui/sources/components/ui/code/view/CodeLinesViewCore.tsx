@@ -1,16 +1,24 @@
 import React from 'react';
-import { FlatList, View } from 'react-native';
+import { FlatList, Platform, View } from 'react-native';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import type { CodeLinesSyntaxHighlightingConfig } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
+import {
+    resolveCodeLineRangeSelection,
+    type CodeLineInteractionMode,
+} from '@/components/ui/code/interactions/resolveCodeLineRangeSelection';
 
-import { CodeLineRow } from './CodeLineRow';
+import { CodeLineRow, type CodeLinePressEvent } from './CodeLineRow';
 import { resolveEffectiveSyntaxHighlighting } from './resolveEffectiveSyntaxHighlighting';
 
 export type CodeLinesViewProps = {
     lines: readonly CodeLine[];
     selectedLineIds?: ReadonlySet<string>;
-    onPressLine?: (line: CodeLine) => void;
+    interactionMode?: CodeLineInteractionMode;
+    rangeSelectionActive?: boolean;
+    onPressLine?: (line: CodeLine, event?: CodeLinePressEvent) => void;
+    onPressLineRange?: (lines: readonly CodeLine[]) => void;
+    pressLineWhenNotSelectable?: boolean;
     onPressAddComment?: (line: CodeLine) => void;
     isCommentActive?: (line: CodeLine) => boolean;
     renderAfterLine?: (line: CodeLine) => React.ReactNode;
@@ -23,6 +31,7 @@ export type CodeLinesViewProps = {
     syntaxHighlighting?: CodeLinesSyntaxHighlightingConfig;
     scrollToLineId?: string;
     highlightLineId?: string;
+    highlightLineIds?: ReadonlySet<string>;
     testID?: string;
     onLayout?: (e: any) => void;
     onContentSizeChange?: (width: number, height: number) => void;
@@ -31,6 +40,15 @@ export type CodeLinesViewProps = {
 };
 
 type InlineToken = Readonly<{ text: string; color: string }>;
+type PreventableEvent = Readonly<{
+    preventDefault?: () => void;
+    nativeEvent?: Readonly<{ preventDefault?: () => void }>;
+}>;
+
+function preventNativeTextSelection(event?: PreventableEvent): void {
+    event?.preventDefault?.();
+    event?.nativeEvent?.preventDefault?.();
+}
 
 export function CodeLinesViewCore(
     props: CodeLinesViewProps & Readonly<{
@@ -46,18 +64,104 @@ export function CodeLinesViewCore(
     const showLineNumbers = props.showLineNumbers ?? true;
     const showPrefix = props.showPrefix ?? true;
     const advancedTokensRevision = props.advancedTokensRevision ?? 0;
+    const interactionMode = props.interactionMode ?? 'read';
+    const rangeGesturesEnabled = interactionMode !== 'read' && typeof props.onPressLineRange === 'function';
+    const lastPressedLineIdRef = React.useRef<string | null>(null);
+    const explicitRangeStartLineIdRef = React.useRef<string | null>(null);
+    const dragStartLineIdRef = React.useRef<string | null>(null);
+    const dragCurrentLineIdRef = React.useRef<string | null>(null);
 
     const effectiveSyntaxHighlighting = React.useMemo(() => {
         return resolveEffectiveSyntaxHighlighting({ lines: props.lines, config: props.syntaxHighlighting });
     }, [props.lines, props.syntaxHighlighting]);
+
+    const isHighlighted = React.useCallback((lineId: string) => {
+        return props.highlightLineId === lineId || props.highlightLineIds?.has(lineId) === true;
+    }, [props.highlightLineId, props.highlightLineIds]);
+
+    const resolveRange = React.useCallback((startLineId: string, endLineId: string): readonly CodeLine[] => {
+        return resolveCodeLineRangeSelection({
+            lines: props.lines,
+            startLineId,
+            endLineId,
+            includeLine: (line) => !line.renderIsHeaderLine,
+        });
+    }, [props.lines]);
+
+    const completeRange = React.useCallback((startLineId: string, endLineId: string) => {
+        const range = resolveRange(startLineId, endLineId);
+        if (range.length === 0) return;
+        props.onPressLineRange?.(range);
+    }, [props.onPressLineRange, resolveRange]);
+
+    const handlePressLine = React.useCallback((line: CodeLine, event?: CodeLinePressEvent) => {
+        if (!rangeGesturesEnabled) {
+            lastPressedLineIdRef.current = line.id;
+            props.onPressLine?.(line, event);
+            return;
+        }
+
+        if (props.rangeSelectionActive === true) {
+            const startLineId = explicitRangeStartLineIdRef.current;
+            if (!startLineId) {
+                explicitRangeStartLineIdRef.current = line.id;
+                lastPressedLineIdRef.current = line.id;
+                return;
+            }
+            explicitRangeStartLineIdRef.current = null;
+            lastPressedLineIdRef.current = line.id;
+            completeRange(startLineId, line.id);
+            return;
+        }
+
+        const shiftPressed = event?.shiftKey === true || event?.nativeEvent?.shiftKey === true;
+        const startLineId = lastPressedLineIdRef.current;
+        if (shiftPressed && startLineId) {
+            lastPressedLineIdRef.current = line.id;
+            completeRange(startLineId, line.id);
+            return;
+        }
+
+        lastPressedLineIdRef.current = line.id;
+        props.onPressLine?.(line, event);
+    }, [completeRange, props, rangeGesturesEnabled]);
+
+    const handlePressInLine = React.useCallback((line: CodeLine, event?: PreventableEvent) => {
+        if (!rangeGesturesEnabled || Platform.OS !== 'web') return;
+        preventNativeTextSelection(event);
+        dragStartLineIdRef.current = line.id;
+        dragCurrentLineIdRef.current = line.id;
+    }, [rangeGesturesEnabled]);
+
+    const handleHoverLine = React.useCallback((line: CodeLine, event?: PreventableEvent) => {
+        if (!rangeGesturesEnabled || Platform.OS !== 'web') return;
+        if (!dragStartLineIdRef.current) return;
+        preventNativeTextSelection(event);
+        dragCurrentLineIdRef.current = line.id;
+    }, [rangeGesturesEnabled]);
+
+    const handlePressOutLine = React.useCallback((line: CodeLine, event?: PreventableEvent) => {
+        if (!rangeGesturesEnabled || Platform.OS !== 'web') return;
+        preventNativeTextSelection(event);
+        const startLineId = dragStartLineIdRef.current;
+        const endLineId = dragCurrentLineIdRef.current ?? line.id;
+        dragStartLineIdRef.current = null;
+        dragCurrentLineIdRef.current = null;
+        if (!startLineId || startLineId === endLineId) return;
+        completeRange(startLineId, endLineId);
+    }, [completeRange, rangeGesturesEnabled]);
 
     const renderLine = (item: CodeLine, index: number) => (
         <View>
             <CodeLineRow
                 line={item}
                 selected={selected.has(item.id)}
-                highlighted={props.highlightLineId === item.id}
-                onPressLine={props.onPressLine}
+                highlighted={isHighlighted(item.id)}
+                onPressLine={handlePressLine}
+                onPressInLine={rangeGesturesEnabled && Platform.OS === 'web' ? handlePressInLine : undefined}
+                onHoverLine={rangeGesturesEnabled && Platform.OS === 'web' ? handleHoverLine : undefined}
+                onPressOutLine={rangeGesturesEnabled && Platform.OS === 'web' ? handlePressOutLine : undefined}
+                pressLineWhenNotSelectable={props.pressLineWhenNotSelectable}
                 onPressAddComment={props.onPressAddComment}
                 commentActive={props.isCommentActive ? props.isCommentActive(item) : false}
                 wrapLines={wrapLines}
@@ -187,7 +291,14 @@ export function CodeLinesViewCore(
     const listExtraData = React.useMemo(() => ({
         selectedLineIds: props.selectedLineIds,
         renderAfterLine: props.renderAfterLine,
-        onPressLine: props.onPressLine,
+        onPressLine: handlePressLine,
+        onPressInLine: rangeGesturesEnabled && Platform.OS === 'web' ? handlePressInLine : undefined,
+        onHoverLine: rangeGesturesEnabled && Platform.OS === 'web' ? handleHoverLine : undefined,
+        onPressOutLine: rangeGesturesEnabled && Platform.OS === 'web' ? handlePressOutLine : undefined,
+        interactionMode,
+        rangeSelectionActive: props.rangeSelectionActive,
+        onPressLineRange: props.onPressLineRange,
+        pressLineWhenNotSelectable: props.pressLineWhenNotSelectable,
         onPressAddComment: props.onPressAddComment,
         isCommentActive: props.isCommentActive,
         wrapLines,
@@ -195,14 +306,24 @@ export function CodeLinesViewCore(
         showPrefix,
         syntaxHighlighting: effectiveSyntaxHighlighting,
         highlightLineId: props.highlightLineId,
+        highlightLineIds: props.highlightLineIds,
         advancedTokensRevision,
     } as const), [
         effectiveSyntaxHighlighting,
         advancedTokensRevision,
+        handleHoverLine,
+        handlePressInLine,
+        handlePressLine,
+        handlePressOutLine,
+        interactionMode,
+        rangeGesturesEnabled,
         props.highlightLineId,
+        props.highlightLineIds,
         props.isCommentActive,
         props.onPressAddComment,
-        props.onPressLine,
+        props.onPressLineRange,
+        props.pressLineWhenNotSelectable,
+        props.rangeSelectionActive,
         props.renderAfterLine,
         props.selectedLineIds,
         showLineNumbers,

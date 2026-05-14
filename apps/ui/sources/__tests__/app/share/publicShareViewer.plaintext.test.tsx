@@ -56,6 +56,14 @@ vi.mock('@/components/sessions/transcript/TranscriptList', () => ({
     },
 }));
 
+vi.mock('@/utils/platform/responsive', () => ({
+    useHeaderHeight: () => 64,
+}));
+
+vi.mock('@/components/ui/layout/useChromeSafeAreaInsets', () => ({
+    useChromeSafeAreaInsets: () => ({ top: 20, bottom: 0, left: 0, right: 0 }),
+}));
+
 describe('PublicShareViewerScreen (plaintext)', () => {
     it('does not attempt DEK decryption for plaintext sessions', async () => {
         serverFetchSpy
@@ -121,6 +129,56 @@ describe('PublicShareViewerScreen (plaintext)', () => {
             expect.objectContaining({ includeAuth: false }),
         );
         expect(transcriptListSpy).toHaveBeenCalled();
+    });
+
+    it('offsets transcript content below the absolute share header', async () => {
+        transcriptListSpy.mockClear();
+        serverFetchSpy.mockReset();
+
+        serverFetchSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    session: {
+                        id: 's1',
+                        seq: 1,
+                        encryptionMode: 'plain',
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: true,
+                        activeAt: 2,
+                        metadata: JSON.stringify({ path: '/repo', host: 'devbox', name: 'Plain Session' }),
+                        metadataVersion: 1,
+                        agentState: JSON.stringify({}),
+                        agentStateVersion: 1,
+                    },
+                    owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                    accessLevel: 'view',
+                    encryptedDataKey: null,
+                    isConsentRequired: false,
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ messages: [] }),
+            });
+
+        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+
+        const screen = await renderScreen(<PublicShareViewerScreen />);
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const headerOffset = 84;
+        const transcriptContainers = screen.findAll((node) => {
+            const style = node.props?.style;
+            if (Array.isArray(style)) {
+                return style.some((entry) => entry?.paddingTop === headerOffset);
+            }
+            return style?.paddingTop === headerOffset;
+        });
+        expect(transcriptContainers).toHaveLength(1);
     });
 
     it('normalizes and reduces messages in deterministic oldest-first order by seq when available', async () => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -14,6 +14,7 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 import { ignoreNextRowPress } from '@/utils/ui/ignoreNextRowPress';
 import { t } from '@/text';
 import { formatAutomationNextRun, formatAutomationScheduleLabel } from './automationListFormatting';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type Props = Readonly<{
     title: string;
@@ -129,7 +130,7 @@ export const AutomationListGroup = React.memo((props: Props) => {
                                     accessibilityLabel={t('automations.detail.runNowTitle')}
                                 >
                                     {runState === 'running' ? (
-                                        <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                                        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                     ) : runState === 'queued' ? (
                                         <Ionicons name="checkmark" size={18} color={theme.colors.text.secondary} />
                                     ) : (

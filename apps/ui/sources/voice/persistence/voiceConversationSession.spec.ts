@@ -122,6 +122,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
         'machine-1': {
           id: 'machine-1',
           active: true,
+          spawnReadinessStatus: 'ready',
           metadata: {
             happyHomeDir: '/Users/test/.happier',
           },
@@ -160,6 +161,38 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
+      directory: '/Users/test/.happier/voice-agent',
+      serverId: 'server-1',
+    }));
+  });
+
+  it('routes recent voice-home spawn targets through active machine replacements', async () => {
+    state.settings.recentMachinePaths = [{
+      machineId: 'machine-old',
+      path: '/Users/test/.happier/voice-agent',
+    }];
+    state.machines = {
+      'machine-old': {
+        id: 'machine-old',
+        active: false,
+        replacedByMachineId: 'machine-new',
+        replacedAt: 123,
+        metadata: {},
+      },
+      'machine-new': {
+        id: 'machine-new',
+        active: true,
+        spawnReadinessStatus: 'ready',
+        metadata: {},
+      },
+    };
+
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-new',
       directory: '/Users/test/.happier/voice-agent',
       serverId: 'server-1',
     }));
@@ -270,6 +303,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     state.machines['machine-2'] = {
       id: 'machine-2',
       active: true,
+      spawnReadinessStatus: 'ready',
       metadata: {
         happyHomeDir: '/Users/fixed/.happier/',
       },
@@ -348,6 +382,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     state.machines['stale-machine'] = {
       id: 'stale-machine',
       active: true,
+      spawnReadinessStatus: 'ready',
       metadata: {},
     };
 
@@ -387,9 +422,19 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     state.machines['machine-target'] = {
       id: 'machine-target',
       active: true,
+      spawnReadinessStatus: 'ready',
       metadata: {
         happyHomeDir: '/Users/target/.happier',
         host: 'target.local',
+      },
+    };
+    state.machines['machine-stale'] = {
+      id: 'machine-stale',
+      active: false,
+      replacedByMachineId: 'machine-target',
+      replacedAt: 123,
+      metadata: {
+        host: 'source.local',
       },
     };
     state.sessions['focus-session'] = {
@@ -656,9 +701,19 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
         },
       },
       machines: {
+        'machine-stale': {
+          id: 'machine-stale',
+          active: false,
+          replacedByMachineId: 'machine-target',
+          replacedAt: 123,
+          metadata: {
+            host: 'source.local',
+          },
+        },
         'machine-target': {
           id: 'machine-target',
           active: true,
+          spawnReadinessStatus: 'ready',
           metadata: {
             happyHomeDir: '/Users/target/.happier',
             host: 'target.local',

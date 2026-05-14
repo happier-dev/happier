@@ -36,11 +36,26 @@ installConnectionStatusControlCommonModuleMocks({
                         error: '#ff0000',
                         default: '#999999',
                     },
-                    surface: '#000000',
-                    surfaceHigh: '#111111',
-                    divider: '#222222',
-                    text: '#111111',
-                    textSecondary: '#666666',
+                    state: {
+                        success: { foreground: '#00ff00', background: '#002200', border: '#005500' },
+                        warning: { foreground: '#ff9900', background: '#332000', border: '#664000' },
+                        danger: { foreground: '#ff0000', background: '#330000', border: '#660000' },
+                        info: { foreground: '#007aff', background: '#001f33', border: '#004f80' },
+                        neutral: { foreground: '#666666', background: '#111111', border: '#222222' },
+                    },
+                    surface: {
+                        base: '#000000',
+                        inset: '#111111',
+                        pressedOverlay: '#222222',
+                    },
+                    border: {
+                        default: '#222222',
+                        strong: '#444444',
+                    },
+                    text: {
+                        primary: '#111111',
+                        secondary: '#666666',
+                    },
                 },
             },
         });
@@ -71,7 +86,19 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: {
+        default: () => ({}),
+        mono: () => ({}),
+        eyebrow: () => ({
+            fontSize: 12,
+            lineHeight: 16,
+            letterSpacing: 0.8,
+            textTransform: 'uppercase',
+        }),
+        pillLabel: () => ({ fontSize: 10, lineHeight: 12 }),
+        keyHint: () => ({ fontSize: 11, lineHeight: 14, fontVariant: ['tabular-nums'] }),
+        tabular: () => ({ fontVariant: ['tabular-nums'] }),
+    },
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({

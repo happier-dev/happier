@@ -36,7 +36,8 @@ import {
 } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { resolveAbsolutePath } from '@/utils/path/pathUtils';
+import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
 
 import type { SessionHandoffPickerResult } from './openSessionHandoffPicker';
 
@@ -96,24 +97,6 @@ function mergeMachinesById(machineGroups: readonly (readonly any[] | null | unde
     return Array.from(merged.values());
 }
 
-function expandHomeRelativePath(rawPath: unknown, homeDir: unknown): string {
-    const path = String(rawPath ?? '').trim();
-    if (!path) return '';
-    if (!path.startsWith('~')) return path;
-
-    const home = String(homeDir ?? '').trim();
-    if (!home) return path;
-    const normalizedHome = home.endsWith('/') ? home.slice(0, -1) : home;
-
-    if (path === '~' || path === '~/') {
-        return normalizedHome;
-    }
-    if (path.startsWith('~/')) {
-        return `${normalizedHome}${path.slice(1)}`;
-    }
-    return path;
-}
-
 export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessionId, sourceMachineId, serverId }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -163,8 +146,8 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         () => {
             const sourceHomeDir = (currentSession as any)?.metadata?.homeDir;
             const fallbackSourceHomeDir = (sourceMachine as any)?.metadata?.homeDir;
-            const sourcePath = expandHomeRelativePath(
-                (currentSession as any)?.metadata?.path,
+            const sourcePath = resolveAbsolutePath(
+                String((currentSession as any)?.metadata?.path ?? '').trim(),
                 sourceHomeDir ?? fallbackSourceHomeDir,
             );
             return evaluateSessionHandoffWorkspaceTransferSourcePathSafety({
@@ -234,6 +217,10 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         () => machines.find((machine: any) => normalizeId(machine?.id) === normalizeId(selectedMachineId)) ?? null,
         [machines, selectedMachineId],
     );
+    const selectedMachineReadiness = React.useMemo(
+        () => resolveMachineExactSpawnReadiness(selectedMachine as any, selectedMachineId),
+        [selectedMachine, selectedMachineId],
+    );
     const [workspaceTransferEnabled, setWorkspaceTransferEnabled] = React.useState(sessionHandoffDefaults.workspaceTransferEnabled);
     const [workspaceTransferStrategy, setWorkspaceTransferStrategy] = React.useState<'transfer_snapshot' | 'sync_changes'>(
         sessionHandoffDefaults.workspaceTransferStrategy,
@@ -254,6 +241,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const handleStart = React.useCallback(() => {
         const targetMachineId = normalizeId(selectedMachineId);
         if (!targetMachineId) return;
+        if (selectedMachineReadiness.status !== 'ready') return;
         const workspaceTransfer = buildSessionHandoffWorkspaceTransfer({
             workspaceTransferEnabled: effectiveWorkspaceTransferEnabled,
             workspaceTransferStrategy,
@@ -268,7 +256,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                 : 'persisted',
             ...(workspaceTransfer ? { workspaceTransfer } : {}),
         });
-    }, [conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isExternalSession, onResolve, selectedMachineId, workspaceTransferStrategy]);
+    }, [conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isExternalSession, onResolve, selectedMachineId, selectedMachineReadiness.status, workspaceTransferStrategy]);
 
     const footer = React.useMemo(() => (
         <View style={styles.footer}>
@@ -277,10 +265,10 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                 testID="session-handoff-start"
                 title={actionSpec.title}
                 onPress={handleStart}
-                disabled={!selectedMachine || !isMachineOnline(selectedMachine as any)}
+                disabled={!selectedMachine || selectedMachineReadiness.status !== 'ready'}
             />
         </View>
-    ), [actionSpec.title, handleCancel, handleStart, selectedMachine, styles.footer]);
+    ), [actionSpec.title, handleCancel, handleStart, selectedMachine, selectedMachineReadiness.status, styles.footer]);
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,

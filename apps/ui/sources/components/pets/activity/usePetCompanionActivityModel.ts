@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
@@ -9,7 +10,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import { deriveSessionListMeaningfulActivityAt } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionMessages } from '@/sync/store/domains/messages';
-import type { StorageState } from '@/sync/store/types';
+import type { SessionPending } from '@/sync/store/domains/pending';
 
 import { buildPetCompanionActivityModel } from './buildPetCompanionActivityModel';
 import type {
@@ -55,8 +56,36 @@ function resolveLatestCommittedMessageSubtitle(transcript: SessionMessages | und
     return null;
 }
 
+type PetCompanionSignalState = Readonly<{
+    sessionMessages: Readonly<Record<string, SessionMessages | undefined>>;
+    sessionPending: Readonly<Record<string, SessionPending | undefined>>;
+}>;
+
+function usePetCompanionSignalState(sessionIds: readonly string[]): PetCompanionSignalState {
+    const transcripts = storage(
+        useShallow((state) => sessionIds.map((sessionId) => state.sessionMessages?.[sessionId])),
+    );
+    const pendingRows = storage(
+        useShallow((state) => sessionIds.map((sessionId) => state.sessionPending?.[sessionId])),
+    );
+
+    return React.useMemo(() => {
+        const sessionMessages: Record<string, SessionMessages | undefined> = {};
+        const sessionPending: Record<string, SessionPending | undefined> = {};
+
+        for (let index = 0; index < sessionIds.length; index += 1) {
+            const sessionId = sessionIds[index];
+            if (!sessionId) continue;
+            sessionMessages[sessionId] = transcripts[index];
+            sessionPending[sessionId] = pendingRows[index];
+        }
+
+        return { sessionMessages, sessionPending };
+    }, [pendingRows, sessionIds, transcripts]);
+}
+
 function buildSessionSignalsBySessionId(
-    state: StorageState,
+    state: PetCompanionSignalState,
     candidates: readonly SessionActivityAttention[],
 ): Record<string, PetCompanionSessionSignals> {
     const signalsBySessionId: Record<string, PetCompanionSessionSignals> = {};
@@ -114,7 +143,6 @@ export function usePetCompanionActivityModel(input?: Readonly<{
     dismissedTrayItemKeys?: ReadonlySet<string>;
 }>): PetCompanionActivityModel {
     const activitySource = useActivityAttentionSource();
-    const state = storage();
     const [nowMs, setNowMs] = React.useState(() => Date.now());
     const overview = React.useMemo(
         () => buildActivityOverviewFromSource({
@@ -129,11 +157,16 @@ export function usePetCompanionActivityModel(input?: Readonly<{
         () => activityCandidates.map((candidate) => candidate.session),
         [activityCandidates],
     );
+    const signalSessionIds = React.useMemo(
+        () => activityCandidates.map((candidate) => candidate.session.id),
+        [activityCandidates],
+    );
     const selectedSessionId = React.useMemo(() => selectCompanionSessionId(activitySessions), [activitySessions]);
     const dismissedTrayItemKeys = input?.dismissedTrayItemKeys;
+    const signalState = usePetCompanionSignalState(signalSessionIds);
     const signalsBySessionId = React.useMemo(
-        () => buildSessionSignalsBySessionId(state, activityCandidates),
-        [activityCandidates, state],
+        () => buildSessionSignalsBySessionId(signalState, activityCandidates),
+        [activityCandidates, signalState],
     );
 
     const model = React.useMemo(() => buildPetCompanionActivityModel({

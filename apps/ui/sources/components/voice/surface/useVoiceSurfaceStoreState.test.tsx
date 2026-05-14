@@ -86,4 +86,47 @@ describe('useVoiceSurfaceStoreState', () => {
 
         await hook.unmount();
     });
+
+    it('reads only the requested surface session from storage state', async () => {
+        const storage = getStorage();
+        storage.setState((state: any) => ({
+            ...state,
+            isDataReady: true,
+            sessions: {
+                ...state.sessions,
+                'surface-session-1': {
+                    id: 'surface-session-1',
+                    metadata: {
+                        summaryText: 'Surface session',
+                    },
+                    presence: 'online',
+                },
+                'other-session': {
+                    id: 'other-session',
+                    metadata: {
+                        summaryText: 'Unrelated session',
+                    },
+                    presence: 'online',
+                },
+            },
+        }));
+
+        const hook = await renderHook(() =>
+            useVoiceSurfaceStoreState({
+                activeControlSessionId: null,
+                localConversationMode: 'direct_session',
+                providerId: 'local_conversation',
+                surfaceSessionId: 'surface-session-1',
+                voicePrivacy: {
+                    shareFilePaths: true,
+                    shareSessionSummary: true,
+                },
+            }),
+        );
+
+        expect(hook.getCurrent().currentSession?.id).toBe('surface-session-1');
+        expect(hook.getCurrent().currentSession?.metadata?.summaryText).toBe('Surface session');
+
+        await hook.unmount();
+    });
 });

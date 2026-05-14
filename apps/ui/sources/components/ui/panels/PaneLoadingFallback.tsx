@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export const PaneLoadingFallback = React.memo((props: Readonly<{
     color: string;
@@ -25,7 +26,7 @@ export const PaneLoadingFallback = React.memo((props: Readonly<{
                 paddingHorizontal: props.paddingHorizontal ?? 16,
             }}
         >
-            <ActivityIndicator size="small" color={props.color} />
+            <ActivitySpinner size="small" color={props.color} />
             <Text style={{ marginTop: 10, fontSize: 12, color: props.color, ...textStyle }}>
                 {t('common.loading')}
             </Text>

@@ -1,11 +1,5 @@
 import * as React from 'react';
-import {
-    Animated,
-    Platform,
-    View,
-    type StyleProp,
-    type ViewStyle,
-} from 'react-native';
+import { Animated, Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { StepTransitionDirection } from '@/components/ui/motion/resolveStepTransitionDirection';

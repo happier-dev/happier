@@ -14,19 +14,20 @@ export function useWorkspaceRepositoryTreeWebDropState(params: Readonly<{
     expandedPaths: readonly string[];
     onExpandedPathsChange: (paths: string[]) => void;
 }>) {
+    const { enabled, expandedPaths, onExpandedPathsChange } = params;
     const [fileDragActive, setFileDragActive] = React.useState(false);
     const [dropTarget, setDropTarget] = React.useState<WorkspaceRepositoryTreeWebDropTarget>({
         destinationDir: '',
         hoverPath: null,
         autoExpandDirectoryPath: null,
     });
-    const expandedPathsRef = React.useRef(params.expandedPaths);
+    const expandedPathsRef = React.useRef(expandedPaths);
     const autoExpandTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const autoExpandPathRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
-        expandedPathsRef.current = params.expandedPaths;
-    }, [params.expandedPaths]);
+        expandedPathsRef.current = expandedPaths;
+    }, [expandedPaths]);
 
     const clearAutoExpandTimer = React.useCallback(() => {
         if (autoExpandTimerRef.current) {
@@ -46,15 +47,15 @@ export function useWorkspaceRepositoryTreeWebDropState(params: Readonly<{
     }, [clearAutoExpandTimer]);
 
     React.useEffect(() => {
-        if (params.enabled) return;
+        if (enabled) return;
         setFileDragActive(false);
         resetDropTarget();
-    }, [params.enabled, resetDropTarget]);
+    }, [enabled, resetDropTarget]);
 
     React.useEffect(() => clearAutoExpandTimer, [clearAutoExpandTimer]);
 
     const scheduleAutoExpand = React.useCallback((directoryPath: string | null) => {
-        if (!params.enabled) {
+        if (!enabled) {
             clearAutoExpandTimer();
             return;
         }
@@ -68,20 +69,20 @@ export function useWorkspaceRepositoryTreeWebDropState(params: Readonly<{
         clearAutoExpandTimer();
         autoExpandPathRef.current = directoryPath;
         autoExpandTimerRef.current = setTimeout(() => {
-            params.onExpandedPathsChange(appendExpandedPath(expandedPathsRef.current, directoryPath));
+            onExpandedPathsChange(appendExpandedPath(expandedPathsRef.current, directoryPath));
             autoExpandTimerRef.current = null;
             autoExpandPathRef.current = null;
         }, REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS);
-    }, [clearAutoExpandTimer, params]);
+    }, [clearAutoExpandTimer, enabled, onExpandedPathsChange]);
 
     const onDropTargetChange = React.useCallback((target: WorkspaceRepositoryTreeWebDropTarget) => {
-        if (!params.enabled) return;
+        if (!enabled) return;
         setDropTarget(target);
         scheduleAutoExpand(target.autoExpandDirectoryPath ?? null);
-    }, [params.enabled, scheduleAutoExpand]);
+    }, [enabled, scheduleAutoExpand]);
 
     const onFileDragActiveChange = React.useCallback((active: boolean) => {
-        if (!params.enabled) {
+        if (!enabled) {
             setFileDragActive(false);
             resetDropTarget();
             return;
@@ -90,23 +91,30 @@ export function useWorkspaceRepositoryTreeWebDropState(params: Readonly<{
         if (!active) {
             resetDropTarget();
         }
-    }, [params.enabled, resetDropTarget]);
+    }, [enabled, resetDropTarget]);
 
     const setRootDropTarget = React.useCallback(() => {
-        if (!params.enabled) return;
+        if (!enabled) return;
         onDropTargetChange({
             destinationDir: '',
             hoverPath: null,
             autoExpandDirectoryPath: null,
         });
-    }, [onDropTargetChange, params.enabled]);
+    }, [enabled, onDropTargetChange]);
 
-    return {
+    return React.useMemo(() => ({
         fileDragActive,
         dropDestinationDir: dropTarget.destinationDir,
         dropHoverPath: dropTarget.hoverPath,
         onDropTargetChange,
         onFileDragActiveChange,
         setRootDropTarget,
-    };
+    }), [
+        dropTarget.destinationDir,
+        dropTarget.hoverPath,
+        fileDragActive,
+        onDropTargetChange,
+        onFileDragActiveChange,
+        setRootDropTarget,
+    ]);
 }

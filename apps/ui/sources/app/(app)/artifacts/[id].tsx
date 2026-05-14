@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, ActivityIndicator, Pressable, Platform } from 'react-native';
+import { View, ScrollView, Pressable, Platform } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { useArtifact } from '@/sync/domains/state/storage';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
@@ -12,6 +12,7 @@ import { sync } from '@/sync/sync';
 import { deleteArtifact } from '@/sync/api/artifacts/apiArtifacts';
 import { storage } from '@/sync/domains/state/storage';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -231,7 +232,7 @@ export default function ArtifactDetailScreen() {
                     options={loadingScreenOptions}
                 />
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" />
+                    <ActivitySpinner size="large" />
                 </View>
             </View>
         );

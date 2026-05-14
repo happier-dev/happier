@@ -1,8 +1,11 @@
 import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { EnrichedMarkdownTextAdapter } from '../enriched/EnrichedMarkdownTextAdapter';
 import type { Option } from '../MarkdownBlockView';
+import type { MarkdownSourceRange, MarkdownSourceRangeAction } from '../MarkdownView';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
 import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
@@ -17,11 +20,19 @@ type MarkdownSegmentViewProps = Readonly<{
     profile: MarkdownRenderingProfile;
     streamingReveal: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
+    renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
+    highlightSourceRange?: MarkdownSourceRange | null;
 }>;
 
 export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) => {
-    if (props.segment.type === 'enriched-markdown') {
-        return (
+    const sourceAction = React.useMemo<MarkdownSourceRangeAction>(() => ({
+        sourceRange: props.segment.sourceRange,
+        markdown: props.segment.markdown,
+    }), [props.segment]);
+    const highlighted = rangesOverlap(props.segment.sourceRange, props.highlightSourceRange ?? null);
+    const content = props.segment.type === 'enriched-markdown'
+        ? (
             <EnrichedMarkdownTextAdapter
                 markdown={props.segment.markdown}
                 profile={props.profile}
@@ -33,21 +44,60 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
                 testID="markdown-enriched-run"
                 suppressLeadingTopMargin={props.segment.first}
             />
+        )
+        : (
+            <SpecialMarkdownBlockView
+                blocks={props.segment.blocks}
+                first={props.segment.first}
+                last={props.segment.last}
+                selectable={props.selectable}
+                onOptionPress={props.onOptionPress}
+                onLinkPress={props.onLinkPress}
+                textStyle={props.textStyle}
+                profile={props.profile}
+                streamingReveal={props.streamingReveal}
+                streamingRevealPreset={props.streamingRevealPreset}
+            />
         );
-    }
 
+    const after = props.renderAfterSourceRange?.(sourceAction) ?? null;
+    if (!props.onPressSourceRange && !after && !highlighted) return content;
+
+    const testID = `markdown-source-range-trigger:${props.segment.sourceRange.startLine}-${props.segment.sourceRange.endLine}`;
+    const Wrapper = props.onPressSourceRange ? Pressable : View;
     return (
-        <SpecialMarkdownBlockView
-            blocks={props.segment.blocks}
-            first={props.segment.first}
-            last={props.segment.last}
-            selectable={props.selectable}
-            onOptionPress={props.onOptionPress}
-            onLinkPress={props.onLinkPress}
-            textStyle={props.textStyle}
-            profile={props.profile}
-            streamingReveal={props.streamingReveal}
-            streamingRevealPreset={props.streamingRevealPreset}
-        />
+        <View style={styles.sourceRangeContainer}>
+            <Wrapper
+                testID={testID}
+                accessibilityRole={props.onPressSourceRange ? 'button' : undefined}
+                onPress={props.onPressSourceRange ? () => props.onPressSourceRange?.(sourceAction) : undefined}
+                style={[styles.sourceRangeTrigger, highlighted ? styles.highlight : null]}
+            >
+                {content}
+            </Wrapper>
+            {after}
+        </View>
     );
 });
+
+function rangesOverlap(a: MarkdownSourceRange, b: MarkdownSourceRange | null): boolean {
+    if (!b) return false;
+    return a.startLine <= b.endLine && b.startLine <= a.endLine;
+}
+
+const styles = StyleSheet.create((theme) => ({
+    sourceRangeContainer: {
+        width: '100%',
+        alignSelf: 'stretch',
+        alignItems: 'stretch',
+    },
+    sourceRangeTrigger: {
+        width: '100%',
+        alignSelf: 'stretch',
+        alignItems: 'stretch',
+    },
+    highlight: {
+        borderRadius: 8,
+        backgroundColor: theme.colors.surface.selected,
+    },
+}));

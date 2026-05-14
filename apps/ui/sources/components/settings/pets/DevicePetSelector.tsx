@@ -1,11 +1,5 @@
 import * as React from 'react';
-import {
-    Platform,
-    useWindowDimensions,
-    View,
-    type StyleProp,
-    type ViewStyle,
-} from 'react-native';
+import { Platform, useWindowDimensions, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import {

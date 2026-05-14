@@ -25,8 +25,11 @@ export type ExpoRouterRuntimeOptions = Readonly<{
         navigate: (value: unknown, options?: unknown) => unknown;
         back: () => unknown;
         replace: (value: unknown) => unknown;
+        dismissTo: (value: unknown) => unknown;
+        dismissAll: () => unknown;
         setParams: (value: ExpoRouterParams) => unknown;
         canGoBack: () => boolean;
+        canDismiss: () => boolean;
     }>;
     stackOptionsCapture?: StackOptionsCapture;
 }>;
@@ -36,8 +39,11 @@ type ExpoRouterRuntimeRouter = {
     navigate?: (value: unknown, options?: unknown) => unknown;
     back: () => unknown;
     replace: (value: unknown) => unknown;
+    dismissTo: (value: unknown) => unknown;
+    dismissAll: () => unknown;
     setParams: (value: ExpoRouterParams) => unknown;
     canGoBack?: () => boolean;
+    canDismiss?: () => boolean;
 };
 
 type RouterMethod<TArgs extends unknown[], TResult> = (...args: TArgs) => TResult;
@@ -142,17 +148,23 @@ export function createExpoRouterRuntime(
     const trackedPush = createTrackedRouterMethod<[unknown], unknown>(options.router?.push, adapters);
     const trackedBack = createTrackedRouterMethod<[], unknown>(options.router?.back, adapters);
     const trackedReplace = createTrackedRouterMethod<[unknown], unknown>(options.router?.replace, adapters);
+    const trackedDismissTo = createTrackedRouterMethod<[unknown], unknown>(options.router?.dismissTo, adapters);
+    const trackedDismissAll = createTrackedRouterMethod<[], unknown>(options.router?.dismissAll, adapters);
     const trackedSetParams = createTrackedRouterMethod<[ExpoRouterParams], unknown>(options.router?.setParams, adapters);
     const router = Object.assign(options.router ?? {}, {
         push: trackedPush.method,
         back: trackedBack.method,
         replace: trackedReplace.method,
+        dismissTo: trackedDismissTo.method,
+        dismissAll: trackedDismissAll.method,
         setParams: trackedSetParams.method,
     }) as ExpoRouterRuntimeRouter;
     const spies = {
         push: trackedPush.spy,
         back: trackedBack.spy,
         replace: trackedReplace.spy,
+        dismissTo: trackedDismissTo.spy,
+        dismissAll: trackedDismissAll.spy,
         setParams: trackedSetParams.spy,
     };
 
@@ -188,6 +200,8 @@ export function createExpoRouterRuntime(
     spies.push.mockName?.('router.push');
     spies.back.mockName?.('router.back');
     spies.replace.mockName?.('router.replace');
+    spies.dismissTo.mockName?.('router.dismissTo');
+    spies.dismissAll.mockName?.('router.dismissAll');
     spies.setParams.mockName?.('router.setParams');
 
     return {

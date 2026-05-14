@@ -35,7 +35,22 @@ installCodeBlockCommonModuleMocks({
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
-            theme: { dark: false, colors: { text: '#111', divider: '#ddd', surfaceHigh: '#fff', textSecondary: '#666' } },
+            theme: {
+                dark: false,
+                colors: {
+                    border: { default: '#ddd' },
+                    surface: { base: '#fff', inset: '#fff' },
+                    text: { primary: '#111', secondary: '#666' },
+                    syntax: {
+                        default: '#111',
+                        keyword: '#123456',
+                        string: '#0a3069',
+                        comment: '#666',
+                        number: '#0550ae',
+                        function: '#8250df',
+                    },
+                },
+            },
         });
     },
 });
@@ -117,7 +132,7 @@ describe('CodeBlockView (web)', () => {
             }
         }
 
-        expect(createHighlighterSpy.mock.calls[0]?.[0]?.themes?.[0]?.name).toBe('happier-light');
+        expect(createHighlighterSpy.mock.calls[0]?.[0]?.themes?.[0]?.name).toMatch(/^happier-light-/);
         expect(hasRed).toBe(true);
         expect(JSON.stringify(tree.toJSON())).toContain('const');
     });

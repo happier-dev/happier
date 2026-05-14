@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 
-const NEW_SESSION_IOS_KEYBOARD_VERTICAL_OFFSET = 16;
+const NEW_SESSION_IOS_KEYBOARD_VERTICAL_OFFSET = 0;
 
 export function NewSessionKeyboardContainer(props: Readonly<{
     children: React.ReactNode;

@@ -131,6 +131,41 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
         expect(updated?.daemonState).toEqual(existingMachine.daemonState)
     })
 
+    it('preserves replacement metadata when socket updates only carry freshness fields', async () => {
+        const existingMachine = buildMachine({
+            replacedByMachineId: 'm-current',
+            replacedAt: 50,
+            replacementReason: 'reauth',
+            replacementSource: 'automatic',
+            replacementActorUserId: 'user-1',
+            installationId: 'installation-1',
+            contentPublicKeyFingerprint: 'content-key-1',
+        })
+
+        const updated = await buildUpdatedMachineFromSocketUpdate({
+            machineUpdate: {
+                machineId: 'm1',
+                active: false,
+                activeAt: 100,
+            } as MachineUpdate,
+            updateSeq: 5,
+            updateCreatedAt: 100,
+            existingMachine,
+            getMachineEncryption: () => null,
+        })
+
+        expect(updated).not.toBeNull()
+        expect(updated).toMatchObject({
+            replacedByMachineId: 'm-current',
+            replacedAt: 50,
+            replacementReason: 'reauth',
+            replacementSource: 'automatic',
+            replacementActorUserId: 'user-1',
+            installationId: 'installation-1',
+            contentPublicKeyFingerprint: 'content-key-1',
+        })
+    })
+
     it('applies revoke updates from the socket payload', async () => {
         const decryptMetadata = vi.fn(async () => ({ m: true }))
         const decryptDaemonState = vi.fn(async () => ({ d: true }))

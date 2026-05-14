@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type ScmCommitComposerCardProps = Readonly<{
     theme: any;
@@ -115,7 +116,10 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
             }}
         >
             {typeof props.selectionCount === 'number' ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <View
+                    testID="scm-commit-selection-summary"
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}
+                >
                     <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                         {t('files.sourceControlOperations.selection', { count: props.selectionCount })}
                     </Text>
@@ -230,7 +234,7 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                         })}
                     >
                         {generating ? (
-                            <ActivityIndicator color={props.theme.colors.text.secondary} />
+                            <ActivitySpinner color={props.theme.colors.text.secondary} />
                         ) : (
                             <Ionicons
                                 name="sparkles-outline"
@@ -260,7 +264,7 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                     })}
                 >
                     {props.busy ? (
-                        <ActivityIndicator color={commitButtonContentColor} />
+                        <ActivitySpinner color={commitButtonContentColor} />
                     ) : (
                         <Text style={{ fontSize: 12, color: commitButtonContentColor, ...Typography.default('semiBold') }}>
                             {props.commitActionLabel}
@@ -288,7 +292,7 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                         })}
                     >
                         {props.pushShortcut.busy ? (
-                            <ActivityIndicator color={props.theme.colors.text.secondary} />
+                            <ActivitySpinner color={props.theme.colors.text.secondary} />
                         ) : (
                             <Ionicons
                                 name="arrow-up-circle-outline"

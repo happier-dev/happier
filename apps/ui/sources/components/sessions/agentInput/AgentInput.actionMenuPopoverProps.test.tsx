@@ -175,9 +175,16 @@ type CapturedActionMenuContentProps = Readonly<{
     actionMenuActions?: Array<{ id?: string; onPress?: () => void }>;
 }>;
 const capturedActionMenuContent: { last: CapturedActionMenuContentProps | null } = { last: null };
-const capturedSimpleOptionsPopover: { last: Record<string, unknown> | null } = { last: null };
 const capturedChipPickerPopover: { last: Record<string, unknown> | null } = { last: null };
+const capturedSelectionListPopover: {
+    last: Record<string, unknown> | null;
+    all: Array<Record<string, unknown>>;
+} = { last: null, all: [] };
 const capturedPermissionPicker: { last: Record<string, unknown> | null } = { last: null };
+
+function findSelectionListPopoverByOpen(open: boolean): Record<string, unknown> | undefined {
+    return capturedSelectionListPopover.all.find((props) => props.open === open);
+}
 
 function renderPopoverChildren(
     props: Readonly<{
@@ -271,9 +278,10 @@ vi.mock('./components/AgentInputChipPickerPopover', () => ({
     },
 }));
 
-vi.mock('./components/AgentInputSimpleOptionsPopover', () => ({
-    AgentInputSimpleOptionsPopover: (props: Record<string, unknown>) => {
-        capturedSimpleOptionsPopover.last = props;
+vi.mock('./components/AgentInputSelectionListPopover', () => ({
+    AgentInputSelectionListPopover: (props: Record<string, unknown>) => {
+        capturedSelectionListPopover.last = props;
+        capturedSelectionListPopover.all.push(props);
         return null;
     },
 }));
@@ -366,13 +374,24 @@ describe('AgentInput (action menu popover props)', () => {
         ).toBe(false);
     });
 
-    it('routes collapsed delivery actions through the shared chip-picker popover anchored to the action menu button', async () => {
+    it("routes the migrated delivery factory through the SelectionList popover and per-option onSelect dispatches the mutation", async () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
-        capturedSimpleOptionsPopover.last = null;
         capturedChipPickerPopover.last = null;
+        capturedSelectionListPopover.last = null;
+        capturedSelectionListPopover.all = [];
         const { AgentInput } = await import('./AgentInput');
+        const { createExecutionRunDeliveryActionChip } = await import(
+            './routing/createExecutionRunDeliveryActionChip'
+        );
+
+        const onDeliveryChange = vi.fn();
+        const deliveryChip = createExecutionRunDeliveryActionChip({
+            recipient: { kind: 'execution_run', runId: 'A1' },
+            delivery: 'interrupt',
+            onDeliveryChange,
+        });
 
         const screen = await renderScreen(<AgentInput
                     value=""
@@ -383,68 +402,67 @@ describe('AgentInput (action menu popover props)', () => {
                     autocompleteSuggestions={async () => []}
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
-                    extraActionChips={[{
-                        key: 'execution-run-delivery',
-                        controlId: 'delivery',
-                        collapsedOptionsPopover: {
-                            title: 'runs.delivery.title',
-                            label: 'Delivery',
-                            options: [
-                                { id: 'steer_if_supported', label: 'Steer' },
-                                { id: 'interrupt', label: 'Interrupt' },
-                            ],
-                            selectedOptionId: 'interrupt',
-                            onSelect: () => {},
-                        },
-                        render: () => React.createElement('View', { testID: 'agent-input-delivery-chip' }),
-                    }]}
+                    extraActionChips={[deliveryChip]}
                     onMachineClick={() => {}}
                     machineName="Builder"
                 />);
 
         const settingsButton = screen.findByTestId('agent-input-action-menu-button');
-        const machinePressable = screen.findByTestId('agent-input-machine-chip');
-
         expect(settingsButton).toBeTruthy();
-        if (!settingsButton) {
-            return;
-        }
+        if (!settingsButton) return;
 
         await screen.pressByTestIdAsync('agent-input-action-menu-button');
 
-        const actionMenuActions = getCapturedActionMenuActions();
-        const deliveryAction = actionMenuActions.find((action: { id?: string }) => action.id === 'delivery');
+        const deliveryAction = getCapturedActionMenuActions().find(
+            (action: { id?: string }) => action.id === 'delivery',
+        );
         expect(deliveryAction).toBeTruthy();
+        act(() => deliveryAction?.onPress?.());
 
-        act(() => {
-            deliveryAction?.onPress?.();
-        });
-
-        const chipPickerProps = capturedChipPickerPopover.last as (Record<string, unknown> & {
+        const selectionListProps = findSelectionListPopoverByOpen(true) as (Record<string, unknown> & {
             open?: boolean;
-            title?: string;
-            selectedOptionId?: string | null;
             anchorRef?: unknown;
-            options?: Array<{ id: string }>;
-        }) | null;
+            rootStep?: { sections?: Array<{ kind: string; options?: Array<{ id: string; onSelect?: () => void }> }> };
+            selectedOptionId?: string | null;
+        }) | undefined;
+        expect(capturedChipPickerPopover.last).toBeNull();
+        expect(selectionListProps).toBeTruthy();
+        expect(selectionListProps?.anchorRef).toBe(settingsButton.props.ref);
+        expect(selectionListProps?.selectedOptionId).toBe('interrupt');
 
-        expect(chipPickerProps?.open).toBe(true);
-        expect(chipPickerProps?.title).toBe('runs.delivery.title');
-        expect(chipPickerProps?.selectedOptionId).toBe('interrupt');
-        expect(chipPickerProps?.options?.map((option) => option.id)).toEqual([
-            'steer_if_supported',
-            'interrupt',
-        ]);
-        expect(chipPickerProps?.anchorRef).toBe(settingsButton.props.ref);
+        const section = selectionListProps?.rootStep?.sections?.[0];
+        expect(section?.kind).toBe('static');
+        const steerOption = section?.options?.find((option) => option.id === 'steer_if_supported');
+        expect(typeof steerOption?.onSelect).toBe('function');
+
+        act(() => steerOption?.onSelect?.());
+
+        expect(onDeliveryChange).toHaveBeenCalledWith('steer_if_supported');
     });
 
-    it('routes collapsed recipient actions through the shared chip-picker popover anchored to the action menu button', async () => {
+    it("routes the migrated recipient factory through the SelectionList popover and per-option onSelect dispatches the mutation", async () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
-        capturedSimpleOptionsPopover.last = null;
         capturedChipPickerPopover.last = null;
+        capturedSelectionListPopover.last = null;
+        capturedSelectionListPopover.all = [];
         const { AgentInput } = await import('./AgentInput');
+        const { createRecipientActionChip } = await import('./definitions/createRecipientActionChip');
+
+        const onRecipientChange = vi.fn();
+        const recipientChip = createRecipientActionChip({
+            isReadOnly: false,
+            participantTargets: [
+                {
+                    key: 'run-A1',
+                    displayLabel: 'Run A1',
+                    recipient: { kind: 'execution_run', runId: 'A1' },
+                },
+            ],
+            recipient: null,
+            onRecipientChange,
+        })!;
 
         const screen = await renderScreen(<AgentInput
                     value=""
@@ -455,21 +473,7 @@ describe('AgentInput (action menu popover props)', () => {
                     autocompleteSuggestions={async () => []}
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
-                    extraActionChips={[{
-                        key: 'participants-recipient',
-                        controlId: 'recipient',
-                        collapsedOptionsPopover: {
-                            title: 'session.participants.sendToTitle',
-                            label: 'Recipient',
-                            options: [
-                                { id: 'lead', label: 'Lead' },
-                                { id: 'run-1', label: 'Run 1' },
-                            ],
-                            selectedOptionId: 'run-1',
-                            onSelect: () => {},
-                        },
-                        render: () => React.createElement('View', { testID: 'agent-input-recipient-chip' }),
-                    }]}
+                    extraActionChips={[recipientChip]}
                     onMachineClick={() => {}}
                     machineName="Builder"
                 />);
@@ -477,45 +481,54 @@ describe('AgentInput (action menu popover props)', () => {
         const settingsButton = screen.findByTestId('agent-input-action-menu-button');
 
         expect(settingsButton).toBeTruthy();
-        if (!settingsButton) {
-            return;
-        }
+        if (!settingsButton) return;
 
         await screen.pressByTestIdAsync('agent-input-action-menu-button');
 
-        const actionMenuActions = getCapturedActionMenuActions();
-        const recipientAction = actionMenuActions.find((action: { id?: string }) => action.id === 'recipient');
+        const recipientAction = getCapturedActionMenuActions().find(
+            (action: { id?: string }) => action.id === 'recipient',
+        );
         expect(recipientAction).toBeTruthy();
+        act(() => recipientAction?.onPress?.());
 
-        act(() => {
-            recipientAction?.onPress?.();
-        });
-
-        const chipPickerProps = capturedChipPickerPopover.last as (Record<string, unknown> & {
+        const selectionListProps = findSelectionListPopoverByOpen(true) as (Record<string, unknown> & {
             open?: boolean;
-            title?: string;
-            selectedOptionId?: string | null;
             anchorRef?: unknown;
-            options?: Array<{ id: string }>;
-        }) | null;
+            rootStep?: { sections?: Array<{ kind: string; options?: Array<{ id: string; onSelect?: () => void }> }> };
+            selectedOptionId?: string | null;
+        }) | undefined;
+        expect(capturedChipPickerPopover.last).toBeNull();
+        expect(selectionListProps).toBeTruthy();
+        expect(selectionListProps?.anchorRef).toBe(settingsButton.props.ref);
+        expect(selectionListProps?.selectedOptionId).toBe('lead');
 
-        expect(chipPickerProps?.open).toBe(true);
-        expect(chipPickerProps?.title).toBe('session.participants.sendToTitle');
-        expect(chipPickerProps?.selectedOptionId).toBe('run-1');
-        expect(chipPickerProps?.options?.map((option) => option.id)).toEqual([
-            'lead',
-            'run-1',
-        ]);
-        expect(chipPickerProps?.anchorRef).toBe(settingsButton.props.ref);
+        const section = selectionListProps?.rootStep?.sections?.[0];
+        const runOption = section?.options?.find((option) => option.id === 'run-A1');
+        expect(typeof runOption?.onSelect).toBe('function');
+
+        act(() => runOption?.onSelect?.());
+
+        expect(onRecipientChange).toHaveBeenCalledWith({
+            kind: 'execution_run',
+            runId: 'A1',
+        });
     });
 
-    it('routes collapsed storage actions through the shared simple-options popover anchored to the action menu button', async () => {
+    it('routes the migrated storage factory through the SelectionList popover and per-option onSelect dispatches the mutation', async () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
-        capturedSimpleOptionsPopover.last = null;
         capturedChipPickerPopover.last = null;
+        capturedSelectionListPopover.last = null;
+        capturedSelectionListPopover.all = [];
         const { AgentInput } = await import('./AgentInput');
+        const { createTranscriptStorageActionChip } = await import('./definitions/createTranscriptStorageActionChip');
+
+        const onStorageChange = vi.fn();
+        const storageChip = createTranscriptStorageActionChip({
+            transcriptStorage: 'persisted',
+            onStorageChange,
+        });
 
         const screen = await renderScreen(<AgentInput
                     value=""
@@ -526,22 +539,7 @@ describe('AgentInput (action menu popover props)', () => {
                     autocompleteSuggestions={async () => []}
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
-                    extraActionChips={[{
-                        key: 'new-session-storage',
-                        controlId: 'storage',
-                        collapsedOptionsPopover: {
-                            presentation: 'simple',
-                            title: 'settingsSession.defaultStorage.title',
-                            label: 'Happier',
-                            options: [
-                                { id: 'persisted', label: 'Happier', subtitle: 'Happier subtitle' },
-                                { id: 'direct', label: 'Direct', subtitle: 'Direct subtitle' },
-                            ],
-                            selectedOptionId: 'persisted',
-                            onSelect: () => {},
-                        },
-                        render: () => React.createElement('View', { testID: 'agent-input-storage-chip' }),
-                    }]}
+                    extraActionChips={[storageChip]}
                     onMachineClick={() => {}}
                     machineName="Builder"
                 />);
@@ -563,30 +561,35 @@ describe('AgentInput (action menu popover props)', () => {
             storageAction?.onPress?.();
         });
 
-        const simplePopoverProps = capturedSimpleOptionsPopover.last as (Record<string, unknown> & {
+        const selectionListProps = findSelectionListPopoverByOpen(true) as (Record<string, unknown> & {
             open?: boolean;
-            title?: string;
+            rootStep?: {
+                id?: string;
+                sections?: Array<{ kind: string; options?: Array<{ id: string; onSelect?: () => void }> }>;
+            };
             selectedOptionId?: string | null;
             anchorRef?: unknown;
-            options?: Array<{ id: string }>;
-        }) | null;
+        }) | undefined;
 
-        expect(simplePopoverProps?.open).toBe(true);
-        expect(simplePopoverProps?.title).toBe('settingsSession.defaultStorage.title');
-        expect(simplePopoverProps?.selectedOptionId).toBe('persisted');
-        expect(simplePopoverProps?.options?.map((option) => option.id)).toEqual([
-            'persisted',
-            'direct',
-        ]);
-        expect(simplePopoverProps?.anchorRef).toBe(settingsButton.props.ref);
+        expect(selectionListProps).toBeTruthy();
+        expect(selectionListProps?.rootStep?.id).toBe('transcript-storage-root');
+        expect(selectionListProps?.selectedOptionId).toBe('persisted');
+        expect(selectionListProps?.anchorRef).toBe(settingsButton.props.ref);
         expect(capturedChipPickerPopover.last).toBeNull();
+
+        const directOption = selectionListProps?.rootStep?.sections?.[0]?.options?.find(
+            (option) => option.id === 'direct',
+        );
+        expect(typeof directOption?.onSelect).toBe('function');
+        act(() => directOption?.onSelect?.());
+        expect(onStorageChange).toHaveBeenCalledWith('direct');
     });
 
     it('routes collapsed content actions through the shared content popover anchored to the action menu button', async () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
-        capturedSimpleOptionsPopover.last = null;
+        capturedSelectionListPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -649,7 +652,7 @@ describe('AgentInput (action menu popover props)', () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
-        capturedSimpleOptionsPopover.last = null;
+        capturedSelectionListPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -706,7 +709,7 @@ describe('AgentInput (action menu popover props)', () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
-        capturedSimpleOptionsPopover.last = null;
+        capturedSelectionListPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -761,7 +764,7 @@ describe('AgentInput (action menu popover props)', () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
-        capturedSimpleOptionsPopover.last = null;
+        capturedSelectionListPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -815,7 +818,7 @@ describe('AgentInput (action menu popover props)', () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
-        capturedSimpleOptionsPopover.last = null;
+        capturedSelectionListPopover.last = null;
         const { createServerActionChip } = await import('./definitions/createServerActionChip');
 
         const toggleCollapsedPopover = vi.fn();
@@ -849,29 +852,50 @@ describe('AgentInput (action menu popover props)', () => {
         expect(captured.last).toBeNull();
     });
 
-    it('routes the checkout/worktree chip through the shared chip-picker popover anchored to the chip', async () => {
+    it('routes a list-presentation checkout/worktree chip through the SelectionList popover anchored to the chip', async () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
-        capturedSimpleOptionsPopover.last = null;
         capturedChipPickerPopover.last = null;
+        capturedSelectionListPopover.last = null;
+        capturedSelectionListPopover.all = [];
         const { AgentInput } = await import('./AgentInput');
-        const { createCheckoutActionChip } = await import('./definitions/createCheckoutActionChip');
 
-        const checkoutChip = createCheckoutActionChip({
-            interaction: { kind: 'picker' },
-            pickerOpen: false,
-            title: 'Checkout',
-            selectedLabel: 'No worktree',
-            selectedOptionId: 'none',
-            pickerOptions: [
-                { id: 'none', label: 'No worktree', sectionId: 'linked', sectionLabel: 'Linked' },
-                { id: 'create_git_worktree', label: 'New worktree', sectionId: 'actions', sectionLabel: 'Actions' },
+        const checkoutRootStep = {
+            id: 'worktree-root',
+            sections: [
+                {
+                    kind: 'static' as const,
+                    id: 'worktree:quick-actions',
+                    options: [
+                        { id: 'current_path', label: 'No worktree' },
+                        { id: 'create_git_worktree', label: 'New worktree' },
+                    ],
+                },
             ],
-            onApplyOption: () => {},
-            onRequestClose: () => {},
-            setPickerOpen: () => {},
-        });
+        };
+
+        const checkoutChip = {
+            key: 'new-session-checkout',
+            controlId: 'checkout' as const,
+            collapsedOptionsPopover: {
+                presentation: 'list' as const,
+                title: 'Checkout',
+                label: 'No worktree',
+                icon: () => null,
+                rootStep: checkoutRootStep,
+                selectedOptionId: 'current_path',
+                onSelect: () => {},
+                maxHeightCap: 480,
+                maxWidthCap: 720,
+                heightBehavior: 'fixedToMaxHeight' as const,
+            },
+            render: (ctx: any) => React.createElement('Pressable', {
+                ref: ctx.chipAnchorRef,
+                testID: 'new-session-checkout-chip',
+                onPress: () => ctx.toggleCollapsedPopover?.('new-session-checkout'),
+            }, null),
+        };
 
         const screen = await renderScreen(
             <AgentInput
@@ -891,13 +915,18 @@ describe('AgentInput (action menu popover props)', () => {
 
         await screen.pressByTestIdAsync('new-session-checkout-chip');
 
-        const chipPickerPopoverProps = capturedChipPickerPopover.last as (Record<string, unknown> & {
+        const selectionListProps = capturedSelectionListPopover.last as (Record<string, unknown> & {
             open?: boolean;
             anchorRef?: unknown;
+            rootStep?: { id?: string };
+            heightBehavior?: string;
         }) | null;
 
-        expect(chipPickerPopoverProps?.open).toBe(true);
-        expect(chipPickerPopoverProps?.anchorRef).toStrictEqual(chip.props.ref);
+        expect(selectionListProps?.open).toBe(true);
+        expect(selectionListProps?.anchorRef).toStrictEqual(chip.props.ref);
+        expect(selectionListProps?.rootStep?.id).toBe('worktree-root');
+        expect(selectionListProps?.heightBehavior).toBe('fixedToMaxHeight');
+        expect(capturedChipPickerPopover.last).toBeNull();
     });
 
 });

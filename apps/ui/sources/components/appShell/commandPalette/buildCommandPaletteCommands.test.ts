@@ -282,6 +282,31 @@ describe('buildCommandPaletteCommands', () => {
     expect(pushes).toEqual(['/search']);
   });
 
+  it('uses effective registry shortcut labels and omits stale display-only labels', async () => {
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
+      shortcutLabels: {
+        'session.new': 'Cmd+P',
+      },
+      nav: {
+        push: () => {},
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    expect(cmds.find((command) => command.id === 'new-session')?.shortcut).toBe('Cmd+P');
+    expect(cmds.find((command) => command.id === 'settings')?.shortcut).toBeUndefined();
+    expect(cmds.some((command) => command.shortcut === '⌘N' || command.shortcut === '⌘,')).toBe(false);
+  });
+
   it('omits the memory search navigation command when disabled', async () => {
     mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
 

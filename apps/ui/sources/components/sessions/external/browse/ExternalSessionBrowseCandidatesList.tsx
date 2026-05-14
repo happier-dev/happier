@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
-import { lightTheme } from '@/theme';
+import type { Theme } from '@/theme';
 import { t } from '@/text';
 
 import {
@@ -16,8 +16,9 @@ import {
     buildExternalSessionBrowseCandidateSubtitle,
 } from './buildExternalSessionBrowseCandidatePresentation';
 import type { ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
-type AppTheme = typeof lightTheme;
+type AppTheme = Theme;
 
 const stylesheet = StyleSheet.create((theme: AppTheme) => ({
     helperText: {
@@ -83,7 +84,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
 
             {props.loading ? (
                 <View style={styles.loadingRow}>
-                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 </View>
             ) : props.error ? (
                 <View>
@@ -123,4 +124,3 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
         </ItemGroup>
     );
 });
-

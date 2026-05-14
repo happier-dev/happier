@@ -9,16 +9,25 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
-import { PathSelector } from '@/components/sessions/new/components/PathSelector';
+import { PathSelectionList } from '@/components/sessions/new/components/PathSelectionList';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
-import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
+import {
+  useStableRecentPathsForMachine,
+  useStableRecentPathsResolver,
+} from '@/utils/sessions/useStableRecentPathsForMachine';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { Text } from '@/components/ui/text/Text';
+import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
+import {
+  resolveDirectoryFavoriteComparisonKey,
+  toggleHomeAwareDirectoryFavorite,
+} from '@/utils/sessions/favoriteDirectoriesToggle';
 
 import type { VoiceSessionSpawnPickerResult } from './openVoiceSessionSpawnPicker';
 
@@ -68,16 +77,21 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
 
   const machines = useAllMachines();
   const sessions = useAllSessionListRenderables();
-  const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
+  const recentMachinePaths = useSetting('recentMachinePaths');
+  const normalizedRecentMachinePaths = React.useMemo(
+    () => Array.isArray(recentMachinePaths) ? recentMachinePaths : [],
+    [recentMachinePaths],
+  );
   const useMachinePickerSearch = useSetting('useMachinePickerSearch');
-  const usePathPickerSearch = useSetting('usePathPickerSearch');
   const [favoriteMachinesRaw, setFavoriteMachinesRaw] = useSettingMutable('favoriteMachines');
   const [favoriteDirectoriesRaw, setFavoriteDirectoriesRaw] = useSettingMutable('favoriteDirectories');
 
   const favoriteMachineIds = Array.isArray(favoriteMachinesRaw) ? favoriteMachinesRaw : [];
   const favoriteMachines = React.useMemo(() => {
-    const byId = new Map(machines.map((m: any) => [m?.id, m] as const));
-    return favoriteMachineIds.map((id) => byId.get(id)).filter(Boolean) as any[];
+    const byId = new Map(machines.map((machine) => [machine.id, machine] as const));
+    return favoriteMachineIds
+      .map((id) => byId.get(id))
+      .filter((machine): machine is Machine => Boolean(machine));
   }, [favoriteMachineIds, machines]);
 
   const recentMachines = React.useMemo(() => {
@@ -86,20 +100,30 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
 
   const [step, setStep] = React.useState<Step>('machine');
   const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() =>
-    resolvePreferredMachineId({ machines, recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [] }),
+    resolvePreferredMachineId({ machines, recentMachinePaths: normalizedRecentMachinePaths }),
   );
 
   const selectedMachine = React.useMemo(() => {
-    return machines.find((m: any) => m?.id === selectedMachineId) ?? null;
+    return machines.find((machine) => machine.id === selectedMachineId) ?? null;
   }, [machines, selectedMachineId]);
 
   const recentPaths = useStableRecentPathsForMachine({
     machineId: selectedMachineId,
-    recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [],
+    recentMachinePaths: normalizedRecentMachinePaths,
+    sessions,
+  });
+  const resolveRecentPathsForMachine = useStableRecentPathsResolver({
+    recentMachinePaths: normalizedRecentMachinePaths,
     sessions,
   });
 
   const favoriteDirectories = Array.isArray(favoriteDirectoriesRaw) ? favoriteDirectoriesRaw : [];
+  const selectedMachineHomeDir = selectedMachine?.metadata?.homeDir || '/home';
+  const favoriteDirectoryKeys = React.useMemo(() => new Set(
+    favoriteDirectories.map((path) =>
+      resolveDirectoryFavoriteComparisonKey(path, selectedMachineHomeDir)
+    ),
+  ), [favoriteDirectories, selectedMachineHomeDir]);
 
   const [selectedPath, setSelectedPath] = React.useState<string>(() => {
     const first = recentPaths?.[0] ?? '';
@@ -121,16 +145,17 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
   const canCreate = Boolean(
     selectedMachineId
     && selectedMachine
-    && isMachineOnline(selectedMachine as any)
+    && resolveMachineExactSpawnReadiness(selectedMachine, selectedMachineId).status === 'ready'
     && (selectedPath.trim() || selectedMachine?.metadata?.homeDir),
   );
 
   const handleCreate = React.useCallback(() => {
     if (!selectedMachineId) return;
+    if (resolveMachineExactSpawnReadiness(selectedMachine, selectedMachineId).status !== 'ready') return;
     const directory = selectedPath.trim() || selectedMachine?.metadata?.homeDir || '/home';
     onResolve({ machineId: selectedMachineId, directory });
     onClose();
-  }, [onClose, onResolve, selectedMachine?.metadata?.homeDir, selectedMachineId, selectedPath]);
+  }, [onClose, onResolve, selectedMachine, selectedMachineId, selectedPath]);
 
   const footer = React.useMemo(() => (
     <View style={styles.footer}>
@@ -165,21 +190,23 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
           </View>
           <ItemList style={{ paddingTop: 0 }}>
             <MachineSelector
-              machines={machines as any}
-              selectedMachine={selectedMachine as any}
-              recentMachines={recentMachines as any}
-              favoriteMachines={favoriteMachines as any}
+              machines={machines}
+              selectedMachine={selectedMachine}
+              recentMachines={recentMachines}
+              favoriteMachines={favoriteMachines}
               showFavorites={true}
               showRecent={true}
               showSearch={useMachinePickerSearch !== false}
               showCliGlyphs={false}
               autoDetectCliGlyphs={false}
-              onSelect={(machine: any) => {
-                setSelectedMachineId(machine?.id ?? null);
+              onSelect={(machine) => {
+                const nextMachineId = normalizeId(machine.id) || null;
+                setSelectedMachineId(nextMachineId);
+                setSelectedPath(resolveRecentPathsForMachine(nextMachineId)[0] ?? '');
                 setStep('path');
               }}
-              onToggleFavorite={(machine: any) => {
-                const id = normalizeId(machine?.id);
+              onToggleFavorite={(machine) => {
+                const id = normalizeId(machine.id);
                 if (!id) return;
                 const exists = favoriteMachineIds.includes(id);
                 const next = exists ? favoriteMachineIds.filter((v) => v !== id) : [...favoriteMachineIds, id];
@@ -203,20 +230,28 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
             <Text style={styles.stepHeaderText}>{t('newSession.selectWorkingDirectoryTitle')}</Text>
           </View>
           <ScrollView keyboardShouldPersistTaps="handled">
-            <PathSelector
-              machineHomeDir={selectedMachine?.metadata?.homeDir || '/home'}
-              selectedPath={selectedPath}
-              onChangeSelectedPath={setSelectedPath}
-              recentPaths={recentPaths}
-              usePickerSearch={usePathPickerSearch !== false}
-              searchVariant="header"
-              favoriteDirectories={favoriteDirectories}
-              onChangeFavoriteDirectories={(dirs) => setFavoriteDirectoriesRaw(dirs)}
-              submitBehavior="showRow"
-              machineBrowse={{
-                enabled: true,
-                machineId: selectedMachine?.id ?? null,
+            <PathSelectionList
+              initialValue={selectedPath}
+              machineHomeDir={selectedMachineHomeDir}
+              favorites={favoriteDirectories.map((path) => ({ path }))}
+              recents={recentPaths.map((path, index) => ({ path, lastUsedAt: index }))}
+              machineId={selectedMachine?.id ?? null}
+              serverId={null}
+              machinePlatform={machineMetadataPlatformToTarget(selectedMachine?.metadata?.platform)}
+              onCommit={setSelectedPath}
+              onChangeDraftPath={setSelectedPath}
+              onRequestClose={() => {}}
+              isFavorite={(path) => favoriteDirectoryKeys.has(
+                resolveDirectoryFavoriteComparisonKey(path, selectedMachineHomeDir),
+              )}
+              onToggleFavorite={(path) => {
+                setFavoriteDirectoriesRaw([...toggleHomeAwareDirectoryFavorite(
+                  favoriteDirectories,
+                  path,
+                  selectedMachineHomeDir,
+                )]);
               }}
+              maxHeight={420}
             />
           </ScrollView>
         </>

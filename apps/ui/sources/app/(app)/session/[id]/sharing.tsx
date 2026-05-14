@@ -1,5 +1,5 @@
 import React, { memo, useState, useCallback, useEffect, useRef } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
@@ -37,6 +37,7 @@ import { mergePublicShareWithCachedToken } from '@/sync/domains/social/mergePubl
 import { createPublicShareWithClientToken } from '@/sync/domains/social/createPublicShareWithClientToken';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 function SharingManagementContent({ sessionId }: { sessionId: string }) {
@@ -385,7 +386,7 @@ export default memo(() => {
     if (!isDataReady || !sessionHydrated) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text style={{
                     color: theme.colors.text.secondary,
                     fontSize: 17,

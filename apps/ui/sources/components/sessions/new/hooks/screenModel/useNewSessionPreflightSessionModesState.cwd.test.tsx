@@ -40,6 +40,58 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 describe('useNewSessionPreflightSessionModesState (cwd)', () => {
+  it('keeps previous mode options visible while a new cwd probe is pending', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicSessionModeProbeCacheForTests();
+
+    const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+
+    machineCapabilitiesInvokeMock
+      .mockImplementationOnce(async () => ({
+        supported: true as const,
+        response: { ok: true as const, result: { availableModes: [{ id: 'plan', name: 'Plan' }] } },
+      }))
+      .mockImplementationOnce(async () => new Promise<never>(() => undefined));
+
+    let cwd = '/repo';
+    let latest: ReturnType<typeof useNewSessionPreflightSessionModesState> | null = null;
+    const readLatest = () => {
+      const value = latest as ReturnType<typeof useNewSessionPreflightSessionModesState> | null;
+      if (!value) throw new Error('Expected preflight session modes state to render');
+      return value;
+    };
+    function Harness() {
+      latest = useNewSessionPreflightSessionModesState({
+        backendTarget: { kind: 'backend', backendId: 'opencode' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd,
+      });
+      return null;
+    }
+
+    const root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(readLatest().modeOptions.map((option) => option.id)).toEqual(['default', 'plan']);
+
+    cwd = '/repo-2';
+    await act(async () => {
+      root.update(React.createElement(Harness));
+      await Promise.resolve();
+    });
+
+    const refreshed = readLatest();
+    expect(refreshed.probe.phase).toBe('refreshing');
+    expect(refreshed.modeOptions.map((option) => option.id)).toEqual(['default', 'plan']);
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it('passes params.cwd through to capabilities.invoke(cli.* probeModes)', async () => {
     vi.resetModules();
     machineCapabilitiesInvokeMock.mockClear();

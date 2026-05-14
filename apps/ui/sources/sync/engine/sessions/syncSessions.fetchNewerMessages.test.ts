@@ -191,6 +191,33 @@ describe('fetchAndApplyNewerMessages', () => {
     expect(applyMessages).toHaveBeenCalledWith('s1', expect.any(Array));
   });
 
+  it('does not write routine logs for empty newer pages', async () => {
+    const applyMessages = vi.fn();
+    const log = { log: vi.fn() };
+    const request = vi.fn(async () => new Response(
+      JSON.stringify({
+        messages: [],
+        nextAfterSeq: null,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+
+    await fetchAndApplyNewerMessages({
+      sessionId: 's1',
+      afterSeq: 1,
+      limit: 150,
+      getSessionEncryption: () => ({
+        decryptMessages: async () => [],
+      }),
+      request,
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
+      applyMessages,
+      log,
+    });
+
+    expect(log.log).not.toHaveBeenCalled();
+  });
+
   it('decrypts newer message pages in configured batches', async () => {
     const applyMessages = vi.fn<(sessionId: string, messages: NormalizedMessage[]) => void>();
     const request = vi.fn(async () => new Response(

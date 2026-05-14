@@ -76,4 +76,21 @@ describe('resolveSessionRowInteractionPolicy', () => {
 
         expect(policy.swipeEnabled).toBe(false);
     });
+
+    it('disables fallback row long-press menus while native inline drag owns long-press', () => {
+        const policy = resolveSessionRowInteractionPolicy({
+            platformOs: 'ios',
+            isActiveSession: true,
+            canStopSession: true,
+            canArchiveSession: false,
+            contextMenuItemCount: 2,
+            contextMenuOpen: false,
+            contextMenuWasOpen: false,
+            nativeInlineDragEnabled: true,
+            hasReorderHandle: true,
+        });
+
+        expect(policy.enableLongPressContextMenu).toBe(false);
+        expect(policy.showReorderHandle).toBe(true);
+    });
 });

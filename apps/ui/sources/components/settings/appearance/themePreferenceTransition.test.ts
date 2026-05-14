@@ -19,6 +19,32 @@ describe('theme preference transitions', () => {
         ).toBe(false);
     });
 
+    it('allows same-visual-mode theme profile activation to force an animation', () => {
+        const input = {
+            currentPreference: 'light' as const,
+            nextPreference: 'light' as const,
+            platform: 'web' as const,
+            reduceMotion: false,
+            systemTheme: 'light' as const,
+            forceAnimate: true,
+        };
+
+        expect(shouldAnimateThemePreferenceChange(input)).toBe(true);
+    });
+
+    it('keeps reduced motion authoritative over forced animation', () => {
+        const input = {
+            currentPreference: 'light' as const,
+            nextPreference: 'dark' as const,
+            platform: 'web' as const,
+            reduceMotion: true,
+            systemTheme: 'light' as const,
+            forceAnimate: true,
+        };
+
+        expect(shouldAnimateThemePreferenceChange(input)).toBe(false);
+    });
+
     it('animates web theme changes with a top-to-bottom view transition reveal', async () => {
         const mutation = vi.fn();
         const animate = vi.fn();

@@ -57,6 +57,41 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         flex: 1,
         minWidth: 0,
     },
+    groupHeaderFavicon: {
+        width: 16,
+        height: 16,
+        borderRadius: 4,
+    },
+    groupHeaderFaviconFrame: {
+        width: 16,
+        minWidth: 16,
+        maxWidth: 16,
+        height: 16,
+        minHeight: 16,
+        maxHeight: 16,
+        flexShrink: 0,
+        borderRadius: 4,
+        backgroundColor: theme.colors.background.canvas,
+        overflow: 'hidden' as const,
+    },
+    folderHeaderSection: {
+        backgroundColor: theme.colors.background.canvas,
+        paddingHorizontal: 10,
+        paddingTop: 0,
+        paddingBottom: 0,
+    },
+    folderHeaderRow: {
+        minHeight: 22,
+        flexDirection: 'row' as const,
+        alignItems: 'center' as const,
+        justifyContent: 'space-between' as const,
+        borderRadius: 8,
+    },
+    dropTargetActive: {
+        borderWidth: 1,
+        borderColor: theme.colors.accent.blue,
+        backgroundColor: theme.colors.state.active.background,
+    },
     groupHeaderContent: {
         flex: 1,
         minWidth: 0,
@@ -80,6 +115,12 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         justifyContent: 'center' as const,
         borderRadius: 999,
         marginLeft: 4,
+    },
+    folderHeaderDragHandleIcon: {
+        opacity: 0,
+    },
+    folderHeaderDragHandleIconActive: {
+        opacity: 1,
     },
     groupHeaderActionIcon: {
         color: theme.colors.text.secondary,

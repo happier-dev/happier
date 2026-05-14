@@ -16,9 +16,11 @@ export interface AppConfig {
     enableDevPushTokenRegistration?: boolean;
     socketForceWebsocketOnly?: boolean;
     filesPreviewMaxBytes?: number;
+    filesPreviewReadTimeoutMs?: number;
 }
 
 const DEFAULT_FILES_PREVIEW_MAX_BYTES = 2_500_000;
+const DEFAULT_FILES_PREVIEW_READ_TIMEOUT_MS = 15_000;
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
     const parsed = parseOptionalBooleanEnv(value);
@@ -41,6 +43,10 @@ function readConfiguredFilesPreviewMaxBytesEnv(): number | undefined {
         ?? parseOptionalPositiveIntEnv(process.env.EXPO_PUBLIC_HAPPY_FILES_PREVIEW_MAX_BYTES)
         ?? parseOptionalPositiveIntEnv(process.env.EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES)
     );
+}
+
+function readConfiguredFilesPreviewReadTimeoutMsEnv(): number | undefined {
+    return parseOptionalPositiveIntEnv(process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_READ_TIMEOUT_MS);
 }
 
 /**
@@ -143,12 +149,25 @@ export function loadAppConfig(): AppConfig {
         config.filesPreviewMaxBytes = filesPreviewMaxBytesFromEnv;
     }
 
+    const filesPreviewReadTimeoutMsFromEnv = readConfiguredFilesPreviewReadTimeoutMsEnv();
+    if (filesPreviewReadTimeoutMsFromEnv !== undefined && config.filesPreviewReadTimeoutMs !== filesPreviewReadTimeoutMsFromEnv) {
+        if (__DEV__) console.log('[loadAppConfig] Override filesPreviewReadTimeoutMs from EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_READ_TIMEOUT_MS');
+        config.filesPreviewReadTimeoutMs = filesPreviewReadTimeoutMsFromEnv;
+    }
+
     const filesPreviewMaxBytesValue = typeof config.filesPreviewMaxBytes === 'number' && Number.isFinite(config.filesPreviewMaxBytes)
         ? Math.floor(config.filesPreviewMaxBytes)
         : null;
     config.filesPreviewMaxBytes = filesPreviewMaxBytesValue && filesPreviewMaxBytesValue > 0
         ? filesPreviewMaxBytesValue
         : DEFAULT_FILES_PREVIEW_MAX_BYTES;
+
+    const filesPreviewReadTimeoutMsValue = typeof config.filesPreviewReadTimeoutMs === 'number' && Number.isFinite(config.filesPreviewReadTimeoutMs)
+        ? Math.floor(config.filesPreviewReadTimeoutMs)
+        : null;
+    config.filesPreviewReadTimeoutMs = filesPreviewReadTimeoutMsValue && filesPreviewReadTimeoutMsValue > 0
+        ? filesPreviewReadTimeoutMsValue
+        : DEFAULT_FILES_PREVIEW_READ_TIMEOUT_MS;
 
     return config as AppConfig;
 }

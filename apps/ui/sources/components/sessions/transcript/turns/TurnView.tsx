@@ -11,7 +11,7 @@ import type { TranscriptTurn } from '@/components/sessions/transcript/turnGroupi
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
 import { ToolCallsGroupRow } from '@/components/sessions/transcript/toolCalls/ToolCallsGroupRow';
 import { TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
-import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
+import { isMessageRolledBack, type SessionRollbackRangeV1, type TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 
 const TurnMessageRow = React.memo(function TurnMessageRow(props: {
@@ -24,7 +24,7 @@ const TurnMessageRow = React.memo(function TurnMessageRow(props: {
     resolveThinkingExpanded?: (messageId: string) => boolean;
     setThinkingExpanded?: (messageId: string, expanded: boolean) => void;
     interaction: TranscriptInteraction;
-    historical?: boolean;
+    rollbackRanges: readonly SessionRollbackRangeV1[];
     resolveRollbackAction?: (messageId: string) => TranscriptRollbackAction | null;
 }) {
     const sessionMessage = useMessage(props.sessionId, props.messageId);
@@ -41,6 +41,7 @@ const TurnMessageRow = React.memo(function TurnMessageRow(props: {
         message.isThinking === true &&
         resolveThinkingExpanded != null &&
         setThinkingExpanded != null;
+    const historical = isMessageRolledBack({ message, rollbackRanges: props.rollbackRanges });
 
     return (
         <View testID={`${TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX}${message.id}`}>
@@ -55,7 +56,7 @@ const TurnMessageRow = React.memo(function TurnMessageRow(props: {
                         thinkingExpanded={controlledThinking ? resolveThinkingExpanded(message.id) : undefined}
                         onThinkingExpandedChange={controlledThinking ? (next) => setThinkingExpanded(message.id, next) : undefined}
                         interaction={props.interaction}
-                        historical={props.historical}
+                        historical={historical}
                         rollbackAction={props.resolveRollbackAction?.(message.id) ?? null}
                     />
                 </TranscriptEnterWrapper>
@@ -76,7 +77,7 @@ export const TurnView = React.memo((props: {
     resolveThinkingExpanded?: (messageId: string) => boolean;
     setThinkingExpanded?: (messageId: string, expanded: boolean) => void;
     interaction: TranscriptInteraction;
-    isMessageHistorical?: (messageId: string) => boolean;
+    rollbackRanges: readonly SessionRollbackRangeV1[];
     resolveRollbackAction?: (messageId: string) => TranscriptRollbackAction | null;
 }) => {
     return (
@@ -92,7 +93,7 @@ export const TurnView = React.memo((props: {
                     resolveThinkingExpanded={props.resolveThinkingExpanded}
                     setThinkingExpanded={props.setThinkingExpanded}
                     interaction={props.interaction}
-                    historical={props.isMessageHistorical?.(props.turn.userMessageId) === true}
+                    rollbackRanges={props.rollbackRanges}
                     resolveRollbackAction={props.resolveRollbackAction}
                 />
             ) : null}
@@ -110,7 +111,7 @@ export const TurnView = React.memo((props: {
                             resolveThinkingExpanded={props.resolveThinkingExpanded}
                             setThinkingExpanded={props.setThinkingExpanded}
                             interaction={props.interaction}
-                            historical={props.isMessageHistorical?.(c.messageId) === true}
+                            rollbackRanges={props.rollbackRanges}
                             resolveRollbackAction={props.resolveRollbackAction}
                         />
                     );

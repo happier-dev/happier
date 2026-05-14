@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type SessionPaneLazyLoaderProps<TProps extends object> = Readonly<{
     testID: string;
@@ -75,7 +76,7 @@ export function SessionPaneLazyLoader<TProps extends object>(input: SessionPaneL
                 testID={input.testID}
                 style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16, gap: 10 }}
             >
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.loading')}
                 </Text>

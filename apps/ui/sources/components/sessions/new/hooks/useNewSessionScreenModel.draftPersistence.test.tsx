@@ -8,6 +8,12 @@ import { createMachineFixture } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import {
+    findCheckoutChip as findSelectionListCheckoutChip,
+    findCheckoutChipOptionFromChip,
+    getCheckoutChipExistingWorktreeIds,
+    getCheckoutChipQuickActionIds,
+} from './__tests__/checkoutChipSelectors';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -315,6 +321,8 @@ const repoSnapshotState = vi.hoisted(() => ({
 }));
 const fetchSnapshotForMachinePathMock = vi.hoisted(() => vi.fn(async () => repoSnapshotState.value));
 const readCachedSnapshotForMachinePathMock = vi.hoisted(() => vi.fn(() => null));
+const readCachedWorktreesEnrichmentMock = vi.hoisted(() => vi.fn(() => null));
+const fetchWorktreesEnrichmentMock = vi.hoisted(() => vi.fn(async () => []));
 const targetServerState = vi.hoisted(() => ({
     allowedTargetServerIds: [] as string[],
     targetServerId: null as string | null,
@@ -558,6 +566,8 @@ vi.mock('@/scm/scmRepositoryService', () => ({
     scmRepositoryService: {
         readCachedSnapshotForMachinePath: readCachedSnapshotForMachinePathMock,
         fetchSnapshotForMachinePath: fetchSnapshotForMachinePathMock,
+        readCachedWorktreesEnrichment: readCachedWorktreesEnrichmentMock,
+        fetchWorktreesEnrichment: fetchWorktreesEnrichmentMock,
     },
 }));
 
@@ -913,9 +923,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         clearNewSessionDraftMock.mockClear();
         loadNewSessionDraftMock.mockClear();
         readCachedSnapshotForMachinePathMock.mockReset();
-        readCachedSnapshotForMachinePathMock.mockReturnValue(null);
+        readCachedSnapshotForMachinePathMock.mockImplementation(() => repoSnapshotState.value);
         fetchSnapshotForMachinePathMock.mockReset();
         fetchSnapshotForMachinePathMock.mockImplementation(async () => repoSnapshotState.value);
+        readCachedWorktreesEnrichmentMock.mockReset();
+        readCachedWorktreesEnrichmentMock.mockReturnValue(null);
+        fetchWorktreesEnrichmentMock.mockReset();
+        fetchWorktreesEnrichmentMock.mockImplementation(async () => []);
         machineMcpServersPreviewMock.mockClear();
         searchParamsState.value = {};
         tempSessionDataState.value = null;
@@ -1385,11 +1399,8 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
         expect(content).toBeTruthy();
 
-        const popoverScreen = await renderScreen(content);
-        const input = popoverScreen.tree.findByProps({ testID: 'path-selector-input' });
-
         act(() => {
-            input.props.onChangeText('/repo/custom/subdir');
+            content.props.onChangeDraftSelectedPath('/repo/custom/subdir');
         });
 
         expect(model?.simpleProps?.selectedPath).toBe('/repo/custom');
@@ -2156,6 +2167,44 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(routerPushMock).not.toHaveBeenCalled();
     });
 
+    it('lets the path picker own scrolling and edge fades inside the shared path popover', async () => {
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+
+        let model: any = null;
+        function Probe() {
+            model = useNewSessionScreenModel();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect(model?.simpleProps?.pathPopover?.scrollEnabled).toBe(false);
+        expect(model?.simpleProps?.pathPopover?.edgeFades).toBeUndefined();
+        expect(model?.simpleProps?.pathPopover?.edgeIndicators).toBeUndefined();
+        expect(model?.simpleProps?.pathPopover?.initialVisibility).toBeUndefined();
+    });
+
+    it('keeps the path popover mounted when opening the tree browser', async () => {
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+
+        let model: any = null;
+        function Probe() {
+            model = useNewSessionScreenModel();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        const requestClose = vi.fn();
+        const element = model?.simpleProps?.pathPopover?.renderContent?.({ requestClose });
+        expect(element).toBeTruthy();
+        expect((element.type as { name?: string }).name).toBe('NewSessionPathSelectionContent');
+
+        const props = element.props as { onBeforeBrowseMachinePath?: unknown };
+        expect(props.onBeforeBrowseMachinePath).not.toBe(requestClose);
+        expect(props.onBeforeBrowseMachinePath).toBeUndefined();
+    });
+
     it('keeps the current route stable and exposes a shared resume popover in the simple panel when resume is available', async () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
@@ -2711,13 +2760,17 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
             const pickerPopover = (checkoutChip as any).collapsedOptionsPopover;
             expect(pickerPopover).toEqual(expect.objectContaining({
+                presentation: 'list',
                 title: 'newSession.checkout.selectTitle',
                 label: 'newSession.checkout.noWorktree',
             }));
-            expect(pickerPopover?.options?.map((option: any) => option.id)).toEqual([
+            const optionIds = [
+                ...getCheckoutChipQuickActionIds(model),
+                ...getCheckoutChipExistingWorktreeIds(model),
+            ];
+            expect(optionIds).toEqual([
                 'current_path',
                 'create_git_worktree',
-                '__existing_worktree__',
             ]);
 
             const toggleCollapsedPopover = vi.fn();
@@ -2798,10 +2851,14 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             expect(checkoutChip).toBeTruthy();
 
             const pickerPopover = (checkoutChip as any).collapsedOptionsPopover;
-            expect(pickerPopover?.options?.map((option: any) => option.id)).toEqual([
+            expect(pickerPopover?.presentation).toBe('list');
+            const optionIds = [
+                ...getCheckoutChipQuickActionIds(model),
+                ...getCheckoutChipExistingWorktreeIds(model),
+            ];
+            expect(optionIds).toEqual([
                 'current_path',
                 'create_git_worktree',
-                '__existing_worktree__',
             ]);
 
             // With the shared overlay controller, "open" is bridged through ctx.toggleCollapsedPopover.
@@ -2951,9 +3008,12 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             expect(checkoutChip?.controlId).toBe('checkout');
             expect(checkoutChip?.collapsedOptionsPopover?.title).toBe('newSession.checkout.selectTitle');
             expect(modalShowMock).not.toHaveBeenCalled();
-            const optionIds = (checkoutChip?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+            const optionIds = [
+                ...getCheckoutChipQuickActionIds(model),
+                ...getCheckoutChipExistingWorktreeIds(model),
+            ];
             expect(optionIds).toContain('current_path');
-            expect(optionIds).toContain('__existing_worktree__');
+            expect(getCheckoutChipExistingWorktreeIds(model).length).toBeGreaterThan(0);
 
             const toggleCollapsedPopover = vi.fn();
             const screen = await renderScreen(
@@ -3056,9 +3116,12 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             screen.pressByTestId('new-session-checkout-chip');
             expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-checkout');
 
-            const optionIds = (checkoutChip?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+            const optionIds = [
+                ...getCheckoutChipQuickActionIds(model),
+                ...getCheckoutChipExistingWorktreeIds(model),
+            ];
             expect(optionIds).toContain('current_path');
-            expect(optionIds).toContain('__existing_worktree__');
+            expect(getCheckoutChipExistingWorktreeIds(model).length).toBeGreaterThan(0);
         } finally {
             repoSnapshotState.value = {
                 ...repoSnapshotState.value,
@@ -3116,7 +3179,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }
     });
 
-    it('commits the selected new-worktree base ref only when the picker apply action runs', async () => {
+    it('exposes the new-worktree branch drill-down without committing before branch selection', async () => {
         persistedDraft.checkoutCreationDraft = null;
         workspaceGraphState.workspacesByServerId['server-a'] = [];
         workspaceGraphState.workspaceLocations = {};
@@ -3143,38 +3206,14 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         await renderScreen(React.createElement(Probe));
 
         try {
-            const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
-            const createOption = checkoutChip?.collapsedOptionsPopover?.options?.find((option: any) => option.id === 'create_git_worktree');
+            const checkoutChip = findSelectionListCheckoutChip(model);
+            const createOption = findCheckoutChipOptionFromChip(checkoutChip, 'worktree:quick-actions', 'create_git_worktree');
 
             expect(createOption).toBeTruthy();
             expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
-
-            const detailElement = createOption.renderDetailContent?.() as React.ReactElement<{
-                onSelectionChange?: (value: { baseRef: string | null; sourceKind: 'current' | 'local' | 'remote' }) => void;
-            }> | undefined;
-            expect(detailElement?.props?.onSelectionChange).toBeTypeOf('function');
-
-        await act(async () => {
-            detailElement?.props?.onSelectionChange?.({
-                baseRef: 'origin/release',
-                sourceKind: 'remote',
-            });
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-        expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
-
-        await act(async () => {
-            createOption.onApply?.();
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-            expect(model?.simpleProps?.checkoutCreationDraft).toEqual({
-                kind: 'git_worktree',
-                displayName: expect.any(String),
-                baseRef: 'origin/release',
-                branchMode: 'new',
-            });
+            expect(createOption && 'openStep' in createOption ? createOption.openStep?.id : undefined)
+                .toBe('worktree-create');
+            expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
         } finally {
             repoSnapshotState.value = {
                 ...repoSnapshotState.value,
@@ -3250,14 +3289,16 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         await renderScreen(React.createElement(Probe));
 
         expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
-        const getCheckoutChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
+        const getCheckoutChip = () => findSelectionListCheckoutChip(model);
         expect(getCheckoutChip()?.controlId).toBe('checkout');
         expect(getCheckoutChip()?.collapsedOptionsPopover?.title).toBe('newSession.checkout.selectTitle');
-        const initialOptionIds = (getCheckoutChip()?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+        const initialOptionIds = [
+            ...getCheckoutChipQuickActionIds(model),
+            ...getCheckoutChipExistingWorktreeIds(model),
+        ];
         expect(initialOptionIds).toEqual([
             'current_path',
             'create_git_worktree',
-            '__existing_worktree__',
         ]);
 
         await act(async () => {
@@ -3302,11 +3343,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
 
         expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
-        const updatedOptionIds = (getCheckoutChip()?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+        const updatedOptionIds = [
+            ...getCheckoutChipQuickActionIds(model),
+            ...getCheckoutChipExistingWorktreeIds(model),
+        ];
         expect(updatedOptionIds).toEqual([
             'current_path',
             'create_git_worktree',
-            '__existing_worktree__',
         ]);
     });
 
@@ -3331,7 +3374,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
         await renderScreen(React.createElement(Probe));
 
-        const getCheckoutChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
+        const getCheckoutChip = () => findSelectionListCheckoutChip(model);
         expect(getCheckoutChip()).toBeTruthy();
         expect(getCheckoutChip()?.controlId).toBe('checkout');
         expect(getCheckoutChip()?.collapsedOptionsPopover?.title).toBe('newSession.checkout.selectTitle');
@@ -3345,12 +3388,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             popoverAnchorRef: { current: null },
         }) as React.ReactElement<{ children?: React.ReactNode }>;
 
-        // The checkout chip exposes its pickable options via `collapsedOptionsPopover`.
-        const optionIds = (getCheckoutChip()?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+        const optionIds = [
+            ...getCheckoutChipQuickActionIds(model),
+            ...getCheckoutChipExistingWorktreeIds(model),
+        ];
         expect(optionIds).toEqual([
             'current_path',
             'create_git_worktree',
-            '__existing_worktree__',
         ]);
         expect(model?.simpleProps?.selectedWorkspaceId).toBeUndefined();
         expect(model?.simpleProps?.selectedWorkspaceLocationId).toBeUndefined();
@@ -3379,7 +3423,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
         await renderScreen(React.createElement(Probe));
 
-        const getCheckoutChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
+        const getCheckoutChip = () => findSelectionListCheckoutChip(model);
         expect(getCheckoutChip()?.controlId).toBe('checkout');
         expect(getCheckoutChip()?.collapsedOptionsPopover?.title).toBe('newSession.checkout.selectTitle');
 
@@ -3388,7 +3432,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(model?.simpleProps?.selectedWorkspaceCheckoutId).toBeUndefined();
         expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
 
-        const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
+        const checkoutChip = findSelectionListCheckoutChip(model);
         expect(checkoutChip).toBeTruthy();
 
         const renderChip = () => checkoutChip.render({
@@ -3400,11 +3444,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             popoverAnchorRef: { current: null },
         }) as React.ReactElement<{ children?: React.ReactNode }>;
 
-        const optionIds = (checkoutChip?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+        const optionIds = [
+            ...getCheckoutChipQuickActionIds(model),
+            ...getCheckoutChipExistingWorktreeIds(model),
+        ];
         expect(optionIds).toEqual([
             'current_path',
             'create_git_worktree',
-            '__existing_worktree__',
         ]);
     });
 

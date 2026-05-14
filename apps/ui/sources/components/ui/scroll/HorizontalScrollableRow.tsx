@@ -1,13 +1,5 @@
 import * as React from 'react';
-import {
-    Platform,
-    ScrollView,
-    View,
-    type LayoutChangeEvent,
-    type NativeScrollEvent,
-    type NativeSyntheticEvent,
-    type ViewStyle,
-} from 'react-native';
+import { Platform, ScrollView, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type ViewStyle } from 'react-native';
 
 import { ScrollEdgeFades } from './ScrollEdgeFades';
 import { ScrollEdgeIndicators } from './ScrollEdgeIndicators';

@@ -44,6 +44,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     const lastHandledRefreshNonceRef = React.useRef(0);
     const configOptionsRef = React.useRef<readonly AcpConfigOption[] | null>(null);
     const refreshedAtRef = React.useRef<number | null>(null);
+    const lastScopeKeyRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
         configOptionsRef.current = configOptions;
@@ -88,11 +89,27 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         extraKeySuffixParts: probeContextCacheKeySuffixParts,
     }), [params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCacheKeySuffixParts, probeKey]);
 
+    const probeScopeKey = React.useMemo(() => {
+        const machineId = String(params.selectedMachineId ?? '').trim();
+        if (!machineId) return null;
+        const serverId = String(params.capabilityServerId ?? '').trim() || 'active';
+        return JSON.stringify([
+            'dynamicConfigOptionsProbeScope',
+            serverId,
+            machineId,
+            probeKey,
+            ...(probeContextCacheKeySuffixParts ?? []),
+        ]);
+    }, [params.capabilityServerId, params.selectedMachineId, probeContextCacheKeySuffixParts, probeKey]);
+
     React.useEffect(() => {
         if (!cacheKey || !agentType) {
             setConfigOptions(null);
+            configOptionsRef.current = null;
             setProbePhase('idle');
             setRefreshedAt(null);
+            refreshedAtRef.current = null;
+            lastScopeKeyRef.current = probeScopeKey;
             return;
         }
 
@@ -104,8 +121,20 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
 
         const cacheEntry = readDynamicConfigOptionsProbeCache(cacheKey);
         const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
-        setConfigOptions(cached);
-        setRefreshedAt(cacheEntry?.kind === 'success' ? cacheEntry.updatedAt : null);
+        const scopeStable = lastScopeKeyRef.current !== null && probeScopeKey !== null && lastScopeKeyRef.current === probeScopeKey;
+        lastScopeKeyRef.current = probeScopeKey;
+        if (cached) {
+            setConfigOptions(cached);
+            configOptionsRef.current = cached;
+            const cachedUpdatedAt = cacheEntry?.updatedAt ?? null;
+            setRefreshedAt(cachedUpdatedAt);
+            refreshedAtRef.current = cachedUpdatedAt;
+        } else if (!scopeStable) {
+            setConfigOptions(null);
+            configOptionsRef.current = null;
+            setRefreshedAt(null);
+            refreshedAtRef.current = null;
+        }
 
         const nowMs = Date.now();
         if (!shouldForceProbe && cacheEntry && nowMs >= 0 && nowMs < cacheEntry.expiresAt) {
@@ -204,7 +233,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTargetForProbe, cacheKey, probeContextCapabilityParams, refreshNonce]);
+    }, [agentType, backendTargetForProbe, cacheKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCapabilityParams, probeContextKey, probeScopeKey, refreshNonce]);
 
     return {
         configOptions,

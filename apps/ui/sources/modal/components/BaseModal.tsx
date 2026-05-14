@@ -1,13 +1,5 @@
 import React, { useEffect, useLayoutEffect } from 'react';
-import {
-    View,
-    TouchableWithoutFeedback,
-    Animated,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    type ViewStyle,
-} from 'react-native';
+import { View, TouchableWithoutFeedback, Animated, KeyboardAvoidingView, Platform, ScrollView, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';

@@ -1,11 +1,9 @@
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
 import { resolveSessionProjectGroupingKeyParts } from '../../domains/session/listing/sessionListProjectGroupingKeys';
 import {
-    resolveBestMachineDisplayRenderableForHost,
     getMachineDisplaySubtitle,
     type MachineDisplayRenderable,
 } from '../../domains/machines/machineDisplayRenderable';
-import { normalizeMachineHost } from '@happier-dev/protocol';
 
 export type MachineSessionListIndexImpact = Readonly<{
     needsSessionListIndexRebuild: boolean;
@@ -24,6 +22,21 @@ function areMachineDisplayRenderablesEqual(
         && (previous.metadata?.displayName ?? null) === (next.metadata?.displayName ?? null)
         && (previous.metadata?.host ?? null) === (next.metadata?.host ?? null)
         && (previous.metadata?.homeDir ?? null) === (next.metadata?.homeDir ?? null);
+}
+
+function areMachineReplacementFieldsEqual(
+    previous: MachineDisplayRenderable | null | undefined,
+    next: MachineDisplayRenderable | null | undefined,
+): boolean {
+    if (previous === next) return true;
+    if (!previous || !next) return previous === next;
+
+    return (previous.revokedAt ?? null) === (next.revokedAt ?? null)
+        && (previous.replacedByMachineId ?? null) === (next.replacedByMachineId ?? null)
+        && (previous.replacedAt ?? null) === (next.replacedAt ?? null)
+        && (previous.replacementReason ?? null) === (next.replacementReason ?? null)
+        && (previous.replacementSource ?? null) === (next.replacementSource ?? null)
+        && (previous.replacementActorUserId ?? null) === (next.replacementActorUserId ?? null);
 }
 
 export function resolveMachineSessionListIndexImpact(params: Readonly<{
@@ -45,16 +58,8 @@ export function resolveMachineSessionListIndexImpact(params: Readonly<{
         const parts = resolveSessionProjectGroupingKeyParts(session.metadata ?? null);
         if (!parts.pathKey) continue;
 
-        const previousGroupId = parts.host
-            ? `host:${parts.host}`
-            : parts.machineId
-                ? `id:${parts.machineId}`
-                : 'unknown';
-        const nextGroupId = (() => {
-            const machine = parts.machineId ? params.nextMachineDisplays[parts.machineId] : undefined;
-            const host = parts.host ?? (normalizeMachineHost(machine?.metadata?.host) || null);
-            return host ? `host:${host}` : parts.machineId ? `id:${parts.machineId}` : 'unknown';
-        })();
+        const previousGroupId = parts.machineId ? `id:${parts.machineId}` : 'unknown';
+        const nextGroupId = previousGroupId;
         referencedGroupIds.add(previousGroupId);
         referencedGroupIds.add(nextGroupId);
         if (parts.machineId) {
@@ -69,21 +74,16 @@ export function resolveMachineSessionListIndexImpact(params: Readonly<{
     }
 
     for (const groupId of referencedGroupIds) {
-        if (groupId.startsWith('host:')) {
-            const host = groupId.slice('host:'.length);
-            const previousMachine = resolveBestMachineDisplayRenderableForHost(params.previousMachineDisplays, host) ?? undefined;
-            const nextMachine = resolveBestMachineDisplayRenderableForHost(params.nextMachineDisplays, host) ?? undefined;
-            if (!areMachineDisplayRenderablesEqual(previousMachine, nextMachine)) {
-                return {
-                    needsSessionListIndexRebuild: true,
-                    needsProjectManagerUpdate: false,
-                };
-            }
-        }
         if (groupId.startsWith('id:')) {
             const machineId = groupId.slice('id:'.length);
             const previousMachine = params.previousMachineDisplays[machineId];
             const nextMachine = params.nextMachineDisplays[machineId];
+            if (!areMachineReplacementFieldsEqual(previousMachine, nextMachine)) {
+                return {
+                    needsSessionListIndexRebuild: true,
+                    needsProjectManagerUpdate: true,
+                };
+            }
             if (!areMachineDisplayRenderablesEqual(previousMachine, nextMachine)) {
                 return {
                     needsSessionListIndexRebuild: true,
@@ -92,28 +92,18 @@ export function resolveMachineSessionListIndexImpact(params: Readonly<{
             }
         }
 
-        const prevSubtitle = groupId.startsWith('host:')
+        const prevSubtitle = groupId.startsWith('id:')
             ? getMachineDisplaySubtitle(
-                resolveBestMachineDisplayRenderableForHost(params.previousMachineDisplays, groupId.slice('host:'.length)) ?? undefined,
-                groupId.slice('host:'.length),
+                params.previousMachineDisplays[groupId.slice('id:'.length)],
+                groupId.slice('id:'.length),
             )
-            : groupId.startsWith('id:')
-                ? getMachineDisplaySubtitle(
-                    params.previousMachineDisplays[groupId.slice('id:'.length)],
-                    groupId.slice('id:'.length),
-                )
-                : 'unknown';
-        const nextSubtitle = groupId.startsWith('host:')
+            : 'unknown';
+        const nextSubtitle = groupId.startsWith('id:')
             ? getMachineDisplaySubtitle(
-                resolveBestMachineDisplayRenderableForHost(params.nextMachineDisplays, groupId.slice('host:'.length)) ?? undefined,
-                groupId.slice('host:'.length),
+                params.nextMachineDisplays[groupId.slice('id:'.length)],
+                groupId.slice('id:'.length),
             )
-            : groupId.startsWith('id:')
-                ? getMachineDisplaySubtitle(
-                    params.nextMachineDisplays[groupId.slice('id:'.length)],
-                    groupId.slice('id:'.length),
-                )
-                : 'unknown';
+            : 'unknown';
         if (prevSubtitle !== nextSubtitle) {
             return {
                 needsSessionListIndexRebuild: true,

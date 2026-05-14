@@ -713,6 +713,12 @@ vi.mock('react-native-unistyles', () => {
                 secondary: { tint: '#666666', surface: '#ffffff' },
             },
             input: { background: '#F5F5F5', text: '#000000', placeholder: '#999999' },
+            segmentedControl: {
+                trackBackground: '#f0f0f0',
+                trackGradient: undefined,
+                activeBackground: '#ffffff',
+                activeGradient: undefined,
+            },
 
             //
             // Status / boxes

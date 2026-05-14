@@ -27,13 +27,11 @@ installToolCallsGroupViewCommonModuleMocks({
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
             theme: {
-                card: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                textDestructive: '#c00',
-                agentEventText: '#666',
-                success: '#0a0',
-                surfacePressedOverlay: '#eee',
+                colors: {
+                    text: {
+                        secondary: '#555555',
+                    },
+                },
             },
         });
     },
@@ -204,6 +202,23 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
 
         const previews = screen.findAllByTestId('transcript-tool-calls-preview-row');
         expect(previews).toHaveLength(15);
+    });
+
+    it('uses the neutral loading color for a running tool group header', async () => {
+        collapsedPreviewCount = 1;
+
+        const toolMessages = [
+            createToolCallMessageFixture({ id: 'm1', createdAt: 1 }),
+        ];
+
+        const screen = await renderToolCallsGroupView({
+            toolMessages,
+            status: 'running',
+            setExpanded: vi.fn(),
+        });
+
+        const spinner = screen.findAllByType('ActivityIndicator' as any)[0];
+        expect(spinner?.props?.color).toBe('#555555');
     });
 
     it('requests expansion via setExpanded(true) when tapping the +N more row', async () => {

@@ -148,6 +148,33 @@ describe('SelectableMenuResults', () => {
         expect(item.props.subtitle).toBe('Selected subtitle');
     });
 
+    it('registers row layouts for the dropdown scroll owner', async () => {
+        const registerItemLayout = vi.fn((key: string) => (event: unknown) => {
+            void key;
+            void event;
+        });
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        const screen = await renderScreen(<SelectableMenuResults
+            categories={[
+                { id: 'c1', title: '', items: [{ id: 'a', title: 'Alpha' }] },
+            ]}
+            selectedIndex={0}
+            onSelectionChange={() => {}}
+            onPressItem={() => {}}
+            rowVariant="slim"
+            registerItemLayout={registerItemLayout}
+        />);
+
+        const rowFrame = screen.findByTestId('dropdown-option-a:scroll-frame');
+        expect(rowFrame).not.toBeNull();
+        expect(typeof rowFrame?.props?.onLayout).toBe('function');
+
+        rowFrame?.props?.onLayout?.({ nativeEvent: { layout: { y: 64, height: 40 } } });
+
+        expect(registerItemLayout).toHaveBeenCalledWith('0');
+    });
+
     it('left aligns category titles with slim dropdown rows', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
 

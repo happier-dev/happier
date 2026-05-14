@@ -11,6 +11,7 @@ const useSessionSpy = vi.hoisted(() => vi.fn(() => null));
 const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() => vi.fn(() => null));
 let hasUnreadMessagesValue = false;
 let platformOs: 'ios' | 'android' | 'web' = 'web';
+let workingIndicatorStyle: 'spinner' | 'pulse' = 'spinner';
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -66,7 +67,9 @@ installSessionShellCommonModuleMocks({
             useProfile: useProfileSpy,
             useSession: useSessionSpy,
             useSessionListRenderableWithServerScope: useSessionListRenderableWithServerScopeSpy,
+            useSessionListActivityTimeLabel: () => '1m',
             useSessionListMeaningfulActivityAt: () => 60_000,
+            useSetting: (key: string) => key === 'sessionListNarrowWorkingIndicatorStyle' ? workingIndicatorStyle : undefined,
         });
     },
 });
@@ -182,6 +185,7 @@ function createSession(id: string) {
 describe('SessionItem activity time', () => {
     beforeEach(() => {
         hasUnreadMessagesValue = false;
+        workingIndicatorStyle = 'spinner';
         platformOs = 'web';
         mockSessionStatus = {
             ...defaultSessionStatus,
@@ -271,7 +275,34 @@ describe('SessionItem activity time', () => {
         expect(screen.findByType('Avatar' as any)?.props.monochrome).toBe(true);
     });
 
-    it('renders a tiny status line in very compact mode when the session has a meaningful active state', async () => {
+    it('uses readable title metrics in very compact rows', async () => {
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_compact_title')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+
+        const rowStyle = flattenStyle(screen.findByTestId('session-list-item-sess_compact_title')?.props.style);
+        expect(rowStyle.height).toBe(42);
+
+        const title = screen.findAllByType('Text').find((node) => node.props.children === 'Session');
+        const titleStyle = flattenStyle(title?.props.style);
+        expect(titleStyle.fontSize).toBe(14);
+        expect(titleStyle.lineHeight).toBe(18);
+    });
+
+    it('replaces trailing time with a spinner in very compact mode when the session is working', async () => {
         mockSessionStatus = {
             state: 'thinking',
             isConnected: true,
@@ -299,7 +330,93 @@ describe('SessionItem activity time', () => {
             />,
         );
 
-        expect(screen.getTextContent()).toContain('Working on it');
+        const spinner = screen.findByTestId('session-item-trailing-working-spinner-sess_compact_active');
+        expect(spinner).toBeTruthy();
+        expect(flattenStyle(spinner?.props.style)).toMatchObject({
+            width: 12,
+            height: 12,
+        });
+        expect(screen.findAllByType('StatusDot')).toHaveLength(0);
+        expect(screen.getTextContent()).not.toContain('Working on it');
+        expect(screen.getTextContent()).not.toContain('1m');
+    });
+
+    it('renders session status with the configured spinner and text', async () => {
+        mockSessionStatus = {
+            state: 'thinking',
+            isConnected: true,
+            statusText: 'Working on it',
+            shouldShowStatus: true,
+            statusColor: '#07f',
+            statusDotColor: '#0f0',
+            isPulsing: true,
+        };
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_status_plain')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                secondaryLineMode="status"
+            />,
+        );
+        expect(screen.findByTestId('session-list-status-pill-sess_status_plain')).toBeNull();
+        const spinner = screen.findByTestId('session-list-status-working-spinner-sess_status_plain');
+        expect(spinner).toBeTruthy();
+        expect(flattenStyle(spinner?.props.style)).toMatchObject({
+            width: 12,
+            height: 12,
+        });
+        expect(screen.findAllByType('StatusDot')).toHaveLength(0);
+        const statusText = screen.findAllByType('Text').find((node) => node.props.children === 'Working on it');
+        const flat = flattenStyle(statusText?.props.style);
+        expect(flat.color).toBe('#07f');
+        expect(flat.fontSize).toBe(12);
+        expect(flat.lineHeight).toBe(16);
+    });
+
+    it('renders session status with the configured pulsing dot and text', async () => {
+        workingIndicatorStyle = 'pulse';
+        mockSessionStatus = {
+            state: 'thinking',
+            isConnected: true,
+            statusText: 'Working on it',
+            shouldShowStatus: true,
+            statusColor: '#07f',
+            statusDotColor: '#0f0',
+            isPulsing: true,
+        };
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_status_plain_dot')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                secondaryLineMode="status"
+            />,
+        );
+
+        const dots = screen.findAllByType('StatusDot');
+        expect(dots).toHaveLength(1);
+        expect(dots[0]?.props.color).toBe('#0f0');
+        expect(dots[0]?.props.isPulsing).toBe(true);
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 
     it('does not render a subtitle in very compact mode for quiet online sessions', async () => {
@@ -331,6 +448,8 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.getTextContent()).not.toContain('online');
+        expect(screen.findAllByType('StatusDot')).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('1m');
     });
 
     it('keeps the selected row background when a session is selected', async () => {

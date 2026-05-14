@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
-import { View, ScrollView, ActivityIndicator, RefreshControl, Platform, Pressable } from 'react-native';
+import { View, ScrollView, RefreshControl, Platform, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -23,6 +23,8 @@ import {
     machineStopSession,
     machineUpdateMetadata,
     machineExecutionRunsList,
+    machineClearReplacementFromAccount,
+    machineReplaceInAccount,
     machineRevokeFromAccount,
 } from '@/sync/ops';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
@@ -64,7 +66,13 @@ import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCat
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
+import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+import {
+    MachineReplacementPickerModal,
+    type MachineReplacementPickerCandidate,
+} from '@/components/machines/MachineReplacementPickerModal';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -165,6 +173,19 @@ function resolveMachineServerIdFromList(params: Readonly<{
     return '';
 }
 
+function resolveMachineReplacementCandidateLabel(machine: Machine): string {
+    return machine.metadata?.displayName || machine.metadata?.host || machine.id;
+}
+
+function resolveMachineReplacementCandidateSubtitle(machine: Machine): string {
+    const parts = [
+        machine.metadata?.platform,
+        machine.metadata?.homeDir,
+        machine.id,
+    ].filter((part): part is string => Boolean(part));
+    return parts.join(' • ');
+}
+
 export default function MachineDetailScreen() {
     const { theme } = useUnistyles();
     const { id: machineId, serverId: serverIdParam } = useLocalSearchParams<{ id: string; serverId?: string }>();
@@ -180,6 +201,8 @@ export default function MachineDetailScreen() {
     const [isUpdatingWindowsConsoleMode, setIsUpdatingWindowsConsoleMode] = useState(false);
     const [openWindowsRemoteSessionLaunchModeMenu, setOpenWindowsRemoteSessionLaunchModeMenu] = useState(false);
     const [isRevokingMachine, setIsRevokingMachine] = useState(false);
+    const [replacingMachineId, setReplacingMachineId] = useState<string | null>(null);
+    const [isClearingReplacement, setIsClearingReplacement] = useState(false);
     const [customPath, setCustomPath] = useState('');
     const [isSpawning, setIsSpawning] = useState(false);
     const inputRef = useRef<MultiTextInputHandle>(null);
@@ -187,6 +210,11 @@ export default function MachineDetailScreen() {
     const [isHydratingMachine, setIsHydratingMachine] = useState(() => Boolean(machineId) && !machine);
     const machineHydrationRequestedRef = useRef(false);
     const isOnline = !!machine && isMachineOnline(machine);
+    const machineSpawnReadiness = useMemo(
+        () => resolveMachineExactSpawnReadiness(machine, machineId),
+        [machine, machineId],
+    );
+    const machineCanSpawn = machineSpawnReadiness.status === 'ready';
     const metadata = machine?.metadata;
     const isWindowsMachine = metadata?.platform === 'win32';
     const machineWindowsRemoteSessionLaunchMode = readMachineWindowsRemoteSessionLaunchMode(metadata);
@@ -201,6 +229,16 @@ export default function MachineDetailScreen() {
     const [terminalTmuxByMachineId, setTerminalTmuxByMachineId] = useSettingMutable('sessionTmuxByMachineId');
     const settings = useSettings();
     const machineListByServerId = useMachineListByServerId();
+    const allMachines = useMemo(() => {
+        const byId = new Map<string, Machine>();
+        for (const list of Object.values(machineListByServerId)) {
+            if (!Array.isArray(list)) continue;
+            for (const candidate of list) {
+                byId.set(candidate.id, candidate);
+            }
+        }
+        return Array.from(byId.values());
+    }, [machineListByServerId]);
     const activeServerId = getActiveServerId();
     const requestedServerId = typeof serverIdParam === 'string' ? serverIdParam.trim() : '';
     const machineListServerId = useMemo(() => resolveMachineServerIdFromList({
@@ -431,13 +469,108 @@ export default function MachineDetailScreen() {
         })(), { tag: 'MachineDetailScreen.revokeMachine' });
     }, [isRevokingMachine, machine?.revokedAt, machineId, router]);
 
+    const replacementCandidates = useMemo<MachineReplacementPickerCandidate[]>(() => {
+        if (!machineId) return [];
+        return allMachines
+            .filter((candidate) => candidate.id !== machineId)
+            .filter((candidate) => !candidate.revokedAt)
+            .filter((candidate) => !candidate.replacedByMachineId)
+            .map((candidate) => {
+                const label = resolveMachineReplacementCandidateLabel(candidate);
+                return {
+                    id: candidate.id,
+                    label,
+                    subtitle: resolveMachineReplacementCandidateSubtitle(candidate),
+                    online: isMachineOnline(candidate),
+                };
+            });
+    }, [allMachines, machineId]);
+
+    const handleReplaceMachine = useCallback((replacementMachineId: string, label: string) => {
+        if (!machineId || replacingMachineId) return;
+
+        fireAndForget((async () => {
+            const confirmed = await Modal.confirm(
+                t('machine.replacementRepair.confirmTitle'),
+                t('machine.replacementRepair.confirmBody', { machine: label }),
+                { confirmText: t('machine.replacementRepair.confirmAction') },
+            );
+            if (!confirmed) return;
+
+            setReplacingMachineId(replacementMachineId);
+            try {
+                const result = await machineReplaceInAccount({
+                    oldMachineId: machineId,
+                    replacementMachineId,
+                    confirmActiveOldMachine: machine?.active === true,
+                });
+                if (!result.ok) {
+                    await Modal.alertAsync(t('common.error'), t('machine.replacementRepair.error'));
+                    return;
+                }
+                await sync.refreshMachinesThrottled({ staleMs: 0, force: true });
+            } finally {
+                setReplacingMachineId(null);
+            }
+        })(), { tag: 'MachineDetailScreen.replaceMachine' });
+    }, [machine?.active, machineId, replacingMachineId]);
+
+    const handleOpenReplacementPicker = useCallback(() => {
+        if (!machineId || replacingMachineId || replacementCandidates.length === 0) return;
+
+        Modal.show({
+            component: MachineReplacementPickerModal,
+            props: {
+                candidates: replacementCandidates,
+                onSelectCandidate: handleReplaceMachine,
+            },
+            chrome: {
+                kind: 'card',
+                title: t('machine.replacementRepair.pickerTitle'),
+                testID: 'machine-replacement-picker-modal',
+                layout: 'fill',
+                bodyScroll: 'auto',
+                dimensions: { width: 520, maxHeightRatio: 0.86, size: 'md' },
+            },
+            closeOnBackdrop: true,
+        });
+    }, [handleReplaceMachine, machineId, replacementCandidates, replacingMachineId]);
+
+    const handleClearReplacement = useCallback(() => {
+        if (!machineId || isClearingReplacement) return;
+
+        fireAndForget((async () => {
+            const confirmed = await Modal.confirm(
+                t('machine.replacementRepair.undoConfirmTitle'),
+                t('machine.replacementRepair.undoConfirmBody'),
+                { confirmText: t('machine.replacementRepair.undoAction') },
+            );
+            if (!confirmed) return;
+
+            setIsClearingReplacement(true);
+            try {
+                const result = await machineClearReplacementFromAccount(machineId);
+                if (!result.ok) {
+                    await Modal.alertAsync(t('common.error'), t('machine.replacementRepair.error'));
+                    return;
+                }
+                await sync.refreshMachinesThrottled({ staleMs: 0, force: true });
+            } finally {
+                setIsClearingReplacement(false);
+            }
+        })(), { tag: 'MachineDetailScreen.clearMachineReplacement' });
+    }, [isClearingReplacement, machineId]);
+
     const machineSessions = useMemo(() => {
         if (!sessions || !machineId) return [];
 
         return sessions.filter(item => {
             if (typeof item === 'string') return false;
             const session = item as Session;
-            return (readMachineTargetForSession(session.id)?.machineId ?? session.metadata?.machineId) === machineId;
+            return readDisplayMachineIdForSession({
+                sessionId: session.id,
+                metadata: session.metadata ?? null,
+            }) === machineId;
         }) as Session[];
     }, [sessions, machineId]);
 
@@ -717,7 +850,7 @@ export default function MachineDetailScreen() {
         if (!machine || !machineId) return;
         try {
             const pathToUse = (customPath.trim() || '~');
-            if (!isMachineOnline(machine)) return;
+            if (!machineCanSpawn) return;
             setIsSpawning(true);
             const absolutePath = resolveAbsolutePath(pathToUse, machine?.metadata?.homeDir);
             const terminal = resolveTerminalSpawnOptions({
@@ -771,7 +904,7 @@ export default function MachineDetailScreen() {
     };
 
     const handleBrowseCustomPath = useCallback(async () => {
-        if (!machineId) return;
+        if (!machineId || !machineCanSpawn) return;
         const selected = await openMachinePathBrowserModal({
             machineId,
             serverId: activeServerId,
@@ -781,7 +914,7 @@ export default function MachineDetailScreen() {
         if (!selected) return;
         setCustomPath(formatPathRelativeToHome(selected, machine?.metadata?.homeDir));
         setTimeout(() => inputRef.current?.focus(), 50);
-    }, [activeServerId, customPath, machine?.metadata?.homeDir, machineId]);
+    }, [activeServerId, customPath, machine?.metadata?.homeDir, machineCanSpawn, machineId]);
 
     const pastUsedRelativePath = useCallback((session: Session) => {
         if (!session.metadata) return t('machine.unknownPath');
@@ -875,7 +1008,7 @@ export default function MachineDetailScreen() {
                         options={notFoundScreenOptions}
                     />
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                        <ActivityIndicator size="large" color={theme.colors.text.secondary} />
+                        <ActivitySpinner size="large" color={theme.colors.text.secondary} />
                         <Text style={[Typography.default(), { fontSize: 16, color: theme.colors.text.secondary, marginTop: 12 }]}>
                             {t('common.loading')}
                         </Text>
@@ -897,7 +1030,7 @@ export default function MachineDetailScreen() {
         );
     }
 
-    const spawnButtonDisabled = !customPath.trim() || isSpawning || !isMachineOnline(machine!);
+    const spawnButtonDisabled = !customPath.trim() || isSpawning || !machineCanSpawn;
 
     return (
         <>
@@ -916,7 +1049,7 @@ export default function MachineDetailScreen() {
                 {/* Launch section */}
                 {machine && (
                     <>
-                        {!isMachineOnline(machine) && (
+                        {!machineCanSpawn && (
                             <ItemGroup>
                                 <Item
                                     title={t('machine.offlineUnableToSpawn')}
@@ -927,11 +1060,11 @@ export default function MachineDetailScreen() {
                             </ItemGroup>
                         )}
                         <ItemGroup title={t('machine.launchNewSessionInDirectory')}>
-                        <View style={{ opacity: isMachineOnline(machine) ? 1 : 0.5 }}>
+                        <View style={{ opacity: machineCanSpawn ? 1 : 0.5 }}>
                             <View style={styles.pathInputContainer}>
                                 <PathInputBrowseButton
                                     onPress={handleBrowseCustomPath}
-                                    disabled={!isMachineOnline(machine)}
+                                    disabled={!machineCanSpawn}
                                 />
                                 <View style={[styles.pathInput, { paddingVertical: 8 }]}>
                                     <MultiTextInput
@@ -972,11 +1105,11 @@ export default function MachineDetailScreen() {
                                         key={path}
                                         title={display}
                                         leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.text.secondary} />}
-                                        onPress={isMachineOnline(machine) ? () => {
+                                        onPress={machineCanSpawn ? () => {
                                             setCustomPath(display);
                                             setTimeout(() => inputRef.current?.focus(), 50);
                                         } : undefined}
-                                        disabled={!isMachineOnline(machine)}
+                                        disabled={!machineCanSpawn}
                                         selected={isSelected}
                                         showChevron={false}
                                         showDivider={!hideDivider}
@@ -1169,7 +1302,7 @@ export default function MachineDetailScreen() {
                             disabled={isStoppingDaemon || daemonStatus === 'stopped'}
                             rightElement={
                                 isStoppingDaemon ? (
-                                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                 ) : (
                                     <Ionicons 
                                         name="stop-circle" 
@@ -1248,7 +1381,7 @@ export default function MachineDetailScreen() {
                             <Item
                                 title={t('common.loading')}
                                 showChevron={false}
-                                rightElement={<ActivityIndicator size="small" color={theme.colors.text.secondary} />}
+                                rightElement={<ActivitySpinner size="small" color={theme.colors.text.secondary} />}
                             />
                         ) : executionRunsState.status === 'error' ? (
                             <Item
@@ -1385,7 +1518,7 @@ export default function MachineDetailScreen() {
                                                         })}
                                                     >
                                                         {stoppingRunId === run.runId ? (
-                                                            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                                                            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                                         ) : (
                                                             <Ionicons name="stop-circle-outline" size={20} color={theme.colors.accent.orange} />
                                                         )}
@@ -1464,6 +1597,29 @@ export default function MachineDetailScreen() {
                 </ItemGroup>
 
                 <ItemGroup title={t('common.actions')}>
+                    {machine.replacedByMachineId ? (
+                        <Item
+                            testID="machine-replacement-repair-undo"
+                            title={t('machine.replacementRepair.undo')}
+                            subtitle={t('machine.replacementRepair.undoSubtitle', { machine: machine.replacedByMachineId })}
+                            subtitleLines={0}
+                            showChevron={false}
+                            disabled={isClearingReplacement}
+                            loading={isClearingReplacement}
+                            onPress={handleClearReplacement}
+                        />
+                    ) : replacementCandidates.length > 0 ? (
+                        <Item
+                            testID="machine-replacement-repair-open"
+                            title={t('machine.replacementRepair.replaceWithMachine')}
+                            subtitle={t('machine.replacementRepair.chooseReplacementSubtitle')}
+                            subtitleLines={0}
+                            showChevron
+                            disabled={replacingMachineId !== null}
+                            loading={replacingMachineId !== null}
+                            onPress={handleOpenReplacementPicker}
+                        />
+                    ) : null}
                     <Item
                         title={t('machine.actions.removeMachine')}
                         subtitle={machine.revokedAt ? t('machine.actions.removeMachineAlreadyRemoved') : t('machine.actions.removeMachineSubtitle')}

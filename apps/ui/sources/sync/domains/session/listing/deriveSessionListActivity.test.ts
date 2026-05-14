@@ -76,6 +76,14 @@ describe('deriveSessionListAttentionState', () => {
         })).toBe('pending');
     });
 
+    it('treats resuming sessions as active attention before generic pending activity', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: false,
+            pendingCount: 2,
+            sessionState: 'resuming',
+        })).toBe('thinking');
+    });
+
     it('uses failed attention for failed primary-session runtime issues', () => {
         expect(deriveSessionListAttentionState({
             hasUnreadMessages: true,

@@ -29,6 +29,7 @@ export type SourceControlPublishRemediationAction =
 export type SourceControlPublishRepositoryRemediationViewModel = Readonly<{
     authState: SourceControlPublishAuthState;
     action: SourceControlPublishRemediationAction | null;
+    authUnavailable: boolean;
     commitRequired: boolean;
     remoteConflict: boolean;
 }>;
@@ -49,6 +50,7 @@ export function resolveSourceControlPublishRepositoryRemediation(input: Readonly
             failure,
             disabled,
         }),
+        authUnavailable: input.selectedTarget !== null && auth?.state !== 'authenticated',
         commitRequired: isCommitRequired(input.publishFailure),
         remoteConflict: isRemoteConflict(input.publishFailure),
     };

@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import type { UnistylesThemes } from 'react-native-unistyles';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 interface ToolStatusIndicatorProps {
     tool: ToolCall;
 }
@@ -28,7 +29,7 @@ function StatusIndicator({ tool, theme }: { tool: ToolCall; theme: Theme }) {
         case 'permission_blocked':
             return <Ionicons name="remove-circle-outline" size={22} color={theme.colors.text.secondary} />;
         case 'running':
-            return <ActivityIndicator size="small" color={theme.colors.accent.blue} />;
+            return <ActivitySpinner size="small" color={theme.colors.text.secondary} />;
         case 'completed':
             return <Ionicons name="checkmark-circle" size={22} color={theme.colors.state.success.foreground} />;
         case 'error':

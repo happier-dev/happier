@@ -14,3 +14,13 @@ export {
     type SoftSlideTransitionFrameProps,
 } from './SoftSlideTransitionFrame';
 export { softSlideTransitionTokens } from './softSlideTransitionTokens';
+export { SlideTransitionFrame } from './SlideTransitionFrame';
+export { SlideTransitionSwitch } from './SlideTransitionSwitch';
+export { slideTransitionTokens } from './slideTransitionTokens';
+export type {
+    SlideLayerRole,
+    SlideTransitionDirection,
+    SlideTransitionFrameProps,
+    SlideTransitionPreset,
+    SlideTransitionSwitchProps,
+} from './_types';

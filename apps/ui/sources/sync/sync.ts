@@ -13,11 +13,7 @@ import { Session, Machine, MetadataSchema, type Metadata } from './domains/state
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { PauseController } from '@/utils/timing/pauseController';
 import {
-    assertServerReachabilityAuthenticated,
-    invalidateAllServerReachabilitySupervisors,
-    setServerReachabilityNetworkAllowed,
-    stopServerReachabilitySupervisors,
-} from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+    assertServerReachabilityAuthenticated, invalidateAllServerReachabilitySupervisors, setServerReachabilityNetworkAllowed, stopServerReachabilitySupervisors, } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { acquireEndpointSupervisor, getEndpointSupervisorForServer } from '@/sync/runtime/connectivity/endpointSupervisorPool';
 import { applyEndpointConnectivityStateToRealtimeStore } from '@/sync/runtime/connectivity/bindEndpointSupervisorToRealtimeStore';
 import { applyInitialAppStateConnectivityGate } from '@/sync/runtime/connectivity/appStateConnectivityGate';
@@ -25,22 +21,13 @@ import { createNotAuthenticatedError, isTerminalAuthError } from '@/sync/runtime
 import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/resolveSocketErrorClassification';
 import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
 import {
-    emitSyncPerformanceSummaryToConsole,
-    installSyncPerformanceTelemetryGlobal,
-    syncPerformanceTelemetry,
-} from '@/sync/runtime/syncPerformanceTelemetry';
+    emitSyncPerformanceSummaryToConsole, installSyncPerformanceTelemetryGlobal, syncPerformanceTelemetry, } from '@/sync/runtime/syncPerformanceTelemetry';
 import {
-    createJsThreadLagTelemetry,
-    type JsThreadLagTelemetry,
-} from '@/sync/runtime/performance/jsThreadLagTelemetry';
+    createJsThreadLagTelemetry, type JsThreadLagTelemetry, } from '@/sync/runtime/performance/jsThreadLagTelemetry';
 import {
-    installSyncReliabilityTelemetryGlobal,
-    syncReliabilityTelemetry,
-} from '@/sync/runtime/syncReliabilityTelemetry';
+    installSyncReliabilityTelemetryGlobal, syncReliabilityTelemetry, } from '@/sync/runtime/syncReliabilityTelemetry';
 import {
-    computeSessionMessagesPaginationUpdateFromPage,
-    type SessionMessagesPaginationState,
-} from '@/sync/runtime/sessionMessagesPagination';
+    computeSessionMessagesPaginationUpdateFromPage, type SessionMessagesPaginationState, } from '@/sync/runtime/sessionMessagesPagination';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import { MachineActivityAccumulator, type MachineActivityUpdate } from './reducer/machineActivityAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
@@ -241,6 +228,7 @@ import {
     handleNewMessageSocketUpdate,
     repairInvalidReadStateV1 as repairInvalidReadStateV1Engine,
 } from './engine/sessions/syncSessions';
+import { fetchAndApplySessionFolderAssignments } from './ops/sessionFolders';
 import { fetchAndApplySessionById } from './engine/sessions/sessionById';
 import { getForkedTranscriptSnapshotCached } from './domains/sessionFork/forkedTranscriptSnapshot';
 import {
@@ -321,6 +309,37 @@ function canUseSessionUserMessageRuntimeRpc(session: Readonly<{
     return isVersionSupported(cliVersion, MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION);
 }
 
+function wakeInactiveSessionAfterCommittedPrompt(params: Readonly<{
+    sessionId: string;
+    session: Session;
+    seq: number;
+    tag: string;
+}>): void {
+    if (params.session.active === true) return;
+
+    const machineId = typeof params.session.metadata?.machineId === 'string'
+        ? params.session.metadata.machineId.trim()
+        : '';
+    const directory = typeof params.session.metadata?.path === 'string'
+        ? params.session.metadata.path.trim()
+        : '';
+    if (!machineId || !directory) return;
+
+    const resolvedBackend = resolveSessionActionDefaultBackend({ session: params.session });
+    if (!resolvedBackend) return;
+
+    fireAndForget(
+        resumeSession({
+            sessionId: params.sessionId,
+            machineId,
+            directory,
+            backendTarget: resolvedBackend.backendTarget,
+            initialTranscriptAfterSeq: Math.max(0, params.seq - 1),
+        }),
+        { tag: params.tag },
+    );
+}
+
 function recordTerminalAuthSyncError(
     error: unknown,
     options?: Readonly<{
@@ -362,6 +381,10 @@ function resolveMessageRouteHydrationServerId(sessionId: string, explicitServerI
 
     return activeServerId;
 }
+
+export type SendPendingMessageNowResult =
+    | Readonly<{ type: 'committed' }>
+    | Readonly<{ type: 'retry_scheduled' }>;
 
 const STATIC_EXPO_PUBLIC_HAPPIER_USER_SEND_NO_ACK_AUTH_PROBE_TIMEOUT_MS =
     process.env.EXPO_PUBLIC_HAPPIER_USER_SEND_NO_ACK_AUTH_PROBE_TIMEOUT_MS;
@@ -1764,24 +1787,12 @@ class Sync {
 	            // across devices.
 	            await publishNextPromptPermissionModeIfNeeded();
 
-		            if (session.active !== true) {
-		                const machineId = typeof session.metadata?.machineId === 'string' ? session.metadata.machineId.trim() : '';
-		                const directory = typeof session.metadata?.path === 'string' ? session.metadata.path.trim() : '';
-		                if (machineId && directory) {
-                            const resolvedBackend = resolveSessionActionDefaultBackend({ session });
-                            if (resolvedBackend) {
-		                        fireAndForget(
-		                            resumeSession({
-		                                sessionId,
-		                                machineId,
-		                                directory,
-                                        backendTarget: resolvedBackend.backendTarget,
-		                            }),
-		                            { tag: 'Sync.sendMessage.wakeAfterSend' },
-		                        );
-                            }
-		                }
-		            }
+            wakeInactiveSessionAfterCommittedPrompt({
+                sessionId,
+                session,
+                seq: ack.seq,
+                tag: 'Sync.sendMessage.wakeAfterSend',
+            });
 
 	            // Server ACK means the user message is committed (or idempotently confirmed).
 	            // Do NOT clear optimistic thinking here: the agent can still be mid-turn (streaming / tool calls).
@@ -1803,7 +1814,7 @@ class Sync {
         rawRecord: unknown;
         text: string;
         displayText?: string;
-    }): Promise<void> {
+    }): Promise<SendPendingMessageNowResult> {
         storage.getState().markSessionOptimisticThinking(sessionId);
 
         const session = storage.getState().sessions[sessionId];
@@ -1881,13 +1892,13 @@ class Sync {
 
             if (!rawAck) {
                 storage.getState().clearSessionOptimisticThinking(sessionId);
-                return;
+                return { type: 'retry_scheduled' };
             }
 
             const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
             if (!parsedAck.success) {
                 this.schedulePendingMessageCommitRetry({ sessionId, localId });
-                return;
+                return { type: 'retry_scheduled' };
             }
 
             const ack = parsedAck.data;
@@ -1938,7 +1949,15 @@ class Sync {
                 }
             }
 
+            wakeInactiveSessionAfterCommittedPrompt({
+                sessionId,
+                session,
+                seq: ack.seq,
+                tag: 'Sync.sendPendingMessageNow.wakeAfterSend',
+            });
+
             // Same policy as sendMessage(): keep optimistic thinking until lifecycle clears.
+            return { type: 'committed' };
         } catch (e) {
             if (isTerminalAuthError(e)) {
                 recordTerminalAuthSyncError(e);
@@ -2714,6 +2733,16 @@ class Sync {
                 if (!shouldContinue()) return;
                 this.activeServerSessionIds = new Set(sessionIds);
                 this.hasFetchedSessionsSnapshotForActiveServer = true;
+                const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                if (serverId && sessionIds.length > 0 && this.credentials) {
+                    fireAndForget(fetchAndApplySessionFolderAssignments({
+                        credentials: this.credentials,
+                        serverId,
+                        sessionIds,
+                        fetchPolicy: 'missing',
+                        shouldContinue,
+                    }), { tag: 'Sync.fetchSessions.sessionFolderAssignments' });
+                }
             },
             prioritizeSessionIds: prioritizedHydrationIds,
             activeSessionIds: currentViewingSessionId ? [currentViewingSessionId] : [],

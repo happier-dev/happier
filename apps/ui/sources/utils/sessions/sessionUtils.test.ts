@@ -20,6 +20,8 @@ const mockStorageState: MockStorageState = {
 };
 const readMockStorageState = () => mockStorageState as unknown as StorageState;
 let storageGetStateShouldThrow = false;
+const useSessionSpy = vi.hoisted(() => vi.fn((id: string) => (mockStorageState.sessions?.[id] as Session | null | undefined) ?? null));
+const useSessionMessagesVersionSpy = vi.hoisted(() => vi.fn((id: string) => mockStorageState.sessionMessages[id]?.messagesVersion ?? 0));
 
 installSessionUtilsCommonModuleMocks({
     text: async () => {
@@ -43,10 +45,28 @@ installSessionUtilsCommonModuleMocks({
                     mockStorageState.sessionMessages = next.sessionMessages;
                 },
             },
-            useSession: (id: string) => (mockStorageState.sessions?.[id] as Session | null | undefined) ?? null,
-            useSessionMessagesVersion: (id: string) => mockStorageState.sessionMessages[id]?.messagesVersion ?? 0,
+            useSession: useSessionSpy,
+            useSessionMessagesVersion: useSessionMessagesVersionSpy,
         });
     },
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
+            colors: {
+                status: {
+                    connected: '#11AA11',
+                    connecting: '#2222AA',
+                    actionRequired: '#AA7722',
+                    disconnected: '#666666',
+                    error: '#CC3333',
+                    default: '#555555',
+                },
+            },
+        },
+    });
 });
 
 afterEach(() => {
@@ -60,6 +80,8 @@ beforeEach(async () => {
     mockStorageState.machines = {};
     mockStorageState.getProjectForSession = () => null;
     storageGetStateShouldThrow = false;
+    useSessionSpy.mockClear();
+    useSessionMessagesVersionSpy.mockClear();
     const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
     registerStorageStateReader(readMockStorageState);
 });
@@ -184,6 +206,20 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('waiting');
     });
 
+    it('uses the current theme status colors in the status hook', async () => {
+        const { useSessionStatus } = await import('./sessionUtils');
+        const hook = await renderHook(() => useSessionStatus(createBaseSession({
+            thinking: true,
+        })));
+
+        expect(hook.getCurrent()).toMatchObject({
+            state: 'thinking',
+            statusColor: '#2222AA',
+            statusDotColor: '#2222AA',
+            isPulsing: true,
+        });
+    });
+
     it('returns action_required when the agent has pending user-action requests', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({
@@ -226,6 +262,19 @@ describe('getSessionStatus', () => {
         } as any, 1_000, 0);
 
         expect(status.state).toBe('waiting');
+    });
+
+    it('returns resuming for inactive sessions with an optimistic prompt even when presence is stale online', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const status = getSessionStatus(createBaseSession({
+            active: false,
+            presence: 'online',
+            optimisticThinkingAt: 1_000,
+        }), 1_100, 0);
+
+        expect(status.state).toBe('resuming');
+        expect(status.statusText).toBe('session.resuming');
+        expect(status.isPulsing).toBe(true);
     });
 
     it('does not return permission_required when agentState.requests is stale relative to completedRequests', async () => {
@@ -355,6 +404,22 @@ describe('getSessionStatus', () => {
         const session = createBaseSession({ optimisticThinkingAt: now - 1_000 });
         const status = getSessionStatus(session, now, 0);
         expect(status.state).toBe('thinking');
+    });
+
+    it('returns resuming when an inactive session has recent optimistic send activity', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const session = createBaseSession({
+            active: false,
+            presence: now - 10_000,
+            optimisticThinkingAt: now - 1_000,
+        });
+        const status = getSessionStatus(session, now, 0);
+        expect(status.state).toBe('resuming');
+        expect(status.isConnected).toBe(true);
+        expect(status.statusText).toBe('session.resuming');
+        expect(status.shouldShowStatus).toBe(true);
+        expect(status.isPulsing).toBe(true);
     });
 
     it('does not treat stale optimisticThinkingAt as thinking', async () => {
@@ -984,6 +1049,51 @@ describe('useSessionStatus', () => {
 
         expect(hook.getCurrent().state).toBe('waiting');
     });
+
+    it('can skip transcript-version subscriptions for session-list rows', async () => {
+        const { useSessionStatus } = await import('./sessionUtils');
+
+        const hook = await renderHook(() => useSessionStatus(createBaseSession({
+            id: 's-list-row',
+            active: true,
+            thinking: true,
+            presence: 'online',
+        }), { subscribeToTranscript: false }));
+
+        expect(hook.getCurrent().state).toBe('thinking');
+        expect(useSessionMessagesVersionSpy).toHaveBeenCalledWith('s-list-row', false);
+    });
+
+    it('can skip full-session subscriptions for session-list rows', async () => {
+        const { useSessionStatus } = await import('./sessionUtils');
+
+        mockStorageState.sessions = {
+            's-list-row': createBaseSession({
+                id: 's-list-row',
+                active: true,
+                thinking: true,
+                thinkingAt: 1_000,
+                updatedAt: 1_000,
+                presence: 'online',
+            }),
+        };
+
+        const hook = await renderHook(() => useSessionStatus(createBaseSession({
+            id: 's-list-row',
+            active: true,
+            thinking: false,
+            thinkingAt: 0,
+            updatedAt: 0,
+            presence: 'online',
+        }), {
+            subscribeToSession: false,
+            subscribeToTranscript: false,
+        }));
+
+        expect(hook.getCurrent().state).toBe('waiting');
+        expect(useSessionSpy).toHaveBeenCalledWith('');
+        expect(useSessionMessagesVersionSpy).toHaveBeenCalledWith('s-list-row', false);
+    });
 });
 
 describe('shouldShowAbortButtonForSessionState', () => {
@@ -1010,6 +1120,11 @@ describe('shouldShowAbortButtonForSessionState', () => {
     it('returns false for disconnected sessions', async () => {
         const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
         expect(shouldShowAbortButtonForSessionState('disconnected')).toBe(false);
+    });
+
+    it('returns false for resuming sessions before the provider process is attached', async () => {
+        const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        expect(shouldShowAbortButtonForSessionState('resuming')).toBe(false);
     });
 });
 

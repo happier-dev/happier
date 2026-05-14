@@ -43,6 +43,7 @@ describe('planSyncActionsFromChanges', () => {
             feed: true,
             automations: false,
             pets: false,
+            sessionFolderAssignments: false,
         });
         expect(planned.kv).toEqual({ type: 'none' });
     });
@@ -78,6 +79,30 @@ describe('planSyncActionsFromChanges', () => {
         expect(planned.invalidate.sessions).toBe(true);
         expect(planned.invalidate.automations).toBe(false);
         expect(planned.kv).toEqual({ type: 'none' });
+    });
+
+    it('plans explicit session folder assignment refreshes without message catch-up', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({
+                cursor: 1,
+                kind: 'session',
+                entityId: 's1',
+                hint: { sessionFolderAssignment: true, folderId: 'folder-a' },
+            }),
+            buildChange({
+                cursor: 2,
+                kind: 'account',
+                entityId: 'session-folder-assignments',
+                hint: { sessionFolderAssignments: true, folderIds: ['folder-a'] },
+            }),
+        ]);
+
+        expect(planned.sessionIdsToCatchUp).toEqual([]);
+        expect(planned.sessionFolderAssignmentSessionIds).toEqual(['s1']);
+        expect(planned.invalidate.sessionFolderAssignments).toBe(true);
+        expect(planned.invalidate.sessions).toBe(false);
+        expect(planned.invalidate.settings).toBe(false);
+        expect(planned.invalidate.profile).toBe(false);
     });
 
     it('records unknown kinds as unsupported without treating them as safe invalidations', () => {

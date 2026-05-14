@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -7,7 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { ChangedFilesViewModeMenu } from '@/components/sessions/files/ChangedFilesViewModeMenu';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
-import { useProjectForSession, useProjectSessions, useSession, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSetting } from '@/sync/domains/state/storage';
+import { useProjectForSession, useProjectSessions, useSession, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
@@ -25,11 +25,15 @@ import { t } from '@/text';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { useDerivedSessionChangeSet } from '@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet';
+import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
+import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import {
     getPreferredChangedFilesViewMode,
     resolveChangedFilesViewMode,
     type ChangedFilesViewMode,
 } from '@/scm/scmAttribution';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 
 export type SessionScmReviewDetailsViewProps = Readonly<{
     sessionId: string;
@@ -39,6 +43,7 @@ export type SessionScmReviewDetailsViewProps = Readonly<{
 export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDetailsViewProps) => {
     const { theme } = useUnistyles();
     const pane = useAppPaneScope(props.scopeId);
+    const openDetailsTab = pane.openDetailsTab;
     const setDetailsTabState = pane.setDetailsTabState;
     const reviewTabKey = 'scmReview:working';
     const persistedReviewTabState = pane.scopeState?.details?.tabState?.[reviewTabKey] as any as
@@ -101,6 +106,10 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
             : 'atomic';
     }, [scmCommitStrategySetting]);
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
+    const reviewScope = useWorkspaceScopeForSession(props.sessionId);
+    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true && Boolean(reviewScope);
+    const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
+    const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
     const [diffRefreshToken, setDiffRefreshToken] = React.useState(0);
 
     useScmDiffCacheLimits(scmDiffCache);
@@ -216,7 +225,15 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                 { intent },
             );
         });
-    }, [pane]);
+    }, [openDetailsTab]);
+
+    const openFileDefault = React.useCallback((file: { fullPath: string }) => {
+        openFile(file.fullPath, 'default');
+    }, [openFile]);
+
+    const openFilePinned = React.useCallback((file: { fullPath: string }) => {
+        openFile(file.fullPath, 'pinned');
+    }, [openFile]);
 
     // Ensure the SCM snapshot is warm so large reviews can load diffs even if the user
     // opened the review tab before visiting Source control.
@@ -229,10 +246,33 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         setDiffRefreshToken((t) => t + 1);
     }, [props.sessionId]);
 
+    const renderReviewFileTrailingActions = React.useMemo(() => {
+        if (!scmWriteEnabled) return undefined;
+        return (file: ScmFileStatus) => (
+            <ScmChangeDiscardButton
+                sessionId={props.sessionId}
+                sessionPath={sessionPath}
+                snapshot={effectiveSnapshot ?? null}
+                scmWriteEnabled={scmWriteEnabled}
+                commitStrategy={scmCommitStrategy}
+                file={file}
+                surface="files"
+                onAfterDiscard={refreshAfterMutation}
+            />
+        );
+    }, [
+        effectiveSnapshot,
+        props.sessionId,
+        refreshAfterMutation,
+        scmCommitStrategy,
+        scmWriteEnabled,
+        sessionPath,
+    ]);
+
     if (!effectiveSnapshot && !snapshotError) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 24 }}>
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text style={{ marginTop: 12, fontSize: 12, color: theme.colors.text.secondary }}>
                     {t('common.loading')}
                 </Text>
@@ -301,31 +341,21 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                 suppressedInferredCount={changed.suppressedInferredCount}
                 maxFiles={maxFiles}
                 maxChangedLines={maxChangedLines}
-                onFilePress={(file) => openFile(file.fullPath, 'default')}
-                onFilePressPinned={(file) => openFile(file.fullPath, 'pinned')}
+                onFilePress={openFileDefault}
+                onFilePressPinned={openFilePinned}
                 initialCollapsedPaths={persistedCollapsedPaths}
                 onCollapsedPathsChange={onCollapsedPathsChange}
                 initialScrollTop={persistedScrollTop}
                 onScrollTopChange={onScrollTopChange}
-                renderFileTrailingActions={
-                    scmWriteEnabled
-                        ? (file) => (
-                            <ScmChangeDiscardButton
-                                sessionId={props.sessionId}
-                                sessionPath={sessionPath}
-                                snapshot={effectiveSnapshot ?? null}
-                                scmWriteEnabled={scmWriteEnabled}
-                                commitStrategy={scmCommitStrategy}
-                                file={file}
-                                surface="files"
-                                onAfterDiscard={refreshAfterMutation}
-                            />
-                        )
-                        : undefined
-                }
+                renderFileTrailingActions={renderReviewFileTrailingActions}
                 rowDensity="compact"
                 diffRefreshToken={diffRefreshToken}
                 providerDiffByPath={reviewProviderDiffByPath}
+                reviewCommentsEnabled={reviewCommentsEnabled}
+                reviewCommentDrafts={reviewCommentDrafts}
+                onUpsertReviewCommentDraft={reviewDraftHandlers.onUpsertReviewCommentDraft}
+                onDeleteReviewCommentDraft={reviewDraftHandlers.onDeleteReviewCommentDraft}
+                onReviewCommentError={reviewDraftHandlers.onReviewCommentError}
                 onLayout={scrollFades.onViewportLayout}
                 onContentSizeChange={scrollFades.onContentSizeChange}
                 onScroll={scrollFades.onScroll}

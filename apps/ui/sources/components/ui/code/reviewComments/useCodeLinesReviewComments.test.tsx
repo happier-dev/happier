@@ -103,6 +103,114 @@ describe('useCodeLinesReviewComments', () => {
         expect(inputStyle.boxShadow).toBeUndefined();
     });
 
+    it('opens one composer after the end line for a range comment', async () => {
+        const { useCodeLinesReviewComments } = await import('./useCodeLinesReviewComments');
+
+        const onUpsertDraft = vi.fn();
+        const lines = [
+            {
+                id: 'f:1',
+                sourceIndex: 0,
+                kind: 'file',
+                oldLine: null,
+                newLine: 1,
+                renderPrefixText: '',
+                renderCodeText: 'const a = 1;',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+            {
+                id: 'f:2',
+                sourceIndex: 1,
+                kind: 'file',
+                oldLine: null,
+                newLine: 2,
+                renderPrefixText: '',
+                renderCodeText: 'const b = 2;',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+            {
+                id: 'f:3',
+                sourceIndex: 2,
+                kind: 'file',
+                oldLine: null,
+                newLine: 3,
+                renderPrefixText: '',
+                renderCodeText: 'const c = 3;',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+        ] as any;
+
+        function Harness() {
+            const controls = useCodeLinesReviewComments({
+                enabled: true,
+                filePath: 'src/a.ts',
+                source: 'file',
+                lines,
+                drafts: [],
+                onUpsertDraft,
+            });
+
+            return (
+                <React.Fragment>
+                    <Pressable testID="add-range-trigger" onPress={() => controls!.onPressAddCommentRange([lines[0], lines[1]])} />
+                    <View testID="after-line-1">{controls!.renderAfterLine(lines[0])}</View>
+                    <View testID="after-line-2">{controls!.renderAfterLine(lines[1])}</View>
+                    <View testID="after-line-3">{controls!.renderAfterLine(lines[2])}</View>
+                </React.Fragment>
+            );
+        }
+
+        const screen = await renderScreen(<Harness />);
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('add-range-trigger');
+        });
+
+        const afterLineOne = screen.findByTestId('after-line-1');
+        const afterLineTwo = screen.findByTestId('after-line-2');
+        const afterLineThree = screen.findByTestId('after-line-3');
+        if (!afterLineOne || !afterLineTwo || !afterLineThree) {
+            throw new Error('Expected line comment containers');
+        }
+
+        expect(afterLineOne.findAllByType('TextInput' as any)).toHaveLength(0);
+        expect(afterLineTwo.findAllByType('TextInput' as any)).toHaveLength(1);
+        expect(afterLineThree.findAllByType('TextInput' as any)).toHaveLength(0);
+
+        const input = afterLineTwo.findAllByType('TextInput' as any)[0]!;
+        await act(async () => {
+            input.props.onChangeText('Review this range');
+        });
+
+        const save = afterLineTwo.findAllByType(Pressable).find((node) => (
+            node.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'Save')
+        ));
+        if (!save) throw new Error('Expected save button');
+
+        await act(async () => {
+            save.props.onPress();
+        });
+
+        expect(onUpsertDraft).toHaveBeenCalledTimes(1);
+        expect(onUpsertDraft.mock.calls[0]?.[0]).toMatchObject({
+            filePath: 'src/a.ts',
+            source: 'file',
+            body: 'Review this range',
+            anchor: {
+                kind: 'range',
+                filePath: 'src/a.ts',
+                startLine: 1,
+                endLine: 2,
+            },
+            snapshot: {
+                selectedLines: ['const a = 1;', 'const b = 2;'],
+            },
+        });
+    });
+
     it('uses themed fallbacks for the inline composer instead of raw color literals', async () => {
         const { useCodeLinesReviewComments } = await import('./useCodeLinesReviewComments');
 

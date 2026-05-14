@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -21,6 +21,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separators/TranscriptSeparatorRow';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import { PendingMessagesDragReorderList } from './PendingMessagesDragReorderList';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function getPendingText(message: PendingMessage | DiscardedPendingMessage): string {
     const raw = (message.displayText ?? message.text) ?? '';
@@ -28,12 +29,23 @@ function getPendingText(message: PendingMessage | DiscardedPendingMessage): stri
 }
 
 function canSteerNowForSession(session: ReturnType<typeof useSession>): boolean {
+    const capabilities = session?.agentState?.capabilities;
     return Boolean(
         session?.thinking
         && session?.presence === 'online'
         && (session?.agentStateVersion ?? 0) > 0
         && session?.agentState?.controlledByUser !== true
-        && session?.agentState?.capabilities?.inFlightSteer === true
+        && (capabilities?.inFlightSteerAvailable ?? capabilities?.inFlightSteer) === true
+    );
+}
+
+function supportsInFlightSteerForSession(session: ReturnType<typeof useSession>): boolean {
+    const capabilities = session?.agentState?.capabilities;
+    return Boolean(
+        session?.presence === 'online'
+        && (session?.agentStateVersion ?? 0) > 0
+        && session?.agentState?.controlledByUser !== true
+        && (capabilities?.inFlightSteerSupported ?? capabilities?.inFlightSteer) === true
     );
 }
 
@@ -46,8 +58,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const session = useSession(props.sessionId);
 
     const canSteerNow = canSteerNowForSession(session);
+    const supportsInFlightSteer = supportsInFlightSteerForSession(session);
     const pendingCount = props.pendingMessages.length;
     const discardedCount = props.discardedMessages.length;
+    const showNonSteerableNotice = Boolean(
+        pendingCount > 0
+        && session?.thinking
+        && supportsInFlightSteer
+        && !canSteerNow
+    );
 
     const maxHeightSetting = useSetting('transcriptPendingQueueMaxHeightPx');
     const maxHeightPx =
@@ -182,14 +201,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         if (!confirmed) return;
 
         try {
-            await sync.sendPendingMessageNow(props.sessionId, {
+            const result = await sync.sendPendingMessageNow(props.sessionId, {
                 localId: message.id,
                 createdAt: message.createdAt,
                 rawRecord: message.rawRecord,
                 text: message.text,
                 displayText: message.displayText,
             });
-            await deleteOrDiscardAfterSend(message.id);
+            if (result.type === 'committed') {
+                await deleteOrDiscardAfterSend(message.id);
+            }
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendFailed'));
         }
@@ -205,14 +226,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
         try {
             await sessionAbort(props.sessionId);
-            await sync.sendPendingMessageNow(props.sessionId, {
+            const result = await sync.sendPendingMessageNow(props.sessionId, {
                 localId: message.id,
                 createdAt: message.createdAt,
                 rawRecord: message.rawRecord,
                 text: message.text,
                 displayText: message.displayText,
             });
-            await deleteOrDiscardAfterSend(message.id);
+            if (result.type === 'committed') {
+                await deleteOrDiscardAfterSend(message.id);
+            }
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendFailed'));
         }
@@ -249,14 +272,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         if (!confirmed) return;
 
         try {
-            await sync.sendPendingMessageNow(props.sessionId, {
+            const result = await sync.sendPendingMessageNow(props.sessionId, {
                 localId: message.id,
                 createdAt: message.createdAt,
                 rawRecord: message.rawRecord,
                 text: message.text,
                 displayText: message.displayText,
             });
-            await sync.deleteDiscardedPendingMessage(props.sessionId, message.id);
+            if (result.type === 'committed') {
+                await sync.deleteDiscardedPendingMessage(props.sessionId, message.id);
+            }
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendDiscardedFailed'));
         }
@@ -272,14 +297,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
         try {
             await sessionAbort(props.sessionId);
-            await sync.sendPendingMessageNow(props.sessionId, {
+            const result = await sync.sendPendingMessageNow(props.sessionId, {
                 localId: message.id,
                 createdAt: message.createdAt,
                 rawRecord: message.rawRecord,
                 text: message.text,
                 displayText: message.displayText,
             });
-            await sync.deleteDiscardedPendingMessage(props.sessionId, message.id);
+            if (result.type === 'committed') {
+                await sync.deleteDiscardedPendingMessage(props.sessionId, message.id);
+            }
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendDiscardedFailed'));
         }
@@ -405,7 +432,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             ]}
                         >
                             {isAccepted ? (
-                                <ActivityIndicator
+                                <ActivitySpinner
                                     testID={`pendingMessages.acceptedIndicator:${message.id}`}
                                     size="small"
                                     color={theme.colors.text.secondary}
@@ -680,6 +707,24 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             />
                         </View>
 
+                        {showNonSteerableNotice ? (
+                            <View
+                                testID="pendingMessages.nonSteerableNotice"
+                                style={[
+                                    styles.nonSteerableNotice,
+                                    {
+                                        backgroundColor: theme.colors.surface.base,
+                                        borderColor: theme.colors.border.default,
+                                    },
+                                ]}
+                            >
+                                <Ionicons name="pause-circle-outline" size={13} color={theme.colors.text.secondary} />
+                                <Text style={[styles.nonSteerableNoticeText, { color: theme.colors.text.secondary }]}>
+                                    {t('session.pendingMessages.nonSteerableNotice')}
+                                </Text>
+                            </View>
+                        ) : null}
+
                         <View style={{ position: 'relative' }}>
                             <ScrollView
                                 testID="pendingMessages.scroll"
@@ -844,6 +889,22 @@ const styles = StyleSheet.create(() => ({
         borderRadius: 999,
         borderWidth: 1,
         zIndex: 20,
+    },
+    nonSteerableNotice: {
+        marginTop: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        borderRadius: 8,
+        borderWidth: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    nonSteerableNoticeText: {
+        flexShrink: 1,
+        fontSize: 12,
+        lineHeight: 16,
+        ...Typography.default(),
     },
     userMessageWrapper: {
         maxWidth: '100%',

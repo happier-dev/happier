@@ -12,7 +12,8 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock(
         {
                                             Platform: {
-                                                select: ({ default: value }: { default: number }) => value,
+                                                OS: 'web',
+                                                select: ({ web, default: value }: { web?: number; default: number }) => web ?? value,
                                             },
                                             View: 'View',
                                             ScrollView: 'ScrollView',
@@ -88,15 +89,15 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 describe('FileActionToolbar', () => {
     const theme = {
         colors: {
-            divider: '#ddd',
-            surface: '#fff',
-            surfaceHigh: '#f6f6f6',
+            border: { default: '#ddd' },
             input: { background: '#f2f2f2' },
-            text: '#111',
-            textSecondary: '#666',
-            textLink: '#007AFF',
-            success: '#34C759',
-            warning: '#FF9500',
+            state: {
+                neutral: { foreground: '#666' },
+                success: { foreground: '#34C759' },
+                warning: { foreground: '#FF9500' },
+            },
+            surface: { base: '#fff', inset: '#f6f6f6' },
+            text: { primary: '#111', secondary: '#666', link: '#007AFF' },
         },
     };
 
@@ -127,6 +128,10 @@ describe('FileActionToolbar', () => {
         );
 
         expect(screen.findByTestId('file-details-stage-file')).toBeTruthy();
+        const stageFileButton = screen.findByTestId('file-details-stage-file');
+        expect(stageFileButton?.props.accessibilityRole).toBe('button');
+        expect(stageFileButton?.props.accessibilityLabel).toBe('files.fileActions.stageFile');
+        expect(typeof stageFileButton?.props.onPress).toBe('function');
     });
 
     it('hides include/exclude controls when backend does not support them', async () => {
@@ -240,6 +245,7 @@ describe('FileActionToolbar', () => {
                 virtualSelectionEnabled: true,
                 isSelectedForCommit: false,
                 lineSelectionEnabled: true,
+                lineSelectionActive: true,
                 selectedLineCount: 2,
                 isApplyingStage: false,
                 inFlightScmOperation: null,
@@ -264,6 +270,359 @@ describe('FileActionToolbar', () => {
         expect(onClearSelection).toHaveBeenCalledTimes(1);
     });
 
+    it('enters line selection mode instead of selecting the whole file when line selection is available', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onStageFile = vi.fn();
+        const onStartLineSelection = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: true,
+                lineSelectionActive: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile,
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                onStartLineSelection,
+                isUntrackedFile: false,
+            }),
+        );
+
+        await screen.pressByTestIdAsync('file-details-stage-file');
+
+        expect(onStartLineSelection).toHaveBeenCalledTimes(1);
+        expect(onStageFile).not.toHaveBeenCalled();
+    });
+
+    it('starts line selection instead of selecting the whole file from combined diff mode', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onStageFile = vi.fn();
+        const onStartLineSelection = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'both',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: true,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                lineSelectionCanStart: true,
+                lineSelectionActive: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile,
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                onStartLineSelection,
+                isUntrackedFile: false,
+            }),
+        );
+
+        await screen.pressByTestIdAsync('file-details-stage-file');
+
+        expect(onStartLineSelection).toHaveBeenCalledTimes(1);
+        expect(onStageFile).not.toHaveBeenCalled();
+    });
+
+    it('uses a compact neutral affordance when Select for commit starts line-selection mode', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: true,
+                lineSelectionActive: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                onStartLineSelection: () => {},
+                isUntrackedFile: false,
+            }),
+        );
+
+        const stageButton = screen.findByTestId('file-details-stage-file');
+        expect(flattenStyle(stageButton?.props.style)).toMatchObject({
+            width: 32,
+            height: 32,
+            borderColor: theme.colors.border.default,
+        });
+        expect(screen.getTextContent()).not.toContain('files.fileActions.selectForCommit');
+    });
+
+    it('uses a compact neutral affordance for Select for commit even when only whole-file selection is available', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'file',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                lineSelectionActive: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                isUntrackedFile: false,
+            }),
+        );
+
+        const stageButton = screen.findByTestId('file-details-stage-file');
+        expect(flattenStyle(stageButton?.props.style)).toMatchObject({
+            width: 32,
+            height: 32,
+            borderColor: theme.colors.border.default,
+        });
+        expect(stageButton?.props.accessibilityLabel).toBe('files.fileActions.selectForCommit');
+        expect(screen.getTextContent()).not.toContain('files.fileActions.selectForCommit');
+    });
+
+    it('does not start line selection during web press start before the completed press action', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onStageFile = vi.fn();
+        const onStartLineSelection = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: true,
+                lineSelectionActive: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile,
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                onStartLineSelection,
+                isUntrackedFile: false,
+            }),
+        );
+
+        const stageFileButton = screen.findByTestId('file-details-stage-file');
+        expect(typeof stageFileButton?.props.onPressIn).not.toBe('function');
+
+        expect(onStartLineSelection).not.toHaveBeenCalled();
+        expect(onStageFile).not.toHaveBeenCalled();
+    });
+
+    it('does not fall back to whole-file staging when line selection entry is missing its handler', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onStageFile = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: true,
+                lineSelectionActive: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile,
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                isUntrackedFile: false,
+            }),
+        );
+
+        await screen.pressByTestIdAsync('file-details-stage-file');
+
+        expect(onStageFile).not.toHaveBeenCalled();
+    });
+
+    it('shows explicit whole-file and cancel controls while waiting for line picks', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onStageFile = vi.fn();
+        const onClearSelection = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: true,
+                lineSelectionActive: true,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile,
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection,
+                onStartLineSelection: () => {},
+                isUntrackedFile: false,
+            }),
+        );
+
+        expect(screen.findByTestId('file-details-line-selection-active')).toBeTruthy();
+        expect(screen.findByTestId('file-details-stage-file')).toBeTruthy();
+        expect(screen.findByTestId('file-details-clear-selection')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('files.fileActions.selectEntireFileForCommit');
+        expect(screen.getTextContent()).not.toContain('files.fileActions.selectForCommit');
+
+        await screen.pressByTestIdAsync('file-details-stage-file');
+        await screen.pressByTestIdAsync('file-details-clear-selection');
+
+        expect(onStageFile).toHaveBeenCalledTimes(1);
+        expect(onClearSelection).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows a visible range action while line selection is active', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onStartRangeSelection = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: true,
+                lineSelectionActive: true,
+                rangeSelectionActive: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                onStartLineSelection: () => {},
+                onStartRangeSelection,
+                isUntrackedFile: false,
+            }),
+        );
+
+        expect(screen.findByTestId('file-details-range-selection')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('files.fileActions.rangeSelection');
+
+        await screen.pressByTestIdAsync('file-details-range-selection');
+
+        expect(onStartRangeSelection).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders a review comment mode toggle when review comments are available', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onToggleCommentMode = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'markdown',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: false,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: false,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                reviewCommentsEnabled: true,
+                commentModeActive: false,
+                onToggleCommentMode,
+            }),
+        );
+
+        expect(screen.findByTestId('file-details-comment-mode')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('file-details-comment-mode');
+
+        expect(onToggleCommentMode).toHaveBeenCalledWith(true);
+    });
+
     it('uses a horizontally scrollable compact action row when selected-line controls overflow', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
 
@@ -284,6 +643,7 @@ describe('FileActionToolbar', () => {
                 virtualSelectionEnabled: true,
                 isSelectedForCommit: false,
                 lineSelectionEnabled: true,
+                lineSelectionActive: true,
                 selectedLineCount: 2,
                 isApplyingStage: false,
                 inFlightScmOperation: null,
@@ -338,6 +698,83 @@ describe('FileActionToolbar', () => {
             left: true,
             right: true,
         });
+    });
+
+    it('does not treat displayed applied line counts as active draft selection controls', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: true,
+                lineSelectionEnabled: true,
+                lineSelectionActive: false,
+                selectedLineCount: 2,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                onStartLineSelection: () => {},
+                isUntrackedFile: false,
+            }),
+        );
+
+        expect(screen.findByTestId('file-details-line-selection-active')).toBeNull();
+        expect(screen.findByTestId('file-details-apply-selected-lines')).toBeNull();
+        expect(screen.findByTestId('file-details-clear-selection')).toBeNull();
+        expect(screen.findByTestId('file-details-unstage-file')).toBeTruthy();
+        expect(screen.findByTestId('file-details-edit-line-selection')).toBeNull();
+    });
+
+    it('shows an edit affordance for an applied partial line selection', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onStartLineSelection = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: true,
+                lineSelectionEnabled: true,
+                lineSelectionActive: false,
+                selectedLineCount: 0,
+                appliedLineSelectionCount: 2,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                onStartLineSelection,
+                isUntrackedFile: false,
+            }),
+        );
+
+        expect(screen.findByTestId('file-details-apply-selected-lines')).toBeNull();
+        expect(screen.findByTestId('file-details-edit-line-selection')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('file-details-edit-line-selection');
+
+        expect(onStartLineSelection).toHaveBeenCalledTimes(1);
     });
 
     it('shows an Edit button in file mode when editor is enabled', async () => {

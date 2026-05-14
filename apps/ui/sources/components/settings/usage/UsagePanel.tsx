@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -17,6 +17,7 @@ import {
 } from '@/sync/api/account/usageAnalytics';
 import { UsageAnalyticsDashboard } from './UsageAnalyticsDashboard';
 import { SessionUsageDrilldownFrame } from './SessionUsageDrilldownFrame';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type UsagePanelProps = {
     sessionId?: string;
@@ -194,7 +195,7 @@ export const UsagePanel: React.FC<UsagePanelProps> = ({ sessionId, initialFilter
     if (loading && usageData == null) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={theme.colors.accent.blue} />
+                <ActivitySpinner size="large" color={theme.colors.accent.blue} />
                 <Text style={styles.loadingText}>{t('common.loading')}</Text>
             </View>
         );

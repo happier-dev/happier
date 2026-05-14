@@ -13,7 +13,8 @@
   "app": {
     "windows": [
       {
-        "title": "Happier (preview)"
+        "title": "Happier (preview)",
+        "dragDropEnabled": false
       }
     ]
   }

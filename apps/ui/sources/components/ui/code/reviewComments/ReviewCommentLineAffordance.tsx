@@ -1,12 +1,5 @@
 import * as React from 'react';
-import {
-    Platform,
-    Pressable,
-    View,
-    type GestureResponderEvent,
-    type StyleProp,
-    type ViewStyle,
-} from 'react-native';
+import { Platform, Pressable, View, type GestureResponderEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 

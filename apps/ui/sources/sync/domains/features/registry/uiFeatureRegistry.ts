@@ -154,6 +154,17 @@ export const UI_FEATURE_REGISTRY = {
     sessions: {
         settingsToggle: undefined,
     },
+    'sessions.folders': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            serverVisibilityScope: 'main_selection',
+            titleKey: 'settingsFeatures.expSessionsFolders',
+            subtitleKey: 'settingsFeatures.expSessionsFoldersSubtitle',
+            icon: { ioniconName: 'folder-outline', color: '#5856D6' },
+        },
+    },
     'sessions.handoff': {
         settingsToggle: undefined,
     },

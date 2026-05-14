@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Linking, Platform, ScrollView, View } from 'react-native';
+import { Linking, Platform, ScrollView, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -20,6 +20,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperationFailedDebugMessage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { layout } from '@/components/ui/layout/layout';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type LostAccessViewProps = Readonly<{
     onBack: () => void;
@@ -173,7 +174,7 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
     if (providers === null) {
         return (
             <View style={styles.loading}>
-                <ActivityIndicator size="small" />
+                <ActivitySpinner size="small" />
             </View>
         );
     }

@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { Platform } from 'react-native';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -35,11 +36,14 @@ export function useCodeSyntaxHighlighting(params: Readonly<{ filePath?: string |
         platformOS: Platform.OS,
     });
 
-    return {
-        mode,
-        language,
-        maxBytes,
-        maxLines,
-        maxLineLength,
-    };
+    return React.useMemo(
+        () => ({
+            mode,
+            language,
+            maxBytes,
+            maxLines,
+            maxLineLength,
+        }),
+        [language, maxBytes, maxLineLength, maxLines, mode],
+    );
 }

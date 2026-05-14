@@ -4,10 +4,13 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { listServerProfiles, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
 import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { resolveMachineSpawnReadiness, type MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
 export type ServerScopedMachine = Machine & Readonly<{
     serverId: string;
     serverName: string;
+    spawnReadinessStatus: MachineSpawnReadiness['status'];
 }>;
 
 export type ServerScopedMachineGroup = Readonly<{
@@ -42,6 +45,11 @@ function buildServerScopedMachine(machine: Machine, params: Readonly<{ serverId:
         ...machine,
         serverId: params.serverId,
         serverName: params.serverName,
+        spawnReadinessStatus: resolveMachineSpawnReadiness({
+            selectedMachineId: machine.id,
+            machine,
+            requireExactSpawnReadiness: true,
+        }).status,
     };
 }
 
@@ -78,7 +86,7 @@ export function useServerScopedMachineOptions(params: UseServerScopedMachineOpti
                 machineListByServerId,
             }) ?? [];
             const machines = (baseMachines ?? [])
-                .filter((machine) => !machine.revokedAt)
+                .filter(isMachineVisibleForLaunchSelection)
                 .map((machine) => buildServerScopedMachine(machine, { serverId, serverName }));
             return {
                 serverId,

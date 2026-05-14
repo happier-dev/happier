@@ -248,6 +248,43 @@ describe('CodeLineRow', () => {
         expect(onPressAddComment).toHaveBeenCalledWith(line);
     });
 
+    it('can press the whole row for non-selectable review comment lines', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+
+        const onPressLine = vi.fn();
+        const line = {
+            id: 'context-line',
+            sourceIndex: 0,
+            kind: 'context' as const,
+            oldLine: 4,
+            newLine: 4,
+            renderPrefixText: ' ',
+            renderCodeText: 'const y = 2;',
+            renderIsHeaderLine: false,
+            selectable: false,
+        };
+
+        const screen = await renderScreen(<CodeLineRow
+            line={line}
+            selected={false}
+            onPressLine={onPressLine}
+            pressLineWhenNotSelectable
+        />);
+
+        const rowPressable = screen.tree.findAll((node) => (
+            (node as any).type === 'Pressable' &&
+            typeof node.props.onPress === 'function'
+        ))[0];
+        expect(rowPressable).toBeTruthy();
+
+        act(() => {
+            rowPressable!.props.onPress();
+        });
+
+        expect(onPressLine).toHaveBeenCalledTimes(1);
+        expect(onPressLine).toHaveBeenCalledWith(line);
+    });
+
     it('uses a dedicated selection indicator when a diff line is selected for commit', async () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 

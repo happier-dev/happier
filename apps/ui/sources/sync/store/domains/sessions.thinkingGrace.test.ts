@@ -112,7 +112,7 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
 }
 
 describe('sessions domain: thinking grace', () => {
-    it('keeps thinkingGraceUntil briefly after thinking turns off (prevents UI flicker)', async () => {
+    it('starts thinkingGraceUntil only after thinking turns off (prevents UI flicker without streaming churn)', async () => {
         mockSessionsDomainBoundaries();
 
         const scheduledTimeouts = new Map<number, () => void>();
@@ -155,10 +155,8 @@ describe('sessions domain: thinking grace', () => {
             } as any,
         ]);
 
-        const graceUntil = get().sessions.s1?.thinkingGraceUntil ?? null;
-        expect(typeof graceUntil).toBe('number');
-        expect(graceUntil).toBeGreaterThan(t0);
-        expect(scheduledTimeouts.size).toBe(1);
+        expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
+        expect(scheduledTimeouts.size).toBe(0);
 
         nowMs += 250;
         const t1 = nowMs;
@@ -180,8 +178,10 @@ describe('sessions domain: thinking grace', () => {
             } as any,
         ]);
 
-        // Grace remains in place after thinking turns off.
-        expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBe(graceUntil);
+        const graceUntil = get().sessions.s1?.thinkingGraceUntil ?? null;
+        expect(typeof graceUntil).toBe('number');
+        expect(graceUntil).toBeGreaterThan(t1);
+        expect(scheduledTimeouts.size).toBe(1);
 
         // Once the grace timer expires, the marker clears without polling.
         nowMs = (graceUntil as number) + 1;

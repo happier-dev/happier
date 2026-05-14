@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 export type ItemGroupTitleAction = {
@@ -38,7 +39,7 @@ export const ItemGroupTitleWithAction = React.memo((props: ItemGroupTitleWithAct
                     disabled={props.action.disabled === true}
                 >
                     {props.action.loading === true
-                        ? <ActivityIndicator size="small" color={props.action.iconColor} />
+                        ? <ActivitySpinner size="small" color={props.action.iconColor} />
                         : <Ionicons name={props.action.iconName} size={18} color={props.action.iconColor} />}
                 </Pressable>
             ) : null}

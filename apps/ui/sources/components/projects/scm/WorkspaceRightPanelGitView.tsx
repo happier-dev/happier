@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { router } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -45,6 +45,7 @@ import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/proje
 import { executeWorkspaceScmRemoteOperation } from './executeWorkspaceScmRemoteOperation';
 import { WorkspaceSourceControlView, type WorkspaceSourceControlViewProps } from './WorkspaceSourceControlView';
 import { WorkspaceSourceControlBranchMenu } from './WorkspaceSourceControlBranchMenu';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type WorkspaceRightPanelGitViewProps = WorkspaceSourceControlViewProps & Readonly<{
     onOpenCommit?: (sha: string) => void;
@@ -420,7 +421,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     if (loading && !snapshot) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, gap: 10 }}>
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text style={{ color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.loading')}
                 </Text>

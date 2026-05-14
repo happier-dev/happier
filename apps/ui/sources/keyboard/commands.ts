@@ -1,0 +1,189 @@
+import type { KeyboardCommand, KeyboardCommandId, KeyboardCommandSettingsTitleKey, KeybindingRule } from './types';
+
+export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
+    {
+        id: 'composer.abortConfirm',
+        settingsTitleKey: 'settingsKeyboard.commands.composerAbortConfirm',
+        defaultBindings: [
+            { binding: 'Mod+.', allowInEditable: true, platforms: ['web'] },
+            { binding: 'Shift+Escape', allowInEditable: true, nativeConsumable: true, blockedSurfaces: ['web'] },
+        ],
+    },
+    {
+        id: 'composer.focus',
+        settingsTitleKey: 'settingsKeyboard.commands.composerFocus',
+        defaultBinding: { binding: 'Mod+I' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'composer.sendImmediate',
+        settingsTitleKey: 'settingsKeyboard.commands.composerSendImmediate',
+        defaultBinding: { binding: 'Mod+Enter', allowInEditable: true, nativeConsumable: true },
+    },
+    {
+        id: 'commandPalette.open',
+        settingsTitleKey: 'settingsKeyboard.commands.commandPaletteOpen',
+        defaultBindings: [
+            { binding: 'Alt+K', platforms: ['web'] },
+            { binding: 'Mod+K', blockedSurfaces: ['web'] },
+        ],
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'mode.cycle',
+        settingsTitleKey: 'settingsKeyboard.commands.modeCycle',
+        defaultBinding: { binding: 'Alt+Shift+M', allowInEditable: true },
+    },
+    {
+        id: 'permission.cycle',
+        settingsTitleKey: 'settingsKeyboard.commands.permissionCycle',
+    },
+    {
+        id: 'shortcutsHelp.open',
+        settingsTitleKey: 'settingsKeyboard.commands.shortcutsHelpOpen',
+        defaultBinding: { binding: '?' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'session.new',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionNew',
+        defaultBindings: [
+            { binding: 'Alt+N', platforms: ['web'] },
+            { binding: 'Mod+Shift+N', blockedSurfaces: ['web'] },
+        ],
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'session.mru.next',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionMruNext',
+        defaultBindings: [
+            { binding: 'Alt+PageDown', platforms: ['web'] },
+            { binding: 'Ctrl+Tab', blockedSurfaces: ['web'] },
+        ],
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'session.mru.previous',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionMruPrevious',
+        defaultBindings: [
+            { binding: 'Alt+PageUp', platforms: ['web'] },
+            { binding: 'Ctrl+Shift+Tab', blockedSurfaces: ['web'] },
+        ],
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'splitCanvas.closeLeaf',
+        settingsTitleKey: 'settingsKeyboard.commands.splitCanvasCloseLeaf',
+        defaultBinding: { binding: 'Alt+Backspace' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'splitCanvas.focusDown',
+        settingsTitleKey: 'settingsKeyboard.commands.splitCanvasFocusDown',
+        defaultBinding: { binding: 'Alt+ArrowDown', conflictScope: 'splitCanvas' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'splitCanvas.focusLeft',
+        settingsTitleKey: 'settingsKeyboard.commands.splitCanvasFocusLeft',
+        defaultBinding: { binding: 'Alt+ArrowLeft', conflictScope: 'splitCanvas' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'splitCanvas.focusRight',
+        settingsTitleKey: 'settingsKeyboard.commands.splitCanvasFocusRight',
+        defaultBinding: { binding: 'Alt+ArrowRight', conflictScope: 'splitCanvas' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'splitCanvas.focusUp',
+        settingsTitleKey: 'settingsKeyboard.commands.splitCanvasFocusUp',
+        defaultBinding: { binding: 'Alt+ArrowUp', conflictScope: 'splitCanvas' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'splitCanvas.restoreMaximize',
+        settingsTitleKey: 'settingsKeyboard.commands.splitCanvasRestoreMaximize',
+        defaultBinding: { binding: 'Escape', conflictScope: 'splitCanvas' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'splitCanvas.splitDown',
+        settingsTitleKey: 'settingsKeyboard.commands.splitCanvasSplitDown',
+        defaultBinding: { binding: 'Alt+Shift+ArrowDown', conflictScope: 'splitCanvas' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'splitCanvas.splitRight',
+        settingsTitleKey: 'settingsKeyboard.commands.splitCanvasSplitRight',
+        defaultBinding: { binding: 'Alt+Shift+Enter', conflictScope: 'splitCanvas' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'splitCanvas.toggleMaximize',
+        settingsTitleKey: 'settingsKeyboard.commands.splitCanvasToggleMaximize',
+        defaultBinding: { binding: 'Alt+M', conflictScope: 'splitCanvas' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'session.visible.next',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionVisibleNext',
+        defaultBinding: { binding: 'Alt+ArrowDown', conflictScope: 'sessionNavigation' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'session.visible.previous',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionVisiblePrevious',
+        defaultBinding: { binding: 'Alt+ArrowUp', conflictScope: 'sessionNavigation' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'settings.open',
+        settingsTitleKey: 'settingsKeyboard.commands.settingsOpen',
+    },
+    {
+        id: 'transcript.message.next',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptMessageNext',
+    },
+    {
+        id: 'transcript.message.previous',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptMessagePrevious',
+    },
+    {
+        id: 'transcript.scroll.bottom',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptScrollBottom',
+        defaultBinding: { binding: 'End' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'transcript.scroll.pageDown',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptScrollPageDown',
+        defaultBinding: { binding: 'PageDown' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'transcript.scroll.pageUp',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptScrollPageUp',
+        defaultBinding: { binding: 'PageUp' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'transcript.scroll.top',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptScrollTop',
+        defaultBinding: { binding: 'Home' },
+        when: (context) => !context.isEditableTarget,
+    },
+];
+
+export function getDefaultKeybinding(commandId: KeyboardCommandId): KeybindingRule | undefined {
+    const command = defaultKeyboardCommands.find((entry) => entry.id === commandId);
+    return command?.defaultBindings?.[0] ?? command?.defaultBinding;
+}
+
+export function getKeyboardCommandSettingsTitleKey(commandId: KeyboardCommandId): KeyboardCommandSettingsTitleKey {
+    const titleKey = defaultKeyboardCommands.find((command) => command.id === commandId)?.settingsTitleKey;
+    if (!titleKey) {
+        throw new Error(`Keyboard command ${commandId} is missing settings title metadata.`);
+    }
+    return titleKey;
+}

@@ -426,6 +426,36 @@ describe('sessions ops server-scoped routing', () => {
         }));
     });
 
+    it('prefers the replacement-aware previous session target for continue-with-replay', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-4' });
+        readMachineTargetForSessionMock.mockReturnValueOnce({
+            machineId: 'replacement-machine',
+            basePath: '/replacement/worktree',
+        });
+        const { continueSessionWithReplay } = await sessionsModulePromise;
+
+        const result = await continueSessionWithReplay({
+            machineId: 'replaced-machine',
+            directory: '/stale/worktree',
+            agent: 'claude',
+            replay: {
+                previousSessionId: 'sess-prev',
+            },
+            serverId: 'server-b',
+        } as any);
+
+        expect(result).toEqual({ type: 'success', sessionId: 'sess-4' });
+        expect(readMachineTargetForSessionMock).toHaveBeenCalledWith('sess-prev');
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'replacement-machine',
+            method: 'session.continueWithReplay',
+            serverId: 'server-b',
+            payload: expect.objectContaining({
+                directory: '/replacement/worktree',
+            }),
+        }));
+    });
+
     it('routes session fork through server-scoped machine rpc with requested server id', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess-child' });
         const { forkSession } = await sessionsModulePromise;

@@ -5,7 +5,7 @@ import {
     type AccountSettingsScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 
-import { parsePendingSettings } from './persistence';
+import { loadPendingSettings, parsePendingSettings } from './persistence';
 import { getPersistenceStorage } from './persistenceStorage';
 import { loadSettings } from './settingsPersistence';
 
@@ -47,20 +47,33 @@ export function prepareAccountSettingsScopeForActivation(scope: AccountSettingsS
     const storage = getPersistenceStorage();
     const scopedSettingsExists = typeof storage.getString(accountSettingsKey(scope)) === 'string';
     const legacySettingsExists = typeof storage.getString('settings') === 'string';
+    const scopedPendingSettingsExists = typeof storage.getString(pendingAccountSettingsKey(scope)) === 'string';
+    const legacyPendingSettingsExists = typeof storage.getString('pending-settings') === 'string';
 
     if (!scopedSettingsExists && legacySettingsExists) {
         const legacySettings = settingsParse(loadSettings().settings);
         const migratedSettings = applySettings(
             settingsDefaults,
-            pickLocalOnlyAccountSettings(legacySettings),
+            {
+                ...pickLocalOnlyAccountSettings(legacySettings),
+            },
         );
         saveAccountSettingsEnvelope(scope, migratedSettings, null);
+    }
+
+    if (!scopedPendingSettingsExists && legacyPendingSettingsExists) {
+        const legacyPendingSettings = loadPendingSettings();
+        if (Object.keys(legacyPendingSettings).length > 0) {
+            savePendingAccountSettings(scope, legacyPendingSettings);
+        }
     }
 
     if (legacySettingsExists) {
         storage.delete('settings');
     }
-    storage.delete('pending-settings');
+    if (legacyPendingSettingsExists) {
+        storage.delete('pending-settings');
+    }
 }
 
 export function loadPendingAccountSettings(scope: AccountSettingsScope): Partial<Settings> {

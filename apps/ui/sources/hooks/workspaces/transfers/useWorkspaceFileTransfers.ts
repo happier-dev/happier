@@ -254,6 +254,16 @@ export function useWorkspaceFileTransfers(params: Readonly<{
     startDownload: (input: Readonly<{ path: string; asZip: boolean }>) => Promise<TransferResult>;
     cancelDownload: () => void;
 }> {
+    const {
+        maxConcurrentUploads,
+        onAfterUploadSuccess,
+        onResolveUploadConflicts,
+        workspaceScope,
+    } = params;
+    const stableWorkspaceScope = React.useMemo(
+        () => workspaceScope,
+        [workspaceScope?.machineId, workspaceScope?.rootPath, workspaceScope?.serverId],
+    );
     const [uploadState, setUploadState] = React.useState<WorkspaceUploadState>({ status: 'idle' });
     const [downloadState, setDownloadState] = React.useState<WorkspaceDownloadState>({ status: 'idle' });
 
@@ -290,10 +300,10 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             });
 
             const plan = await buildUploadEntryPlan({
-                workspaceScope: params.workspaceScope,
+                workspaceScope: stableWorkspaceScope,
                 entries: input.entries,
                 destinationDir: input.destinationDir,
-                onResolveConflicts: params.onResolveUploadConflicts ?? null,
+                onResolveConflicts: onResolveUploadConflicts ?? null,
             });
             if (!plan.ok) {
                 setUploadState(plan.error === 'Upload canceled' ? { status: 'canceled' } : { status: 'error', error: plan.error });
@@ -310,14 +320,14 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 totalBytes,
             });
 
-            const scope = params.workspaceScope;
+            const scope = stableWorkspaceScope;
             if (!scope) {
                 setUploadState({ status: 'error', error: 'Workspace scope not available' });
                 return { ok: false, error: 'Workspace scope not available' };
             }
 
-            const maxConcurrentUploads = typeof params.maxConcurrentUploads === 'number' && Number.isFinite(params.maxConcurrentUploads)
-                ? Math.max(1, Math.floor(params.maxConcurrentUploads))
+            const resolvedMaxConcurrentUploads = typeof maxConcurrentUploads === 'number' && Number.isFinite(maxConcurrentUploads)
+                ? Math.max(1, Math.floor(maxConcurrentUploads))
                 : 3;
 
             let nextIndex = 0;
@@ -328,7 +338,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 controller.abort();
             };
 
-            const workers = Array.from({ length: Math.min(maxConcurrentUploads, tasks.length) }, () => (async () => {
+            const workers = Array.from({ length: Math.min(resolvedMaxConcurrentUploads, tasks.length) }, () => (async () => {
                 while (true) {
                     if (controller.signal.aborted) return;
                     const index = nextIndex;
@@ -432,13 +442,13 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             }
 
             setUploadState({ status: 'done', totalFiles: tasks.length, totalBytes });
-            params.onAfterUploadSuccess?.();
+            onAfterUploadSuccess?.();
             return { ok: true };
         } finally {
             uploadAbortRef.current = null;
             uploadAbortReasonRef.current = null;
         }
-    }, [params]);
+    }, [maxConcurrentUploads, onAfterUploadSuccess, onResolveUploadConflicts, stableWorkspaceScope]);
 
     const startDownload = React.useCallback(async (input: Readonly<{ path: string; asZip: boolean }>): Promise<TransferResult> => {
         if (downloadAbortRef.current) {
@@ -468,7 +478,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         };
 
         try {
-            const scope = params.workspaceScope;
+            const scope = stableWorkspaceScope;
             if (!scope) {
                 setDownloadState({ status: 'error', error: 'Workspace scope not available' });
                 return { ok: false, error: 'Workspace scope not available' };
@@ -635,14 +645,21 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             }
             downloadAbortRef.current = null;
         }
-    }, [params]);
+    }, [stableWorkspaceScope]);
 
-    return {
+    return React.useMemo(() => ({
         uploadState,
         downloadState,
         startUploads,
         cancelUploads,
         startDownload,
         cancelDownload,
-    };
+    }), [
+        cancelDownload,
+        cancelUploads,
+        downloadState,
+        startDownload,
+        startUploads,
+        uploadState,
+    ]);
 }

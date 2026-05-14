@@ -1,10 +1,11 @@
 import React from 'react';
 import { View, Platform } from 'react-native';
+import { GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 
 import { SessionItem } from './SessionItem';
 import { sessionListStyles } from './sessionListStyles';
-import { useSessionInlineDrag } from './useSessionInlineDrag';
+import { useSessionInlineDrag, type SessionInlineDragEndContext } from './useSessionInlineDrag';
 
 export type SessionListRowProps = Readonly<
     Omit<React.ComponentProps<typeof SessionItem>, 'onTogglePinned' | 'onSetTags' | 'onNativeContextMenuOpenChange'> & {
@@ -13,7 +14,20 @@ export type SessionListRowProps = Readonly<
         rowHeight: number;
         reorderEnabled: boolean;
         onDragStart: (sessionKey: string) => void;
-        onDragEnd: (sessionKey: string, groupKey: string, positionDelta: number) => void;
+        onDragEnd: (
+            sessionKey: string,
+            groupKey: string,
+            positionDelta: number,
+            context?: SessionInlineDragEndContext,
+        ) => void | Promise<void>;
+        onDragUpdate?: (event: Readonly<{
+            sessionKey: string;
+            groupKey: string;
+            positionDelta: number;
+            dataIndex: number;
+            absoluteX: number;
+            absoluteY: number;
+        }>) => void;
         onTogglePinnedSessionKey: ((sessionKey: string) => void) | null;
         onSetTagsSessionKey: ((sessionKey: string, newTags: string[]) => void) | null;
         onNativeContextMenuOpenChangeSessionKey: ((sessionKey: string, next: boolean) => void) | null;
@@ -34,6 +48,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         reorderEnabled,
         onDragStart,
         onDragEnd,
+        onDragUpdate,
         onTogglePinnedSessionKey,
         onSetTagsSessionKey,
         onNativeContextMenuOpenChangeSessionKey,
@@ -81,23 +96,26 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         onDragStart(nextSessionKey);
     }, [getCellWrapper, handleNativeContextMenuOpenChange, onDragStart]);
 
-    const handleInlineDragEnd = React.useCallback((nextSessionKey: string, nextGroupKey: string, delta: number) => {
+    const handleInlineDragEnd = React.useCallback((nextSessionKey: string, nextGroupKey: string, delta: number, context?: SessionInlineDragEndContext) => {
         const cellWrapper = getCellWrapper();
         if (cellWrapper) {
             cellWrapper.style.zIndex = '';
             cellWrapper.style.overflow = '';
         }
-        onDragEnd(nextSessionKey, nextGroupKey, delta);
+        void onDragEnd(nextSessionKey, nextGroupKey, delta, context);
     }, [getCellWrapper, onDragEnd]);
 
     const isWeb = Platform.OS === 'web';
+    const isIos = Platform.OS === 'ios';
+    const rowReorderEnabled = reorderEnabled && Platform.OS !== 'android';
     const { gesture, animatedStyle } = useSessionInlineDrag({
-        enabled: reorderEnabled,
+        enabled: rowReorderEnabled,
         sessionKey,
         groupKey,
         rowHeight,
         onDragStart: handleInlineDragStart,
         onDragEnd: handleInlineDragEnd,
+        onDragUpdate,
         dataIndex,
         totalItemCount,
         dropIndicatorIdx,
@@ -131,18 +149,27 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
             bottom: atBottom ? 0 : undefined,
         };
     });
+    const reorderGesture = rowReorderEnabled ? gesture : undefined;
+
+    const sessionItem = (
+        <SessionItem
+            {...itemProps}
+            onTogglePinned={onTogglePinnedSessionKey ? handleTogglePinned : null}
+            onSetTags={onSetTagsSessionKey && sessionKey ? handleSetTags : null}
+            onNativeContextMenuOpenChange={onNativeContextMenuOpenChangeSessionKey && sessionKey ? handleNativeContextMenuOpenChange : undefined}
+            reorderHandleGesture={isIos ? undefined : reorderGesture}
+            isBeingDragged={isBeingDragged}
+        />
+    );
 
     return (
         <Animated.View ref={wrapperRef} style={animatedStyle} pointerEvents={rowPointerEvents}>
             <Animated.View style={[styles.dropIndicator, indicatorAnimatedStyle]} pointerEvents="none" />
-            <SessionItem
-                {...itemProps}
-                onTogglePinned={onTogglePinnedSessionKey ? handleTogglePinned : null}
-                onSetTags={onSetTagsSessionKey && sessionKey ? handleSetTags : null}
-                onNativeContextMenuOpenChange={onNativeContextMenuOpenChangeSessionKey && sessionKey ? handleNativeContextMenuOpenChange : undefined}
-                reorderHandleGesture={gesture}
-                isBeingDragged={isBeingDragged}
-            />
+            {isIos && reorderGesture ? (
+                <GestureDetector gesture={reorderGesture}>
+                    {sessionItem}
+                </GestureDetector>
+            ) : sessionItem}
         </Animated.View>
     );
 });

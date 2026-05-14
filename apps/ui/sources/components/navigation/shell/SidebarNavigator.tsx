@@ -1,6 +1,6 @@
 import { useAuth } from '@/auth/context/AuthContext';
 import * as React from 'react';
-import { Stack, usePathname } from 'expo-router';
+import { Stack, usePathname, useSegments } from 'expo-router';
 import * as ExpoRouterDrawer from 'expo-router/drawer';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { SidebarView } from './SidebarView';
@@ -17,6 +17,7 @@ import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { resolvePaneFocusModeRouteScopeId } from '@/components/appShell/panes/focusMode/resolvePaneFocusModeRouteScopeId';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
+import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
 
 type DrawerNavigatorComponent = typeof ExpoRouterDrawer.Drawer;
 
@@ -40,16 +41,30 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
+function isPublicNonHomeRoute(segments: readonly string[]): boolean {
+    const normalizedSegments = segments.filter((segment) => !(segment.startsWith('(') && segment.endsWith(')')));
+    if (normalizedSegments.length === 0 || normalizedSegments[0] === 'index') {
+        return false;
+    }
+    return isPublicRouteForUnauthenticated([...segments]);
+}
+
 export const SidebarNavigator = React.memo(() => {
     const styles = stylesheet;
     const auth = useAuth();
     const pathname = usePathname();
+    const segments = useSegments();
     const isTablet = useIsTablet();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const { state: paneState, dispatch: dispatchPaneAction } = useAppPaneContext();
-    const bypassDesktopDrawerShell = Platform.OS === 'web' && isTerminalConnectWebPathname(pathname);
+    const bypassDesktopDrawerShell =
+        Platform.OS === 'web'
+        && (isTerminalConnectWebPathname(pathname) || isPublicNonHomeRoute(segments));
     const desktopDrawerEnabled = auth.isAuthenticated && isTablet && !isDesktopOverlayWindow;
-    const showPermanentDrawer = desktopDrawerEnabled;
+    const drawerShellEnabled =
+        desktopDrawerEnabled
+        || (Platform.OS === 'web' && isTablet && !isDesktopOverlayWindow);
+    const showPermanentDrawer = desktopDrawerEnabled && !bypassDesktopDrawerShell;
     const { theme } = useUnistyles();
     const { width: windowWidth } = useWindowDimensions();
     const sidebarCollapsed = useLocalSetting('sidebarCollapsed');
@@ -69,7 +84,7 @@ export const SidebarNavigator = React.memo(() => {
         && focusedPaneScopeId === routePaneScopeId
         && paneState.activeScopeId === focusedPaneScopeId
         && focusedPaneScopeHasFocusablePane;
-    const paneFocusModeChromeActive = desktopDrawerEnabled && focusedPaneScopeMatchesRoute;
+    const paneFocusModeChromeActive = showPermanentDrawer && focusedPaneScopeMatchesRoute;
 
     const stopScrollEventPropagationOnWeb = React.useCallback((event: any) => {
         // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
@@ -102,7 +117,7 @@ export const SidebarNavigator = React.memo(() => {
 
     // Calculate drawer width only when needed
     const drawerWidth = React.useMemo(() => {
-        if (!showPermanentDrawer) return 280; // default width; hidden drawers are not rendered
+        if (!showPermanentDrawer) return 0;
         if (effectiveSidebarCollapsed) return SIDEBAR_COLLAPSED_WIDTH_PX;
         return dragSidebarWidthPx ?? effectiveSidebarWidthPx;
     }, [dragSidebarWidthPx, effectiveSidebarCollapsed, effectiveSidebarWidthPx, showPermanentDrawer]);
@@ -157,10 +172,10 @@ export const SidebarNavigator = React.memo(() => {
             swipeEnabled: false,
         };
 
-        if (!desktopDrawerEnabled) {
+        if (!showPermanentDrawer) {
             return {
                 ...base,
-                drawerType: 'front' as const,
+                drawerType: 'permanent' as const,
                 drawerStyle: {
                     width: 0,
                     display: 'none' as const,
@@ -182,7 +197,7 @@ export const SidebarNavigator = React.memo(() => {
             drawerItemStyle: { display: 'none' as const },
             drawerLabelStyle: { display: 'none' as const },
         };
-    }, [desktopDrawerEnabled, showPermanentDrawer, drawerWidth, theme.colors.border.default, theme.colors.background.canvas]);
+    }, [showPermanentDrawer, drawerWidth, theme.colors.border.default, theme.colors.background.canvas]);
 
     const handleExitFocusMode = React.useCallback(() => {
         dispatchPaneAction({ type: 'exitFocusMode' });
@@ -239,7 +254,7 @@ export const SidebarNavigator = React.memo(() => {
         ]
     );
 
-    if (!desktopDrawerEnabled || bypassDesktopDrawerShell) {
+    if (!drawerShellEnabled) {
         return <Stack screenOptions={stackNavigationOptions} />;
     }
 

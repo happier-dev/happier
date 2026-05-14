@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReducer } from '@/sync/reducer/reducer';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import type { UserTextMessage } from '@/sync/domains/messages/messageTypes';
 
 installMessageViewCommonModuleMocks({
     reactNative: async () => {
@@ -213,6 +214,41 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(screen.findByTestId('message-session-media-inline-image:.happier/uploads/generated/session-1/message-1/generated.png')).toBeTruthy();
     });
 
+    it('renders failure-only session_media.v1 image rows from the dedicated media metadata slot', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message = {
+            kind: 'user-text',
+            id: 'message-media-failure-1',
+            localId: 'local-media-failure-1',
+            createdAt: 0,
+            text: 'Generated image',
+            meta: {
+                happierMedia: {
+                    kind: 'session_media.v1',
+                    payload: {
+                        media: [],
+                        failures: [{
+                            index: 0,
+                            code: 'invalid_source_file',
+                            role: 'output',
+                            category: 'generated',
+                            mediaKind: 'image',
+                            mimeType: 'image/png',
+                            name: 'generated.png',
+                            origin: { source: 'provider-generated' },
+                        }],
+                    },
+                },
+            },
+        } satisfies UserTextMessage;
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('message-session-media-inline-images')).toBeTruthy();
+        expect(screen.findByTestId('message-session-media-inline-image-unavailable:failure-0')).toBeTruthy();
+    });
+
     it('renders a structured review-comments card when meta.happier.kind is review_comments.v1', async () => {
         const { MessageView } = await import('./MessageView');
         const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');
@@ -364,6 +400,40 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         expect(screen.findByTestId('message-attachments-inline-images')).not.toBeNull();
         expect(screen.findAllByTestId('message-attachments-row')).toHaveLength(0);
+    });
+
+    it('keeps unsupported image attachments visible as file rows', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-svg-1',
+            text: [
+                'hello',
+                '',
+                'Attachments: open and analyze these files before answering.',
+                '[attachments]',
+                '- .happier/uploads/messages/m1/icon.svg (icon.svg, image/svg+xml, 12 bytes)',
+                '[/attachments]',
+            ].join('\n'),
+            displayText: 'hello',
+            meta: {
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'icon.svg', path: '.happier/uploads/messages/m1/icon.svg', mimeType: 'image/svg+xml', sizeBytes: 12, sha256: 'svg-hash' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('message-attachments-inline-images')).toBeNull();
+        expect(screen.findByTestId('message-attachments-row')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('icon.svg');
     });
 
     it('renders attachments for structured review-comment messages that carry attachment metadata', async () => {
@@ -617,6 +687,27 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         await screen.pressByTestIdAsync('review-comments-jump:c1');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/file?path=src%2Ffoo.ts&source=file&anchor=fileLine&startLine=12');
+    });
+
+    it('navigates transcript markdown range links with normalized file anchors', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            id: 'message-link-1',
+            localId: 'local-link-1',
+            createdAt: 0,
+            text: '[open range](src/foo.ts:5-8)',
+            meta: {},
+        };
+
+        routerPushSpy.mockClear();
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+        const markdownView = screen.findByType('MarkdownView' as any);
+
+        expect(markdownView.props.onLinkPress('src/foo.ts:5-8')).toBe(true);
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/file?path=src%2Ffoo.ts&source=file&anchor=range&startLine=5&endLine=8');
     });
 
     it('renders a structured review-findings card for tool-call messages when meta.happier.kind is review_findings.v1', async () => {

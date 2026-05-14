@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View, type AccessibilityState } from 'react-native';
+import { Pressable, View, type AccessibilityState } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 export type WizardSectionHeaderRowAction = {
@@ -56,7 +57,7 @@ export const WizardSectionHeaderRow = React.memo((props: WizardSectionHeaderRowP
                     accessibilityState={{ disabled: actionDisabled } satisfies AccessibilityState}
                 >
                     {props.action.loading ? (
-                        <ActivityIndicator
+                        <ActivitySpinner
                             size="small"
                             color={props.action.iconColor}
                             accessibilityLabel={props.action.loadingAccessibilityLabel}

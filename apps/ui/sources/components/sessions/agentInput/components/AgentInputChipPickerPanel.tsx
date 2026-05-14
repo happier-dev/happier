@@ -1,5 +1,5 @@
 import React from "react";
-import { useWindowDimensions, View } from "react-native";
+import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet } from "react-native-unistyles";
 
 import { Item } from "@/components/ui/lists/Item";
@@ -13,6 +13,7 @@ import { AgentInputChipPickerDetailPane } from "./AgentInputChipPickerDetailPane
 import { shouldShowAgentInputChipPickerRail } from "./AgentInputChipPickerLayout";
 import { AgentInputChipPickerOptionSelector } from "./AgentInputChipPickerOptionSelector";
 import {
+  AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT,
   agentInputChipPickerHasDetailPane,
   buildAgentInputChipPickerSections,
   type AgentInputChipPickerPanelProps,
@@ -262,7 +263,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   bodyDetailed: {
     flexDirection: "row",
     alignItems: "stretch",
-    minHeight: 272,
+    minHeight: AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT,
     backgroundColor: theme.colors.surface.base,
   },
   bodyDetailedStacked: {

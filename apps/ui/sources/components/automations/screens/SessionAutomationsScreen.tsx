@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -20,6 +20,7 @@ import { AutomationListGroup } from '@/components/automations/list/AutomationLis
 import { AutomationsEmptyState } from '@/components/automations/shared/AutomationsEmptyState';
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -81,7 +82,7 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
     if (loading) {
         return (
             <View style={styles.loading}>
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }

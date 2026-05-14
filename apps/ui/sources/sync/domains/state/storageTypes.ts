@@ -380,6 +380,8 @@ const AgentStateObjectSchema = z.object({
     capabilities: z.object({
         askUserQuestionAnswersInPermission: z.boolean().optional(),
         inFlightSteer: z.boolean().optional(),
+        inFlightSteerSupported: z.boolean().optional(),
+        inFlightSteerAvailable: z.boolean().optional(),
         localPermissionBridgeInLocalMode: z.boolean().optional(),
         permissionsInUiWhileLocal: z.boolean().optional(),
     }).nullish(),
@@ -529,6 +531,14 @@ export interface Machine {
     active: boolean;
     activeAt: number;  // Changed from lastActiveAt to activeAt for consistency
     revokedAt?: number | null;
+    replacedByMachineId?: string | null;
+    replacedAt?: number | string | null;
+    replacementReason?: string | null;
+    replacementSource?: string | null;
+    replacementActorUserId?: string | null;
+    installationId?: string | null;
+    contentPublicKeyFingerprint?: string | null;
+    spawnReadinessStatus?: 'ready' | 'missing' | 'revoked' | 'replaced' | 'offline' | 'unknown' | 'probing' | 'rpcUnavailable' | 'keyUnavailable';
     metadata: MachineMetadata | null;
     metadataVersion: number;
     daemonState: any | null;  // Dynamic daemon state (runtime info)
@@ -677,6 +687,8 @@ export interface ScmWorkingSnapshot {
             isCurrent: boolean;
             isMain?: boolean;
             isPrunable?: boolean;
+            changeCount?: number;
+            lastActivityAt?: number;
         }>;
         remotes?: ScmRemoteInfo[];
     };

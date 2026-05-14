@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, Pressable, ActivityIndicator, Platform, KeyboardAvoidingView as RNKeyboardAvoidingView } from 'react-native';
+import { View, ScrollView, Pressable, Platform, KeyboardAvoidingView as RNKeyboardAvoidingView } from 'react-native';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useRouter, Stack } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -10,6 +10,7 @@ import { sync } from '@/sync/sync';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -119,7 +120,7 @@ export default function NewArtifactScreen() {
             disabled={isSaving}
         >
             {isSaving ? (
-                <ActivityIndicator size="small" color={theme.colors.chrome.header.foreground} />
+                <ActivitySpinner size="small" color={theme.colors.chrome.header.foreground} />
             ) : (
                 <Text style={styles.headerButtonText}>
                     {t('common.save')}

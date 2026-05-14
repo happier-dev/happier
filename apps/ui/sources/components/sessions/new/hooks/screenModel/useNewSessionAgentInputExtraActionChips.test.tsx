@@ -127,16 +127,18 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
         expect(storageChip?.collapsedAction).toBeUndefined();
         expect(storageChip?.collapsedOptionsPopover?.selectedOptionId).toBe('persisted');
         expect(storageChip?.collapsedOptionsPopover?.title).toBeTruthy();
-        expect(storageChip?.collapsedOptionsPopover?.options).toHaveLength(2);
-        expect(storageChip?.collapsedOptionsPopover?.options.map((option) => option.id)).toEqual([
+        const storageOptions = storageChip?.collapsedOptionsPopover?.rootStep?.sections
+            .flatMap((section) => section.kind === 'static' ? section.options : []) ?? [];
+        expect(storageOptions).toHaveLength(2);
+        expect(storageOptions.map((option) => option.id)).toEqual([
             'persisted',
             'direct',
         ]);
-        expect(storageChip?.collapsedOptionsPopover?.options.every((option) =>
+        expect(storageOptions.every((option) =>
             typeof option.subtitle === 'string' && option.subtitle.length > 0,
         )).toBe(true);
 
-        storageChip?.collapsedOptionsPopover?.onSelect('direct');
+        storageOptions.find((option) => option.id === 'direct')?.onSelect?.();
         expect(onTranscriptStorageChange).toHaveBeenCalledWith('direct');
     });
 });

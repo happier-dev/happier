@@ -57,13 +57,14 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
 }));
 
 describe('ServerScopedMachineSelector', () => {
-    it('assigns stable item test IDs when a prefix is provided for grouped machine rows', async () => {
+    it('assigns stable option and readiness test IDs when a prefix is provided for grouped machine rows', async () => {
         const { ServerScopedMachineSelector } = await import('./ServerScopedMachineSelector');
         const machine = {
             id: 'machine-1',
             serverId: 'server-b',
             serverName: 'Server B',
             active: true,
+            spawnReadinessStatus: 'ready',
             metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
         } as ServerScopedMachine;
 
@@ -93,8 +94,48 @@ describe('ServerScopedMachineSelector', () => {
                 }));
 
         expect(capturedItemProps).toContainEqual(expect.objectContaining({
-            testID: 'new-session-machine:machine-1',
+            testID: 'new-session-machine-option:machine-1',
+            detailTestID: 'new-session-machine-readiness:machine-1',
             selected: true,
         }));
+    });
+
+    it('keeps a broadly online machine selectable while exact spawn readiness is unresolved', async () => {
+        const { ServerScopedMachineSelector } = await import('./ServerScopedMachineSelector');
+        const onSelect = vi.fn();
+        const machine = {
+            id: 'machine-unknown',
+            serverId: 'server-b',
+            serverName: 'Server B',
+            active: true,
+            spawnReadinessStatus: 'unknown',
+            metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
+        } as ServerScopedMachine;
+
+        capturedItemProps.length = 0;
+
+        await renderScreen(React.createElement(ServerScopedMachineSelector, {
+            groups: [{
+                serverId: 'server-b',
+                serverName: 'Server B',
+                loading: false,
+                signedOut: false,
+                machines: [machine],
+            }],
+            selectedMachineId: null,
+            selectedServerId: null,
+            onSelect,
+            testIdPrefix: 'new-session-machine',
+        }));
+
+        const item = capturedItemProps.find((props) => props.testID === 'new-session-machine-option:machine-unknown');
+        expect(item).toEqual(expect.objectContaining({
+            detail: 'status.online',
+            disabled: false,
+        }));
+
+        (item?.onPress as (() => void) | undefined)?.();
+
+        expect(onSelect).toHaveBeenCalledWith(machine);
     });
 });

@@ -19,7 +19,7 @@ describe('pendingQueueV2 optimistic thinking', () => {
         vi.useRealTimers();
     });
 
-    it('clears optimistic thinking after successful enqueue', async () => {
+    it('keeps optimistic thinking and marks the pending row accepted after successful enqueue', async () => {
         const sessionId = 's_test';
         storage.getState().applySessions([buildSession({ sessionId })]);
         const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 7 });
@@ -33,7 +33,36 @@ describe('pendingQueueV2 optimistic thinking', () => {
             request: async () => new Response(null, { status: 200 }),
         });
 
-        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
+        expect(storage.getState().sessionPending[sessionId]?.messages[0]?.deliveryStatus).toBe('accepted');
+    });
+
+    it('keeps a newly enqueued pending row in queued delivery state until the server accepts it', async () => {
+        const sessionId = 's_test_delivery_state';
+        storage.getState().applySessions([buildSession({ sessionId })]);
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 7 });
+
+        let acceptRequest!: () => void;
+        const requestGate = new Promise<void>((resolve) => {
+            acceptRequest = resolve;
+        });
+
+        const promise = enqueuePendingMessageV2({
+            sessionId,
+            text: 'hello',
+            encryption,
+            request: async () => {
+                await requestGate;
+                return new Response(null, { status: 200 });
+            },
+        });
+
+        expect(storage.getState().sessionPending[sessionId]?.messages[0]?.deliveryStatus).toBe('queued');
+
+        acceptRequest();
+        await promise;
+
+        expect(storage.getState().sessionPending[sessionId]?.messages[0]?.deliveryStatus).toBe('accepted');
     });
 
     it('keeps queued pending messages in call order even when earlier encryption resolves later', async () => {

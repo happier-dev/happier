@@ -221,6 +221,27 @@ function needsWarmHydration(params: {
     return false;
 }
 
+function buildMissingEncryptedDataKeySessionIdSet(
+    dataKeyHydrationPlan: ReturnType<typeof createSessionDataKeyHydrationPlan>,
+): ReadonlySet<string> {
+    const sessionIds = new Set<string>();
+    for (const entry of dataKeyHydrationPlan.entries) {
+        if (entry.shouldClearRuntimeEncryption && !entry.hasEnvelope) {
+            sessionIds.add(entry.sessionId);
+        }
+    }
+    return sessionIds;
+}
+
+function canHydrateSessionRow(params: {
+    row: SessionListRow;
+    missingEncryptedDataKeySessionIds: ReadonlySet<string>;
+    encryption: SessionListEncryption;
+}): boolean {
+    if (!params.missingEncryptedDataKeySessionIds.has(params.row.id)) return true;
+    return params.encryption.getSessionEncryption(params.row.id) != null;
+}
+
 function yieldToSessionListBackgroundHydration(delayMs: number): Promise<void> {
     const safeDelayMs = Math.max(0, Math.trunc(Number.isFinite(delayMs) ? delayMs : 0));
     return new Promise((resolve) => {
@@ -593,7 +614,9 @@ async function decryptSessionRow(
             const encryptionMode: 'e2ee' | 'plain' = row.encryptionMode === 'plain' ? 'plain' : 'e2ee';
             const sessionEncryption = encryptionMode === 'plain' ? null : encryption.getSessionEncryption(row.id);
             if (encryptionMode === 'e2ee' && !sessionEncryption) {
-                console.error(`Session encryption not found for ${row.id} - this should never happen`);
+                syncPerformanceTelemetry.count('sync.sessions.snapshot.decryptRow.missingSessionEncryption', {
+                    sessions: 1,
+                });
                 return null;
             }
 
@@ -1105,14 +1128,27 @@ export async function fetchAndApplySessions(params: {
             async () => encryption.initializeSessions(sessionKeys, encryptionScope),
         );
     }
+    const missingEncryptedDataKeySessionIds = buildMissingEncryptedDataKeySessionIdSet(dataKeyHydrationPlan);
+    if (missingEncryptedDataKeySessionIds.size > 0) {
+        syncPerformanceTelemetry.count('sync.sessions.snapshot.missingEncryptedDataKeys', {
+            sessions: missingEncryptedDataKeySessionIds.size,
+        });
+    }
 
     if (shouldApplyRenderables) {
         const hydrationPriority = orderRowsForSessionListHydration({
-            rows: sessions.filter((row) => needsWarmHydration({
-                row,
-                cachedEntry: cachedSessionListEntries[row.id],
-                existingSession: params.getExistingSession?.(row.id),
-            })),
+            rows: sessions.filter((row) =>
+                canHydrateSessionRow({
+                    row,
+                    missingEncryptedDataKeySessionIds,
+                    encryption,
+                })
+                && needsWarmHydration({
+                    row,
+                    cachedEntry: cachedSessionListEntries[row.id],
+                    existingSession: params.getExistingSession?.(row.id),
+                }),
+            ),
             requiredSessionIds: requiredHydrationSessionIds,
             routeSessionIds: params.prioritizeSessionIds,
             activeSessionIds: params.activeSessionIds,
@@ -1398,12 +1434,18 @@ export async function fetchAndApplySessions(params: {
         'sync.sessions.snapshot.decryptRows',
         { sessions: sessions.length, concurrencyLimit },
         async () => runTasksWithLimit(
-            sessions.map((row) => async () => decryptSessionRow(
-                row,
-                encryption,
-                params.serverId,
-                cachedSessionListEntries[row.id],
-            )),
+            sessions
+                .filter((row) => canHydrateSessionRow({
+                    row,
+                    missingEncryptedDataKeySessionIds,
+                    encryption,
+                }))
+                .map((row) => async () => decryptSessionRow(
+                    row,
+                    encryption,
+                    params.serverId,
+                    cachedSessionListEntries[row.id],
+                )),
             concurrencyLimit,
         ),
     );

@@ -27,6 +27,7 @@ describe('loadAppConfig (filesPreviewMaxBytes env)', () => {
         canonical: process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_MAX_BYTES,
         legacyHappy: process.env.EXPO_PUBLIC_HAPPY_FILES_PREVIEW_MAX_BYTES,
         legacyGeneric: process.env.EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES,
+        readTimeout: process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_READ_TIMEOUT_MS,
     };
 
     const restore = () => {
@@ -38,14 +39,27 @@ describe('loadAppConfig (filesPreviewMaxBytes env)', () => {
 
         if (previous.legacyGeneric === undefined) delete process.env.EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES;
         else process.env.EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES = previous.legacyGeneric;
+
+        if (previous.readTimeout === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_READ_TIMEOUT_MS;
+        else process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_READ_TIMEOUT_MS = previous.readTimeout;
     };
 
     it('uses EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_MAX_BYTES when set', () => {
         process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_MAX_BYTES = '123';
         delete process.env.EXPO_PUBLIC_HAPPY_FILES_PREVIEW_MAX_BYTES;
         delete process.env.EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES;
+        delete process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_READ_TIMEOUT_MS;
         try {
             expect(loadAppConfig().filesPreviewMaxBytes).toBe(123);
+        } finally {
+            restore();
+        }
+    });
+
+    it('uses EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_READ_TIMEOUT_MS when set', () => {
+        process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_READ_TIMEOUT_MS = '4567';
+        try {
+            expect(loadAppConfig().filesPreviewReadTimeoutMs).toBe(4567);
         } finally {
             restore();
         }

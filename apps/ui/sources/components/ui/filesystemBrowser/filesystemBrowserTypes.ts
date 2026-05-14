@@ -27,6 +27,7 @@ export type FilesystemBrowserListProps = Readonly<{
     retryRoot: () => void | Promise<void>;
     contentContainerStyle?: StyleProp<ViewStyle>;
     style?: StyleProp<ViewStyle>;
+    extraData?: unknown;
     initialNumToRender?: number;
     maxToRenderPerBatch?: number;
     windowSize?: number;

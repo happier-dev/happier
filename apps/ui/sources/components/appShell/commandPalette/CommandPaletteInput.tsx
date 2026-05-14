@@ -15,20 +15,58 @@ interface CommandPaletteInputProps {
     autoFocus?: boolean;
 }
 
+type CommandPaletteKeyEvent = Readonly<{
+    nativeEvent?: Readonly<{
+        key?: unknown;
+        code?: unknown;
+        isComposing?: unknown;
+        keyCode?: unknown;
+    }>;
+    preventDefault?: () => void;
+    stopPropagation?: () => void;
+}>;
+
+const handledCommandPaletteKeys = new Set(['ArrowDown', 'ArrowUp', 'Enter', 'Escape']);
+
+function readString(value: unknown): string | undefined {
+    return typeof value === 'string' ? value : undefined;
+}
+
+function normalizeCommandPaletteKey(key: string, code?: string): string | null {
+    switch (key) {
+        case 'Enter':
+        case 'Escape':
+        case 'ArrowUp':
+        case 'ArrowDown':
+            return key;
+        case 'Up':
+            return 'ArrowUp';
+        case 'Down':
+            return 'ArrowDown';
+        default:
+            if (code === 'ArrowUp' || code === 'ArrowDown') return code;
+            return null;
+    }
+}
+
 export function CommandPaletteInput({ value, onChangeText, onKeyPress, inputRef, placeholder, autoFocus = true }: CommandPaletteInputProps) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
 
-    const handleKeyDown = React.useCallback((e: any) => {
+    const handleKeyDown = React.useCallback((e: CommandPaletteKeyEvent) => {
         if (Platform.OS === 'web' && onKeyPress) {
-            const key = e.nativeEvent.key;
-            
-            // Handle navigation keys
-            if (['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(key)) {
-                e.preventDefault();
-                e.stopPropagation();
-                onKeyPress(key);
-            }
+            const nativeEvent = e.nativeEvent;
+            if (nativeEvent?.isComposing === true || nativeEvent?.keyCode === 229) return;
+
+            const key = normalizeCommandPaletteKey(
+                readString(nativeEvent?.key) ?? '',
+                readString(nativeEvent?.code),
+            );
+            if (!key || !handledCommandPaletteKeys.has(key)) return;
+
+            e.preventDefault?.();
+            e.stopPropagation?.();
+            onKeyPress(key);
         }
     }, [onKeyPress]);
 

@@ -88,7 +88,6 @@ const SESSION_VIEW_HEADER_PROPS_CACHE = new LruMap<string, SessionViewHeaderProp
 
 function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     sessionId: string;
-    sessionUpdatedAt: number | null | undefined;
     sessionServerId: string | null | undefined;
     sessionMachineId: string | null | undefined;
     title: string;
@@ -116,7 +115,6 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
 }>): string {
     return JSON.stringify([
         input.sessionId,
-        input.sessionUpdatedAt ?? 0,
         input.sessionServerId ?? '',
         input.sessionMachineId ?? '',
         input.title,
@@ -180,7 +178,6 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         : null;
     const cacheKey = buildSessionViewHeaderPropsCacheKey({
         sessionId: session.id,
-        sessionUpdatedAt: session.updatedAt,
         sessionServerId: session.serverId,
         sessionMachineId: session.metadata?.machineId ?? null,
         title,

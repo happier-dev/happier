@@ -51,6 +51,7 @@ export function CodeLinesView(props: CodeLinesViewProps) {
                     isDark,
                     language: syntaxLanguage,
                     lines: inputLines,
+                    colors: theme.colors,
                 });
 
                 const out: Array<readonly ShikiInlineToken[] | null> = [];
@@ -87,6 +88,7 @@ export function CodeLinesView(props: CodeLinesViewProps) {
         isDark,
         props.lines,
         shikiEnabled,
+        theme.colors,
     ]);
 
     return (

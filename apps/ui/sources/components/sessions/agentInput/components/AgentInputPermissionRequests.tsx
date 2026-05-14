@@ -5,10 +5,29 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
+import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
+import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
 import { Typography } from '@/constants/Typography';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
+
+type AttentionRequest =
+    | Readonly<{ kind: 'permission'; request: PendingPermissionRequest }>
+    | Readonly<{ kind: 'approval'; request: OpenApprovalArtifactForSession }>
+    | Readonly<{ kind: 'userAction'; request: PendingPermissionRequest }>;
+
+function getAttentionRequestKey(request: AttentionRequest): string {
+    switch (request.kind) {
+        case 'permission':
+            return request.request.id;
+        case 'approval':
+            return `approval:${request.request.artifact.id}`;
+        case 'userAction':
+            return `userAction:${request.request.id}`;
+    }
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     permissionRequestsContainer: {
@@ -42,6 +61,8 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const AgentInputPermissionRequests = React.memo(function AgentInputPermissionRequests(props: Readonly<{
     sessionId: string;
     permissionRequests: readonly PendingPermissionRequest[];
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
+    userActionRequests?: readonly PendingPermissionRequest[];
     permissionLocationsById: ReadonlyMap<string, PermissionToolCallMessageLocation | null>;
     metadata: Metadata | null;
     canApprovePermissions: boolean;
@@ -56,9 +77,18 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
     const { theme } = useUnistyles();
 
     const permissionRequests = props.disabledReason === 'inactive' ? [] : props.permissionRequests;
+    const approvalRequests = props.disabledReason === 'inactive' ? [] : props.approvalRequests ?? [];
+    const userActionRequests = props.disabledReason === 'inactive'
+        ? []
+        : (props.userActionRequests ?? []).filter((request) => request.kind === 'user_action');
+    const attentionRequests = React.useMemo<AttentionRequest[]>(() => [
+        ...permissionRequests.map((request) => ({ kind: 'permission' as const, request })),
+        ...approvalRequests.map((request) => ({ kind: 'approval' as const, request })),
+        ...userActionRequests.map((request) => ({ kind: 'userAction' as const, request })),
+    ], [approvalRequests, permissionRequests, userActionRequests]);
     const scrollStyle = React.useMemo(() => ({ maxHeight: props.maxHeightPx }), [props.maxHeightPx]);
 
-    if (permissionRequests.length === 0) {
+    if (attentionRequests.length === 0) {
         return null;
     }
 
@@ -78,23 +108,45 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                         onScroll={props.onScroll}
                     >
                         <View style={{ paddingTop: 0 }}>
-                            {permissionRequests.map((req, index) => (
-                                <React.Fragment key={req.id}>
+                            {attentionRequests.map((item, index) => (
+                                <React.Fragment key={getAttentionRequestKey(item)}>
                                     {index > 0 ? (
                                         <View
-                                            testID={`agentInput.permissionRequests.divider:${req.id}`}
+                                            testID={`agentInput.permissionRequests.divider:${getAttentionRequestKey(item)}`}
                                             style={styles.divider}
                                         />
                                     ) : null}
-                                    <PermissionPromptCard
-                                        chrome="inline"
-                                        request={req}
-                                        location={props.permissionLocationsById.get(req.id) ?? null}
-                                        sessionId={props.sessionId}
-                                        metadata={props.metadata}
-                                        canApprovePermissions={props.canApprovePermissions}
-                                        disabledReason={props.disabledReason}
-                                    />
+                                    {item.kind === 'permission' ? (
+                                        <PermissionPromptCard
+                                            chrome="inline"
+                                            request={item.request}
+                                            location={props.permissionLocationsById.get(item.request.id) ?? null}
+                                            sessionId={props.sessionId}
+                                            metadata={props.metadata}
+                                            canApprovePermissions={props.canApprovePermissions}
+                                            disabledReason={props.disabledReason}
+                                        />
+                                    ) : item.kind === 'approval' ? (
+                                        <ApprovalPromptCard
+                                            chrome="inline"
+                                            artifact={item.request.artifact}
+                                            approval={item.request.approval}
+                                            sessionId={props.sessionId}
+                                            metadata={props.metadata}
+                                            canApprovePermissions={props.canApprovePermissions}
+                                            disabledReason={props.disabledReason}
+                                        />
+                                    ) : (
+                                        <UserActionPromptCard
+                                            chrome="inline"
+                                            request={item.request}
+                                            location={props.permissionLocationsById.get(item.request.id) ?? null}
+                                            sessionId={props.sessionId}
+                                            metadata={props.metadata}
+                                            canApprovePermissions={props.canApprovePermissions}
+                                            disabledReason={props.disabledReason}
+                                        />
+                                    )}
                                 </React.Fragment>
                             ))}
                         </View>

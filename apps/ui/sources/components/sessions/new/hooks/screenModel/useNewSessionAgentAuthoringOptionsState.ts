@@ -8,6 +8,7 @@ import {
     type SessionMcpSelectionV1,
     type AcpConfigOptionOverridesV1,
 } from '@happier-dev/protocol';
+import type { RememberedEngineSelectionV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 
 type PersistedAuthoringDraftLike = Readonly<{
     modelId?: string | null;
@@ -29,6 +30,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     agentType: AgentId;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
+    rememberedEngineSelection?: RememberedEngineSelectionV1 | null;
 }>): Readonly<{
     modelMode: ModelMode;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
@@ -44,12 +46,14 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         const core = getAgentCore(params.agentType);
         const tempMode = typeof params.hydratedTempAuthoringDraft?.modelId === 'string' ? params.hydratedTempAuthoringDraft.modelId : null;
         const draftMode = typeof params.hydratedPersistedAuthoringDraft?.modelId === 'string' ? params.hydratedPersistedAuthoringDraft.modelId : null;
+        const rememberedMode = typeof params.rememberedEngineSelection?.modelId === 'string' ? params.rememberedEngineSelection.modelId : null;
         return resolveInitialNewSessionModelMode({
-            draftModelMode: tempMode ?? draftMode,
+            draftModelMode: tempMode ?? draftMode ?? rememberedMode,
             modelConfig: {
                 defaultMode: core.model.defaultMode,
                 allowedModes: core.model.allowedModes,
                 supportsFreeform: core.model.supportsFreeform,
+                dynamicProbe: core.model.dynamicProbe ?? 'auto',
             },
         }) as ModelMode;
     });
@@ -65,16 +69,26 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
             const trimmed = raw.trim();
             return trimmed.length > 0 ? trimmed : null;
         }
+        const rememberedRaw = params.rememberedEngineSelection?.acpSessionModeId;
+        if (typeof rememberedRaw === 'string') {
+            const trimmed = rememberedRaw.trim();
+            return trimmed.length > 0 ? trimmed : null;
+        }
         return null;
     });
 
     const initialSessionConfigOptionOverrides = React.useMemo(() => {
-        return params.hydratedTempAuthoringDraft?.sessionConfigOptionOverrides
-            ?? params.hydratedPersistedAuthoringDraft?.sessionConfigOptionOverrides
-            ?? null;
+        if (params.hydratedTempAuthoringDraft && 'sessionConfigOptionOverrides' in params.hydratedTempAuthoringDraft) {
+            return params.hydratedTempAuthoringDraft.sessionConfigOptionOverrides ?? null;
+        }
+        if (params.hydratedPersistedAuthoringDraft && 'sessionConfigOptionOverrides' in params.hydratedPersistedAuthoringDraft) {
+            return params.hydratedPersistedAuthoringDraft.sessionConfigOptionOverrides ?? null;
+        }
+        return params.rememberedEngineSelection?.sessionConfigOptionOverrides ?? null;
     }, [
         params.hydratedPersistedAuthoringDraft?.sessionConfigOptionOverrides,
         params.hydratedTempAuthoringDraft?.sessionConfigOptionOverrides,
+        params.rememberedEngineSelection?.sessionConfigOptionOverrides,
     ]);
 
     const [sessionConfigOptionOverrides, setSessionConfigOptionOverrides] = React.useState<AcpConfigOptionOverridesV1 | null>(

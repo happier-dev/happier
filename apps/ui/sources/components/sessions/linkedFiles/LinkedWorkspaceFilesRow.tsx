@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Pressable, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { usePathname, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 
 import { useOptionalAppPaneScopeLayout } from '@/components/appShell/panes/hooks/useAppPaneScopeLayout';
 import { Text } from '@/components/ui/text/Text';
@@ -11,7 +11,6 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { shouldRedirectDetailsRouteToPanes } from '@/components/ui/panels/shouldRedirectDetailsRouteToPanes';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useLocalSetting } from '@/sync/domains/state/storage';
-import { prepareMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 
 const LINKED_FILE_PREFIX = '@';
 
@@ -70,7 +69,6 @@ export const LinkedWorkspaceFilesRow = React.memo((props: LinkedWorkspaceFilesRo
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const router = useRouter();
-    const pathname = usePathname();
     const { width: windowWidth } = useWindowDimensions();
     const deviceType = useDeviceType();
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
@@ -89,11 +87,6 @@ export const LinkedWorkspaceFilesRow = React.memo((props: LinkedWorkspaceFilesRo
 
         if (!shouldOpenInDetailsPane) {
             const href = `/session/${props.sessionId}/file?path=${encodeURIComponent(path)}`;
-            prepareMobileSurfaceTransition({
-                currentPathname: pathname,
-                targetHref: href,
-                operation: 'push',
-            });
             router.push(href as any);
             return;
         }
@@ -104,7 +97,7 @@ export const LinkedWorkspaceFilesRow = React.memo((props: LinkedWorkspaceFilesRo
             title: getBasename(path),
             resource: { kind: 'file', path },
         });
-    }, [deviceType, multiPaneEnabled, pane, paneScopeLayout?.containerWidthPx, pathname, props.sessionId, router, windowWidth]);
+    }, [deviceType, multiPaneEnabled, pane, paneScopeLayout?.containerWidthPx, props.sessionId, router, windowWidth]);
 
     if (props.paths.length === 0) return null;
 

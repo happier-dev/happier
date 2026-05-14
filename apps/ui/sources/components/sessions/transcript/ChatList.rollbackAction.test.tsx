@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     legacyChatListHarnessState,
     renderLegacyChatList,
+    requireCapturedFlatListProps,
     resetLegacyChatListHarness,
 } from './ChatList.legacyListTestHarness';
 import { installLegacyChatListHarnessCommonModuleMocks } from './chatListLegacyHarnessTestHelpers';
@@ -201,6 +202,49 @@ describe('ChatList rollback action', () => {
         });
         expect(byId.get('a1')?.rollbackAction ?? null).toBeNull();
         expect(byId.get('t1')?.rollbackAction ?? null).toBeNull();
+
+        await screen.unmount();
+    });
+
+    it('keeps the current-session row renderer stable when message text streams', async () => {
+        legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
+            metadata: { flavor: 'codex', codexBackendMode: 'appServer' },
+        };
+
+        const messages = [
+            { kind: 'agent-text', id: 'a1', localId: null, createdAt: 1, text: 'first', seq: 1, isThinking: false },
+        ];
+        legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
+        buildChatListItemsMock.mockImplementation((opts: any) => (
+            (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
+                kind: 'message',
+                id,
+                messageId: id,
+                createdAt: opts.messagesById[id]?.createdAt ?? 0,
+                seq: opts.messagesById[id]?.seq ?? null,
+            }))
+        ));
+
+        const { ChatList } = await import('./ChatList');
+        const screen = await renderLegacyChatList();
+        const firstRenderItem = requireCapturedFlatListProps().renderItem;
+
+        legacyChatListHarnessState.sessionMessagesState = {
+            isLoaded: true,
+            messages: [
+                { ...messages[0], text: 'first and streamed more' },
+            ],
+        };
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
+            metadata: { flavor: 'codex', codexBackendMode: 'appServer' },
+        };
+
+        await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+
+        expect(requireCapturedFlatListProps().renderItem).toBe(firstRenderItem);
 
         await screen.unmount();
     });

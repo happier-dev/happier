@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
+import type { SelectionListHeightBehavior, SelectionListStep } from '@/components/ui/selectionList';
 
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
 import type { AgentInputContentPopoverConfig } from './components/AgentInputContentPopover';
@@ -42,6 +43,42 @@ export type AgentInputComposerAttachmentBadge = Readonly<{
     removeAccessibilityLabel?: string;
 }>;
 
+type AgentInputCollapsedOptionsPopoverBase = Readonly<{
+    title: string;
+    label?: string | null;
+    icon?: (tint: string) => React.ReactNode;
+    selectedOptionId?: string | null;
+    onSelect: (id: string) => void;
+    applyLabel?: string;
+    railWidth?: number;
+    railMaxWidth?: number | `${number}%`;
+    maxHeightCap?: number;
+    maxWidthCap?: number;
+    heightBehavior?: SelectionListHeightBehavior;
+}>;
+
+export type AgentInputCollapsedOptionsPopover =
+    | (AgentInputCollapsedOptionsPopoverBase & Readonly<{
+        presentation?: 'picker';
+        options: ReadonlyArray<AgentInputChipPickerOption>;
+        rootStep?: undefined;
+    }>)
+    | (AgentInputCollapsedOptionsPopoverBase & Readonly<{
+        presentation: 'list';
+        rootStep: SelectionListStep;
+        options?: undefined;
+    }>);
+
+export function hasAgentInputCollapsedOptionsPopoverContent(
+    popover: AgentInputCollapsedOptionsPopover,
+): boolean {
+    if (popover.presentation === 'list') {
+        return popover.rootStep !== undefined;
+    }
+
+    return Array.isArray(popover.options) && popover.options.length > 0;
+}
+
 export type AgentInputExtraActionChip = Readonly<{
     key: string;
     controlId?: AgentInputControlId;
@@ -55,24 +92,7 @@ export type AgentInputExtraActionChip = Readonly<{
         dismiss: () => void;
         blurInput: () => void;
     }>) => ActionListItem | ReadonlyArray<ActionListItem>;
-    collapsedOptionsPopover?: Readonly<{
-        /**
-         * Controls which popover presentation is used when this chip is opened from the collapsed
-         * action menu. Defaults to the richer chip-picker panel.
-         */
-        presentation?: 'picker' | 'simple';
-        title: string;
-        label?: string | null;
-        icon?: (tint: string) => React.ReactNode;
-        options: ReadonlyArray<AgentInputChipPickerOption>;
-        selectedOptionId?: string | null;
-        onSelect: (id: string) => void;
-        applyLabel?: string;
-        railWidth?: number;
-        railMaxWidth?: number | `${number}%`;
-        maxHeightCap?: number;
-        maxWidthCap?: number;
-    }>;
+    collapsedOptionsPopover?: AgentInputCollapsedOptionsPopover;
     collapsedContentPopover?: Readonly<{
         title: string;
         label?: string | null;

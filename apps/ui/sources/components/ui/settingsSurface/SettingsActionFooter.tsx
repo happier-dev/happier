@@ -19,8 +19,8 @@ export const SettingsActionFooter = React.memo(function SettingsActionFooter(pro
         <View style={styles.wrapper}>
             <View style={styles.container}>
                 <SplitActionButtons
-                    secondaryLabel={props.secondaryLabel ?? ''}
-                    onSecondaryPress={props.onSecondaryPress ?? (() => {})}
+                    secondaryLabel={props.secondaryLabel}
+                    onSecondaryPress={props.onSecondaryPress ?? undefined}
                     secondaryTestID={props.secondaryTestID}
                     secondaryDestructive={props.secondaryTone === 'destructive'}
                     primaryLabel={props.primaryLabel}

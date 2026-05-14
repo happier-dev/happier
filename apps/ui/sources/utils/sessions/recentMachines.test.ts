@@ -88,14 +88,14 @@ describe('getRecentMachinesFromSessions', () => {
         };
     });
 
-    it('includes machines selected through the canonical reachable target when session metadata is stale', async () => {
+    it('does not include a same-host machine when session metadata has no explicit replacement', async () => {
         const { getRecentMachinesFromSessions } = await import('./recentMachines');
 
         const targetMachine = createMachine('machine-target');
         const otherMachine = createMachine('machine-other');
         const reboundSession = createSession({
             id: 'session-1',
-            machineId: 'machine-stale',
+            machineId: 'machine-other',
             updatedAt: 25,
         });
 
@@ -112,7 +112,7 @@ describe('getRecentMachinesFromSessions', () => {
                 sessionId === 'session-1'
                     ? {
                         key: {
-                            machineId: 'machine-target',
+                            machineId: 'machine-other',
                             path: '/Users/test/workspace/rebound',
                         },
                     }
@@ -121,6 +121,46 @@ describe('getRecentMachinesFromSessions', () => {
 
         expect(getRecentMachinesFromSessions({
             machines: [otherMachine, targetMachine],
+            sessions: [reboundSession],
+        })).toEqual([otherMachine]);
+    });
+
+    it('includes the current machine for sessions from explicitly replaced machines', async () => {
+        const { getRecentMachinesFromSessions } = await import('./recentMachines');
+
+        const targetMachine = createMachine('machine-target');
+        const oldMachine = {
+            ...createMachine('machine-old'),
+            active: false,
+            replacedByMachineId: 'machine-target',
+            replacedAt: 100,
+            replacementReason: 'manual_repair',
+            replacementSource: 'manual',
+        };
+        const reboundSession = createSession({
+            id: 'session-1',
+            machineId: 'machine-old',
+            updatedAt: 25,
+        });
+
+        storageState = {
+            ...storageState,
+            machines: {
+                'machine-old': oldMachine,
+                'machine-target': targetMachine,
+            },
+            sessions: {
+                'session-1': {
+                    active: false,
+                    updatedAt: 25,
+                    metadata: reboundSession.metadata,
+                },
+            },
+            getProjectForSession: () => null,
+        };
+
+        expect(getRecentMachinesFromSessions({
+            machines: [oldMachine, targetMachine],
             sessions: [reboundSession],
         })).toEqual([targetMachine]);
     });

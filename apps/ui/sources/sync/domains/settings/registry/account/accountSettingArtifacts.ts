@@ -9,6 +9,7 @@ import { ACCOUNT_CORE_SETTING_DEFINITIONS } from './accountCoreSettingDefinition
 import { ACCOUNT_DISPLAY_SETTING_DEFINITIONS } from './accountDisplaySettingDefinitions';
 import { ACCOUNT_FEATURE_TOGGLE_SETTING_DEFINITIONS } from './accountFeatureToggleSettingDefinitions';
 import { ACCOUNT_LEGACY_SETTING_DEFINITIONS } from './accountLegacySettingDefinitions';
+import { ACCOUNT_KEYBOARD_SHORTCUT_SETTING_DEFINITIONS } from './accountKeyboardShortcutSettingDefinitions';
 import { ACCOUNT_MCP_SETTING_DEFINITIONS } from './accountMcpSettingDefinitions';
 import { ACCOUNT_PET_SETTING_DEFINITIONS } from './accountPetSettingDefinitions';
 import { ACCOUNT_PERMISSION_SETTING_DEFINITIONS } from './accountPermissionSettingDefinitions';
@@ -32,6 +33,7 @@ export const ACCOUNT_SETTING_DEFINITIONS = defineSettingDefinitions({
     ...ACCOUNT_CORE_SETTING_DEFINITIONS,
     ...ACCOUNT_DISPLAY_SETTING_DEFINITIONS,
     ...ACCOUNT_FEATURE_TOGGLE_SETTING_DEFINITIONS,
+    ...ACCOUNT_KEYBOARD_SHORTCUT_SETTING_DEFINITIONS,
     ...ACCOUNT_LEGACY_SETTING_DEFINITIONS,
     ...ACCOUNT_MCP_SETTING_DEFINITIONS,
     ...ACCOUNT_PET_SETTING_DEFINITIONS,

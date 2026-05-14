@@ -1,0 +1,569 @@
+import * as React from 'react';
+import { Platform, TextInput as RNTextInput, View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+
+import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwitch';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { t } from '@/text';
+
+import { SelectionListAnimatedHeight } from './SelectionListAnimatedHeight';
+import { SelectionListBody } from './SelectionListBody';
+import { SelectionListFooter } from './SelectionListFooter';
+import { createSelectionListKeyPressHandler } from './SelectionListKeyboardInput';
+import { synthesizeSelectionListRenderPlan } from './SelectionListRenderPlan';
+import { activateSelectionListRow } from './SelectionListRowActivation';
+import { SelectionListSearchHeader } from './SelectionListSearchHeader';
+import { selectionListTestId } from './_shared';
+import type {
+    SelectionListDynamicSection,
+    SelectionListKeyboardHint,
+    SelectionListOption,
+    SelectionListProps,
+    SelectionListStep,
+} from './_types';
+import { useSelectionListAutocomplete } from './useSelectionListAutocomplete';
+import { useSelectionListDynamicSections } from './useSelectionListDynamicSections';
+import { useSelectionListKeyboardNav } from './useSelectionListKeyboardNav';
+import { useSelectionListStepStack } from './useSelectionListStepStack';
+import { useHardwareKeyboard } from './useHardwareKeyboard';
+
+const stylesheet = StyleSheet.create((theme) => ({
+    container: {
+        backgroundColor: theme.colors.surface.base,
+        flexDirection: 'column',
+    },
+    content: {
+        // RUX-1 Issue 7: the content zone (body + cross-slide) MUST be the
+        // flex grower of the column so the persistent footer below it stays
+        // pinned to the bottom of the popover regardless of how tall the
+        // body's contents grow. Without `flex: 1` and `minHeight: 0`, a
+        // body that exceeds maxHeight pushes the footer off-screen and
+        // forces the user to scroll to the very bottom of the list to see
+        // the keyboard hints.
+        flexDirection: 'column',
+        flex: 1,
+        minHeight: 0,
+    },
+}));
+
+const IS_WEB = Platform.OS === 'web';
+
+/**
+ * SelectionList — top-level orchestrator with three-zone composition:
+ *  - Zone 1: persistent `SelectionListSearchHeader` (outside the cross-slide)
+ *  - Zone 2: step body wrapped in `SlideTransitionSwitch` (Lane L's discrete adapter)
+ *  - Zone 3: persistent `SelectionListFooter` (outside the cross-slide)
+ *
+ * Owns:
+ *  - the step stack (`useSelectionListStepStack`)
+ *  - the input value
+ *  - the keyboard nav (`useSelectionListKeyboardNav`) and Escape routing
+ *  - keyboard-hints visibility (`useHasHardwareKeyboard` default)
+ *
+ * Does NOT own:
+ *  - animation choreography (delegated to `SlideTransitionSwitch`)
+ *  - the leading-slot search↔back swap (owned by `SelectionListSearchHeader`)
+ *  - per-row press behaviour (owned by `Item`)
+ *  - render-plan synthesis (`synthesizeSelectionListRenderPlan` in
+ *    `SelectionListRenderPlan.ts`)
+ *  - body rendering (`SelectionListBody` in `SelectionListBody.tsx`)
+ *  - per-row activation (`activateSelectionListRow` in
+ *    `SelectionListRowActivation.ts`)
+ *  - per-event key dispatch (`createSelectionListKeyPressHandler` in
+ *    `SelectionListKeyboardInput.ts`)
+ *
+ * R14 split this orchestrator from a 1042-line monolith into ~300 lines of
+ * pure composition. The body, the render-plan synthesizer, the row-activation
+ * contract, and the key-press dispatch all live in adjacent modules with their
+ * own unit tests.
+ */
+export function SelectionList(props: SelectionListProps): React.ReactElement {
+    const styles = stylesheet;
+
+    const stack = useSelectionListStepStack(props.rootStep);
+
+    // Phase 1A — rootStep prop-change resync. The step stack reducer initializes
+    // from the FIRST `rootStep` and never re-reads the prop, so a parent that
+    // swaps `rootStep` after mount would see the orchestrator stuck on the old
+    // root. Drain the stack back to the new root identity whenever the prop
+    // changes (keeps a clean back-chip state and matches expectations of the
+    // declarative API).
+    const lastRootStepRef = React.useRef<SelectionListStep>(props.rootStep);
+    React.useEffect(() => {
+        if (lastRootStepRef.current === props.rootStep) return;
+        lastRootStepRef.current = props.rootStep;
+        stack.resetTo(props.rootStep);
+    }, [props.rootStep, stack]);
+    const detectedKeyboard = useHardwareKeyboard();
+    const detectedReducedMotion = useReducedMotionPreference();
+    const keyboardHintsEnabled = props.keyboardHintsEnabled ?? detectedKeyboard;
+
+    const isInputControlled = props.inputValue !== undefined;
+    const [uncontrolledInputValue, setUncontrolledInputValue] = React.useState<string>('');
+    const inputValue = isInputControlled ? (props.inputValue ?? '') : uncontrolledInputValue;
+    const setInputValue = React.useCallback(
+        (next: string) => {
+            if (!isInputControlled) setUncontrolledInputValue(next);
+            props.onChangeInputValue?.(next);
+        },
+        [isInputControlled, props.onChangeInputValue],
+    );
+
+    const currentStep = stack.currentStep;
+    const inputMode = props.inputMode ?? 'search';
+    const inputBehavior = props.inputBehavior;
+    const searchInputRef = React.useRef<RNTextInput | null>(null);
+
+    // Reset the input when the visible step changes — the placeholder + filter
+    // domain are step-specific, so persisting the value across pushes/pops
+    // would surface stale text. Skip when controlled (parent owns the value).
+    const lastStepIdRef = React.useRef<string>(currentStep.id);
+    React.useEffect(() => {
+        if (lastStepIdRef.current === currentStep.id) return;
+        lastStepIdRef.current = currentStep.id;
+        if (!isInputControlled) setUncontrolledInputValue('');
+    }, [currentStep.id, isInputControlled]);
+
+    // Filter query is the raw input by default; behavior adapters can map it
+    // (e.g. paths surface only the trailing leaf for filtering).
+    const filterQuery = React.useMemo(() => {
+        if (inputBehavior?.getFilterQueryFromInput) {
+            return inputBehavior.getFilterQueryFromInput(inputValue);
+        }
+        return inputValue;
+    }, [inputBehavior, inputValue]);
+
+    // Resolve dynamic sections via the Phase 2.2 hook.
+    const dynamicSections = React.useMemo<ReadonlyArray<SelectionListDynamicSection>>(() => {
+        const out: SelectionListDynamicSection[] = [];
+        for (const section of currentStep.sections) {
+            if (section.kind === 'dynamic') {
+                const { kind: _kind, ...rest } = section;
+                out.push(rest);
+            }
+        }
+        return out;
+    }, [currentStep.sections]);
+
+    const dynamicSectionStates = useSelectionListDynamicSections({
+        dynamicSections,
+        inputValue,
+        inputBehavior,
+    });
+
+    // Resolve sections to render via the pure synthesizer (R14 extraction).
+    const renderPlan = React.useMemo(
+        () => synthesizeSelectionListRenderPlan({
+            sections: currentStep.sections,
+            inputValue,
+            filterQuery,
+            dynamicSectionStates,
+        }),
+        [currentStep.sections, dynamicSectionStates, inputValue, filterQuery],
+    );
+
+    // FR4-2: option-bearing sections contribute focusable rows. Sections in
+    // stale-while-revalidate state (`dynamicState: 'loading' | 'error'` with
+    // `options.length > 0`) surface prior successful options as real
+    // interactive rows in the body (see `SelectionListBody` loading/error
+    // branches). They MUST therefore be reachable via Arrow / Enter and via
+    // `aria-activedescendant` — otherwise keyboard + screen-reader users lose
+    // access to rows that pointer users can still tap. Pure non-interactive
+    // sections (skeleton-only loading, error without stale, `empty`,
+    // `notFound`) stay excluded.
+    const isFocusableSectionPlan = React.useCallback(
+        (sectionPlan: typeof renderPlan[number]): boolean => {
+            if (sectionPlan.dynamicState === undefined) return true;
+            if (sectionPlan.dynamicState === 'loading' || sectionPlan.dynamicState === 'error') {
+                return sectionPlan.options.length > 0;
+            }
+            return false;
+        },
+        [],
+    );
+
+    const flatVisibleOptionIds = React.useMemo<ReadonlyArray<string>>(() => {
+        const ids: string[] = [];
+        for (const sectionPlan of renderPlan) {
+            if (!isFocusableSectionPlan(sectionPlan)) continue;
+            for (const option of sectionPlan.options) {
+                if (option.disabled === true) continue;
+                ids.push(option.id);
+            }
+        }
+        return ids;
+    }, [renderPlan, isFocusableSectionPlan]);
+
+    const findOptionById = React.useCallback(
+        (optionId: string): SelectionListOption | undefined => {
+            for (const sectionPlan of renderPlan) {
+                if (!isFocusableSectionPlan(sectionPlan)) continue;
+                const match = sectionPlan.options.find(
+                    (opt: SelectionListOption) => opt.id === optionId,
+                );
+                if (match) return match;
+            }
+            return undefined;
+        },
+        [renderPlan, isFocusableSectionPlan],
+    );
+
+    const handleActivate = React.useCallback(
+        (optionId: string) => {
+            const option = findOptionById(optionId);
+            if (!option) return;
+            activateSelectionListRow({
+                option,
+                onSelect: props.onSelect,
+                onPushStep: stack.pushStep,
+            });
+        },
+        [findOptionById, stack.pushStep, props.onSelect],
+    );
+
+    const handleClearInput = React.useCallback(() => {
+        setInputValue('');
+    }, [setInputValue]);
+
+    // Phase 2.3 autocomplete + Phase 2.5 advanced keyboard nav.
+    const dynamicSectionIds = React.useMemo(() => new Set(dynamicSections.map((s) => s.id)), [dynamicSections]);
+    const [focusedOptionId, setFocusedOptionId] = React.useState<string | null>(null);
+
+    const focusedOption = React.useMemo(
+        () => (focusedOptionId ? findOptionById(focusedOptionId) ?? null : null),
+        [focusedOptionId, findOptionById],
+    );
+    const focusedOptionSectionId = React.useMemo(() => {
+        if (!focusedOptionId) return null;
+        for (const sectionPlan of renderPlan) {
+            // FR4-2: include stale option-bearing dynamic sections (same
+            // contract as `flatVisibleOptionIds` / `findOptionById`).
+            if (!isFocusableSectionPlan(sectionPlan)) continue;
+            if (sectionPlan.options.some((o: SelectionListOption) => o.id === focusedOptionId)) {
+                return sectionPlan.id;
+            }
+        }
+        return null;
+    }, [renderPlan, focusedOptionId, isFocusableSectionPlan]);
+    const isFocusedOptionInDynamicSection = focusedOptionSectionId
+        ? dynamicSectionIds.has(focusedOptionSectionId)
+        : false;
+
+    const [caretAtEnd, setCaretAtEnd] = React.useState<boolean>(true);
+    const [isComposing, setIsComposing] = React.useState<boolean>(false);
+
+    const autocomplete = useSelectionListAutocomplete({
+        inputValue,
+        focusedOption,
+        isFocusedOptionInDynamicSection,
+        shouldSuppress: inputBehavior?.shouldSuppressAutocomplete,
+        isComposing,
+    });
+
+    const autocompleteValueByOptionId = React.useMemo(() => {
+        const values = new Map<string, string>();
+        for (const sectionPlan of renderPlan) {
+            if (!isFocusableSectionPlan(sectionPlan)) continue;
+            if (!dynamicSectionIds.has(sectionPlan.id)) continue;
+            for (const option of sectionPlan.options) {
+                if (option.disabled === true) continue;
+                if (option.autocompleteValue !== undefined) {
+                    values.set(option.id, option.autocompleteValue);
+                }
+            }
+        }
+        return values;
+    }, [renderPlan, isFocusableSectionPlan, dynamicSectionIds]);
+
+    const handleAcceptAutocomplete = React.useCallback(() => {
+        if (autocomplete.ghostSuffix.length > 0) {
+            setInputValue(autocomplete.nextInputValue);
+        }
+    }, [autocomplete.ghostSuffix, autocomplete.nextInputValue, setInputValue]);
+
+    const handleAcceptFocusedAutocomplete = React.useCallback((optionId: string): boolean => {
+        const nextValue = autocompleteValueByOptionId.get(optionId);
+        if (nextValue === undefined) return false;
+        setInputValue(nextValue);
+        return true;
+    }, [autocompleteValueByOptionId, setInputValue]);
+
+    const handleCommitInputValue = React.useCallback(() => {
+        props.onCommitInputValue?.(inputValue);
+    }, [inputValue, props.onCommitInputValue]);
+
+    const handleWalkUp = React.useCallback((): boolean => {
+        if (!inputBehavior?.onBackspaceAtEnd) return false;
+        const next = inputBehavior.onBackspaceAtEnd(inputValue);
+        if (next === null) return false;
+        setInputValue(next);
+        return true;
+    }, [inputBehavior, inputValue, setInputValue]);
+
+    // RUX-13: Shift+Tab "back/up" — when the step stack cannot be popped, the
+    // hook delegates here. The path adapter walks the input up regardless of
+    // trailing separator (more aggressive than `onBackspaceAtEnd`). Returns
+    // false when there is genuinely no back action available so the keyboard
+    // hook can fall through to native focus traversal.
+    const handleBackUp = React.useCallback((): boolean => {
+        if (!inputBehavior?.onBackUp) return false;
+        const next = inputBehavior.onBackUp(inputValue);
+        if (next === null) return false;
+        setInputValue(next);
+        return true;
+    }, [inputBehavior, inputValue, setInputValue]);
+
+    const keyboard = useSelectionListKeyboardNav({
+        flatVisibleOptionIds,
+        onActivate: handleActivate,
+        canPopStep: stack.canPop,
+        onPopStep: stack.popStep,
+        inputValue,
+        onClearInput: handleClearInput,
+        // R14: thread the prop-level quick-action shortcuts through to the
+        // hook. Previously the prop was declared on `SelectionListProps` but
+        // never forwarded — making `Cmd+N` from a parent dead. The hook
+        // already covers this code path under
+        // `useSelectionListKeyboardNav.advanced.test.ts`.
+        quickActionShortcuts: props.quickActionShortcuts,
+        inputCaretAtEnd: caretAtEnd,
+        ghostSuffixPresent: autocomplete.ghostSuffix.length > 0,
+        isComposing,
+        onAcceptAutocomplete: handleAcceptAutocomplete,
+        onAcceptFocusedAutocomplete: handleAcceptFocusedAutocomplete,
+        onCommitInputValue: handleCommitInputValue,
+        onWalkUp: handleWalkUp,
+        onBackUp: handleBackUp,
+        inputMode,
+    });
+
+    // Mirror keyboard.focusedIndex back into focusedOptionId for autocomplete/accessibility.
+    React.useEffect(() => {
+        if (keyboard.focusedIndex < 0 || keyboard.focusedIndex >= flatVisibleOptionIds.length) {
+            if (focusedOptionId !== null) setFocusedOptionId(null);
+            return;
+        }
+        const id = flatVisibleOptionIds[keyboard.focusedIndex] ?? null;
+        if (id !== focusedOptionId) setFocusedOptionId(id);
+    }, [keyboard.focusedIndex, flatVisibleOptionIds, focusedOptionId]);
+
+    const handleKeyPress = React.useMemo(
+        () => createSelectionListKeyPressHandler({
+            keyboard,
+            isComposing,
+            focusedOptionId,
+            onActivate: handleActivate,
+            canPopStep: stack.canPop,
+            inputValue,
+            onRequestClose: props.onRequestClose,
+        }),
+        [keyboard, isComposing, focusedOptionId, handleActivate, stack.canPop, inputValue, props.onRequestClose],
+    );
+
+    const handlePushStep = React.useCallback(
+        (step: SelectionListStep) => {
+            stack.pushStep(step);
+        },
+        [stack],
+    );
+
+    // RUX-13: synthesize the "⇧⇥ back" footer hint when there's a real back
+    // action available. The hint is shown when EITHER:
+    //   - the step stack can pop (sub-step is active), OR
+    //   - path-mode `inputBehavior.onBackUp(inputValue)` returns a non-null
+    //     replacement (i.e. there's a parent path to walk up to)
+    // Otherwise the hint is omitted so the footer doesn't advertise a dead
+    // shortcut. Authored step `footerHints` are preserved verbatim and the
+    // back hint is appended at the end of the array (the visual order chosen
+    // to keep authored hints stable; the back chip is the "extra" cue).
+    const backHintAvailable = React.useMemo<boolean>(() => {
+        if (stack.canPop) return true;
+        if (inputBehavior?.onBackUp) {
+            const next = inputBehavior.onBackUp(inputValue);
+            if (next !== null) return true;
+        }
+        return false;
+    }, [stack.canPop, inputBehavior, inputValue]);
+
+    const footerHints = React.useMemo<ReadonlyArray<SelectionListKeyboardHint>>(() => {
+        const authored = currentStep.footerHints ?? [];
+        if (!backHintAvailable) return authored;
+        const backHint: SelectionListKeyboardHint = {
+            id: 'back',
+            label: '⇧⇥',
+            description: t('selectionList.backShortcut'),
+        };
+        return [...authored, backHint];
+    }, [currentStep.footerHints, backHintAvailable]);
+
+    const resolvedTestId = props.testID ?? 'selection-list';
+    const fixedHeight = props.heightBehavior === 'fixedToMaxHeight'
+        && typeof props.maxHeight === 'number'
+        && Number.isFinite(props.maxHeight)
+        && props.maxHeight > 0
+        ? props.maxHeight
+        : undefined;
+    const containerStyle: StyleProp<ViewStyle> = [
+        styles.container,
+        props.maxHeight !== undefined ? { maxHeight: props.maxHeight } : null,
+        fixedHeight !== undefined ? { height: fixedHeight } : null,
+    ];
+
+    // Pick a direction that maps step-stack changes to SlideTransitionSwitch.
+    // The stack reducer emits 'forward' on push, 'backward' on pop, 'replace' on
+    // resetTo. We forward as-is.
+    const direction = stack.state.direction;
+
+    const listboxId = React.useMemo(
+        () => selectionListTestId(resolvedTestId, 'listbox'),
+        [resolvedTestId],
+    );
+    const activeDescendantId = focusedOptionId
+        ? selectionListTestId(resolvedTestId, currentStep.id, 'option', focusedOptionId)
+        : undefined;
+
+    const body = (
+        <SelectionListBody
+            step={currentStep}
+            rootTestID={resolvedTestId}
+            selectedOptionId={props.selectedOptionId ?? null}
+            plan={renderPlan}
+            focusedOptionId={focusedOptionId}
+            scrollTargetOptionId={props.activeScrollOptionId ?? focusedOptionId ?? props.selectedOptionId ?? null}
+            listboxId={listboxId}
+            onSelect={props.onSelect}
+            onPushStep={handlePushStep}
+        />
+    );
+
+    // FR3-1 / FR3-8 — identity-free measure mirror. Pass an explicit
+    // `mode='measure'` SelectionListBody to SelectionListAnimatedHeight so
+    // the hidden measure subtree never emits duplicate listbox / option
+    // testIDs, aria-* props, or roles in the live DOM. The boundary is
+    // expressed at the API level instead of relying on post-hoc cloneElement
+    // identity stripping.
+    const measureBody = (
+        <SelectionListBody
+            mode="measure"
+            step={currentStep}
+            rootTestID={resolvedTestId}
+            selectedOptionId={props.selectedOptionId ?? null}
+            plan={renderPlan}
+            focusedOptionId={focusedOptionId}
+            listboxId={listboxId}
+            onSelect={props.onSelect}
+            onPushStep={handlePushStep}
+        />
+    );
+
+    const disableTransitions = props.disableTransitions === true || detectedReducedMotion;
+
+    // RV-1 (routing-2): the search header is omitted entirely when the
+    // consumer's `rootStep` declares no `inputPlaceholder` (the documented
+    // "omit to disable input" contract per `_types.ts`) AND no `inputBehavior`
+    // adapter (path / value-mode adapters own backspace/walk-up semantics on
+    // the input row) AND `inputMode !== 'value'` (the input IS the candidate
+    // value, e.g. the path picker's value-mode where Enter commits the raw
+    // input). When omitted the SelectionList degrades to a plain section list
+    // — used by simple-mode pickers (session mode, transcript storage,
+    // recipient, delivery, Windows launch mode) that have a single small
+    // section with no need for filtering.
+    //
+    // Gate on `rootStep.inputPlaceholder` (consumer-level intent) rather than
+    // `currentStep.inputPlaceholder` so the header stays stable across step
+    // pushes — a sub-step that omits the placeholder must NOT cause the
+    // header to vanish mid-flow.
+    const showSearchHeader =
+        props.rootStep.inputPlaceholder !== undefined
+        || inputBehavior !== undefined
+        || inputMode === 'value';
+
+    React.useEffect(() => {
+        if (!IS_WEB || props.autoFocusInputOnWeb !== true || !showSearchHeader) return;
+        searchInputRef.current?.focus?.();
+    }, [currentStep.id, props.autoFocusInputOnWeb, showSearchHeader]);
+
+    // FR3-4: headerless keyboard host. When the search header is omitted
+    // (inputless list chips: session-mode, transcript-storage, recipient,
+    // delivery, Windows launch mode, etc.), the container View becomes the
+    // sole key-event surface so Arrow / Enter / Escape / Shift+Tab still work.
+    // The handler is identical to the one the header's TextInput would receive;
+    // we attach via `onKeyDown` (web) so it sits on the actual DOM container
+    // without competing with `onKeyPress` from a TextInput-shaped event.
+    //
+    // Native (iOS/Android) does not need this — there is no hardware keyboard
+    // hierarchy to bind to and the visual surface relies on row taps. The
+    // prop is silently ignored by the native View renderer.
+    const headerlessKeyHandler: Record<string, unknown> = showSearchHeader
+        ? {}
+        : { onKeyDown: handleKeyPress };
+
+    return (
+        <View
+            testID={resolvedTestId}
+            style={containerStyle}
+            {...headerlessKeyHandler}
+        >
+            {showSearchHeader ? (
+                <SelectionListSearchHeader
+                    testID={selectionListTestId(resolvedTestId, 'header')}
+                    value={inputValue}
+                    onChangeText={setInputValue}
+                    placeholder={currentStep.inputPlaceholder ?? ''}
+                    canPop={stack.canPop}
+                    backLabel={currentStep.backLabel ?? props.rootStep.title}
+                    onPopStep={stack.popStep}
+                    onKeyPress={handleKeyPress}
+                    ghostSuffix={autocomplete.ghostSuffix}
+                    inputPrefix={props.inputPrefix}
+                    inputSuffix={props.inputSuffix}
+                    inputRef={searchInputRef}
+                    onCaretAtEndChange={setCaretAtEnd}
+                    onIsComposingChange={setIsComposing}
+                    listboxId={listboxId}
+                    activeDescendantId={activeDescendantId}
+                />
+            ) : null}
+            <View
+                testID={selectionListTestId(resolvedTestId, 'content')}
+                style={styles.content}
+            >
+                {disableTransitions ? (
+                    body
+                ) : (
+                    // RUX-14: wrap the SlideTransitionSwitch in
+                    // SelectionListAnimatedHeight so the OUTER container
+                    // shrinks/grows in lockstep with the inner slide rather
+                    // than snapping abruptly when the spring settles. The
+                    // animator pins height to the previous step's measured
+                    // natural height, animates to the new step's natural
+                    // height (read from the offscreen measure host that
+                    // mirrors `body`), and releases back to `auto` on
+                    // completion. Reduced motion: snaps without animation.
+                    <SelectionListAnimatedHeight
+                        stepKey={currentStep.id}
+                        measureChildren={measureBody}
+                        testID={selectionListTestId(resolvedTestId, 'animatedHeight')}
+                    >
+                        <SlideTransitionSwitch
+                            contentKey={currentStep.id}
+                            direction={direction}
+                            blur={false}
+                            preset="compact"
+                            testID={selectionListTestId(resolvedTestId, 'transition')}
+                        >
+                            {body}
+                        </SlideTransitionSwitch>
+                    </SelectionListAnimatedHeight>
+                )}
+            </View>
+            {keyboardHintsEnabled ? (
+                <SelectionListFooter
+                    testID={selectionListTestId(resolvedTestId, 'footer')}
+                    hints={footerHints}
+                    hardwareKeyboardAvailable={keyboardHintsEnabled}
+                />
+            ) : null}
+        </View>
+    );
+}

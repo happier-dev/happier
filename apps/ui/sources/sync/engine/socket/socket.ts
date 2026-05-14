@@ -16,6 +16,7 @@ import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/rep
 import { deriveNewAgentRequests } from '@/sync/domains/permissions/deriveNewAgentRequests';
 import { notifyActivityAgentRequest } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { didControlReturnToMobile } from '@/sync/domains/session/control/controlledByUserTransitions';
+import { writeSyncDebugLog } from '@/sync/runtime/syncDebugLogging';
 import {
     createSessionApplyCoalescer,
     type SessionApplyCoalescerSession,
@@ -514,7 +515,7 @@ export async function handleUpdateContainer(params: {
             const wasControlledByUser = session.agentState?.controlledByUser;
             const isNowControlledByUser = agentState?.controlledByUser;
             if (didControlReturnToMobile(wasControlledByUser, isNowControlledByUser)) {
-                log.log(`🔄 Control returned to mobile for session ${updateData.body.id}, re-fetching messages`);
+                writeSyncDebugLog(log, `🔄 Control returned to mobile for session ${updateData.body.id}, re-fetching messages`);
                 if (!shouldContinue()) return;
                 onSessionVisible(updateData.body.id);
             }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
 
+import type { AgentInputExtraActionChip } from '../agentInputContracts';
 import { useAgentInputSelectionOverlayController } from './useAgentInputSelectionOverlayController';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -182,6 +183,49 @@ describe('useAgentInputSelectionOverlayController', () => {
         expect(hook.getCurrent().activeExtraCollapsedPopoverChip?.key).toBe('mcp');
 
         await hook.rerender({ nextExtraActionChips: [] as any });
+
+        expect(hook.getCurrent().activeSelectionOverlay).toBeNull();
+        expect(hook.getCurrent().activeExtraCollapsedPopoverChip).toBeNull();
+
+        await hook.unmount();
+    });
+
+    it('rejects malformed picker collapsed extra popovers that only provide a list root step', async () => {
+        // Boundary fixture: models a dynamic descriptor that bypassed the
+        // discriminated union before reaching the overlay controller.
+        const malformedPickerChip = {
+            key: 'malformed-picker',
+            controlId: 'recipient',
+            collapsedOptionsPopover: {
+                presentation: 'picker',
+                title: 'Recipient',
+                rootStep: {
+                    id: 'recipient-root',
+                    title: 'Recipient',
+                    sections: [],
+                },
+                onSelect: () => undefined,
+            },
+            render: () => null,
+        } as unknown as AgentInputExtraActionChip;
+
+        const hook = await renderHook(() =>
+            useAgentInputSelectionOverlayController({
+                shouldRenderSessionModeChip: true,
+                canChangePermission: true,
+                hasMachinePopover: false,
+                hasPathPopover: false,
+                hasResumePopover: false,
+                hasProfilePopover: true,
+                hasEnvVarsPopover: true,
+                hasAgentPickerOptions: true,
+                extraActionChips: [malformedPickerChip],
+            }),
+        );
+
+        await act(async () => {
+            hook.getCurrent().openSelectionOverlay('collapsedExtra', 'actionMenu', 'malformed-picker');
+        });
 
         expect(hook.getCurrent().activeSelectionOverlay).toBeNull();
         expect(hook.getCurrent().activeExtraCollapsedPopoverChip).toBeNull();

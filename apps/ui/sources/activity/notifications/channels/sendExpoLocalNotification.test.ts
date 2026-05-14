@@ -53,6 +53,48 @@ describe('sendExpoLocalNotification', () => {
         });
     });
 
+    it('omits the native category field when no category is provided', async () => {
+        const { sendExpoLocalNotification } = await import('./sendExpoLocalNotification');
+
+        await sendExpoLocalNotification({
+            title: 'Session ready',
+            body: 'Codex finished the turn.',
+            data: { sessionId: 'session-1' },
+            categoryIdentifier: null as unknown as string,
+        });
+
+        expect(scheduleNotificationAsync).toHaveBeenCalledWith({
+            content: {
+                title: 'Session ready',
+                body: 'Codex finished the turn.',
+                data: { sessionId: 'session-1' },
+                sound: 'default',
+            },
+            trigger: null,
+        });
+    });
+
+    it('omits the native category field when the category is blank', async () => {
+        const { sendExpoLocalNotification } = await import('./sendExpoLocalNotification');
+
+        await sendExpoLocalNotification({
+            title: 'Session ready',
+            body: 'Codex finished the turn.',
+            data: { sessionId: 'session-1' },
+            categoryIdentifier: '   ',
+        });
+
+        expect(scheduleNotificationAsync).toHaveBeenCalledWith({
+            content: {
+                title: 'Session ready',
+                body: 'Codex finished the turn.',
+                data: { sessionId: 'session-1' },
+                sound: 'default',
+            },
+            trigger: null,
+        });
+    });
+
     it('uses an Android channel-aware trigger when a channel id is provided', async () => {
         const { sendExpoLocalNotification } = await import('./sendExpoLocalNotification');
 

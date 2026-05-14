@@ -4,17 +4,20 @@ export async function sendExpoLocalNotification(params: Readonly<{
     title: string;
     body: string;
     data?: Record<string, unknown>;
-    categoryIdentifier?: string;
+    categoryIdentifier?: string | null;
     sound?: string | null;
     channelId?: string;
 }>): Promise<string> {
+    const categoryIdentifier = typeof params.categoryIdentifier === 'string' && params.categoryIdentifier.trim().length > 0
+        ? params.categoryIdentifier
+        : undefined;
     const content: Parameters<typeof Notifications.scheduleNotificationAsync>[0]['content'] = {
         title: params.title,
         body: params.body,
         data: params.data,
     };
-    if (params.categoryIdentifier) {
-        content.categoryIdentifier = params.categoryIdentifier;
+    if (categoryIdentifier) {
+        content.categoryIdentifier = categoryIdentifier;
     }
     const sound = params.sound === undefined ? 'default' : params.sound;
     if (sound !== null) {

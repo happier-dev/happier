@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
@@ -19,6 +19,7 @@ import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScre
 import { Text } from '@/components/ui/text/Text';
 import { getErrorMessage } from '@/utils/errors/getErrorMessage';
 import { useSession } from '@/sync/domains/state/storage';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 type LoadState =
@@ -57,7 +58,7 @@ export default function SessionRunsScreen() {
             gap: 12,
           }}
         >
-          <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+          <ActivitySpinner size="small" color={theme.colors.text.secondary} />
         </ConstrainedScreenContent>
       </View>
     );
@@ -199,7 +200,7 @@ function SessionRunsScreenContent(props: Readonly<{
         }}
       >
         {state.status === 'loading' ? (
-          <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+          <ActivitySpinner size="small" color={theme.colors.text.secondary} />
         ) : state.status === 'error' ? (
           <Text style={{ color: theme.colors.text.secondary }}>{state.error}</Text>
         ) : (

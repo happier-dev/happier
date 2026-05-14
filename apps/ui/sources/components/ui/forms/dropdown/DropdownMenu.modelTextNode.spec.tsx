@@ -46,7 +46,7 @@ installDropdownCommonModuleMocks({
 });
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: { default: () => ({}), eyebrow: () => ({}), keyHint: () => ({}) },
 }));
 
 vi.mock('@/components/ui/popover', () => ({

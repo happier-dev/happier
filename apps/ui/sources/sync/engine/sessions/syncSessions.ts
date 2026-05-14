@@ -15,6 +15,7 @@ import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
 import { storage } from '@/sync/domains/state/storage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
+import { writeSyncDebugLog } from '@/sync/runtime/syncDebugLogging';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { nowServerMs } from '@/sync/runtime/time';
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
@@ -576,7 +577,7 @@ export async function fetchAndApplyMessages(params: {
     const { sessionId, request, sessionReceivedMessages, applyMessages, markMessagesLoaded, log } =
         params;
 
-    log.log(`💬 fetchMessages starting for session ${sessionId} - acquiring lock`);
+    writeSyncDebugLog(log, `💬 fetchMessages starting for session ${sessionId} - acquiring lock`);
 
     const DEBUG_MESSAGE_DECRYPT =
         typeof globalThis !== 'undefined'
@@ -590,10 +591,10 @@ export async function fetchAndApplyMessages(params: {
     const encryption = resolveSessionMessagesEncryption(params);
     if (!encryption) {
         if (params.isSessionKnown?.(sessionId) === false) {
-            log.log(`💬 fetchMessages: Session ${sessionId} is not known on this server; skipping message fetch`);
+            writeSyncDebugLog(log, `💬 fetchMessages: Session ${sessionId} is not known on this server; skipping message fetch`);
             return;
         }
-        log.log(`💬 fetchMessages: Session encryption not ready for ${sessionId}, will retry`);
+        writeSyncDebugLog(log, `💬 fetchMessages: Session encryption not ready for ${sessionId}, will retry`);
         throw new Error(`Session encryption not ready for ${sessionId}`);
     }
 
@@ -723,7 +724,7 @@ export async function fetchAndApplyMessages(params: {
     recordMessageApplyTelemetry('initial', decryptedMessages.length, sessionId, normalizedMessages, applyMessages);
 
     markMessagesLoaded(sessionId);
-    log.log(`💬 fetchMessages completed for session ${sessionId} - processed ${normalizedMessages.length} messages`);
+    writeSyncDebugLog(log, `💬 fetchMessages completed for session ${sessionId} - processed ${normalizedMessages.length} messages`);
 }
 
 export async function fetchAndApplyOlderMessages(params: {
@@ -748,7 +749,7 @@ export async function fetchAndApplyOlderMessages(params: {
     const encryption = resolveSessionMessagesEncryption(params);
     if (!encryption) {
         if (params.isSessionKnown?.(sessionId) === false) {
-            log.log(`💬 fetchOlderMessages: Session ${sessionId} is not known on this server; skipping page fetch`);
+            writeSyncDebugLog(log, `💬 fetchOlderMessages: Session ${sessionId} is not known on this server; skipping page fetch`);
             return {
                 applied: 0,
                 page: {
@@ -837,7 +838,7 @@ export async function fetchAndApplyOlderMessages(params: {
 
     params.onNormalizedMessages?.(normalizedMessages);
     recordMessageApplyTelemetry('older', decryptedMessages.length, sessionId, normalizedMessages, applyMessages);
-    log.log(`💬 fetchOlderMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
+    writeSyncDebugLog(log, `💬 fetchOlderMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
     return { applied: normalizedMessages.length, page: data };
 }
 
@@ -862,7 +863,7 @@ export async function fetchAndApplyNewerMessages(params: {
     const encryption = resolveSessionMessagesEncryption(params);
     if (!encryption) {
         if (params.isSessionKnown?.(sessionId) === false) {
-            log.log(`💬 fetchNewerMessages: Session ${sessionId} is not known on this server; skipping page fetch`);
+            writeSyncDebugLog(log, `💬 fetchNewerMessages: Session ${sessionId} is not known on this server; skipping page fetch`);
             return {
                 applied: 0,
                 page: {
@@ -952,6 +953,6 @@ export async function fetchAndApplyNewerMessages(params: {
 
     params.onNormalizedMessages?.(normalizedMessages);
     recordMessageApplyTelemetry('newer', decryptedMessages.length, sessionId, normalizedMessages, applyMessages);
-    log.log(`💬 fetchNewerMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
+    writeSyncDebugLog(log, `💬 fetchNewerMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
     return { applied: normalizedMessages.length, page: data };
 }

@@ -1,8 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildSessionListReachabilitySummary } from './buildSessionListReachabilitySummary';
 
+const getStateSpy = vi.fn();
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        storage: {
+            getState: () => getStateSpy(),
+        },
+    });
+});
+
 describe('buildSessionListReachabilitySummary', () => {
+    beforeEach(() => {
+        getStateSpy.mockReset();
+        getStateSpy.mockReturnValue({});
+    });
+
     it('reuses a shared empty summary when there are no session rows', () => {
         const first = buildSessionListReachabilitySummary({
             listItems: [],
@@ -151,6 +167,69 @@ describe('buildSessionListReachabilitySummary', () => {
             machineLabel: 'stale.local',
             workspaceSubtitle: 'Renamed Workspace',
             workspaceSubtitleEllipsizeMode: 'tail',
+        });
+    });
+
+    it('uses stable display attribution instead of live RPC reachability for row summaries', () => {
+        getStateSpy.mockReturnValue({
+            sessions: {
+                'sess-replaced': {
+                    active: false,
+                    metadata: {
+                        machineId: 'machine-old',
+                        host: 'old.local',
+                        path: '/home/user/repo',
+                        homeDir: '/home/user',
+                    },
+                },
+            },
+            machines: {
+                'machine-old': {
+                    id: 'machine-old',
+                    active: false,
+                    activeAt: 1,
+                    replacedByMachineId: 'machine-current',
+                    replacedAt: 2,
+                    metadata: { host: 'old.local', homeDir: '/home/user' },
+                },
+                'machine-current': {
+                    id: 'machine-current',
+                    active: false,
+                    activeAt: 3,
+                    metadata: { displayName: 'Current machine', host: 'current.local', homeDir: '/home/user' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+
+        const summary = buildSessionListReachabilitySummary({
+            listItems: [
+                {
+                    type: 'session',
+                    sessionId: 'sess-replaced',
+                    serverId: 'server-a',
+                },
+            ] as any,
+            machinesById: new Map([
+                ['machine-old', { id: 'machine-old', metadata: { host: 'old.local' } }],
+                ['machine-current', { id: 'machine-current', metadata: { displayName: 'Current machine', host: 'current.local' } }],
+            ]),
+            workspaceRefs: [],
+            resolveSessionRenderable: () => ({
+                metadata: {
+                    machineId: 'machine-old',
+                    host: 'old.local',
+                    path: '/home/user/repo',
+                    homeDir: '/home/user',
+                },
+            }) as any,
+        });
+
+        expect(summary.displayById.get('sess-replaced')).toEqual({
+            machineId: 'machine-current',
+            machineLabel: 'Current machine',
+            workspaceSubtitle: '~/repo',
+            workspaceSubtitleEllipsizeMode: 'head',
         });
     });
 });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -11,6 +11,7 @@ import { t } from '@/text';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { DetailsTabState, DetailsWorkspaceGroupView } from './detailsWorkspaceTypes';
 import { DetailsTabStrip, type DetailsTabStripTestIds } from './DetailsTabStrip';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type ScrollPropagationEvent = Readonly<{ stopPropagation?: () => void }>;
 
@@ -186,7 +187,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
 
     const renderLoadingFallback = React.useCallback(() => (
         <View style={styles.loading}>
-            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             <Text style={styles.loadingText}>{t('common.loading')}</Text>
         </View>
     ), [styles.loading, styles.loadingText, theme.colors.text.secondary]);

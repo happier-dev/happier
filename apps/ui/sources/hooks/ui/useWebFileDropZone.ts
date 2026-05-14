@@ -1,3 +1,10 @@
+const noopDropZoneHandlers = {
+    onDragEnter: () => {},
+    onDragLeave: () => {},
+    onDragOver: () => {},
+    onDrop: () => {},
+};
+
 export function useWebFileDropZone(_params: Readonly<{
     enabled: boolean;
     onFilesDropped: (event: any) => void | Promise<void>;
@@ -8,11 +15,5 @@ export function useWebFileDropZone(_params: Readonly<{
     onDragOver: (event: any) => void;
     onDrop: (event: any) => void;
 }> {
-    return {
-        onDragEnter: () => {},
-        onDragLeave: () => {},
-        onDragOver: () => {},
-        onDrop: () => {},
-    };
+    return noopDropZoneHandlers;
 }
-

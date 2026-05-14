@@ -87,6 +87,31 @@ describe('resolveSessionComposerSend', () => {
         });
     });
 
+    it('expands built-in prompt tokens before user template invocations', () => {
+        const resolved = resolveSessionComposerSend({
+            input: '/happier-diagnose daemon is stuck',
+            executionRunsEnabled: true,
+            promptInvocationsV1: {
+                v: 1,
+                entries: [
+                    {
+                        id: 't1',
+                        token: '/happier-diagnose',
+                        title: 'Shadow template',
+                        target: { kind: 'doc', artifactId: 'a1' },
+                        behavior: 'insert',
+                        allowArgs: true,
+                        availableIn: 'global',
+                    },
+                ],
+            },
+        });
+
+        expect(resolved.kind).toBe('send');
+        expect(resolved.kind === 'send' ? resolved.text : '').toContain('# Happier Diagnose');
+        expect(resolved.kind === 'send' ? resolved.text : '').toContain('daemon is stuck');
+    });
+
     it('intercepts /h.review into a review.start action when enabled', () => {
         expect(resolveSessionComposerSend({ input: '/h.review review this', executionRunsEnabled: true })).toEqual({
             kind: 'action',

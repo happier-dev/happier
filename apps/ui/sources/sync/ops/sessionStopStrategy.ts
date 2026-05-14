@@ -1,6 +1,10 @@
 import { apiSocket } from '../api/session/apiSocket';
 import { assertRpcResponseWithSuccess } from '../runtime/assertRpcResponseWithSuccess';
-import { isRpcMethodNotAvailableError, readRpcErrorCode as readSessionRpcErrorCode } from '../runtime/rpcErrors';
+import {
+    isRpcMethodNotAvailableError,
+    isRpcMethodNotFoundError,
+    readRpcErrorCode as readSessionRpcErrorCode,
+} from '../runtime/rpcErrors';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
@@ -37,6 +41,33 @@ function hasMachineStopResponseShape(response: unknown): response is Readonly<{ 
         && typeof (response as { message?: unknown }).message === 'string';
 }
 
+function isDaemonSessionNotFoundOrFailedToStopMessage(message: string): boolean {
+    return message === 'Session not found or failed to stop';
+}
+
+function readFallbackRpcErrorEnvelope(response: unknown): Readonly<{ message: string; errorCode?: string }> | null {
+    if (!response || typeof response !== 'object') return null;
+    const envelope = response as { error?: unknown; errorCode?: unknown };
+    if (typeof envelope.error !== 'string') return null;
+
+    const carrier = {
+        message: envelope.error,
+        rpcErrorCode: typeof envelope.errorCode === 'string' ? envelope.errorCode : undefined,
+    };
+    if (
+        !isRpcMethodNotAvailableError(carrier)
+        && !isRpcMethodNotFoundError(carrier)
+        && !isDaemonSessionNotFoundOrFailedToStopMessage(envelope.error)
+    ) {
+        return null;
+    }
+
+    return {
+        message: envelope.error,
+        ...(carrier.rpcErrorCode ? { errorCode: carrier.rpcErrorCode } : {}),
+    };
+}
+
 export async function stopSessionViaDaemonMachineRpc(params: Readonly<{
     machineId: string;
     sessionId: string;
@@ -50,6 +81,14 @@ export async function stopSessionViaDaemonMachineRpc(params: Readonly<{
             serverId: params.serverId,
         });
         if (!hasMachineStopResponseShape(response)) {
+            const fallbackEnvelope = readFallbackRpcErrorEnvelope(response);
+            if (fallbackEnvelope) {
+                return {
+                    type: 'fallback',
+                    message: fallbackEnvelope.message,
+                    ...(fallbackEnvelope.errorCode ? { errorCode: fallbackEnvelope.errorCode } : {}),
+                };
+            }
             return { type: 'failed', message: 'Unsupported response from machine RPC' };
         }
         return { type: 'stopped' };

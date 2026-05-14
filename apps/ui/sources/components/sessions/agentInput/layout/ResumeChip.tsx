@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { ActivityIndicator, Pressable, type View } from 'react-native';
+import { Pressable, type View } from 'react-native';
 import { t } from '@/text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 export const RESUME_CHIP_ICON_NAME = 'refresh-outline' as const;
@@ -54,7 +55,7 @@ export function ResumeChip(props: ResumeChipProps) {
             style={(p) => props.pressableStyle(p.pressed)}
         >
             {props.isChecking ? (
-                <ActivityIndicator
+                <ActivitySpinner
                     size="small"
                     color={props.iconColor}
                 />

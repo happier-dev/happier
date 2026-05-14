@@ -4,8 +4,7 @@ import { Command } from './types';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
-import { Typography } from '@/constants/Typography';
-import { Text } from '@/components/ui/text/Text';
+import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 
 
 interface CommandPaletteItemProps {
@@ -35,13 +34,7 @@ export function CommandPaletteItem({ command, isSelected, onPress, onHover }: Co
             ) : null}
             title={command.title}
             subtitle={command.subtitle ?? undefined}
-            right={command.shortcut ? (
-                <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: theme.colors.surface.pressedOverlay, borderRadius: 6 }}>
-                    <Text style={{ ...Typography.mono(), fontSize: 12, color: theme.colors.text.secondary, fontWeight: '500' }}>
-                        {command.shortcut}
-                    </Text>
-                </View>
-            ) : null}
+            right={command.shortcut ? <KeyHint label={command.shortcut} /> : null}
         />
     );
 }

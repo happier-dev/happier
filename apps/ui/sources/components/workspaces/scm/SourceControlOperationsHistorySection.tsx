@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -12,6 +12,7 @@ import {
 } from '@/scm/history/historyPresentation';
 import { SourceControlOperationsHistoryLoadMoreButton } from './SourceControlOperationsHistoryLoadMoreButton';
 import { SourceControlOperationsHistoryTimelineRow } from './SourceControlOperationsHistoryTimelineRow';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type SourceControlOperationsHistorySectionProps = Readonly<{
     theme: any;
@@ -45,7 +46,7 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
     }, [historyEntries.length, historyHasMore, visibleCount]);
 
     if (historyLoading && historyEntries.length === 0) {
-        return <ActivityIndicator size="small" color={theme.colors.text.secondary} />;
+        return <ActivitySpinner size="small" color={theme.colors.text.secondary} />;
     }
 
     if (historyEntries.length === 0) {

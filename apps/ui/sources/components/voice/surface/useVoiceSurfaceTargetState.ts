@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { useSession } from '@/sync/store/hooks';
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
 import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
@@ -37,6 +38,9 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
     const focusedSessionId = useFocusedSessionId();
     const lastFocusedSessionId = useVoiceTargetStore((state) => state.lastFocusedSessionId);
     const primaryActionSessionId = useVoiceTargetStore((state) => state.primaryActionSessionId);
+    const primaryActionSession = useSession(
+        typeof primaryActionSessionId === 'string' ? primaryActionSessionId.trim() : '',
+    );
     const voiceScope = useVoiceTargetStore((state) => state.scope);
     const routeSessionId = params.variant === 'sidebar' ? resolveSessionIdFromPathname(params.pathname) : null;
     const startSessionId =
@@ -74,11 +78,10 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
     const targetLabel =
         params.variant === 'sidebar' && voiceScope === 'global' && primaryActionSessionId
             ? (
-                params.sessionLabelById.get(primaryActionSessionId)
-                ?? resolveVoiceSessionLabel(primaryActionSessionId, {
+                resolveVoiceSessionLabel(primaryActionSessionId, {
                     voiceShareSessionSummary: params.voicePrivacy.shareSessionSummary,
                     voiceShareFilePaths: params.voicePrivacy.shareFilePaths,
-                })
+                }, primaryActionSession ? { metadata: primaryActionSession.metadata } : undefined)
             )
             : null;
 

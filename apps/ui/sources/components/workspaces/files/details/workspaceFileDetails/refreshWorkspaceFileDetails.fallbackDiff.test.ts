@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installWorkspaceFileDetailsCommonModuleMocks } from './workspaceFileDetailsTestHelpers';
 
@@ -29,7 +29,7 @@ vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
 }));
 
 vi.mock('@/config', () => ({
-    config: { filesPreviewMaxBytes: 1024 * 1024 },
+    config: { filesPreviewMaxBytes: 1024 * 1024, filesPreviewReadTimeoutMs: 25 },
 }));
 
 installWorkspaceFileDetailsCommonModuleMocks();
@@ -41,6 +41,10 @@ vi.mock('@/scm/utils/filePresentation', () => ({
 }));
 
 describe('refreshWorkspaceFileDetails (fallback diff)', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('returns a synthesized diff for untracked/added files when backend returns empty diff', async () => {
         machineScmDiffFileSpy.mockClear();
         workspaceReadFileSpy.mockClear();
@@ -58,5 +62,40 @@ describe('refreshWorkspaceFileDetails (fallback diff)', () => {
         expect(result.diffContent).toContain('diff --git a/src/new.txt b/src/new.txt');
         expect(result.diffContent).toContain('+hello');
         expect(result.diffContent).toContain('+world');
+    });
+
+    it('returns a renderable diff when file preview download stalls', async () => {
+        vi.useFakeTimers();
+        machineScmDiffFileSpy.mockResolvedValueOnce({
+            success: true,
+            diff: [
+                'diff --git a/src/changed.txt b/src/changed.txt',
+                '--- a/src/changed.txt',
+                '+++ b/src/changed.txt',
+                '@@ -1 +1 @@',
+                '-old',
+                '+new',
+                '',
+            ].join('\n'),
+        });
+        workspaceReadFileSpy.mockImplementationOnce(() => new Promise(() => {}));
+
+        const { refreshWorkspaceFileDetails } = await import('./refreshWorkspaceFileDetails');
+        const resultPromise = refreshWorkspaceFileDetails({
+            scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
+            filePath: 'src/changed.txt',
+            diffMode: 'pending',
+            fileEntryKind: 'modified',
+        });
+
+        await vi.advanceTimersByTimeAsync(25);
+
+        await expect(resultPromise).resolves.toMatchObject({
+            status: 'ready',
+            error: null,
+            fileContent: null,
+            fileWriteSupported: false,
+        });
+        await expect(resultPromise).resolves.toHaveProperty('diffContent', expect.stringContaining('+new'));
     });
 });

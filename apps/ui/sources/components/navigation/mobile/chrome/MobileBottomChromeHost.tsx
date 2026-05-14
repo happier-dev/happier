@@ -1,18 +1,22 @@
 import * as React from 'react';
-import { Animated, Platform } from 'react-native';
-import { useGlobalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
+import { Animated, Platform, View } from 'react-native';
+import { useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useAuth } from '@/auth/context/AuthContext';
-import { useLocalSetting, useLocalSettingMutable, useSetting } from '@/sync/domains/state/storage';
+import { useLocalSetting, useLocalSettingMutable, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { isMobileWorkspaceCockpitEnabled } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
 import {
-    collapseSessionDetailsRouteBeforeSurfaceSwitch,
-    resolveSessionCockpitSurfaceSwitchPlan,
-} from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
-import { prepareMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
+    useSessionCockpitChromeRegistration,
+} from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import {
+    resolveSessionRoutePathForSurface,
+    type SessionMobileSurface,
+} from '@/components/workspaceCockpit/session/sessionCockpitState';
+import { SessionCockpitModeSwipeGesture } from '@/components/workspaceCockpit/session/SessionCockpitModeSwipeGesture';
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 
@@ -38,10 +42,31 @@ type PendingSessionSurfaceSwitch = Readonly<{
     targetHref: string;
 }>;
 
+type BottomChromeItem = Readonly<{
+    key: string;
+    signature: string;
+    node: React.ReactElement;
+}>;
+
+const BOTTOM_CHROME_TRANSITION_TRANSLATE_Y = 10;
+
+function isSameBottomChromeItem(left: BottomChromeItem | null, right: BottomChromeItem | null): boolean {
+    if (!left || !right) {
+        return left === right;
+    }
+    return left.key === right.key && left.signature === right.signature;
+}
+
+function isBottomChromeStateSettled(
+    state: Readonly<{ current: BottomChromeItem | null; previous: BottomChromeItem | null }>,
+    resolvedChrome: BottomChromeItem | null,
+): boolean {
+    return state.previous === null && isSameBottomChromeItem(state.current, resolvedChrome);
+}
+
 export const MobileBottomChromeHost = React.memo(() => {
     const pathname = usePathname();
     const router = useRouter();
-    const navigation = useNavigation();
     const params = useGlobalSearchParams<{
         mobileSurface?: string | string[];
         serverId?: string | string[];
@@ -50,6 +75,7 @@ export const MobileBottomChromeHost = React.memo(() => {
     }>();
     const auth = useAuth();
     const deviceType = useDeviceType();
+    const keyboardHeight = useKeyboardHeight();
     const reduceMotion = useReducedMotionPreference();
     const { activeTab, setActiveTab } = useMainAppTabState();
     const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
@@ -58,10 +84,11 @@ export const MobileBottomChromeHost = React.memo(() => {
     const projectLastMobileSurfaceByWorkspaceRefId = useLocalSetting('projectLastMobileSurfaceByWorkspaceRefId');
     const [, setSessionLastMobileSurfaceBySessionId] = useLocalSettingMutable('sessionLastMobileSurfaceBySessionId');
     const [, setProjectLastMobileSurfaceByWorkspaceRefId] = useLocalSettingMutable('projectLastMobileSurfaceByWorkspaceRefId');
+    const [, setMobileWorkspaceExperience] = useSettingMutable('mobileWorkspaceExperienceV1');
+    const cockpitRegistration = useSessionCockpitChromeRegistration();
     const explicitMobileSurfaceHint = normalizeRouteParam(params.mobileSurface);
     const routeServerId = normalizeRouteParam(params.serverId);
-    const currentDetailsSourceSurface = normalizeRouteParam(params.sourceSurface);
-    const [pendingSessionSurfaceSwitch, setPendingSessionSurfaceSwitch] = React.useState<PendingSessionSurfaceSwitch | null>(null);
+    const softwareKeyboardVisible = deviceType === 'phone' && keyboardHeight > 0;
 
     const model = resolveMobileBottomChromeModel({
         isAuthenticated: auth.isAuthenticated,
@@ -80,26 +107,44 @@ export const MobileBottomChromeHost = React.memo(() => {
         void setActiveTab(tab);
     }, [activeTab, setActiveTab]);
 
-    React.useEffect(() => {
-        if (!pendingSessionSurfaceSwitch) {
+    const persistSessionSurface = React.useCallback((sessionId: string, surface: SessionMobileSurface) => {
+        setSessionLastMobileSurfaceBySessionId({
+            ...(sessionLastMobileSurfaceBySessionId ?? {}),
+            [sessionId]: surface,
+        });
+    }, [sessionLastMobileSurfaceBySessionId, setSessionLastMobileSurfaceBySessionId]);
+
+    const handleSessionCockpitSurfacePress = React.useCallback((sessionId: string, surface: SessionMobileSurface) => {
+        const matchingRegistration =
+            cockpitRegistration?.sessionId === sessionId
+                ? cockpitRegistration
+                : null;
+        if (matchingRegistration) {
+            matchingRegistration.switchSurface(surface);
             return;
         }
 
-        const currentPathname = typeof pathname === 'string' ? pathname.trim() : '';
-        if (!currentPathname || currentPathname === pendingSessionSurfaceSwitch.sourceDetailsPathname) {
+        persistSessionSurface(sessionId, surface);
+        router.replace(resolveSessionRoutePathForSurface(sessionId, surface, { serverId: routeServerId }));
+    }, [cockpitRegistration, persistSessionSurface, routeServerId, router]);
+
+    const handleCloseMobileWorkspaceCockpit = React.useCallback((sessionId: string) => {
+        const matchingRegistration =
+            cockpitRegistration?.sessionId === sessionId
+                ? cockpitRegistration
+                : null;
+        if (matchingRegistration) {
+            matchingRegistration.closeCockpit();
             return;
         }
+        setMobileWorkspaceExperience('classic');
+    }, [cockpitRegistration, setMobileWorkspaceExperience]);
 
-        const targetHref = pendingSessionSurfaceSwitch.targetHref;
-        setPendingSessionSurfaceSwitch(null);
-        router.replace(targetHref);
-    }, [pathname, pendingSessionSurfaceSwitch, router]);
+    const resolvedChrome = React.useMemo((): BottomChromeItem | null => {
+        if (softwareKeyboardVisible) {
+            return null;
+        }
 
-    const resolvedChrome = React.useMemo((): Readonly<{
-        key: string;
-        signature: string;
-        node: React.ReactElement;
-    }> | null => {
         if (model.kind === 'mainAppTabs') {
             if (deviceType !== 'phone') {
                 return null;
@@ -123,51 +168,30 @@ export const MobileBottomChromeHost = React.memo(() => {
                 mobileWorkspaceExperience,
             })
         ) {
+            const matchingRegistration =
+                cockpitRegistration?.sessionId === model.sessionId
+                    ? cockpitRegistration
+                    : null;
+            const activeSurface = matchingRegistration?.activeSurface ?? model.surface;
+            const terminalTabAvailable = matchingRegistration?.terminalTabAvailable ?? model.terminalTabAvailable;
+
             return {
                 key: `session:${model.sessionId}`,
-                signature: `session:${model.sessionId}:${model.surface}:${model.terminalTabAvailable ? 'terminal' : 'no-terminal'}:${routeServerId ?? 'default-server'}`,
+                signature: `session:${model.sessionId}:${activeSurface}:${terminalTabAvailable ? 'terminal' : 'no-terminal'}:${routeServerId ?? 'default-server'}`,
                 node: (
-                    <SessionCockpitTabBar
-                        sessionId={model.sessionId}
-                        activeSurface={model.surface}
-                        terminalTabAvailable={model.terminalTabAvailable}
-                        onSurfacePress={(surface) => {
-                            setSessionLastMobileSurfaceBySessionId({
-                                ...(sessionLastMobileSurfaceBySessionId ?? {}),
-                                [model.sessionId]: surface,
-                            });
-                            const switchPlan = resolveSessionCockpitSurfaceSwitchPlan({
-                                sessionId: model.sessionId,
-                                targetSurface: surface,
-                                serverId: routeServerId,
-                                currentPathname: pathname,
-                                currentDetailsSourceSurface,
-                            });
-                            prepareMobileSurfaceTransition({
-                                currentPathname: pathname,
-                                targetHref: switchPlan.targetHref,
-                                operation: 'replace',
-                            });
-                            if (switchPlan.kind === 'replace') {
-                                setPendingSessionSurfaceSwitch(null);
-                                router.replace(switchPlan.targetHref);
-                                return;
-                            }
-
-                            setPendingSessionSurfaceSwitch({
-                                sourceDetailsPathname: switchPlan.sourceDetailsPathname,
-                                targetHref: switchPlan.targetHref,
-                            });
-                            const collapseStarted = collapseSessionDetailsRouteBeforeSurfaceSwitch({
-                                router,
-                                navigation,
-                            });
-                            if (!collapseStarted) {
-                                setPendingSessionSurfaceSwitch(null);
-                                router.replace(switchPlan.targetHref);
-                            }
-                        }}
-                    />
+                    <SessionCockpitModeSwipeGesture
+                        direction="close"
+                        enabled={deviceType === 'phone'}
+                        onIntent={() => handleCloseMobileWorkspaceCockpit(model.sessionId)}
+                        testID={`session-cockpit-close-swipe-${model.sessionId}`}
+                    >
+                        <SessionCockpitTabBar
+                            sessionId={model.sessionId}
+                            activeSurface={activeSurface}
+                            terminalTabAvailable={terminalTabAvailable}
+                            onSurfacePress={(surface) => handleSessionCockpitSurfacePress(model.sessionId, surface)}
+                        />
+                    </SessionCockpitModeSwipeGesture>
                 ),
             };
         }
@@ -210,28 +234,34 @@ export const MobileBottomChromeHost = React.memo(() => {
         return null;
     }, [
         activeTab,
+        cockpitRegistration,
         deviceType,
+        handleCloseMobileWorkspaceCockpit,
+        handleSessionCockpitSurfacePress,
         mobileWorkspaceExperience,
         model,
-        pathname,
-        routeServerId,
-        currentDetailsSourceSurface,
-        navigation,
         params.worktreeId,
         router,
+        routeServerId,
         sessionTerminalTabAvailable,
         sessionLastMobileSurfaceBySessionId,
         setProjectLastMobileSurfaceByWorkspaceRefId,
-        setSessionLastMobileSurfaceBySessionId,
         projectLastMobileSurfaceByWorkspaceRefId,
         handleMainAppTabPress,
+        softwareKeyboardVisible,
     ]);
-    const [renderedChrome, setRenderedChrome] = React.useState(resolvedChrome);
+    const [renderedChrome, setRenderedChrome] = React.useState<Readonly<{
+        current: BottomChromeItem | null;
+        previous: BottomChromeItem | null;
+    }>>({
+        current: resolvedChrome,
+        previous: null,
+    });
     const renderedChromeRef = React.useRef(renderedChrome);
-    const progress = React.useRef(new Animated.Value(resolvedChrome ? 1 : 0)).current;
+    const progress = React.useRef(new Animated.Value(1)).current;
     const activeChromeAnimationRef = React.useRef<Animated.CompositeAnimation | null>(null);
 
-    const setRenderedChromeState = React.useCallback((nextChrome: typeof resolvedChrome) => {
+    const setRenderedChromeState = React.useCallback((nextChrome: typeof renderedChrome) => {
         renderedChromeRef.current = nextChrome;
         setRenderedChrome(nextChrome);
     }, []);
@@ -243,98 +273,120 @@ export const MobileBottomChromeHost = React.memo(() => {
     }, [progress]);
 
     React.useLayoutEffect(() => {
-        const currentRenderedChrome = renderedChromeRef.current;
+        const currentRenderedState = renderedChromeRef.current;
+        const currentRenderedChrome = currentRenderedState.current;
 
         if (reduceMotion) {
             stopChromeAnimation();
-            setRenderedChromeState(resolvedChrome);
-            progress.setValue(resolvedChrome ? 1 : 0);
+            if (isBottomChromeStateSettled(currentRenderedState, resolvedChrome)) {
+                return;
+            }
+            setRenderedChromeState({ current: resolvedChrome, previous: null });
+            progress.setValue(1);
             return;
         }
 
         if (!resolvedChrome) {
-            stopChromeAnimation();
-            setRenderedChromeState(null);
-            progress.setValue(0);
-            return;
-        }
-
-        if ((currentRenderedChrome?.key ?? null) === (resolvedChrome?.key ?? null)) {
-            if ((currentRenderedChrome?.signature ?? null) !== (resolvedChrome?.signature ?? null)) {
-                setRenderedChromeState(resolvedChrome);
+            if (isBottomChromeStateSettled(currentRenderedState, null)) {
+                return;
             }
+            stopChromeAnimation();
+            setRenderedChromeState({ current: null, previous: null });
+            progress.setValue(1);
             return;
         }
-
-        const animateIn = (nextChrome: typeof resolvedChrome) => {
-            stopChromeAnimation();
-            setRenderedChromeState(nextChrome);
-            progress.setValue(0);
-            const animation = Animated.timing(progress, {
-                toValue: 1,
-                duration: motionTokens.durationMs.base,
-                easing: motionTokens.easing.emphasized,
-                useNativeDriver: Platform.OS !== 'web',
-            });
-            activeChromeAnimationRef.current = animation;
-            animation.start(({ finished }) => {
-                if (activeChromeAnimationRef.current !== animation) {
-                    return;
-                }
-                activeChromeAnimationRef.current = null;
-                if (!finished) {
-                    return;
-                }
-                progress.setValue(1);
-            });
-        };
 
         if (!currentRenderedChrome) {
-            animateIn(resolvedChrome);
+            stopChromeAnimation();
+            progress.setValue(1);
+            setRenderedChromeState({ current: resolvedChrome, previous: null });
             return;
         }
 
-        animateIn(resolvedChrome);
+        if (currentRenderedChrome.key === resolvedChrome.key) {
+            if (currentRenderedChrome.signature === resolvedChrome.signature) {
+                return;
+            }
+            stopChromeAnimation();
+            progress.setValue(1);
+            setRenderedChromeState({ current: resolvedChrome, previous: null });
+            return;
+        }
+
+        stopChromeAnimation();
+        setRenderedChromeState({
+            current: resolvedChrome,
+            previous: currentRenderedChrome,
+        });
+        progress.setValue(0);
+        const animation = Animated.timing(progress, {
+            toValue: 1,
+            duration: motionTokens.durationMs.base,
+            easing: motionTokens.easing.emphasized,
+            useNativeDriver: Platform.OS !== 'web',
+        });
+        activeChromeAnimationRef.current = animation;
+        animation.start(({ finished }) => {
+            if (activeChromeAnimationRef.current !== animation) {
+                return;
+            }
+            activeChromeAnimationRef.current = null;
+            if (!finished) {
+                return;
+            }
+            progress.setValue(1);
+            setRenderedChromeState({ current: resolvedChrome, previous: null });
+        });
     }, [progress, reduceMotion, resolvedChrome, setRenderedChromeState, stopChromeAnimation]);
 
     React.useLayoutEffect(() => () => {
         stopChromeAnimation();
     }, [stopChromeAnimation]);
 
-    if (!resolvedChrome) {
+    if (!renderedChrome.current) {
         return null;
     }
 
-    const chromeToRender =
-        (renderedChrome?.key ?? null) === (resolvedChrome?.key ?? null)
-            ? (resolvedChrome ?? renderedChrome)
-            : renderedChrome;
-
-    if (!chromeToRender) {
-        return null;
-    }
-
-    const animatedStyle = {
+    const currentStyle = {
         opacity: progress,
         transform: [
             {
                 translateY: progress.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [10, 0],
+                    outputRange: [BOTTOM_CHROME_TRANSITION_TRANSLATE_Y, 0],
                 }),
             },
+        ],
+    } as const;
+    const previousStyle = {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        opacity: progress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [1, 0],
+        }),
+        transform: [
             {
-                scale: progress.interpolate({
+                translateY: progress.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [0.99, 1],
+                    outputRange: [0, BOTTOM_CHROME_TRANSITION_TRANSLATE_Y],
                 }),
             },
         ],
     } as const;
 
     return (
-        <Animated.View style={animatedStyle}>
-            {chromeToRender.node}
-        </Animated.View>
+        <View style={{ position: 'relative' }}>
+            <Animated.View style={currentStyle}>
+                {renderedChrome.current.node}
+            </Animated.View>
+            {renderedChrome.previous ? (
+                <Animated.View pointerEvents="none" style={previousStyle}>
+                    {renderedChrome.previous.node}
+                </Animated.View>
+            ) : null}
+        </View>
     );
 });

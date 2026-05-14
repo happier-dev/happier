@@ -1,6 +1,10 @@
 import * as React from 'react';
 
-import type { AgentInputExtraActionChip, AgentInputPopoverAnchor } from '../agentInputContracts';
+import {
+    hasAgentInputCollapsedOptionsPopoverContent,
+    type AgentInputExtraActionChip,
+    type AgentInputPopoverAnchor,
+} from '../agentInputContracts';
 import type {
     AgentInputSelectionOverlayId,
     AgentInputSelectionOverlayState,
@@ -16,7 +20,7 @@ function hasCollapsedExtraPopover(chip: AgentInputExtraActionChip): boolean {
     return Boolean(
         (
             chip.collapsedOptionsPopover
-            && chip.collapsedOptionsPopover.options.length > 0
+            && hasAgentInputCollapsedOptionsPopoverContent(chip.collapsedOptionsPopover)
         )
         || chip.collapsedContentPopover,
     );

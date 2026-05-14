@@ -1,4 +1,5 @@
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import { formatAutomationCadenceLabel } from '@/components/automations/editor/automationScheduleSentenceModel';
 import { t } from '@/text';
 
 export function getAutomationChipLabel(draft: NewSessionAutomationDraft): string {
@@ -6,11 +7,11 @@ export function getAutomationChipLabel(draft: NewSessionAutomationDraft): string
         return t('newSession.automationChip.default');
     }
 
-    if (draft.scheduleKind === 'cron') {
-        return t('newSession.automationChip.cron');
+    const cadence = formatAutomationCadenceLabel(draft);
+    const name = draft.name.trim();
+    if (name.length > 0) {
+        return `${name} ${cadence}`;
     }
 
-    return t('newSession.automationChip.interval', {
-        minutes: Math.max(1, Math.floor(draft.everyMinutes)),
-    });
+    return cadence.charAt(0).toUpperCase() + cadence.slice(1);
 }

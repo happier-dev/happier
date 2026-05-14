@@ -13,7 +13,12 @@ export const DiffViewer = React.memo<DiffViewerProps>((props) => {
     const rendererMode = useSetting('filesDiffRendererMode');
 
     const wantsPierre = rendererMode === 'pierre';
-    const pierreAllowed = wantsPierre && isPierreDiffKillSwitchEnabled() && supportsPierreRuntime();
+    const rangeInteractionRequired = typeof props.onPressLineRange === 'function'
+        && (props.interactionMode ?? 'read') !== 'read';
+    const pierreAllowed = wantsPierre
+        && !rangeInteractionRequired
+        && isPierreDiffKillSwitchEnabled()
+        && supportsPierreRuntime();
 
     if (pierreAllowed) {
         const viewer = <PierreDiffViewer {...props} />;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -20,6 +20,7 @@ import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 import { Typography } from '@/constants/Typography';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function shouldRenderGroupedToolCallWithMessageView(
     message: ToolCallMessage,
@@ -208,7 +209,7 @@ export const ToolCallsGroupView = React.memo((props: {
                 <View style={styles.headerRight}>
                     <View style={styles.statusIconRight}>
                         {props.status === 'running' ? (
-                            <ActivityIndicator size="small" />
+                            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                         ) : props.status === 'error' ? (
                             <Ionicons name="alert-circle" size={16} color={theme.colors.state.danger.foreground} />
                         ) : (

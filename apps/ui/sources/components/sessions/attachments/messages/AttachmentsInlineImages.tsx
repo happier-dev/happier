@@ -1,7 +1,7 @@
 import * as React from 'react';
 
-import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
 import { SessionMediaInlineImages } from '@/components/sessions/media/SessionMediaInlineImages';
+import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/sessions/media/presentation';
 import type { SessionMediaInlineImageSummary } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 
 export type InlineImageAttachmentSummary = Readonly<{
@@ -12,15 +12,6 @@ export type InlineImageAttachmentSummary = Readonly<{
     sha256?: string;
 }>;
 
-function resolveImageMimeType(attachment: InlineImageAttachmentSummary): string | null {
-    const raw = typeof attachment.mimeType === 'string' && attachment.mimeType.trim().length > 0
-        ? attachment.mimeType.trim().toLowerCase()
-        : getImageMimeTypeFromPath(attachment.path) ?? getImageMimeTypeFromPath(attachment.name);
-    return raw === 'image/png' || raw === 'image/jpeg' || raw === 'image/webp' || raw === 'image/gif'
-        ? raw
-        : null;
-}
-
 export const AttachmentsInlineImages = React.memo(function AttachmentsInlineImages(props: Readonly<{
     sessionId: string;
     attachments: readonly InlineImageAttachmentSummary[];
@@ -29,7 +20,7 @@ export const AttachmentsInlineImages = React.memo(function AttachmentsInlineImag
     const media = React.useMemo(() => {
         const result: SessionMediaInlineImageSummary[] = [];
         for (const attachment of props.attachments) {
-            const mimeType = resolveImageMimeType(attachment);
+            const mimeType = resolveSessionMediaInlineRenderableImageMimeType(attachment);
             if (!mimeType) continue;
             result.push({
                 id: attachment.sha256 ?? attachment.path,

@@ -4,6 +4,7 @@ import { nowServerMs } from '@/sync/runtime/time';
 import { RawRecordSchema, type RawRecord } from '@/sync/typesRaw';
 import { randomUUID } from '@/platform/randomUUID';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
 import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
@@ -238,7 +239,7 @@ export async function fetchAndApplyPendingMessagesV2(params: {
     const queued = rows.filter((r) => r.status === 'queued').sort((a, b) => a.position - b.position || a.createdAt - b.createdAt || a.localId.localeCompare(b.localId));
     const discarded = rows.filter((r) => r.status === 'discarded').sort((a, b) => (a.discardedAt ?? a.updatedAt) - (b.discardedAt ?? b.updatedAt));
 
-    const pendingMessages = [];
+    const pendingMessages: PendingMessage[] = [];
     for (const r of queued) {
         const decrypted = await readPendingRowDecryptedContent({
             row: r,
@@ -259,13 +260,14 @@ export async function fetchAndApplyPendingMessagesV2(params: {
             localId: r.localId,
             createdAt: r.createdAt,
             updatedAt: r.updatedAt,
+            deliveryStatus: 'accepted',
             text: coerced.text,
             displayText: coerced.displayText,
             rawRecord: coerced.rawRecord,
         });
     }
 
-    const discardedMessages = [];
+    const discardedMessages: DiscardedPendingMessage[] = [];
     for (const r of discarded) {
         const decrypted = await readPendingRowDecryptedContent({
             row: r,
@@ -361,6 +363,7 @@ export async function enqueuePendingMessageV2(params: {
         localId,
         createdAt,
         updatedAt,
+        deliveryStatus: 'queued',
         text,
         displayText,
         rawRecord,
@@ -385,7 +388,16 @@ export async function enqueuePendingMessageV2(params: {
                 assertPendingResponseOk(response, 'Failed to enqueue pending message');
             }
         });
-        storage.getState().clearSessionOptimisticThinking(sessionId);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: localId,
+            localId,
+            createdAt,
+            updatedAt: nowServerMs(),
+            deliveryStatus: 'accepted',
+            text,
+            displayText,
+            rawRecord,
+        });
     } catch (e) {
         storage.getState().removePendingMessage(sessionId, localId);
         storage.getState().clearSessionOptimisticThinking(sessionId);

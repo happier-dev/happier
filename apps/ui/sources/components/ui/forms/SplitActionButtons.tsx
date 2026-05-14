@@ -6,8 +6,8 @@ import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 
 export const SplitActionButtons = React.memo(function SplitActionButtons(props: Readonly<{
-    secondaryLabel: string;
-    onSecondaryPress: () => void;
+    secondaryLabel?: string;
+    onSecondaryPress?: () => void;
     secondaryTestID?: string;
     secondaryDestructive?: boolean;
     primaryLabel: string;
@@ -19,30 +19,32 @@ export const SplitActionButtons = React.memo(function SplitActionButtons(props: 
 
     return (
         <View style={styles.actionsRow}>
-            <View style={styles.buttonContainer}>
-                <Pressable
-                    testID={props.secondaryTestID}
-                    onPress={props.onSecondaryPress}
-                    accessibilityRole="button"
-                    accessibilityLabel={props.secondaryLabel}
-                    style={({ pressed }) => ({
-                        backgroundColor: theme.colors.surface.base,
-                        borderRadius: 10,
-                        paddingVertical: 12,
-                        alignItems: 'center',
-                        opacity: pressed ? 0.85 : 1,
-                    })}
-                >
-                    <Text
-                        style={{
-                            color: props.secondaryDestructive ? theme.colors.state.danger.foreground : theme.colors.text.primary,
-                            ...Typography.default('semiBold'),
-                        }}
+            {props.secondaryLabel && props.onSecondaryPress ? (
+                <View style={styles.buttonContainer}>
+                    <Pressable
+                        testID={props.secondaryTestID}
+                        onPress={props.onSecondaryPress}
+                        accessibilityRole="button"
+                        accessibilityLabel={props.secondaryLabel}
+                        style={({ pressed }) => ({
+                            backgroundColor: theme.colors.surface.base,
+                            borderRadius: 10,
+                            paddingVertical: 12,
+                            alignItems: 'center',
+                            opacity: pressed ? 0.85 : 1,
+                        })}
                     >
-                        {props.secondaryLabel}
-                    </Text>
-                </Pressable>
-            </View>
+                        <Text
+                            style={{
+                                color: props.secondaryDestructive ? theme.colors.state.danger.foreground : theme.colors.text.primary,
+                                ...Typography.default('semiBold'),
+                            }}
+                        >
+                            {props.secondaryLabel}
+                        </Text>
+                    </Pressable>
+                </View>
+            ) : null}
 
             <View style={styles.buttonContainer}>
                 <Pressable

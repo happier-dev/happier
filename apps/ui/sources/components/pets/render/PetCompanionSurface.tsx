@@ -1,13 +1,5 @@
 import * as React from 'react';
-import {
-    Platform,
-    Pressable,
-    type GestureResponderEvent,
-    type PressableProps,
-    type View,
-    type StyleProp,
-    type ViewStyle,
-} from 'react-native';
+import { Platform, Pressable, type GestureResponderEvent, type PressableProps, type View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import {

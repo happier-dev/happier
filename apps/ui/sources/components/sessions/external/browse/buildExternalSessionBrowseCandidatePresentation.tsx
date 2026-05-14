@@ -7,11 +7,11 @@ import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMet
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { lightTheme } from '@/theme';
+import type { Theme } from '@/theme';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
-type AppTheme = typeof lightTheme;
+type AppTheme = Theme;
 
 type ExternalSessionBrowseCandidate = Readonly<{
     remoteSessionId: string;

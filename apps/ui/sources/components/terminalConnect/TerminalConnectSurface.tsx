@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -7,6 +7,7 @@ import { FlowSurfaceActions, FlowSurfaceChrome } from '@/components/ui/flowSurfa
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type TerminalConnectMessageState = Readonly<{
     kind: 'message';
@@ -110,7 +111,7 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
             >
                 <View style={styles.message}>
                     {props.state.loading ? (
-                        <ActivityIndicator color={theme.colors.button.primary.background} />
+                        <ActivitySpinner color={theme.colors.button.primary.background} />
                     ) : (
                         <Ionicons
                             name={props.state.tone === 'critical' ? 'warning-outline' : 'terminal-outline'}

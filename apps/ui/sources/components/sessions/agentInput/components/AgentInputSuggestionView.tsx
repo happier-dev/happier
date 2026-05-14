@@ -15,18 +15,20 @@ interface CommandSuggestionProps {
 }
 
 const COMMAND_PREFIX = '/';
+export const COMMAND_SUGGESTION_ROW_HEIGHT = 52;
 
 export const CommandSuggestion = React.memo(({ command, description }: CommandSuggestionProps) => {
     return (
-        <View style={styles.suggestionContainer}>
+        <View testID="agent-input-command-suggestion" style={styles.commandSuggestionContainer}>
             <Text 
-                style={[styles.commandText, { marginRight: description ? 12 : 0 }]}
+                style={styles.commandText}
+                numberOfLines={1}
             >
                 {COMMAND_PREFIX}{command}
             </Text>
             {description && (
                 <Text
-                    style={styles.descriptionText}
+                    style={styles.commandSubtitleText}
                     numberOfLines={1}
                 >
                     {description}
@@ -66,6 +68,15 @@ export const FileMentionSuggestion = React.memo(({ fileName, filePath, fileType 
 });
 
 const styles = StyleSheet.create((theme) => ({
+    commandSuggestionContainer: {
+        flex: 1,
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        justifyContent: 'center',
+        paddingHorizontal: 16,
+        paddingTop: 8,
+        paddingBottom: 8,
+    },
     suggestionContainer: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -74,13 +85,15 @@ const styles = StyleSheet.create((theme) => ({
     },
     commandText: {
         fontSize: 14,
+        lineHeight: 18,
         color: theme.colors.text.primary,
         fontWeight: '600',
         ...Typography.default('semiBold'),
     },
-    descriptionText: {
-        flex: 1,
-        fontSize: 13,
+    commandSubtitleText: {
+        marginTop: 2,
+        fontSize: 12,
+        lineHeight: 16,
         color: theme.colors.text.secondary,
         ...Typography.default(),
     },

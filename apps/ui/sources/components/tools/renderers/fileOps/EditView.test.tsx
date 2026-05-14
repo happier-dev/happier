@@ -36,7 +36,7 @@ describe('EditView', () => {
             result: null,
         });
 
-        await renderScreen(React.createElement(EditView, makeToolViewProps(tool)));
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool, { sessionId: 'session-1' })));
 
         expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -63,11 +63,12 @@ describe('EditView', () => {
             result: null,
         });
 
-        await renderScreen(React.createElement(EditView, makeToolViewProps(tool)));
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool, { sessionId: 'session-1' })));
 
         expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 filePath: '/tmp/a.ts',
+                sessionId: 'session-1',
             }),
         );
     });

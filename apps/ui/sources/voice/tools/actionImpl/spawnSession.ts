@@ -6,6 +6,8 @@ import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/s
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
+import { resolveCanonicalMachineId } from '@/sync/domains/machines/identity/resolveCanonicalMachineId';
+import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
 
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
 import { postprocessSpawnedSession } from './spawnSessionPostProcess';
@@ -33,9 +35,9 @@ function resolveSpawnTarget(state: any): { machineId: string; directory: string 
 
   for (const sid of Object.keys(sessionsObj)) {
     const metadata = resolveSessionListPreferredSessionMetadataFromState(state, sid);
-    const fallbackMachineId = normalizeNonEmptyString(metadata?.machineId);
+    const metadataMachineId = normalizeNonEmptyString(metadata?.machineId);
     const fallbackDirectory = normalizeNonEmptyString(metadata?.path);
-    if (fallbackMachineId && fallbackDirectory) return { machineId: fallbackMachineId, directory: fallbackDirectory };
+    if (metadataMachineId && fallbackDirectory) return { machineId: metadataMachineId, directory: fallbackDirectory };
   }
 
   return null;
@@ -54,19 +56,38 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
 
   const requestedHost = normalizeNonEmptyString(params.host);
   const machinesObj: any = state?.machines ?? {};
-  const match = requestedHost
-    ? ((Object.values(machinesObj as any).find((m: any) => normalizeNonEmptyString(m?.metadata?.host) === requestedHost) as any) ?? null)
-    : null;
-  const machineIdFromHost = requestedHost ? (match?.id ?? null) : null;
-  if (requestedHost && !normalizeNonEmptyString(machineIdFromHost)) {
-    return { type: 'error', errorCode: 'host_not_found', errorMessage: 'host_not_found', host: requestedHost };
+  const fallbackTarget = resolveSpawnTarget(state);
+  const machines = Object.values(machinesObj as any);
+  const canonical = resolveCanonicalMachineId(fallbackTarget?.machineId ?? null, machines as any);
+  const targetMachineId = canonical?.machineId ?? fallbackTarget?.machineId ?? null;
+  if (requestedHost) {
+    const hostMatches = machines.filter((machine: any) => normalizeNonEmptyString(machine?.metadata?.host) === requestedHost);
+    if (hostMatches.length === 0 || !targetMachineId) {
+      return { type: 'error', errorCode: 'host_not_found', errorMessage: 'host_not_found', host: requestedHost };
+    }
+    if (hostMatches.length > 1) {
+      return { type: 'error', errorCode: 'host_ambiguous', errorMessage: 'host_ambiguous', host: requestedHost };
+    }
+    if (normalizeNonEmptyString((hostMatches[0] as any)?.id) !== targetMachineId) {
+      return { type: 'error', errorCode: 'host_not_found', errorMessage: 'host_not_found', host: requestedHost };
+    }
   }
 
-  const fallbackTarget = resolveSpawnTarget(state);
-  const machineId = normalizeNonEmptyString(machineIdFromHost) ?? fallbackTarget?.machineId ?? null;
+  const machineId = normalizeNonEmptyString(targetMachineId);
   const directory = normalizeNonEmptyString(params.path) ?? fallbackTarget?.directory ?? null;
   if (!machineId || !directory) {
     return { type: 'error', errorCode: 'spawn_target_missing', errorMessage: 'spawn_target_missing' };
+  }
+  const machineRecord = state?.machines?.[machineId] ?? Object.values(state?.machines ?? {}).find((entry: any) => entry?.id === machineId) ?? null;
+  const readiness = resolveMachineExactSpawnReadiness(machineRecord as any, machineId);
+  if (readiness.status !== 'ready') {
+    return {
+      type: 'error',
+      errorCode: 'spawn_target_unavailable',
+      errorMessage: 'spawn_target_unavailable',
+      machineId,
+      readinessStatus: readiness.status,
+    };
   }
 
   const serverId = getActiveServerSnapshot().serverId;
@@ -88,7 +109,6 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
   const modelUpdatedAt = modelId ? Date.now() : null;
   const machineMetadata = (state?.machines?.[machineId] ?? Object.values(state?.machines ?? {}).find((entry: any) => entry?.id === machineId) ?? null)?.metadata ?? null;
-  const machineRecord = state?.machines?.[machineId] ?? Object.values(state?.machines ?? {}).find((entry: any) => entry?.id === machineId) ?? { id: machineId, metadata: machineMetadata };
   const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
     machineMetadata,
     settings: state?.settings ?? {},

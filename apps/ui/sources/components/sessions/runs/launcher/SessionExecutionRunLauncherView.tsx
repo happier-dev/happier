@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -43,6 +43,7 @@ import {
     resolveExecutionRunLauncherActionId,
     type ExecutionRunIntent,
 } from './executionRunLauncherModel';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -467,11 +468,11 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     ]);
 
     if (!hydrateReady) {
-        return <ActivityIndicator size="small" color={theme.colors.text.secondary} />;
+        return <ActivitySpinner size="small" color={theme.colors.text.secondary} />;
     }
 
     if (waitingForExecutionRunCapabilities) {
-        return <ActivityIndicator size="small" color={theme.colors.text.secondary} />;
+        return <ActivitySpinner size="small" color={theme.colors.text.secondary} />;
     }
 
     if (!canLaunchExecutionRuns) {

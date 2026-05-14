@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, ActivityIndicator, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
+import { View, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { UserSearchResult } from '@/components/friends/UserSearchResult';
 import { searchUsersByUsername, sendFriendRequest } from '@/sync/api/social/apiFriends';
@@ -15,6 +15,7 @@ import { useRequireFriendsEnabled } from '@/hooks/friends/useRequireFriendsEnabl
 import { HappyError } from '@/utils/errors/errors';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 export default function SearchFriendsScreen() {
@@ -120,7 +121,7 @@ export default function SearchFriendsScreen() {
                             
                             {isSearching && (
                                 <View style={styles.searchingIndicator}>
-                                    <ActivityIndicator size="small" color={theme.colors.text.link} />
+                                    <ActivitySpinner size="small" color={theme.colors.text.link} />
                                 </View>
                             )}
                         </View>
@@ -135,7 +136,7 @@ export default function SearchFriendsScreen() {
                         <View style={styles.resultsSection}>
                             {isSearching && searchResults.length === 0 ? (
                                 <View style={styles.loadingContainer}>
-                                    <ActivityIndicator size="large" color={theme.colors.text.link} />
+                                    <ActivitySpinner size="large" color={theme.colors.text.link} />
                                     <Text style={styles.loadingText}>{t('friends.searching')}</Text>
                                 </View>
                             ) : searchResults.length > 0 ? (

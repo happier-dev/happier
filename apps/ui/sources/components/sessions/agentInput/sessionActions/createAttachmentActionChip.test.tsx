@@ -42,14 +42,17 @@ describe('createAttachmentActionChip', () => {
 
             expect(chip.collapsedContentPopover).toBeFalsy();
             expect(chip.collapsedOptionsPopover).toMatchObject({
-                presentation: 'simple',
+                presentation: 'list',
                 title: '',
-                options: [
-                    { id: 'paste-image', label: 'common.pasteImage' },
-                    { id: 'add-image', label: 'common.addImage' },
-                    { id: 'add-file', label: 'common.addFile' },
-                ],
             });
+            const section = chip.collapsedOptionsPopover?.rootStep.sections[0];
+            expect(section?.kind).toBe('static');
+            if (section?.kind !== 'static') throw new Error('expected static attachment section');
+            expect(section.options.map((option) => ({ id: option.id, label: option.label }))).toEqual([
+                { id: 'paste-image', label: 'common.pasteImage' },
+                { id: 'add-image', label: 'common.addImage' },
+                { id: 'add-file', label: 'common.addFile' },
+            ]);
 
             const toggleCollapsedPopover = vi.fn();
             const screen = await renderScreen(
@@ -71,13 +74,13 @@ describe('createAttachmentActionChip', () => {
             await screen.pressByTestIdAsync('agent-input-attachments-chip');
             expect(toggleCollapsedPopover).toHaveBeenCalledWith('attachments-add');
 
-            chip.collapsedOptionsPopover?.onSelect?.('paste-image');
+            section.options.find((option) => option.id === 'paste-image')?.onSelect?.();
             expect(onPasteImage).toHaveBeenCalledTimes(1);
 
-            chip.collapsedOptionsPopover?.onSelect?.('add-image');
+            section.options.find((option) => option.id === 'add-image')?.onSelect?.();
             expect(onPickImage).toHaveBeenCalledTimes(1);
 
-            chip.collapsedOptionsPopover?.onSelect?.('add-file');
+            section.options.find((option) => option.id === 'add-file')?.onSelect?.();
             expect(onPickFile).toHaveBeenCalledTimes(1);
         } finally {
             (Platform as any).OS = originalOs;

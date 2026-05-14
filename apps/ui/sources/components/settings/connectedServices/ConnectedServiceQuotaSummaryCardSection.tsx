@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import type { DimensionValue } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -9,6 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 import type { ConnectedServiceQuotaSummaryCard } from './buildConnectedServiceQuotaSummaryCards';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type ConnectedServiceQuotaSummaryCardSectionProps = Readonly<{
     title: string;
@@ -117,7 +118,7 @@ export const ConnectedServiceQuotaSummaryCardSection = React.memo(function Conne
                 >
                     <View style={styles.loadingState}>
                         {props.isRefreshing ? (
-                            <ActivityIndicator size="small" color={theme.colors.accent.blue} />
+                            <ActivitySpinner size="small" color={theme.colors.accent.blue} />
                         ) : null}
                         <Text style={styles.statusText}>{props.isRefreshing ? t('common.loading') : t('usage.noData')}</Text>
                     </View>

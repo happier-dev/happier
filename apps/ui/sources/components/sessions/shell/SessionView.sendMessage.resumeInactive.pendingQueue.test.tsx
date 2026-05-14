@@ -58,6 +58,9 @@ const inactiveSessionUiState = vi.hoisted(() => ({
         shouldShowInput: boolean;
     },
 }));
+const sessionOptimisticThinkingAt = vi.hoisted(() => ({
+    current: null as number | null,
+}));
 const resolveSessionComposerSendMock = vi.hoisted(() =>
     vi.fn((...args: any[]) => {
         const first = args[0] as { input?: unknown } | undefined;
@@ -212,6 +215,9 @@ installSessionShellCommonModuleMocks({
                 ...sessionMetadataOverrides.current,
             },
             agentState: {},
+            get optimisticThinkingAt() {
+                return sessionOptimisticThinkingAt.current;
+            },
         };
 
         const localSettingsFixture: Partial<LocalSettings> = {
@@ -480,6 +486,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         settingsState.current = { experiments: true, featureToggles: {}, codexBackendMode: 'acp' };
         sessionMetadataOverrides.current = {};
         machineEncryptionAvailable.current = false;
+        sessionOptimisticThinkingAt.current = null;
         inactiveSessionUiState.current = { noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true };
         canResumeSessionWithOptionsSpy.mockReset();
         canResumeSessionWithOptionsSpy.mockImplementation(
@@ -583,11 +590,13 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         expect(findAgentInput(screen).props.connectionStatus?.isPulsing).toBe(true);
 
         await act(async () => {
+            sessionOptimisticThinkingAt.current = Date.now();
             resolveResume?.({ type: 'success' });
             await pendingFireAndForget[0];
         });
 
-        expect(findAgentInput(screen).props.connectionStatus?.text).not.toBe('session.resuming');
+        expect(findAgentInput(screen).props.connectionStatus?.text).toBe('session.resuming');
+        expect(findAgentInput(screen).props.connectionStatus?.isPulsing).toBe(true);
 
         await screen.unmount();
     });

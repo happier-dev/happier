@@ -6,6 +6,7 @@ import { SCM_OPERATION_ERROR_CODES, type ScmHostingRepositoryDescribePublishTarg
 import { createDeferred, createThemeFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { SourceControlUpdateTheme } from './SourceControlUpdateControls';
+import { SourceControlPublishRepositorySection } from './SourceControlPublishRepositorySection';
 
 function createSnapshot(overrides: Partial<ScmWorkingSnapshot> = {}): ScmWorkingSnapshot {
     return {
@@ -66,7 +67,6 @@ function createSourceControlUpdateThemeFixture(): SourceControlUpdateTheme {
 
 describe('SourceControlPublishRepositorySection', () => {
     it('suppresses publish when any remote already points at a GitHub-family host', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
                 theme={createSourceControlUpdateThemeFixture()}
@@ -98,7 +98,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('suppresses publish for scp-style GitHub SSH remotes', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
                 theme={createSourceControlUpdateThemeFixture()}
@@ -130,7 +129,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('renders target controls for a publishable repository with backend targets', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
                 theme={createSourceControlUpdateThemeFixture()}
@@ -172,7 +170,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('surfaces authenticated connected-account availability without remediation actions', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
                 theme={createSourceControlUpdateThemeFixture()}
@@ -212,7 +209,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('surfaces connected-service authentication remediation from backend target auth', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const onConnectGitHub = vi.fn(async () => {});
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
@@ -259,7 +255,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('surfaces gh install remediation from backend target auth', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const onInstallGh = vi.fn(async () => {});
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
@@ -306,7 +301,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('disables gh install remediation when the owning surface provides no installable action', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
                 theme={createSourceControlUpdateThemeFixture()}
@@ -347,8 +341,92 @@ describe('SourceControlPublishRepositorySection', () => {
         expect(screen.findByTestId('scm-publish-remediation-install-gh')?.props.disabled).toBe(true);
     });
 
+    it('fails closed for publish submission while backend auth remediation is required', async () => {
+        const onPublishRepository = vi.fn();
+        const screen = await renderScreen(
+            <SourceControlPublishRepositorySection
+                theme={createSourceControlUpdateThemeFixture()}
+                snapshot={createSnapshot()}
+                writeEnabled
+                disabled={false}
+                publishTargets={{
+                    success: true,
+                    auth: { state: 'authentication_required', profileKind: 'provider_cli' },
+                    defaultRepositoryName: 'repo',
+                    targets: [{
+                        provider: {
+                            id: 'scm.github',
+                            kind: 'github',
+                            displayName: 'GitHub',
+                            baseUrl: 'https://github.com',
+                            urlSafety: { allowedSchemes: ['https:'] },
+                        },
+                        owner: 'acme',
+                        ownerKind: 'org',
+                        label: 'acme',
+                        isDefault: true,
+                        supportedVisibilities: ['private'],
+                        supportedRemoteUrlKinds: ['https'],
+                        auth: {
+                            state: 'authentication_required',
+                            profileKind: 'provider_cli',
+                            remediation: { kind: 'install_required', action: 'install_gh' },
+                        },
+                    }],
+                }}
+                onDescribePublishTargets={vi.fn()}
+                onPublishRepository={onPublishRepository}
+                onRefresh={vi.fn()}
+            />,
+        );
+
+        expect(screen.findByTestId('scm-publish-repository-submit')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('scm-publish-repository-submit');
+
+        expect(onPublishRepository).not.toHaveBeenCalled();
+    });
+
+    it('fails closed for publish submission when backend auth state is unknown', async () => {
+        const onPublishRepository = vi.fn();
+        const screen = await renderScreen(
+            <SourceControlPublishRepositorySection
+                theme={createSourceControlUpdateThemeFixture()}
+                snapshot={createSnapshot()}
+                writeEnabled
+                disabled={false}
+                publishTargets={{
+                    success: true,
+                    auth: { state: 'unknown', profileKind: 'unknown' },
+                    defaultRepositoryName: 'repo',
+                    targets: [{
+                        provider: {
+                            id: 'scm.github',
+                            kind: 'github',
+                            displayName: 'GitHub',
+                            baseUrl: 'https://github.com',
+                            urlSafety: { allowedSchemes: ['https:'] },
+                        },
+                        owner: 'acme',
+                        ownerKind: 'org',
+                        label: 'acme',
+                        isDefault: true,
+                        supportedVisibilities: ['private'],
+                        supportedRemoteUrlKinds: ['https'],
+                    }],
+                }}
+                onDescribePublishTargets={vi.fn()}
+                onPublishRepository={onPublishRepository}
+                onRefresh={vi.fn()}
+            />,
+        );
+
+        expect(screen.findByTestId('scm-publish-repository-submit')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('scm-publish-repository-submit');
+
+        expect(onPublishRepository).not.toHaveBeenCalled();
+    });
+
     it('surfaces authenticated provider-cli availability from backend target auth', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
                 theme={createSourceControlUpdateThemeFixture()}
@@ -388,7 +466,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('routes browser remediation through validated follow-up URL shape', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const openUrl = vi.fn(async () => {});
         const screen = await renderScreen(
             <SourceControlPublishRepositorySection
@@ -425,7 +502,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('rejects browser remediation when URL safety metadata is malformed', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const openUrl = vi.fn(async () => {});
         const malformedTargetsResponse = {
             success: false,
@@ -462,7 +538,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('rejects browser remediation when the follow-up URL uses a disallowed scheme', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const openUrl = vi.fn(async () => {});
         const malformedTargetsResponse = {
             success: false,
@@ -499,7 +574,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('routes existing-origin conflict choice through the publish request', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const onPublishRepository = vi.fn()
             .mockResolvedValueOnce({
                 success: false,
@@ -572,7 +646,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('surfaces commit-required remediation as a stable state', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const commitRequiredResponse = {
             success: false,
             error: 'Commit required',
@@ -617,7 +690,6 @@ describe('SourceControlPublishRepositorySection', () => {
     });
 
     it('clears stale publish targets when the repository root changes', async () => {
-        const { SourceControlPublishRepositorySection } = await import('./SourceControlPublishRepositorySection');
         const firstTargets = createDeferred<ScmHostingRepositoryDescribePublishTargetsResponse>();
         const nextTargets = createDeferred<ScmHostingRepositoryDescribePublishTargetsResponse>();
         const onDescribePublishTargets = vi.fn()

@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Pressable, ActivityIndicator } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 export function FriendsGateCentered(props: { title: string; body?: string; children: React.ReactNode }) {
@@ -55,7 +56,7 @@ export function FriendsProviderConnectControls(props: {
                 }}
             >
                 {props.connecting ? (
-                    <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
+                    <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
                 ) : (
                     <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>
                         {props.connectLabel}

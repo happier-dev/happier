@@ -515,7 +515,7 @@ describe('buildSessionListViewData', () => {
         }
     });
 
-    it('can group active sessions by project while grouping inactive sessions by date', () => {
+    it('groups inactive sessions by updated date while grouping active sessions by project', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(2026, 1, 17, 12, 0, 0));
 
@@ -570,7 +570,7 @@ describe('buildSessionListViewData', () => {
                 'header:project:~/repoA',
                 'session:act1:active:no-path',
                 'header:inactive:Inactive',
-                'header:date:Yesterday',
+                'header:date:Today',
                 'session:in1:inactive:default',
             ]);
         } finally {

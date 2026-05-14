@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
@@ -23,6 +23,16 @@ function formatValue(valueId: AcpConfigOptionValueId): string {
 }
 
 export function AgentInputAcpConfigOptionsSection(props: AgentInputAcpConfigOptionsSectionProps) {
+    const { theme } = useUnistyles();
+    const transientStyles = React.useMemo(() => ({
+        choicePillSelected: {
+            borderColor: theme.colors.radio.active,
+        },
+        optionRowPressed: {
+            opacity: 0.85,
+        },
+    }), [theme.colors.radio.active]);
+
     if (props.controls.length === 0 && !props.headerAccessory) {
         return null;
     }
@@ -56,7 +66,7 @@ export function AgentInputAcpConfigOptionsSection(props: AgentInputAcpConfigOpti
                             )}
                             style={({ pressed }) => [
                                 styles.optionRow,
-                                pressed ? styles.optionRowPressed : null,
+                                pressed ? transientStyles.optionRowPressed : null,
                             ]}
                         >
                             <View style={styles.booleanContent}>
@@ -133,8 +143,8 @@ export function AgentInputAcpConfigOptionsSection(props: AgentInputAcpConfigOpti
                                             onPress={() => props.onSelectValue?.(option.id, choice.value)}
                                             style={({ pressed }) => [
                                                 styles.choicePill,
-                                                isSelected ? styles.choicePillSelected : null,
-                                                pressed ? styles.optionRowPressed : null,
+                                                isSelected ? transientStyles.choicePillSelected : null,
+                                                pressed ? transientStyles.optionRowPressed : null,
                                             ]}
                                         >
                                             <Text
@@ -185,9 +195,6 @@ const styles = StyleSheet.create((theme) => ({
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.border.default,
     },
-    optionRowPressed: {
-        opacity: 0.85,
-    },
     booleanContent: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -235,9 +242,6 @@ const styles = StyleSheet.create((theme) => ({
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.base,
         justifyContent: 'center',
-    },
-    choicePillSelected: {
-        borderColor: theme.colors.radio.active,
     },
     choiceLabel: {
         fontSize: 12,

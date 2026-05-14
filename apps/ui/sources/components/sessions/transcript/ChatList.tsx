@@ -1,23 +1,8 @@
 import * as React from 'react';
-import {
-    getStorage,
-    useForkedTranscriptSnapshot,
-    useMessage,
-    useSession,
-    useSessionActionDrafts,
-    useSessionLatestThinkingMessageId,
-    useSessionLatestThinkingMessageActivityAtMs,
-    useSessionMessages,
-    useSessionMessagesById,
-    useSessionPendingMessages,
-    useSessionTranscriptIds,
-    useSetting,
-} from '@/sync/domains/state/storage';
-import { ActivityIndicator, FlatList, Platform, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { getStorage, useForkedTranscriptSnapshot, useMessage, useSession, useSessionActionDrafts, useSessionLatestThinkingMessageId, useSessionLatestThinkingMessageActivityAtMs, useSessionMessages, useSessionMessagesById, useSessionPendingMessages, useSessionTranscriptIds, useSetting, } from '@/sync/domains/state/storage';
+import { FlatList, Platform, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { useCallback } from 'react';
-import { useHeaderHeight } from '@/utils/platform/responsive';
-import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { MessageView } from './MessageView';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { Metadata, Session } from '@/sync/domains/state/storageTypes';
@@ -83,6 +68,8 @@ import {
     clearSessionUiTelemetryMarks,
     recordStreamingVisibleUpdateForSessionUiTelemetry,
 } from '@/sync/runtime/performance/sessionUiTelemetry';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
 
 type ScrollableChatListRef = Readonly<{
     scrollToIndex: (params: { index: number; animated?: boolean; viewPosition?: number }) => void;
@@ -97,6 +84,7 @@ type ChatTranscriptListItem =
         turn: TranscriptTurn;
     };
 
+const EMPTY_MESSAGES_BY_ID: Readonly<Record<string, Message>> = Object.freeze({});
 const TRANSCRIPT_SCROLL_AUTO_REPIN_THROTTLE_MS = 200;
 const TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS = 250;
 const TRANSCRIPT_SCROLL_USER_INTENT_RECENT_MS = 500;
@@ -143,6 +131,43 @@ function readSessionViewportForEntry(sessionId: string) {
     return typeof sync.getSessionViewport === 'function' ? sync.getSessionViewport(sessionId) : null;
 }
 
+function buildRollbackActionsInputSignature(params: Readonly<{
+    messageIdsOldestFirst: readonly string[];
+    messagesById: Readonly<Record<string, Message>>;
+}>): string {
+    let signature = '';
+    for (const messageId of params.messageIdsOldestFirst) {
+        const message = params.messagesById[messageId];
+        if (!message) {
+            signature += `${messageId}:missing|`;
+            continue;
+        }
+        const seq = typeof message.seq === 'number' && Number.isFinite(message.seq) ? Math.trunc(message.seq) : '';
+        signature += `${message.id}:${message.kind}:${seq}`;
+        if (message.kind === 'user-text') {
+            signature += `:${message.text}`;
+        }
+        signature += '|';
+    }
+    return signature;
+}
+
+function buildStableJsonSignature(value: unknown): string {
+    try {
+        return JSON.stringify(value ?? null) ?? 'null';
+    } catch {
+        return String(value);
+    }
+}
+
+function useStableValueBySignature<T>(value: T, signature: string): T {
+    const ref = React.useRef<{ signature: string; value: T }>({ signature, value });
+    if (ref.current.signature !== signature) {
+        ref.current = { signature, value };
+    }
+    return ref.current.value;
+}
+
 export const ChatList = React.memo((props: {
     session: Session;
     bottomNotice?: ChatListBottomNotice | null;
@@ -160,7 +185,9 @@ export const ChatList = React.memo((props: {
     const fork = useForkedTranscriptSnapshot(props.session.id);
     const { ids: childMessageIdsOldestFirst, isLoaded } = useSessionTranscriptIds(props.session.id);
     const childMessagesById = useSessionMessagesById(props.session.id);
-    const { messages: swrCommittedMessages } = useSessionMessages(props.session.id);
+    const forkedTranscriptEnabled = fork != null;
+    const swrFallbackCandidateEnabled = !forkedTranscriptEnabled && childMessageIdsOldestFirst.length === 0;
+    const { messages: swrCommittedMessages } = useSessionMessages(props.session.id, { enabled: swrFallbackCandidateEnabled });
     const { messages: pendingMessages, discarded: discardedPendingMessages } = useSessionPendingMessages(props.session.id);
     const actionDrafts = useSessionActionDrafts(props.session.id);
 
@@ -168,8 +195,6 @@ export const ChatList = React.memo((props: {
     const transcriptGroupToolCalls = useSetting('transcriptGroupToolCalls');
     const transcriptTurnToolCallsGroupStrategy = useSetting('transcriptTurnToolCallsGroupStrategy');
     const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
-
-    const forkedTranscriptEnabled = fork != null;
 
     const swrFallbackEnabled = !forkedTranscriptEnabled
         && childMessageIdsOldestFirst.length === 0
@@ -215,6 +240,11 @@ export const ChatList = React.memo((props: {
         }
         return swrFallbackMessagesById;
     }, [fork, forkedTranscriptEnabled, swrFallbackMessagesById]);
+    const sessionMetadataSignature = React.useMemo(
+        () => buildStableJsonSignature(props.session.metadata ?? null),
+        [props.session.metadata],
+    );
+    const stableSessionMetadata = useStableValueBySignature(props.session.metadata, sessionMetadataSignature);
 
     const groupingMode = forkedTranscriptEnabled ? 'linear' : (transcriptGroupingMode === 'turns' ? 'turns' : 'linear');
     const groupToolCalls =
@@ -289,15 +319,24 @@ export const ChatList = React.memo((props: {
         return resolveLatestVisibleTailActivityKey(groupedItems);
     }, [groupedItems]);
     const rollbackRanges = React.useMemo(
-        () => readSessionRollbackRangesV1((props.session.metadata as Record<string, unknown> | null | undefined) ?? null),
-        [props.session.metadata],
+        () => readSessionRollbackRangesV1((stableSessionMetadata as Record<string, unknown> | null | undefined) ?? null),
+        [sessionMetadataSignature, stableSessionMetadata],
     );
-    const turnChangeSets = React.useMemo(
+    const computedTurnChangeSets = React.useMemo(
         () => deriveTurnChangeSetsFromMessages(
             messageIdsOldestFirst
                 .map((messageId) => messagesById[messageId])
                 .filter((message): message is Message => message != null),
         ),
+        [messageIdsOldestFirst, messagesById],
+    );
+    const turnChangeSetsSignature = React.useMemo(
+        () => buildStableJsonSignature(computedTurnChangeSets),
+        [computedTurnChangeSets],
+    );
+    const turnChangeSets = useStableValueBySignature(computedTurnChangeSets, turnChangeSetsSignature);
+    const rollbackActionsInputSignature = React.useMemo(
+        () => buildRollbackActionsInputSignature({ messageIdsOldestFirst, messagesById }),
         [messageIdsOldestFirst, messagesById],
     );
     const rollbackActionsByMessageId = React.useMemo(
@@ -308,7 +347,14 @@ export const ChatList = React.memo((props: {
             rollbackRanges,
             turnChangeSets,
         }),
-        [messageIdsOldestFirst, messagesById, props.session, rollbackRanges, turnChangeSets],
+        [
+            props.session.accessLevel,
+            props.session.active,
+            sessionMetadataSignature,
+            rollbackActionsInputSignature,
+            rollbackRanges,
+            turnChangeSets,
+        ],
     );
 
     const latestThinkingMessageId = useSessionLatestThinkingMessageId(props.session.id);
@@ -351,15 +397,16 @@ export const ChatList = React.memo((props: {
             presence: props.session.presence,
         });
     }, [props.session.accessLevel, props.session.canApprovePermissions, props.session.active, props.session.presence]);
+    const internalMessagesById = forkedTranscriptEnabled ? messagesById : EMPTY_MESSAGES_BY_ID;
 
         return (
             <ChatListInternal
-            metadata={props.session.metadata}
+            metadata={stableSessionMetadata}
             sessionId={props.session.id}
             sessionSeq={props.session.seq ?? 0}
             forkedTranscriptEnabled={forkedTranscriptEnabled}
             items={groupedItems}
-            messagesById={messagesById}
+            messagesById={internalMessagesById}
             committedMessagesCount={messageIdsOldestFirst.length}
             latestCommittedActivityKey={latestCommittedActivityKey}
             latestVisibleTailActivityKey={latestVisibleTailActivityKey}
@@ -380,16 +427,14 @@ export const ChatList = React.memo((props: {
 });
 
 const ListHeader = React.memo((props: { isLoadingOlder: boolean }) => {
-    const headerHeight = useHeaderHeight();
-    const safeArea = useChromeSafeAreaInsets();
     return (
         <View>
             {props.isLoadingOlder && (
                 <View style={{ paddingVertical: 12 }}>
-                    <ActivityIndicator size="small" />
+                    <ActivitySpinner size="small" />
                 </View>
             )}
-            <View style={{ flexDirection: 'row', alignItems: 'center', height: headerHeight + safeArea.top + 32 }} />
+            <View style={{ height: TRANSCRIPT_TOP_GUTTER_PX }} />
         </View>
     );
 });
@@ -432,7 +477,7 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
     setThinkingExpanded: (messageId: string, expanded: boolean) => void;
     interaction: TranscriptInteraction;
     rollbackAction?: TranscriptRollbackAction | null;
-    historical?: boolean;
+    rollbackRanges: readonly SessionRollbackRangeV1[];
 }) {
     const originSessionId = props.originSessionId ?? props.sessionId;
     const committedMessage = useMessage(originSessionId, props.messageId);
@@ -449,6 +494,7 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
             disableToolNavigation: true,
         }
         : props.interaction;
+    const historical = isMessageRolledBack({ message, rollbackRanges: props.rollbackRanges });
     return (
         <View testID={`${TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX}${props.messageId}`}>
             <View testID={`transcript-message-${props.messageId}`}>
@@ -461,7 +507,7 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
                     onThinkingExpandedChange={isThinking ? (next) => props.setThinkingExpanded(message.id, next) : undefined}
                     interaction={readOnlyInteraction}
                     rollbackAction={props.rollbackAction ?? null}
-                    historical={props.historical}
+                    historical={historical}
                 />
             </View>
         </View>
@@ -518,7 +564,7 @@ const ChatListInternal = React.memo((props: {
       const lastAutoRepinAtMsRef = React.useRef(0);
       const lastPinOffsetForIntentRef = React.useRef<number | null>(null);
       const lastScrollOffsetForIntentRef = React.useRef<number | null>(null);
-    const lastNativeInitialPinOffsetRef = React.useRef<number | null>(null);
+    const lastNativePinOffsetRef = React.useRef<number | null>(null);
     const scheduledPinRef = React.useRef<{ kind: 'raf' | 'timeout'; id: any; previousWebMetrics: WebTranscriptScrollMetrics | null } | null>(null);
     const scheduleWebHotTailBottomFollowRef = React.useRef<(() => void) | null>(null);
     const initialWebPinStabilizingRef = React.useRef(false);
@@ -666,7 +712,7 @@ const ChatListInternal = React.memo((props: {
           lastAutoRepinAtMsRef.current = 0;
           lastPinOffsetForIntentRef.current = shouldFollowBottom ? 0 : (sessionViewport?.offsetY ?? null);
           lastScrollOffsetForIntentRef.current = null;
-          lastNativeInitialPinOffsetRef.current = null;
+          lastNativePinOffsetRef.current = null;
       }
       const [expandedToolCallsAnchorMessageIds, setExpandedToolCallsAnchorMessageIds] = React.useState<ReadonlySet<string>>(
           () => new Set<string>(),
@@ -767,7 +813,7 @@ const ChatListInternal = React.memo((props: {
         lastAutoRepinAtMsRef.current = 0;
         lastPinOffsetForIntentRef.current = shouldFollowBottom ? 0 : offsetY;
         lastScrollOffsetForIntentRef.current = null;
-        lastNativeInitialPinOffsetRef.current = null;
+        lastNativePinOffsetRef.current = null;
         setScrollPin({
             isPinned: shouldFollowBottom,
             newActivityCount: 0,
@@ -910,13 +956,17 @@ const ChatListInternal = React.memo((props: {
         return typeof kind === 'string' ? kind : null;
     }, [props.sessionId]);
 
-    const resolveTurnMessageById = React.useCallback((messageId: string): Message | null => {
+    const resolveForkedTurnMessageById = React.useCallback((messageId: string): Message | null => {
         return props.messagesById[messageId] ?? null;
     }, [props.messagesById]);
+    const getTurnMessageById = props.forkedTranscriptEnabled ? resolveForkedTurnMessageById : undefined;
 
     const toolTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
     const keyExtractor = useCallback((item: ChatTranscriptListItem) => item.id, []);
     const getItemType = useCallback((item: ChatTranscriptListItem): string => item.kind, []);
+    const resolveRollbackActionForMessage = React.useCallback((messageId: string): TranscriptRollbackAction | null => {
+        return props.rollbackActionsByMessageId[messageId] ?? null;
+    }, [props.rollbackActionsByMessageId]);
     const wrapTranscriptItemForAnchor = React.useCallback((itemId: string, node: React.ReactNode) => {
         return (
             <View testID={`${TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX}${itemId}`}>
@@ -1142,9 +1192,9 @@ const ChatListInternal = React.memo((props: {
                            sessionId={props.sessionId}
                            interaction={props.interaction}
                            activeThinkingMessageId={props.activeThinkingMessageId}
-                           getMessageById={resolveTurnMessageById}
-                           isMessageHistorical={(messageId) => isMessageRolledBack({ message: props.messagesById[messageId] ?? null, rollbackRanges: props.rollbackRanges })}
-                           resolveRollbackAction={(messageId) => props.rollbackActionsByMessageId[messageId] ?? null}
+                           getMessageById={getTurnMessageById}
+                           rollbackRanges={props.rollbackRanges}
+                           resolveRollbackAction={resolveRollbackActionForMessage}
                              resolveThinkingExpanded={resolveThinkingExpanded}
                              setThinkingExpanded={setThinkingExpanded}
                            expandedToolCallsAnchorMessageIds={expandedToolCallsAnchorMessageIds}
@@ -1170,7 +1220,7 @@ const ChatListInternal = React.memo((props: {
                         <ChatListMessageRow
                             sessionId={props.sessionId}
                             messageId={item.messageId}
-                            messageOverride={props.messagesById[item.messageId] ?? null}
+                            messageOverride={item.originSessionId ? (props.messagesById[item.messageId] ?? null) : undefined}
                             originSessionId={item.originSessionId}
                             isReadOnlyContext={item.isReadOnlyContext}
                             metadata={props.metadata}
@@ -1179,17 +1229,20 @@ const ChatListInternal = React.memo((props: {
                             setThinkingExpanded={setThinkingExpanded}
                             interaction={props.interaction}
                             rollbackAction={props.rollbackActionsByMessageId[item.messageId] ?? null}
-                            historical={isMessageRolledBack({ message: props.messagesById[item.messageId] ?? null, rollbackRanges: props.rollbackRanges })}
+                            rollbackRanges={props.rollbackRanges}
                         />
                     </View>
                 </TranscriptEnterWrapper>
             ));
         }
         return null;
-      }, [expandedToolCallsAnchorMessageIds, listImplementation, props.activeThinkingMessageId, props.interaction, props.messagesById, props.metadata, props.rollbackActionsByMessageId, props.rollbackRanges, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveThinkingExpanded, resolveTurnMessageById, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode, wrapTranscriptItemForAnchor]);
+      }, [expandedToolCallsAnchorMessageIds, getTurnMessageById, listImplementation, props.activeThinkingMessageId, props.interaction, props.metadata, props.rollbackRanges, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveRollbackActionForMessage, resolveThinkingExpanded, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode, wrapTranscriptItemForAnchor]);
     const renderTranscriptItemAtIndex = React.useCallback((item: ChatTranscriptListItem, index: number) => {
         return renderItem({ item, index });
     }, [renderItem]);
+    const listHeaderNode = React.useMemo(() => (
+        <ListHeader isLoadingOlder={isLoadingOlder} />
+    ), [isLoadingOlder]);
     const listFooterNode = React.useMemo(() => (
         <ListFooter
             sessionId={props.sessionId}
@@ -1398,13 +1451,13 @@ const ChatListInternal = React.memo((props: {
         if (!Number.isFinite(contentHeight) || contentHeight <= 0) return false;
 
         const offset = Math.max(0, Math.trunc(contentHeight - layoutHeight));
-        if (lastNativeInitialPinOffsetRef.current === offset) return true;
+        if (lastNativePinOffsetRef.current === offset) return true;
 
         const node: any = listRef.current as any;
         if (!node || typeof node.scrollToOffset !== 'function') return false;
 
         node.scrollToOffset({ offset, animated: false });
-        lastNativeInitialPinOffsetRef.current = offset;
+        lastNativePinOffsetRef.current = offset;
         return true;
     }, [props.jumpToSeq, usesNativeFlashListBottomMaintenance]);
 
@@ -1422,6 +1475,7 @@ const ChatListInternal = React.memo((props: {
             return;
         }
         if (usesNativeFlashListBottomMaintenance) {
+            pinNativeFlashListToBottomIfMeasured();
             return;
         }
         const node: any = listRef.current as any;
@@ -1432,7 +1486,7 @@ const ChatListInternal = React.memo((props: {
                     : Math.max(0, Math.trunc(listContentHeightRef.current - listLayoutHeightRef.current));
             node.scrollToOffset({ offset, animated: false });
         }
-    }, [listImplementation, tryPinToBottomDom, usesNativeFlashListBottomMaintenance]);
+    }, [listImplementation, pinNativeFlashListToBottomIfMeasured, tryPinToBottomDom, usesNativeFlashListBottomMaintenance]);
 
     const jumpToBottom = React.useCallback(() => {
         if (Platform.OS === 'web') {
@@ -1472,7 +1526,6 @@ const ChatListInternal = React.memo((props: {
 
     const schedulePinToBottom = React.useCallback((previousWebMetrics: WebTranscriptScrollMetrics | null = null) => {
         if (listImplementation !== 'flash_v2') return;
-        if (usesNativeFlashListBottomMaintenance) return;
         const waitMs = resolveAutoPinWaitMs();
         if (waitMs === null) return;
         if (scheduledPinRef.current) return;
@@ -1500,7 +1553,7 @@ const ChatListInternal = React.memo((props: {
             if (handle.previousWebMetrics && applyWebBottomFollowAdjustment(handle.previousWebMetrics)) return;
             pinToBottom();
         }, waitMs);
-    }, [applyWebBottomFollowAdjustment, listImplementation, pinToBottom, resolveAutoPinWaitMs, usesNativeFlashListBottomMaintenance]);
+    }, [applyWebBottomFollowAdjustment, listImplementation, pinToBottom, resolveAutoPinWaitMs]);
 
     React.useLayoutEffect(() => {
         scheduleWebHotTailBottomFollowRef.current = () => {
@@ -2079,9 +2132,7 @@ const ChatListInternal = React.memo((props: {
                     const offset = Math.max(0, Math.trunc(info.averageItemLength * info.index));
                     listRef.current?.scrollToOffset({ offset, animated: true });
                 }}
-                  ListHeaderComponent={
-                        <ListHeader isLoadingOlder={isLoadingOlder} />
-                  }
+                  ListHeaderComponent={listHeaderNode}
                   ListFooterComponent={
                         listFooterNode
                     }
@@ -2233,9 +2284,7 @@ const ChatListInternal = React.memo((props: {
                           const offset = Math.max(0, Math.trunc(info.averageItemLength * info.index));
                           listRef.current?.scrollToOffset({ offset, animated: true });
                       }}
-                      ListHeaderComponent={
-                            <ListHeader isLoadingOlder={isLoadingOlder} />
-                      }
+                      ListHeaderComponent={listHeaderNode}
                       ListFooterComponent={
                             flashListFooterNode
                         }

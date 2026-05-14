@@ -8,6 +8,15 @@ import { installTranscriptCommonModuleMocks } from './transcriptTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const keyboardDismissMock = vi.fn();
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}
+
 installTranscriptCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -21,6 +30,7 @@ installTranscriptCommonModuleMocks({
                 select: (v: any) => v.android ?? v.native ?? v.default,
             },
             View: (props: any) => React.createElement('View', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
         });
     },
 });
@@ -35,6 +45,7 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 vi.mock('react-native-keyboard-controller', () => ({
+    KeyboardAvoidingView: (props: any) => React.createElement('KeyboardAvoidingView', props, props.children),
     useKeyboardHandler: () => undefined,
     useReanimatedKeyboardAnimation: () => ({
         height: { value: 0 },
@@ -60,7 +71,7 @@ afterEach(() => {
 });
 
 describe('AgentContentView (android keyboard)', () => {
-    it('uses the keyboard-controller animated implementation on Android', async () => {
+    it('uses one keyboard-aware flex layout with a painted input footer on Android', async () => {
         const { AgentContentView } = await import('./AgentContentView.native');
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -70,10 +81,50 @@ describe('AgentContentView (android keyboard)', () => {
                     placeholder={<React.Fragment>placeholder</React.Fragment>}
                 />)).tree;
 
-        const animatedViews = tree!.findAllByType('AnimatedView' as any);
-        expect(animatedViews.length).toBeGreaterThan(0);
-        expect(animatedViews[0]?.props.pointerEvents).toBe('box-none');
-        expect(tree!.findAllByType('AnimatedScrollView' as any).length).toBe(1);
+        const keyboardHost = tree!.root.findByProps({ testID: 'agent-content-keyboard-host' });
+        expect(keyboardHost.props.behavior).toBe('padding');
+        expect(keyboardHost.props.keyboardVerticalOffset).toBe(0);
+        expect(flattenStyle(keyboardHost.props.style)).toMatchObject({
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+        });
+        expect(flattenStyle(keyboardHost.props.style).backgroundColor).toBeTruthy();
+
+        const contentRegion = tree!.root.findByProps({ testID: 'agent-content-scroll-region' });
+        expect(flattenStyle(contentRegion.props.style)).toMatchObject({
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+        });
+        expect(flattenStyle(contentRegion.props.style).position).not.toBe('absolute');
+
+        const contentLayer = tree!.root.findByProps({ testID: 'agent-content-layer' });
+        expect(flattenStyle(contentLayer.props.style)).toMatchObject({
+            bottom: 0,
+            left: 0,
+            minWidth: 0,
+            overflow: 'hidden',
+            position: 'absolute',
+            right: 0,
+            top: 0,
+        });
+
+        const placeholderLayer = tree!.root.findByProps({ testID: 'agent-content-placeholder-layer' });
+        expect(flattenStyle(placeholderLayer.props.style)).toMatchObject({
+            bottom: 0,
+            left: 0,
+            minWidth: 0,
+            position: 'absolute',
+            right: 0,
+            top: 0,
+        });
+
+        const inputFooter = tree!.root.findByProps({ testID: 'agent-content-input-footer' });
+        expect(flattenStyle(inputFooter.props.style).backgroundColor).toBeTruthy();
+
+        expect(tree!.findAllByType('AnimatedView' as any)).toHaveLength(0);
+        expect(tree!.findAllByType('AnimatedScrollView' as any)).toHaveLength(0);
     });
 
     it('dismisses the keyboard when transcript content is tapped outside the composer', async () => {
@@ -86,7 +137,7 @@ describe('AgentContentView (android keyboard)', () => {
                     placeholder={<React.Fragment>placeholder</React.Fragment>}
                 />)).tree;
 
-        const contentContainer = tree!.root.findAllByType('View').find((node) => typeof node.props.onTouchStart === 'function');
+        const contentContainer = tree!.root.findByProps({ testID: 'agent-content-scroll-region' });
         expect(contentContainer).toBeTruthy();
 
         invokeTestInstanceHandler(
@@ -115,7 +166,7 @@ describe('AgentContentView (android keyboard)', () => {
                     placeholder={<React.Fragment>placeholder</React.Fragment>}
                 />)).tree;
 
-        const contentContainer = tree!.root.findAllByType('View').find((node) => typeof node.props.onTouchStart === 'function');
+        const contentContainer = tree!.root.findByProps({ testID: 'agent-content-scroll-region' });
         expect(contentContainer).toBeTruthy();
 
         invokeTestInstanceHandler(

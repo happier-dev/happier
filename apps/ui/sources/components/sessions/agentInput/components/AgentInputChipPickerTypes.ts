@@ -6,6 +6,8 @@ export type AgentInputChipPickerDetailSelectOption = Readonly<{
     disabled?: boolean;
 }>;
 
+export const AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT = 272;
+
 export type AgentInputChipPickerOption = Readonly<{
     id: string;
     label: string;
@@ -23,6 +25,16 @@ export type AgentInputChipPickerOption = Readonly<{
     detailBullets?: ReadonlyArray<string>;
     detailContent?: React.ReactNode;
     renderDetailContent?: () => React.ReactNode;
+    /**
+     * Defers expensive custom detail rendering until after native interactions
+     * so the popover shell can become visible without waiting on model/config UI.
+     */
+    deferRenderDetailContent?: boolean;
+    /**
+     * Stable identity for deferred detail readiness. Once this key has rendered,
+     * later popover opens can show cached detail immediately.
+     */
+    deferredDetailContentCacheKey?: string;
     detailSelectOptions?: ReadonlyArray<AgentInputChipPickerDetailSelectOption>;
     detailActionLabel?: string;
     onDetailAction?: () => void;

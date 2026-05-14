@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +24,7 @@ import { BugReportSimilarIssuesSection } from './BugReportSimilarIssuesSection';
 import { bugReportComposerStyles } from './bugReportComposerStyles';
 import { DEFAULT_BUG_REPORT_CAPABILITIES, type BugReportsFeature } from './bugReportFeatureDefaults';
 import { useBugReportComposerModel } from './hooks/useBugReportComposerModel';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export const BugReportComposerView = React.memo(function BugReportComposerView() {
   const styles = bugReportComposerStyles;
@@ -170,7 +171,7 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
               disabled={model.submitting || model.validation.code !== 'ok'}
             >
               {model.submitting
-                ? <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
+                ? <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
                 : <Ionicons name="paper-plane-outline" size={18} color={theme.colors.button.primary.tint} />}
                 <Text style={styles.submitButtonText}>
                   {model.submitting

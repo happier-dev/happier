@@ -54,6 +54,33 @@ afterEach(() => {
 });
 
 describe('SessionMediaInlineImages', () => {
+    it('renders unavailable media failure rows with translated accessible state', async () => {
+        const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
+        const { t } = await import('@/text');
+
+        const screen = await renderScreen(
+            <SessionMediaInlineImages
+                sessionId="s1"
+                media={[{
+                    id: 'failure-0',
+                    status: 'unavailable',
+                    name: 'generated.png',
+                    mimeType: 'image/png',
+                    category: 'generated',
+                    role: 'output',
+                    failureCode: 'invalid_source_file',
+                }]}
+                onOpenPath={() => {}}
+            />,
+        );
+
+        const tile = screen.findByTestId('message-session-media-inline-image-unavailable:failure-0');
+
+        expect(tile?.props.accessibilityRole).toBe('image');
+        expect(tile?.props.accessibilityLabel).toBe(t('files.sessionMedia.unavailableImageA11y', { name: 'generated.png' }));
+        expect(screen.getTextContent()).toContain(t('files.sessionMedia.previewUnavailableA11y'));
+    });
+
     it('exposes inline image tiles as accessible translated buttons', async () => {
         const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
         const { t } = await import('@/text');
@@ -78,6 +105,51 @@ describe('SessionMediaInlineImages', () => {
 
         expect(tile?.props.accessibilityRole).toBe('button');
         expect(tile?.props.accessibilityLabel).toBe(t('files.sessionMedia.generatedImageA11y', { name: 'diagram.png' }));
+    });
+
+    it('opens available previews using indexes that skip unavailable failure rows', async () => {
+        const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
+        const { Modal } = await import('@/modal');
+
+        const screen = await renderScreen(
+            <SessionMediaInlineImages
+                sessionId="s1"
+                media={[{
+                    id: 'failure-0',
+                    status: 'unavailable',
+                    name: 'missing.png',
+                    category: 'generated',
+                    role: 'output',
+                    failureCode: 'invalid_source_file',
+                }, {
+                    id: 'media-1',
+                    status: 'available',
+                    name: 'first.png',
+                    path: '.happier/uploads/generated/session-1/message-1/first.png',
+                    mimeType: 'image/png',
+                    sizeBytes: 42,
+                    category: 'generated',
+                    role: 'output',
+                }, {
+                    id: 'media-2',
+                    status: 'available',
+                    name: 'second.png',
+                    path: '.happier/uploads/generated/session-1/message-1/second.png',
+                    mimeType: 'image/png',
+                    sizeBytes: 43,
+                    category: 'generated',
+                    role: 'output',
+                }]}
+                onOpenPath={() => {}}
+            />,
+        );
+
+        screen.pressByTestId('message-session-media-inline-image:.happier/uploads/generated/session-1/message-1/first.png');
+
+        expect(Modal.show).toHaveBeenCalledTimes(1);
+        const [config] = vi.mocked(Modal.show).mock.calls[0] ?? [];
+        expect(config?.props?.images).toHaveLength(2);
+        expect(config?.props?.initialIndex).toBe(0);
     });
 
     it('exposes a translated unavailable hint when an inline image preview is missing', async () => {

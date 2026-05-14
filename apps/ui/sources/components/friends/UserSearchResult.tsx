@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Pressable } from 'react-native';
+import { View, TouchableOpacity, Pressable } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { UserProfile, getDisplayName } from '@/sync/domains/social/friendTypes';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -7,6 +7,7 @@ import { t } from '@/text';
 import { useRouter } from 'expo-router';
 import { Text } from '@/components/ui/text/Text';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const USERNAME_PREFIX = '@';
 
@@ -29,7 +30,7 @@ export function UserSearchResult({
     // Determine button state based on relationship status
     const getButtonContent = () => {
         if (isProcessing) {
-            return <ActivityIndicator size="small" color="white" />;
+            return <ActivitySpinner size="small" color="white" />;
         }
         
         switch (user.status) {

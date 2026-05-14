@@ -67,6 +67,19 @@ export function useWorkspaceRepositoryTreeRowActions(params: Readonly<{
 }>): Readonly<{
     onSelectRowMenuItem: (node: RepositoryTreeNodeLike, itemId: RepositoryTreeRowActionMenuItemId) => Promise<void>;
 }> {
+    const {
+        expandedPaths,
+        onExpandedPathsChange,
+        onRequestDownload,
+        onRequestRefresh,
+        workspaceScope,
+        writeActionsEnabled,
+    } = params;
+    const expandedPathsRef = React.useRef(expandedPaths);
+    React.useEffect(() => {
+        expandedPathsRef.current = expandedPaths;
+    }, [expandedPaths]);
+
     const isDestinationAlreadyExistsError = React.useCallback((error: string | undefined): boolean => {
         return typeof error === 'string' && /destination already exists/i.test(error);
     }, []);
@@ -84,11 +97,11 @@ export function useWorkspaceRepositoryTreeRowActions(params: Readonly<{
         }
 
         if (itemId === 'repository-tree-menuitem-rename') {
-            if (!params.writeActionsEnabled) return;
+            if (!writeActionsEnabled) return;
             let nextPath = await renamePathPrompt({ currentPath: node.path });
             if (!nextPath) return;
 
-            const target = params.workspaceScope;
+            const target = workspaceScope;
             if (!target) {
                 Modal.alert(t('common.error'), t('files.repositoryTree.rename.failed'));
                 return;
@@ -121,23 +134,23 @@ export function useWorkspaceRepositoryTreeRowActions(params: Readonly<{
 
             if (node.type === 'directory') {
                 const nextExpanded = remapExpandedPathsAfterRename({
-                    expandedPaths: params.expandedPaths,
+                    expandedPaths: expandedPathsRef.current,
                     from: node.path,
                     to: nextPath,
                 });
-                params.onExpandedPathsChange(nextExpanded);
+                onExpandedPathsChange(nextExpanded);
             }
-            params.onRequestRefresh?.();
+            onRequestRefresh?.();
             return;
         }
 
         if (itemId === 'repository-tree-menuitem-delete') {
-            if (!params.writeActionsEnabled) return;
+            if (!writeActionsEnabled) return;
 
             const confirm = await deletePathConfirm({ path: node.path, kind: node.type });
             if (!confirm.confirmed) return;
 
-            const target = params.workspaceScope;
+            const target = workspaceScope;
             if (!target) {
                 Modal.alert(t('common.error'), t('files.repositoryTree.delete.failed'));
                 return;
@@ -150,20 +163,27 @@ export function useWorkspaceRepositoryTreeRowActions(params: Readonly<{
             }
 
             if (node.type === 'directory') {
-                params.onExpandedPathsChange(removeExpandedPathsUnderDirectory(params.expandedPaths, node.path));
+                onExpandedPathsChange(removeExpandedPathsUnderDirectory(expandedPathsRef.current, node.path));
             }
-            params.onRequestRefresh?.();
+            onRequestRefresh?.();
             return;
         }
 
         if (itemId === 'repository-tree-menuitem-download' || itemId === 'repository-tree-menuitem-zip') {
-            if (!params.onRequestDownload) return;
-            const res = await params.onRequestDownload({ path: node.path, asZip: itemId === 'repository-tree-menuitem-zip' });
+            if (!onRequestDownload) return;
+            const res = await onRequestDownload({ path: node.path, asZip: itemId === 'repository-tree-menuitem-zip' });
             if (!res.ok) {
                 Modal.alert(t('common.error'), res.error);
             }
         }
-    }, [isDestinationAlreadyExistsError, params]);
+    }, [
+        isDestinationAlreadyExistsError,
+        onExpandedPathsChange,
+        onRequestDownload,
+        onRequestRefresh,
+        workspaceScope,
+        writeActionsEnabled,
+    ]);
 
-    return { onSelectRowMenuItem };
+    return React.useMemo(() => ({ onSelectRowMenuItem }), [onSelectRowMenuItem]);
 }

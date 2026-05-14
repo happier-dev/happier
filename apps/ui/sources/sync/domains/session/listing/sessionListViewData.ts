@@ -1,4 +1,4 @@
-import { resolveBestMachineDisplayRenderableForHost, type MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import { isUserFacingSession } from './isUserFacingSession';
@@ -6,7 +6,9 @@ import { resolveSessionProjectGroupingKeyPartsWithMachineMetadata } from './sess
 import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 import { normalizeSessionListServerScope } from './normalizeSessionListServerScope';
 import {
+    resolveSessionListRenderableUpdatedAt,
     sortSessionListRenderableSessionsNewestFirstIfNeeded,
+    sortSessionListRenderableSessionsNewestUpdatedFirstIfNeeded,
 } from './sessionListRenderableSorting';
 import { resolveSessionListGroupingModes } from './resolveSessionListGroupingModes';
 import { t } from '@/text';
@@ -24,7 +26,7 @@ export type SessionListViewItem =
     | {
         type: 'header';
         title: string;
-        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared';
+        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared' | 'folder';
         groupKey?: string;
         workspaceKey?: string;
         seedSessionId?: string | null;
@@ -33,17 +35,21 @@ export type SessionListViewItem =
         serverName?: string;
         subtitle?: string;
         machine?: MachineDisplayRenderable;
+        folderId?: string;
+        folderDepth?: number;
     }
     | {
         type: 'session';
         session: SessionListRenderableSession;
         section?: 'active' | 'inactive';
         groupKey?: string;
-        groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared';
+        groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared' | 'folder';
         pinned?: boolean;
         variant?: 'default' | 'no-path';
         serverId?: string;
         serverName?: string;
+        folderId?: string | null;
+        folderDepth?: number;
     };
 
 export interface BuildSessionListViewDataOptions {
@@ -143,11 +149,9 @@ function groupSessionsByProject(params: Readonly<{
 
         const existing = groups.get(key);
         if (!existing) {
-            const displayMachine = groupingParts.host
-                ? resolveBestMachineDisplayRenderableForHost(params.machines, groupingParts.host) ?? makeUnknownMachine(groupingParts.host)
-                : displayMachineId
-                    ? params.machines[displayMachineId] ?? makeUnknownMachine(displayMachineId)
-                    : makeUnknownMachine('unknown');
+            const displayMachine = displayMachineId
+                ? params.machines[displayMachineId] ?? makeUnknownMachine(displayMachineId)
+                : makeUnknownMachine('unknown');
             groups.set(key, {
                 key,
                 displayPath: groupingParts.pathKey ? formatPathRelativeToHome(groupingParts.pathKey, groupingParts.homeDir ?? undefined) : '',
@@ -371,6 +375,7 @@ function pushSessionSectionToList(params: Readonly<{
 
     let currentDateGroup: SessionListRenderableSession[] = [];
     let currentDateString: string | null = null;
+    const dateGroupedSessions = sortSessionListRenderableSessionsNewestUpdatedFirstIfNeeded([...params.ownedSessions]);
 
     const flush = () => {
         if (currentDateGroup.length === 0 || !currentDateString) return;
@@ -404,8 +409,8 @@ function pushSessionSectionToList(params: Readonly<{
         });
     };
 
-    for (const session of params.ownedSessions) {
-        const sessionDate = new Date(session.createdAt);
+    for (const session of dateGroupedSessions) {
+        const sessionDate = new Date(resolveSessionListRenderableUpdatedAt(session));
         const dateString = sessionDate.toDateString();
 
         if (currentDateString !== dateString) {

@@ -3,6 +3,7 @@ import React from 'react';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { AgentInput } from '@/components/sessions/agentInput';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { resolveSessionComposerStateFromAuthoringContext } from '@/components/sessions/authoring/context/resolveSessionComposerStateFromAuthoringContext';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import {
@@ -22,6 +23,7 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
     submitAccessibilityLabel: string;
     isSubmitDisabled: boolean;
     editable?: boolean;
+    extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
 }>): React.JSX.Element {
     const composerState = resolveSessionComposerStateFromAuthoringContext(props.context);
     const profileId = composerState.profileId;
@@ -67,6 +69,7 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
                 : undefined}
             contentPaddingHorizontal={0}
             disabled={props.editable === false}
+            extraActionChips={props.extraActionChips}
         />
     );
 }

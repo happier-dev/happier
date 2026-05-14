@@ -6,6 +6,8 @@ import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { withItemGroupDividers } from './ItemGroup.dividers';
 import { countSelectableItems } from './ItemGroup.selectableCount';
+import { Eyebrow } from '@/components/ui/text/Eyebrow';
+import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import {
     ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX,
     ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX,
@@ -35,54 +37,62 @@ export interface ItemGroupProps {
     selectableItemCountOverride?: number;
 }
 
-const stylesheet = StyleSheet.create((theme, runtime) => ({
-    wrapper: {
-        alignItems: 'center',
-    },
-    container: {
-        width: '100%',
-        paddingHorizontal: Platform.select(ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX),
-    },
-    header: {
-        paddingTop: Platform.select({ ios: 26, default: 20 }),
-        paddingBottom: Platform.select({ ios: 8, default: 8 }),
-        paddingHorizontal: Platform.select({ ios: 32, default: 24 }),
-    },
-    headerNoTitle: {
-        paddingTop: Platform.select({ ios: 20, default: 16 }),
-    },
-    headerText: {
-        ...Typography.default('regular'),
-        color: theme.colors.text.secondary,
-        fontSize: Platform.select({ ios: 13, default: 14 }),
-        lineHeight: Platform.select({ ios: 18, default: 20 }),
-        letterSpacing: -0.08,
-        textTransform: 'uppercase'
-    },
-    contentContainerOuter: {
-        backgroundColor: theme.colors.surface.base,
-        marginHorizontal: Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX),
-        borderRadius: Platform.select({ ios: 10, default: 16 }),
-        // IMPORTANT: allow popovers to overflow this rounded container.
-        overflow: 'visible',
-        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
-    },
-    contentContainerInner: {
-        borderRadius: Platform.select({ ios: 10, default: 16 }),
-    },
-    footer: {
-        paddingTop: Platform.select({ ios: 6, default: 8 }),
-        paddingBottom: Platform.select({ ios: 8, default: 16 }),
-        paddingHorizontal: Platform.select({ ios: 32, default: 24 }),
-    },
-    footerText: {
-        ...Typography.default('regular'),
-        color: theme.colors.text.secondary,
-        fontSize: Platform.select({ ios: 13, default: 14 }),
-        lineHeight: Platform.select({ ios: 18, default: 20 }),
-        letterSpacing: Platform.select({ ios: -0.08, default: 0 }),
-    },
-}));
+const stylesheet = StyleSheet.create((theme) => {
+    const surfaceChromeStyle = resolveThemeSurfaceChromeStyle({
+        borderColor: theme.colors.border.surface,
+        highlightColor: theme.colors.effect.surfaceHighlight,
+        shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[1]),
+    });
+
+    return {
+        wrapper: {
+            alignItems: 'center',
+        },
+        container: {
+            width: '100%',
+            paddingHorizontal: Platform.select(ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX),
+        },
+        header: {
+            paddingTop: Platform.select({ ios: 26, default: 20 }),
+            paddingBottom: Platform.select({ ios: 8, default: 8 }),
+            paddingHorizontal: Platform.select({ ios: 32, default: 24 }),
+        },
+        headerNoTitle: {
+            paddingTop: Platform.select({ ios: 20, default: 16 }),
+        },
+        headerText: {
+            ...Typography.default('regular'),
+            color: theme.colors.text.secondary,
+            fontSize: Platform.select({ ios: 13, default: 14 }),
+            lineHeight: Platform.select({ ios: 18, default: 20 }),
+            letterSpacing: -0.08,
+            textTransform: 'uppercase'
+        },
+        contentContainerOuter: {
+            backgroundColor: theme.colors.surface.base,
+            marginHorizontal: Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX),
+            borderRadius: Platform.select({ ios: 10, default: 16 }),
+            ...surfaceChromeStyle,
+            // IMPORTANT: allow popovers to overflow this rounded container.
+            overflow: 'visible',
+        },
+        contentContainerInner: {
+            borderRadius: Platform.select({ ios: 10, default: 16 }),
+        },
+        footer: {
+            paddingTop: Platform.select({ ios: 6, default: 8 }),
+            paddingBottom: Platform.select({ ios: 8, default: 16 }),
+            paddingHorizontal: Platform.select({ ios: 32, default: 24 }),
+        },
+        footerText: {
+            ...Typography.default('regular'),
+            color: theme.colors.text.secondary,
+            fontSize: Platform.select({ ios: 13, default: 14 }),
+            lineHeight: Platform.select({ ios: 18, default: 20 }),
+            letterSpacing: Platform.select({ ios: -0.08, default: 0 }),
+        },
+    };
+});
 
 export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const { theme } = useUnistyles();
@@ -121,9 +131,9 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                 {title ? (
                     <View style={[styles.header, headerStyle]}>
                         {typeof title === 'string' ? (
-                            <Text style={[styles.headerText, titleStyle]}>
+                            <Eyebrow style={[styles.headerText, titleStyle]}>
                                 {title}
-                            </Text>
+                            </Eyebrow>
                         ) : (
                             title
                         )}

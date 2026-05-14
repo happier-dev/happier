@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View, Pressable, Platform, ActivityIndicator } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -18,9 +18,8 @@ import { Option } from '@/components/markdown/MarkdownView';
 import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommittedMessages";
 import { shouldShowMessageCopyButton } from '@/components/sessions/transcript/messageCopyVisibility';
 import { renderStructuredMessage, StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
-import { usePathname, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
-import { prepareMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { storage, useProjectForSession, useSession, useSessionMessagesById, useSessionMessagesReducerState, useSetting } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
@@ -36,13 +35,13 @@ import { AttachmentsMessageRow } from '@/components/sessions/attachments/message
 import { AttachmentsInlineImages } from '@/components/sessions/attachments/messages/AttachmentsInlineImages';
 import { parseSessionMediaMessageMeta } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 import { SessionMediaInlineImages } from '@/components/sessions/media/SessionMediaInlineImages';
+import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/sessions/media/presentation';
 import { forkSession } from '@/sync/ops';
 import { canForkFromMessage } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/forkFromMessageSemantics';
 import { writeForkInitialPromptV1 } from '@/sync/domains/sessionFork/forkInitialPromptV1';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
 import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
 import { TranscriptRollbackActionButton } from '@/components/sessions/transcript/TranscriptRollbackActionButton';
 import { executeTranscriptRollbackAction } from '@/components/sessions/transcript/transcriptRollbackActionRunner';
@@ -52,11 +51,13 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useStreamingTextSmoothing } from '@/components/sessions/transcript/streaming/useStreamingTextSmoothing';
+import { useThrottledStreamingMarkdownText } from '@/components/sessions/transcript/streaming/useThrottledStreamingMarkdownText';
 import { readStreamSegmentMetaV1 } from '@/sync/reducer/helpers/streamSegmentMeta';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { resolveTranscriptMarkdownFileLink } from '@/components/sessions/transcript/resolveTranscriptMarkdownFileLink';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function shouldEnableFallbackTextNativeSelection(platformOS: typeof Platform.OS): boolean {
   return platformOS !== 'ios';
@@ -83,15 +84,9 @@ type SessionFileDeepLinkRouter = Pick<ReturnType<typeof useRouter>, 'push'>;
 
 function pushSessionFileDeepLink(
   router: SessionFileDeepLinkRouter,
-  currentPathname: string | null | undefined,
   params: SessionFileDeepLinkParams,
 ): void {
   const href = buildSessionFileDeepLink(params);
-  prepareMobileSurfaceTransition({
-    currentPathname,
-    targetHref: href,
-    operation: 'push',
-  });
   router.push(href as never);
 }
 
@@ -225,7 +220,6 @@ function UserTextBlock(props: {
   const contextMenuAnchorRef = React.useRef<View>(null);
 	  const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
 	  const router = useRouter();
-  const pathname = usePathname();
 	  const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
 
   const isVoiceAgentTurn = React.useMemo(() => {
@@ -237,7 +231,7 @@ function UserTextBlock(props: {
 	    message: props.message,
 	    sessionId: props.sessionId,
 	    onJumpToAnchor: (target) => {
-	      pushSessionFileDeepLink(router, pathname, {
+	      pushSessionFileDeepLink(router, {
 	        sessionId: props.sessionId,
 	        filePath: target.filePath,
 	        source: target.source,
@@ -253,8 +247,8 @@ function UserTextBlock(props: {
     return parseSessionMediaMessageMeta(envelope);
   }, [props.message.meta]);
   const handleOpenSessionMediaPath = React.useCallback((filePath: string) => {
-    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
-  }, [pathname, props.sessionId, router]);
+    pushSessionFileDeepLink(router, { sessionId: props.sessionId, filePath });
+  }, [props.sessionId, router]);
   const isStructuredOnly = structuredNode != null;
 
   const attachmentsMeta = React.useMemo(() => {
@@ -272,13 +266,12 @@ function UserTextBlock(props: {
   const nonImageAttachments = React.useMemo(() => {
     if (!attachmentsMeta) return [];
     return attachmentsMeta.attachments.filter((a) => {
-      if (a.mimeType && a.mimeType.startsWith('image/')) return false;
-      return getImageMimeTypeFromPath(a.path) == null;
+      return resolveSessionMediaInlineRenderableImageMimeType(a) == null;
     });
   }, [attachmentsMeta]);
 	  const handleOpenAttachmentPath = React.useCallback((filePath: string) => {
-	    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
-	  }, [pathname, props.sessionId, router]);
+	    pushSessionFileDeepLink(router, { sessionId: props.sessionId, filePath });
+	  }, [props.sessionId, router]);
 
   const stripAttachmentsBlock = React.useCallback((text: string): string => {
     const startTag = '[attachments]';
@@ -346,15 +339,14 @@ function UserTextBlock(props: {
 	  const handleMarkdownLinkPress = React.useCallback((url: string) => {
 	    const resolved = resolveTranscriptMarkdownFileLink({ url, workspacePath });
 	    if (!resolved) return false;
-	    pushSessionFileDeepLink(router, pathname, {
+	    const anchor = resolved.anchor ?? null;
+	    pushSessionFileDeepLink(router, {
 	      sessionId: props.sessionId,
 	      filePath: resolved.filePath,
-	      ...(typeof resolved.line === 'number'
-	        ? { source: 'file' as const, anchor: { kind: 'fileLine' as const, startLine: resolved.line } }
-	        : {}),
+	      ...(anchor ? { source: 'file' as const, anchor } : {}),
 	    });
 	    return true;
-	  }, [pathname, props.sessionId, router, workspacePath]);
+	  }, [props.sessionId, router, workspacePath]);
   const seq =
     typeof (props.message as any).seq === 'number' && Number.isFinite((props.message as any).seq)
       ? Math.trunc((props.message as any).seq)
@@ -623,7 +615,7 @@ function UserTextBlock(props: {
               message={props.message as any}
 	              sessionId={props.sessionId}
 	              onJumpToAnchor={(target) => {
-	                pushSessionFileDeepLink(router, pathname, {
+	                pushSessionFileDeepLink(router, {
 	                  sessionId: props.sessionId,
 	                  filePath: target.filePath,
 	                  source: target.source,
@@ -739,7 +731,6 @@ function AgentTextBlock(props: {
   const contextMenuAnchorRef = React.useRef<View>(null);
 	  const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
 	  const router = useRouter();
-  const pathname = usePathname();
 	  const isVoiceAgentTurn = React.useMemo(() => {
     const envelope = parseHappierMetaEnvelope(props.message.meta);
     return envelope?.kind === 'voice_agent_turn.v1';
@@ -758,7 +749,7 @@ function AgentTextBlock(props: {
 	    message: props.message,
 	    sessionId: props.sessionId,
 	    onJumpToAnchor: (target) => {
-	      pushSessionFileDeepLink(router, pathname, {
+	      pushSessionFileDeepLink(router, {
 	        sessionId: props.sessionId,
 	        filePath: target.filePath,
 	        source: target.source,
@@ -823,15 +814,14 @@ function AgentTextBlock(props: {
 	  const handleMarkdownLinkPress = React.useCallback((url: string) => {
 	    const resolved = resolveTranscriptMarkdownFileLink({ url, workspacePath });
 	    if (!resolved) return false;
-	    pushSessionFileDeepLink(router, pathname, {
+	    const anchor = resolved.anchor ?? null;
+	    pushSessionFileDeepLink(router, {
 	      sessionId: props.sessionId,
 	      filePath: resolved.filePath,
-	      ...(typeof resolved.line === 'number'
-	        ? { source: 'file' as const, anchor: { kind: 'fileLine' as const, startLine: resolved.line } }
-	        : {}),
+	      ...(anchor ? { source: 'file' as const, anchor } : {}),
 	    });
 	    return true;
-	  }, [pathname, props.sessionId, router, workspacePath]);
+	  }, [props.sessionId, router, workspacePath]);
   const seq =
     typeof (props.message as any).seq === 'number' && Number.isFinite((props.message as any).seq)
       ? Math.trunc((props.message as any).seq)
@@ -1028,6 +1018,17 @@ function AgentTextBlock(props: {
       shouldRenderActiveStreamSegmentPlain || streaming.isStreaming;
   const shouldRenderStreamingMarkdown =
       shouldRenderStreamingPlain && transcriptStreamingMarkdownRenderingEnabled === true;
+  const streamingMarkdownText = useThrottledStreamingMarkdownText({
+      enabled: shouldRenderStreamingMarkdown && transcriptStreamingSmoothingEnabled,
+      text: streaming.displayText,
+      throttleMs: transcriptStreamingSettleDelayMs,
+  });
+  const streamingMarkdownMessageIdRef = React.useRef<string | null>(null);
+  if (shouldRenderStreamingMarkdown) {
+      streamingMarkdownMessageIdRef.current = props.message.id;
+  }
+  const staticRenderPlaceholderEnabled =
+      streamingMarkdownMessageIdRef.current === props.message.id ? false : undefined;
   const streamingRevealAnimationEnabled =
       motion?.config.preset !== 'off' &&
       motion?.config.animateNewItemsEnabled === true;
@@ -1046,8 +1047,8 @@ function AgentTextBlock(props: {
       return extractWorkspaceFileMentions(markdown);
   }, [markdown, shouldRenderStreamingPlain]);
   const handleOpenAgentSessionMediaPath = React.useCallback((filePath: string) => {
-    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
-  }, [pathname, props.sessionId, router]);
+    pushSessionFileDeepLink(router, { sessionId: props.sessionId, filePath });
+  }, [props.sessionId, router]);
   const agentSessionMediaMeta = React.useMemo(() => {
     const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
     const envelope = primaryEnvelope?.kind === 'session_media.v1'
@@ -1121,7 +1122,7 @@ function AgentTextBlock(props: {
             ) : (
               shouldRenderStreamingMarkdown ? (
                   <MarkdownView
-                      markdown={streaming.displayText}
+                      markdown={streamingMarkdownText}
                       onOptionPress={handleOptionPress}
                       onLinkPress={handleMarkdownLinkPress}
                       selectable={true}
@@ -1147,6 +1148,7 @@ function AgentTextBlock(props: {
                       selectable={true}
                       profile={props.message.isThinking ? 'thinking' : 'transcript'}
                       textStyle={props.message.isThinking ? styles.thinkingMarkdownText : styles.transcriptMarkdownText}
+                      staticRenderPlaceholderEnabled={staticRenderPlaceholderEnabled}
                   />
               )
             )
@@ -1315,7 +1317,7 @@ function ForkMessageButton(props: {
       ]}
     >
       {isForking ? (
-        <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
       ) : (
         <Ionicons
           name="git-branch-outline"
@@ -1417,7 +1419,6 @@ function ToolCallBlock(props: {
   historical?: boolean;
 }) {
 	  const router = useRouter();
-  const pathname = usePathname();
 	  const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
   const messagesById = useSessionMessagesById(props.sessionId);
   const reducerState = useSessionMessagesReducerState(props.sessionId);
@@ -1428,7 +1429,7 @@ function ToolCallBlock(props: {
 	    message: props.message,
 	    sessionId: props.sessionId,
 	    onJumpToAnchor: (target) => {
-	      pushSessionFileDeepLink(router, pathname, {
+	      pushSessionFileDeepLink(router, {
 	        sessionId: props.sessionId,
 	        filePath: target.filePath,
 	        source: target.source,
@@ -1455,8 +1456,8 @@ function ToolCallBlock(props: {
         reducerState,
       });
   const handleOpenToolSessionMediaPath = React.useCallback((filePath: string) => {
-    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
-  }, [pathname, props.sessionId, router]);
+    pushSessionFileDeepLink(router, { sessionId: props.sessionId, filePath });
+  }, [props.sessionId, router]);
   const toolSessionMediaMeta = React.useMemo(() => {
     const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
     const envelope = primaryEnvelope?.kind === 'session_media.v1'

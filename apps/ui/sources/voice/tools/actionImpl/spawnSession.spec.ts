@@ -32,6 +32,9 @@ function createBaseState(): any {
     machines: {
       m1: {
         id: 'm1',
+        active: true,
+        activeAt: Date.now(),
+        spawnReadinessStatus: 'ready',
         metadata: { displayName: 'Leeroy MacBook Pro', host: 'leeroy-mbp' },
       },
     },
@@ -358,6 +361,101 @@ describe('spawnSessionForVoiceTool', () => {
       errorCode: 'host_not_found',
       errorMessage: 'host_not_found',
       host: 'missing-host',
+    });
+  });
+
+  it('returns ambiguity instead of picking the first same-host machine for explicit voice host requests', async () => {
+    state.machines = {
+      m_old: {
+        id: 'm_old',
+        active: true,
+        activeAt: Date.now(),
+        spawnReadinessStatus: 'ready',
+        metadata: { displayName: 'Old', host: 'leeroy-mbp' },
+      },
+      m_current: {
+        id: 'm_current',
+        active: true,
+        activeAt: Date.now(),
+        spawnReadinessStatus: 'ready',
+        metadata: { displayName: 'Current', host: 'leeroy-mbp' },
+      },
+    };
+    state.settings.recentMachinePaths = [
+      { machineId: 'm_current', path: '/Users/leeroy/projects/current' },
+    ];
+
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      host: 'leeroy-mbp',
+      path: '/Users/leeroy/projects/current',
+    });
+
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: 'host_ambiguous',
+      errorMessage: 'host_ambiguous',
+      host: 'leeroy-mbp',
+    });
+  });
+
+  it('does not select a single host match when voice provides only host and path', async () => {
+    state.machines = {
+      m_voice: {
+        id: 'm_voice',
+        active: true,
+        activeAt: Date.now(),
+        spawnReadinessStatus: 'ready',
+        metadata: { displayName: 'Voice Host', host: 'voice-host' },
+      },
+    };
+    state.settings.recentMachinePaths = [];
+
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      host: 'voice-host',
+      path: '/Users/leeroy/projects/voice',
+    });
+
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: 'host_not_found',
+      errorMessage: 'host_not_found',
+      host: 'voice-host',
+    });
+  });
+
+  it('does not spawn when the only matching machine is online but exact readiness is unknown', async () => {
+    state.machines = {
+      m_unknown: {
+        id: 'm_unknown',
+        active: true,
+        activeAt: Date.now(),
+        metadata: { displayName: 'Unknown Host', host: 'unknown-host' },
+      },
+    };
+    state.settings.recentMachinePaths = [
+      { machineId: 'm_unknown', path: '/Users/leeroy/projects/voice' },
+    ];
+
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    const result = await spawnSessionForVoiceTool({
+      host: 'unknown-host',
+      path: '/Users/leeroy/projects/voice',
+    });
+
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      type: 'error',
+      errorCode: 'spawn_target_unavailable',
+      errorMessage: 'spawn_target_unavailable',
+      machineId: 'm_unknown',
+      readinessStatus: 'unknown',
     });
   });
 });

@@ -27,6 +27,18 @@ installToolShellCommonModuleMocks({
             }
         );
     },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: {
+                        secondary: '#555555',
+                    },
+                },
+            },
+        });
+    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
@@ -121,5 +133,8 @@ describe('ToolView (running tools)', () => {
         const flattened = collectHostText(screen.tree);
         expect(flattened).toContain('stdout');
         expect(flattened).not.toContain('toolView.output');
+
+        const spinner = screen.findByType('ActivityIndicator' as any);
+        expect(spinner?.props?.color).toBe('#555555');
     });
 });

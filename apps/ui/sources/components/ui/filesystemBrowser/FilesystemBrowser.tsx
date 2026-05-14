@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -9,6 +9,7 @@ import { Typography } from '@/constants/Typography';
 
 import { FilesystemBrowserList } from './FilesystemBrowserList';
 import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type FilesystemBrowserProps = FilesystemBrowserListProps & Readonly<{
     loadingTestID?: string;
@@ -36,7 +37,7 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
                     paddingVertical: 20,
                 }}
             >
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text
                     style={{
                         fontSize: 16,

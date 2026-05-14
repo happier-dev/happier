@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
@@ -105,6 +106,56 @@ describe('useHasUnreadMessages', () => {
 
             expect(hook.getCurrent()).toBe(true);
 
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('keeps the session-list activity label stable while streaming timestamps stay in the same display bucket', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    s1: {
+                        id: 's1',
+                        createdAt: 1,
+                    },
+                },
+                sessionMessages: {
+                    s1: {
+                        latestThinkingMessageActivityAtMs: 60_000,
+                    },
+                },
+                sessionPending: {},
+                sessionListRenderables: {},
+                isDataReady: true,
+            } as never));
+
+            const { useSessionListActivityTimeLabel } = await import('./hooks');
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return useSessionListActivityTimeLabel('s1');
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const initial = hook.getCurrent();
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionMessages: {
+                        s1: {
+                            latestThinkingMessageActivityAtMs: 60_500,
+                        },
+                    },
+                } as never));
+            });
+
+            expect(hook.getCurrent()).toBe(initial);
+            expect(renderCount).toBe(1);
             await hook.unmount();
         } finally {
             storage.setState(previousState);

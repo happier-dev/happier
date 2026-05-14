@@ -1,6 +1,6 @@
 import { extractShellCommand, formatPermissionRequestSummary } from '@happier-dev/protocol';
 import React, { useState } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import { View, TouchableOpacity, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { sessionAbort, sessionAllow, sessionAllowWithPermissionUpdates, sessionDeny } from '@/sync/ops';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -11,6 +11,7 @@ import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import { getAgentBehavior } from '@/agents/catalog/catalog';
 import { parseParenIdentifier } from '@/components/tools/normalization/parse/parseParenIdentifier';
 import { Text } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 interface PermissionFooterProps {
@@ -631,7 +632,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     >
                         {loadingButton === 'allow' && isPending ? (
                             <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                                <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorAllow.color} />
+                                <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorAllow.color} />
                             </View>
                         ) : (
                             <View style={styles.buttonContent}>
@@ -663,7 +664,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         >
                             {loadingExecPolicy && isPending ? (
                                 <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                                    <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorForSession.color} />
+                                    <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorForSession.color} />
                                 </View>
                             ) : (
                                 <View style={styles.buttonContent}>
@@ -695,7 +696,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     >
                         {loadingForSession && isPending ? (
                             <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                                <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorForSession.color} />
+                                <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorForSession.color} />
                             </View>
                         ) : (
                             <View style={styles.buttonContent}>
@@ -725,7 +726,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     >
                         {loadingButton === 'deny' && isPending ? (
                             <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                                <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorDeny.color} />
+                                <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorDeny.color} />
                             </View>
                         ) : (
                             <View style={styles.buttonContent}>
@@ -760,7 +761,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     >
                         {loadingButton === 'abort' && isPending ? (
                             <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                                <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorDeny.color} />
+                                <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorDeny.color} />
                             </View>
                         ) : (
                             <View style={styles.buttonContent}>
@@ -806,7 +807,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 >
                     {loadingButton === 'allow' && isPending ? (
                         <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                            <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorAllow.color} />
+                            <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorAllow.color} />
                         </View>
                     ) : (
                         <View style={styles.buttonContent}>
@@ -837,7 +838,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     >
                         {loadingAllEdits && isPending ? (
                             <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                                <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorAllowAll.color} />
+                                <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorAllowAll.color} />
                             </View>
                         ) : (
                             <View style={styles.buttonContent}>
@@ -869,7 +870,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     >
                         {loadingForSession && isPending ? (
                             <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                                <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorForSession.color} />
+                                <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorForSession.color} />
                             </View>
                         ) : (
                             <View style={styles.buttonContent}>
@@ -901,7 +902,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     >
                         {loadingForSessionPrefix && isPending ? (
                             <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                                <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorForSession.color} />
+                                <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorForSession.color} />
                             </View>
                         ) : (
                             <View style={styles.buttonContent}>
@@ -939,7 +940,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     >
                         {loadingForSessionCommandName && isPending ? (
                             <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                                <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorForSession.color} />
+                                <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorForSession.color} />
                             </View>
                         ) : (
                             <View style={styles.buttonContent}>
@@ -970,7 +971,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 >
                     {loadingButton === 'deny' && isPending ? (
                         <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                            <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorDeny.color} />
+                            <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorDeny.color} />
                         </View>
                     ) : (
                         <View style={styles.buttonContent}>
@@ -1004,7 +1005,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 >
                     {loadingButton === 'abort' && isPending ? (
                         <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
-                            <ActivityIndicator size={Platform.OS === 'ios' ? "small" : 14 as any} color={styles.loadingIndicatorDeny.color} />
+                            <ActivitySpinner size={Platform.OS === 'ios' ? "small" : 14} color={styles.loadingIndicatorDeny.color} />
                         </View>
                     ) : (
                         <View style={styles.buttonContent}>

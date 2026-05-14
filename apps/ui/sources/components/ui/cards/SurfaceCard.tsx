@@ -3,6 +3,7 @@ import { Platform, Pressable, View, type StyleProp, type ViewStyle } from 'react
 import { StyleSheet } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
+import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 
 type SurfaceCardTone = 'surface' | 'muted';
 type SurfaceCardPadding = 'none' | 'sm' | 'md' | 'lg';
@@ -16,37 +17,46 @@ type SurfaceCardProps = Readonly<{
     style?: StyleProp<ViewStyle>;
 }>;
 
-const styles = StyleSheet.create((theme) => ({
-    cardBase: {
-        width: '100%',
-        minWidth: 0,
-        borderRadius: Platform.select({ ios: 10, default: 16 }),
-        backgroundColor: theme.colors.surface.base,
-        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
-    },
-    toneMuted: {
-        backgroundColor: theme.colors.surface.inset,
-    },
-    paddingSm: {
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-    },
-    paddingMd: {
-        paddingHorizontal: 18,
-        paddingVertical: 16,
-    },
-    paddingLg: {
-        paddingHorizontal: 22,
-        paddingVertical: 20,
-    },
-    pressable: {
-        width: '100%',
-        borderRadius: Platform.select({ ios: 10, default: 16 }),
-    },
-    pressablePressed: {
-        opacity: 0.985,
-    },
-}));
+const styles = StyleSheet.create((theme) => {
+    const surfaceBorderStyle = resolveThemeSurfaceBorderStyle({
+        borderColor: theme.colors.border.surface,
+        highlightColor: theme.colors.effect.surfaceHighlight,
+    });
+    const hasVisibleSurfaceChrome = surfaceBorderStyle.borderWidth > 0 || surfaceBorderStyle.borderTopWidth > 0;
+
+    return {
+        cardBase: {
+            width: '100%',
+            minWidth: 0,
+            borderRadius: Platform.select({ ios: 10, default: 16 }),
+            backgroundColor: theme.colors.surface.base,
+            ...surfaceBorderStyle,
+            ...(hasVisibleSurfaceChrome ? shadowLevelStyle(theme.colors.shadowLevels[1]) : {}),
+        },
+        toneMuted: {
+            backgroundColor: theme.colors.surface.inset,
+        },
+        paddingSm: {
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+        },
+        paddingMd: {
+            paddingHorizontal: 18,
+            paddingVertical: 16,
+        },
+        paddingLg: {
+            paddingHorizontal: 22,
+            paddingVertical: 20,
+        },
+        pressable: {
+            width: '100%',
+            borderRadius: Platform.select({ ios: 10, default: 16 }),
+        },
+        pressablePressed: {
+            opacity: 0.985,
+        },
+    };
+});
 
 function resolvePaddingStyle(padding: SurfaceCardPadding): ViewStyle | undefined {
     if (padding === 'none') {

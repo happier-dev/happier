@@ -10,6 +10,7 @@ import {
     filterReviewCommentDraftsIncludedInPrompt,
 } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
 
 import { ReviewCommentsDraftsModal } from './ReviewCommentsDraftsModal';
@@ -51,6 +52,7 @@ function openReviewCommentsRemovePrompt(params: Readonly<{
 
 function openReviewCommentsDraftsModal(params: Readonly<{
     sessionId?: string;
+    reviewScope?: WorkspaceScopeBase | null;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
     onUpdateDraft: (draft: ReviewCommentDraft) => void;
     onDeleteDraft: (draftId: string) => void;
@@ -59,6 +61,7 @@ function openReviewCommentsDraftsModal(params: Readonly<{
         component: ReviewCommentsDraftsModal,
         props: {
             sessionId: params.sessionId,
+            reviewScope: params.reviewScope ?? null,
             reviewCommentDrafts: params.reviewCommentDrafts,
             onUpdateDraft: params.onUpdateDraft,
             onDeleteDraft: params.onDeleteDraft,
@@ -77,6 +80,7 @@ function openReviewCommentsDraftsModal(params: Readonly<{
 
 export function createReviewCommentsActionChip(params: Readonly<{
     sessionId?: string;
+    reviewScope?: WorkspaceScopeBase | null;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
     onSetDraftIncluded: (draftId: string, included: boolean) => void;
     onUpdateDraft: (draft: ReviewCommentDraft) => void;
@@ -91,6 +95,7 @@ export function createReviewCommentsActionChip(params: Readonly<{
     const openDraftsModal = () => {
         openReviewCommentsDraftsModal({
             sessionId: params.sessionId,
+            reviewScope: params.reviewScope ?? null,
             reviewCommentDrafts: params.reviewCommentDrafts,
             onUpdateDraft: params.onUpdateDraft,
             onDeleteDraft: params.onDeleteDraft,

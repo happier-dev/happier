@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -14,6 +14,7 @@ import {
     resolveBooleanConfigOptionValue,
 } from '@/sync/domains/sessionControl/configOptionsControl';
 import { t } from '@/text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 export type ModelPickerOption = Readonly<{
@@ -50,6 +51,20 @@ export function ModelPickerOverlay(props: {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
+    const transientStyles = React.useMemo(() => ({
+        optionCardSelected: { backgroundColor: theme.colors.surface.pressed },
+        optionCardPressed: { opacity: 0.86 },
+        refreshIconButtonPressed: { backgroundColor: theme.colors.surface.pressed },
+        refreshIconButtonDisabled: { opacity: 0.6 },
+        selectedControlChoiceSelected: { backgroundColor: theme.colors.button.primary.background },
+        selectedControlChoiceLabelSelected: { color: theme.colors.button.primary.tint },
+        customEntryRowSelected: { backgroundColor: theme.colors.surface.pressed },
+        rowPressed: { opacity: 0.85 },
+    }), [
+        theme.colors.button.primary.background,
+        theme.colors.button.primary.tint,
+        theme.colors.surface.pressed,
+    ]);
     const [query, setQuery] = React.useState('');
     const lastCommittedCustomModelRef = React.useRef<string | null>(null);
     const optionValues = React.useMemo(() => {
@@ -147,14 +162,14 @@ export function ModelPickerOverlay(props: {
                                     onPress={() => props.onSelectOptionControlValue?.(option.id, String(choice.value) as AcpConfigOptionValueId)}
                                     style={({ pressed }) => [
                                         styles.selectedControlChoice,
-                                        isChoiceSelected ? styles.selectedControlChoiceSelected : null,
-                                        pressed ? styles.optionCardPressed : null,
+                                        isChoiceSelected ? transientStyles.selectedControlChoiceSelected : null,
+                                        pressed ? transientStyles.optionCardPressed : null,
                                     ]}
                                 >
                                     <Text
                                         style={[
                                             styles.selectedControlChoiceLabel,
-                                            isChoiceSelected ? styles.selectedControlChoiceLabelSelected : null,
+                                            isChoiceSelected ? transientStyles.selectedControlChoiceLabelSelected : null,
                                         ]}
                                     >
                                         {choice.name}
@@ -166,7 +181,7 @@ export function ModelPickerOverlay(props: {
                 </View>
             );
         }) ?? null;
-    }, [props.onSelectOptionControlValue, props.selectedOptionControls, styles.optionCardPressed, styles.selectedControlChoice, styles.selectedControlChoiceLabel, styles.selectedControlChoiceLabelSelected, styles.selectedControlChoiceSelected, styles.selectedControlChoices, styles.selectedControlDescription, styles.selectedControlGroup, styles.selectedControlRow, styles.selectedControlTextBlock, styles.selectedControlTitle]);
+    }, [props.onSelectOptionControlValue, props.selectedOptionControls, styles.selectedControlChoice, styles.selectedControlChoiceLabel, styles.selectedControlChoices, styles.selectedControlDescription, styles.selectedControlGroup, styles.selectedControlRow, styles.selectedControlTextBlock, styles.selectedControlTitle, transientStyles.optionCardPressed, transientStyles.selectedControlChoiceLabelSelected, transientStyles.selectedControlChoiceSelected]);
 
     const handleSelectOption = React.useCallback((nextValue: string) => {
         setCustomEditorVisible(false);
@@ -203,8 +218,8 @@ export function ModelPickerOverlay(props: {
                                 onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
                             style={({ pressed }) => [
                                 styles.refreshIconButton,
-                                pressed && probe.phase === 'idle' ? styles.refreshIconButtonPressed : null,
-                                probe.phase !== 'idle' ? styles.refreshIconButtonDisabled : null,
+                                pressed && probe.phase === 'idle' ? transientStyles.refreshIconButtonPressed : null,
+                                probe.phase !== 'idle' ? transientStyles.refreshIconButtonDisabled : null,
                                 ]}
                                 accessibilityRole="button"
                                 accessibilityLabel={probe.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y')}
@@ -213,7 +228,7 @@ export function ModelPickerOverlay(props: {
                                 {probe.phase === 'idle' ? (
                                     <Ionicons name="refresh-outline" size={18} color={theme.colors.text.secondary} />
                                 ) : (
-                                    <ActivityIndicator
+                                    <ActivitySpinner
                                         size="small"
                                         color={theme.colors.text.secondary}
                                         accessibilityLabel={probe.phase === 'loading'
@@ -224,7 +239,7 @@ export function ModelPickerOverlay(props: {
                             </Pressable>
                         ) : probe.phase !== 'idle' ? (
                             <View style={styles.refreshIconButton}>
-                                <ActivityIndicator
+                                <ActivitySpinner
                                     size="small"
                                     color={theme.colors.text.secondary}
                                     accessibilityLabel={probe.phase === 'loading'
@@ -270,8 +285,8 @@ export function ModelPickerOverlay(props: {
                                         onPress={() => handleSelectOption(option.value)}
                                         style={({ pressed }) => [
                                             styles.optionCard,
-                                            isSelected ? styles.optionCardSelected : null,
-                                            pressed ? styles.optionCardPressed : null,
+                                            isSelected ? transientStyles.optionCardSelected : null,
+                                            pressed ? transientStyles.optionCardPressed : null,
                                         ]}
                                     >
                                         <View style={styles.optionCardHeader}>
@@ -317,8 +332,8 @@ export function ModelPickerOverlay(props: {
                             }}
                             style={({ pressed }) => [
                                 styles.customEntryRow,
-                                customEditorVisible ? styles.customEntryRowSelected : null,
-                                pressed ? styles.rowPressed : null,
+                                customEditorVisible ? transientStyles.customEntryRowSelected : null,
+                                pressed ? transientStyles.rowPressed : null,
                             ]}
                         >
                             <View style={styles.customEntryHeader}>
@@ -402,12 +417,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: 'transparent',
         flexShrink: 0,
     },
-    refreshIconButtonPressed: {
-        backgroundColor: theme.colors.surface.pressed,
-    },
-    refreshIconButtonDisabled: {
-        opacity: 0.6,
-    },
     noteText: {
         fontSize: 10,
         lineHeight: 13,
@@ -431,12 +440,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 8,
         backgroundColor: theme.colors.surface.base,
         gap: 3,
-    },
-    optionCardSelected: {
-        backgroundColor: theme.colors.surface.pressed,
-    },
-    optionCardPressed: {
-        opacity: 0.86,
     },
     optionCardHeader: {
         flexDirection: 'row',
@@ -508,16 +511,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    selectedControlChoiceSelected: {
-        backgroundColor: theme.colors.button.primary.background,
-    },
     selectedControlChoiceLabel: {
         fontSize: 10,
         fontWeight: '600',
         color: theme.colors.text.secondary,
-    },
-    selectedControlChoiceLabelSelected: {
-        color: theme.colors.button.primary.tint,
     },
     searchInput: {
         borderRadius: 10,
@@ -541,9 +538,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         paddingVertical: 9,
         backgroundColor: theme.colors.surface.base,
-    },
-    customEntryRowSelected: {
-        backgroundColor: theme.colors.surface.pressed,
     },
     customEntryHeader: {
         flexDirection: 'row',
@@ -572,9 +566,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 10,
         lineHeight: 13,
         color: theme.colors.text.secondary,
-    },
-    rowPressed: {
-        opacity: 0.85,
     },
     emptyText: {
         fontSize: 11,

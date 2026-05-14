@@ -1438,6 +1438,56 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ]);
     });
 
+    it('does not enqueue encrypted rows that are missing data keys for warm hydration', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_missing_data_key',
+                        dataEncryptionKey: null,
+                        metadata: 'encrypted-missing-key-meta',
+                        metadataVersion: 3,
+                        agentState: null,
+                        agentStateVersion: 0,
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption, getSessionEncryption, decryptMetadata } = createEncryptionHarness();
+        getSessionEncryption.mockReturnValue(null);
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const applySessions = vi.fn();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables,
+            awaitSessionListHydration: true,
+            requiredHydrationSessionIds: ['s_missing_data_key'],
+            cachedSessionListEntries: {},
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessionListRenderables).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_missing_data_key',
+                metadata: null,
+            }),
+        ], { replace: true });
+        expect(getSessionEncryption).toHaveBeenCalledWith('s_missing_data_key');
+        expect(decryptMetadata).not.toHaveBeenCalled();
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(consoleError).not.toHaveBeenCalled();
+    });
+
     it('preserves stale metadata instead of marking unavailable when failed hydration has safe metadata', async () => {
         const previousMetadata = {
             path: '/known/repo',
@@ -2913,6 +2963,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             });
 
             await expect.poll(() => applySessionListRenderablePatches.mock.calls.length).toBe(1);
+            expect(consoleError).not.toHaveBeenCalled();
         } finally {
             consoleError.mockRestore();
         }

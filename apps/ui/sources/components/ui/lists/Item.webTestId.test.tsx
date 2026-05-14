@@ -49,6 +49,7 @@ describe('Item web testID forwarding', () => {
                     testID="settings-appearance-themePreference-cycle"
                     title="Appearance"
                     detail="Adaptive"
+                    detailTestID="settings-appearance-themePreference-detail"
                     onPress={() => {}}
                 />);
 
@@ -58,6 +59,8 @@ describe('Item web testID forwarding', () => {
         expect(row?.props['data-testid']).toBe('settings-appearance-themePreference-cycle');
         expect(row?.props.accessibilityRole).toBeUndefined();
         expect(row?.props.tabIndex).toBe(0);
+        const detail = screen.findByTestId('settings-appearance-themePreference-detail');
+        expect(detail?.props.children).toBe('Adaptive');
     });
 
     it('avoids button semantics on web rows with nested right-side actions', async () => {

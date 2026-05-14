@@ -23,6 +23,27 @@ export function canUseLineSelection(input: {
     return true;
 }
 
+export function canStartLineSelection(input: {
+    scmWriteEnabled: boolean;
+    includeExcludeEnabled?: boolean;
+    virtualLineSelectionEnabled?: boolean;
+    hasConflicts: boolean;
+    isBinary: boolean;
+    hasPendingDelta: boolean;
+    hasIncludedDelta: boolean;
+    diffContent: string | null;
+}): boolean {
+    if (!input.scmWriteEnabled) return false;
+    const liveSelectionEnabled = input.includeExcludeEnabled !== false;
+    const virtualSelectionEnabled = input.virtualLineSelectionEnabled === true;
+    if (!liveSelectionEnabled && !virtualSelectionEnabled) return false;
+    if (input.hasConflicts) return false;
+    if (input.isBinary) return false;
+    if (!input.diffContent || input.diffContent.trim().length === 0) return false;
+    if (virtualSelectionEnabled && !liveSelectionEnabled) return input.hasPendingDelta;
+    return input.hasPendingDelta || input.hasIncludedDelta;
+}
+
 export function buildFileLineSelectionFingerprint(
     entry: Pick<
         ScmWorkingEntry,

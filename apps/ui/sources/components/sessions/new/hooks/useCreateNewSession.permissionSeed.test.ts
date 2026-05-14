@@ -637,6 +637,72 @@ describe('useCreateNewSession permission seeding', () => {
         }));
     });
 
+    it('runs local slash actions for the created session without sending the slash text as the first message', async () => {
+        const {
+            useCreateNewSession,
+            followUpSpawnedSessionWithServerScopeSpy,
+            machineSpawnNewSessionSpy,
+            syncSendMessageSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_runs' });
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = { experiments: false, featureToggles: { 'execution.runs': true } } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex' as any,
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '/h.runs',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess_runs',
+            initialMessageText: '',
+        }));
+        expect(syncSendMessageSpy).not.toHaveBeenCalled();
+    });
+
     it('passes connectedServices bindings into machineSpawnNewSession when provided', async () => {
         const { useCreateNewSession, captured } = await setupUseCreateNewSessionHarness();
 

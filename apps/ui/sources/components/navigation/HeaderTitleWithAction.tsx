@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 export type HeaderTitleWithActionProps = {
@@ -19,11 +20,14 @@ export type HeaderTitleWithActionProps = {
 
 export const HeaderTitleWithAction = React.memo((props: HeaderTitleWithActionProps) => {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const resolvedTintColor = props.tintColor ?? theme.colors.text.primary;
+    const resolvedActionColor = props.actionColor ?? resolvedTintColor;
 
     return (
         <View style={styles.container}>
             <Text
-                style={[styles.title, { color: props.tintColor ?? '#000' }]}
+                style={[styles.title, { color: resolvedTintColor }]}
                 numberOfLines={1}
                 accessibilityRole="header"
             >
@@ -38,8 +42,8 @@ export const HeaderTitleWithAction = React.memo((props: HeaderTitleWithActionPro
                 disabled={props.actionDisabled === true}
             >
                 {props.actionLoading === true
-                    ? <ActivityIndicator size="small" color={props.actionColor ?? props.tintColor ?? '#000'} />
-                    : <Ionicons name={props.actionIconName} size={18} color={props.actionColor ?? props.tintColor ?? '#000'} />}
+                    ? <ActivitySpinner size="small" color={resolvedActionColor} />
+                    : <Ionicons name={props.actionIconName} size={18} color={resolvedActionColor} />}
             </Pressable>
         </View>
     );
@@ -63,4 +67,3 @@ const stylesheet = StyleSheet.create(() => ({
         opacity: 0.7,
     },
 }));
-

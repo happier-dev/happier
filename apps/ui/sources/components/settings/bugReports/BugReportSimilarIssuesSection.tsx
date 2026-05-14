@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -8,6 +8,7 @@ import { t } from '@/text';
 
 import type { BugReportSimilarIssue } from './bugReportServiceClient';
 import { bugReportComposerStyles } from './bugReportComposerStyles';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export function BugReportSimilarIssuesSection(props: Readonly<{
   loading: boolean;
@@ -32,7 +33,7 @@ export function BugReportSimilarIssuesSection(props: Readonly<{
 
       {props.loading && (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+          <ActivitySpinner size="small" color={theme.colors.text.secondary} />
           <Text style={styles.helperText}>{t('bugReports.composer.similarIssues.searching')}</Text>
         </View>
       )}

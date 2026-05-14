@@ -1,7 +1,8 @@
-import { SessionMediaItemV1Schema } from '@happier-dev/protocol';
+import { SessionMediaFailureV1Schema, SessionMediaItemV1Schema } from '@happier-dev/protocol';
 
-export type SessionMediaInlineImageSummary = Readonly<{
+export type SessionMediaInlineImageAvailableSummary = Readonly<{
     id: string;
+    status?: 'available';
     name: string;
     path: string;
     mimeType: string;
@@ -12,6 +13,20 @@ export type SessionMediaInlineImageSummary = Readonly<{
     category: 'attachment' | 'generated' | 'tool-artifact';
     role: 'input' | 'output';
 }>;
+
+export type SessionMediaInlineImageUnavailableSummary = Readonly<{
+    id: string;
+    status: 'unavailable';
+    name: string;
+    mimeType?: string;
+    category: 'attachment' | 'generated' | 'tool-artifact';
+    role: 'input' | 'output';
+    failureCode: string;
+}>;
+
+export type SessionMediaInlineImageSummary =
+    | SessionMediaInlineImageAvailableSummary
+    | SessionMediaInlineImageUnavailableSummary;
 
 export type ParsedSessionMediaMessageMeta = Readonly<{
     inlineImages: readonly SessionMediaInlineImageSummary[];
@@ -59,6 +74,7 @@ export function parseSessionMediaMessageMeta(value: unknown): ParsedSessionMedia
         if (!isSafeSessionMediaPath(item.path)) continue;
         inlineImages.push({
             id: item.id,
+            status: 'available',
             name: item.name,
             path: item.path,
             mimeType: item.mimeType,
@@ -69,6 +85,21 @@ export function parseSessionMediaMessageMeta(value: unknown): ParsedSessionMedia
                 : {}),
             category: item.category,
             role: item.role,
+        });
+    }
+    for (const rawFailure of Array.isArray(value.payload.failures) ? value.payload.failures : []) {
+        const parsedFailure = SessionMediaFailureV1Schema.safeParse(rawFailure);
+        if (!parsedFailure.success) continue;
+        const failure = parsedFailure.data;
+        if (failure.mediaKind !== 'image') continue;
+        inlineImages.push({
+            id: `failure-${failure.index}`,
+            status: 'unavailable',
+            name: failure.name,
+            ...(failure.mimeType ? { mimeType: failure.mimeType } : {}),
+            category: failure.category,
+            role: failure.role,
+            failureCode: failure.code,
         });
     }
 

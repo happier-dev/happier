@@ -62,7 +62,7 @@ function truncateOneLine(text: string, maxChars: number): string {
     return `${oneLine.slice(0, maxChars - 1)}…`;
 }
 
-export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId }) => {
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
     
     const extracted = extractEditStrings(tool.input);
@@ -92,6 +92,7 @@ export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
         <>
             <ToolSectionView fullWidth>
                 <ToolDiffView 
+                    sessionId={sessionId}
                     filePath={filePath}
                     oldText={truncatedOld} 
                     newText={truncatedNew} 

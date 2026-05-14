@@ -1,13 +1,20 @@
 import { Appearance } from 'react-native';
 import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
 
-import { darkTheme, lightTheme } from './theme';
-import { loadThemePreference } from './sync/domains/state/persistence';
+import { loadThemeRuntimeLocalState } from './sync/domains/state/persistence';
+import {
+    resolveThemeRuntimeStartupThemes,
+    resolveThemeRuntimeVisualTheme,
+} from './theme/profiles/themeProfileRuntime';
 
-const appThemes = {
-    light: lightTheme,
-    dark: darkTheme,
-};
+const themeRuntimeLocalState = loadThemeRuntimeLocalState();
+const themePreference = themeRuntimeLocalState.themePreference;
+const startupThemes = resolveThemeRuntimeStartupThemes({
+    themeProfiles: themeRuntimeLocalState.themeProfiles,
+    themePreference,
+    systemTheme: Appearance.getColorScheme(),
+});
+const appThemes = startupThemes.themes;
 
 const breakpoints = {
     xs: 0,
@@ -25,14 +32,8 @@ declare module 'react-native-unistyles' {
     export interface UnistylesBreakpoints extends AppBreakpoints {}
 }
 
-const themePreference = loadThemePreference();
-
 const getInitialTheme = (): 'light' | 'dark' => {
-    if (themePreference === 'adaptive') {
-        const systemTheme = Appearance.getColorScheme();
-        return systemTheme === 'dark' ? 'dark' : 'light';
-    }
-    return themePreference;
+    return resolveThemeRuntimeVisualTheme(themePreference, Appearance.getColorScheme());
 };
 
 const settings =
@@ -53,14 +54,7 @@ StyleSheet.configure({
 });
 
 const setRootBackgroundColor = () => {
-    const resolvedTheme =
-        themePreference === 'adaptive'
-            ? (Appearance.getColorScheme() === 'dark' ? 'dark' : 'light')
-            : themePreference;
-    const color = resolvedTheme === 'dark'
-        ? appThemes.dark.colors.background.canvas
-        : appThemes.light.colors.background.canvas;
-    UnistylesRuntime.setRootViewBackgroundColor(color);
+    UnistylesRuntime.setRootViewBackgroundColor(startupThemes.backgroundColor);
 };
 
 setRootBackgroundColor();

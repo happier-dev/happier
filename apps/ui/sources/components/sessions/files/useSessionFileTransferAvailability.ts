@@ -1,3 +1,5 @@
+import * as React from 'react';
+
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { useSession } from '@/sync/domains/state/storage';
@@ -44,10 +46,10 @@ export function useSessionFileTransferAvailabilityState(sessionId: string): Reso
 export function useSessionFileTransferAvailabilityResolver(sessionId: string): (transferSizeBytes?: number | null) => boolean {
     const availability = useSessionFileTransferAvailabilityState(sessionId);
 
-    return (transferSizeBytes?: number | null) => {
+    return React.useCallback((transferSizeBytes?: number | null) => {
         void transferSizeBytes;
         return availability.available;
-    };
+    }, [availability.available]);
 }
 
 export function useSessionFileTransferAvailability(sessionId: string): boolean {

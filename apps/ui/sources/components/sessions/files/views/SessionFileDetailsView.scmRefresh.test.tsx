@@ -179,6 +179,7 @@ vi.mock('@/scm/scmLineSelection', () => ({
     return `${entry.path}:${entry.stats?.pendingAdded ?? 0}:${entry.stats?.pendingRemoved ?? 0}`;
   },
   canUseLineSelection: () => false,
+    canStartLineSelection: () => false,
 }));
 
 vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({

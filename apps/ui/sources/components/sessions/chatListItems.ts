@@ -46,9 +46,14 @@ type CommittedTranscriptItem = Extract<ChatListItem, { kind: 'message' | 'tool-c
 
 export type ChatListItemsBuildCache = Readonly<{
     messageIdsOldestFirst: readonly string[];
+    messageStructureKeysOldestFirst: readonly string[];
     groupConsecutiveToolCalls: boolean;
     committedItems: readonly CommittedTranscriptItem[];
     localIdsInTranscript: ReadonlySet<string>;
+    pendingMessagesRef: readonly PendingMessage[] | null | undefined;
+    discardedMessagesRef: readonly DiscardedPendingMessage[] | null | undefined;
+    actionDraftsRef: readonly SessionActionDraft[] | null | undefined;
+    items: ChatListItem[];
 }>;
 
 function normalizeSeq(seq: unknown): number | null {
@@ -65,6 +70,35 @@ function isPrefix(params: Readonly<{ prefix: readonly string[]; full: readonly s
 
 function canGroupToolCallMessage(message: Message): boolean {
     return isToolCallMessageGroupableInTranscript(message);
+}
+
+function areSameSourceList<T>(
+    left: readonly T[] | null | undefined,
+    right: readonly T[] | null | undefined,
+): boolean {
+    if (left === right) return true;
+    return (left?.length ?? 0) === 0 && (right?.length ?? 0) === 0;
+}
+
+function buildMessageStructureKey(messageId: string, message: Message | undefined, groupConsecutiveToolCalls: boolean): string {
+    if (!message) return `${messageId}:missing`;
+    const seq = normalizeSeq((message as { seq?: unknown }).seq);
+    const localId = 'localId' in message ? (message.localId ?? '') : '';
+    const groupKey =
+        groupConsecutiveToolCalls && canGroupToolCallMessage(message)
+            ? 'groupable'
+            : 'standalone';
+    return `${message.id}:${message.kind}:${message.createdAt}:${seq ?? ''}:${localId}:${groupKey}`;
+}
+
+function buildMessageStructureKeys(
+    messageIdsOldestFirst: readonly string[],
+    messagesById: Readonly<Record<string, Message>>,
+    groupConsecutiveToolCalls: boolean,
+): string[] {
+    return messageIdsOldestFirst.map((messageId) =>
+        buildMessageStructureKey(messageId, messagesById[messageId], groupConsecutiveToolCalls)
+    );
 }
 
 export function buildChatListItems(opts: {
@@ -154,10 +188,16 @@ export function buildChatListItemsCached(opts: {
     groupConsecutiveToolCalls?: boolean;
 }): { cache: ChatListItemsBuildCache; items: ChatListItem[] } {
     const groupConsecutiveToolCalls = opts.groupConsecutiveToolCalls === true;
+    const messageStructureKeysOldestFirst = buildMessageStructureKeys(
+        opts.messageIdsOldestFirst,
+        opts.messagesById,
+        groupConsecutiveToolCalls,
+    );
     const canReuse =
         opts.cache != null &&
         opts.cache.groupConsecutiveToolCalls === groupConsecutiveToolCalls &&
-        isPrefix({ prefix: opts.cache.messageIdsOldestFirst, full: opts.messageIdsOldestFirst });
+        isPrefix({ prefix: opts.cache.messageIdsOldestFirst, full: opts.messageIdsOldestFirst }) &&
+        isPrefix({ prefix: opts.cache.messageStructureKeysOldestFirst, full: messageStructureKeysOldestFirst });
 
     let committedItems: CommittedTranscriptItem[] = [];
     let localIdsInTranscript: Set<string> = new Set<string>();
@@ -235,6 +275,21 @@ export function buildChatListItemsCached(opts: {
 
     const pending = opts.pendingMessages.filter((p) => !p.localId || !localIdsInTranscript.has(p.localId));
     const discarded = Array.isArray(opts.discardedMessages) ? opts.discardedMessages : [];
+    const drafts = Array.isArray(opts.actionDrafts) ? opts.actionDrafts : [];
+    if (
+        canReuse &&
+        opts.cache != null &&
+        opts.cache.messageIdsOldestFirst.length === opts.messageIdsOldestFirst.length &&
+        areSameSourceList(opts.cache.pendingMessagesRef, opts.pendingMessages) &&
+        areSameSourceList(opts.cache.discardedMessagesRef, opts.discardedMessages) &&
+        areSameSourceList(opts.cache.actionDraftsRef, opts.actionDrafts)
+    ) {
+        return {
+            cache: opts.cache,
+            items: opts.cache.items,
+        };
+    }
+
     const items: ChatListItem[] = [...committedItems];
 
     if (pending.length > 0 || discarded.length > 0) {
@@ -246,7 +301,6 @@ export function buildChatListItemsCached(opts: {
         });
     }
 
-    const drafts = Array.isArray(opts.actionDrafts) ? opts.actionDrafts : [];
     for (const d of drafts) {
         items.push({
             kind: 'action-draft',
@@ -258,9 +312,14 @@ export function buildChatListItemsCached(opts: {
     return {
         cache: {
             messageIdsOldestFirst: opts.messageIdsOldestFirst,
+            messageStructureKeysOldestFirst,
             groupConsecutiveToolCalls,
             committedItems,
             localIdsInTranscript,
+            pendingMessagesRef: opts.pendingMessages,
+            discardedMessagesRef: opts.discardedMessages,
+            actionDraftsRef: opts.actionDrafts,
+            items,
         },
         items,
     };

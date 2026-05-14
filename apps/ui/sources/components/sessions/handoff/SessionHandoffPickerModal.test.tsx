@@ -126,10 +126,6 @@ vi.mock('@/utils/sessions/recentMachines', () => ({
     getRecentMachinesFromSessions: () => [],
 }));
 
-vi.mock('@/utils/sessions/machineUtils', () => ({
-    isMachineOnline: () => true,
-}));
-
 vi.mock('@/sync/sync', () => ({
     sync: {
         refreshMachinesThrottled: refreshMachinesThrottledMock,
@@ -143,11 +139,23 @@ describe('SessionHandoffPickerModal', () => {
         credentialsReady = true;
         machineListByServerIdState = {
             server_a: [
-                { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
+                {
+                    id: 'machine_target',
+                    active: true,
+                    activeAt: Date.now(),
+                    spawnReadinessStatus: 'ready',
+                    metadata: { displayName: 'Target machine', host: 'target.local' },
+                },
             ],
         };
         allMachinesState = [
-            { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
+            {
+                id: 'machine_target',
+                active: true,
+                activeAt: Date.now(),
+                spawnReadinessStatus: 'ready',
+                metadata: { displayName: 'Target machine', host: 'target.local' },
+            },
         ];
         sessionsByIdState = {
             sess_1: {
@@ -647,6 +655,56 @@ describe('SessionHandoffPickerModal', () => {
             targetMachineId: 'machine_target',
             targetSessionStorageMode: 'direct',
         });
+    });
+
+    it('does not start when the selected machine has no exact spawn readiness', async () => {
+        machineListByServerIdState = {
+            server_a: [
+                {
+                    id: 'machine_target',
+                    active: true,
+                    activeAt: Date.now(),
+                    metadata: { displayName: 'Target machine', host: 'target.local' },
+                },
+            ],
+        };
+        allMachinesState = machineListByServerIdState.server_a;
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        let chrome: CustomModalChromeConfig | null = null;
+        const setChrome = vi.fn((next: CustomModalChromeConfig | null) => {
+            chrome = next;
+        });
+
+        const tree = (await renderScreen(<SessionHandoffPickerModal
+                    onClose={onClose}
+                    setChrome={setChrome}
+                    onResolve={onResolve}
+                    sessionId="sess_1"
+                    sourceMachineId="machine_source"
+                    serverId="server_a"
+                />)).tree;
+
+        const machineSelector = tree.findByType('MachineSelector' as any);
+        await act(async () => {
+            invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
+        });
+
+        const footer = requireCardChrome(chrome).footer;
+        const startButton = findElementByTestId(footer, 'session-handoff-start');
+        const startButtonProps = startButton?.props as { disabled?: boolean; onPress?: () => unknown } | undefined;
+        expect(startButtonProps?.disabled).toBe(true);
+
+        await act(async () => {
+            const onPress = startButtonProps?.onPress;
+            if (typeof onPress !== 'function') {
+                throw new Error('expected start button to have an onPress handler');
+            }
+            await onPress();
+        });
+
+        expect(onResolve).not.toHaveBeenCalled();
     });
 
     it('falls back to the active machine record when the server-scoped list lags behind', async () => {

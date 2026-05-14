@@ -6,19 +6,29 @@ import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
+type ExtendedPlannedChangeActions = Omit<PlannedChangeActions, 'invalidate'> & {
+    sessionFolderAssignmentSessionIds: string[];
+    invalidate: PlannedChangeActions['invalidate'] & {
+        sessionFolderAssignments: boolean;
+    };
+};
+
 function buildPlanned(partial: {
     changes?: ApiChangeEntry[];
     sessionIdsToCatchUp?: string[];
+    sessionFolderAssignmentSessionIds?: string[];
     unsupportedChanges?: PlannedChangeActions['unsupportedChanges'];
-    invalidate?: Partial<PlannedChangeActions['invalidate']>;
+    invalidate?: Partial<ExtendedPlannedChangeActions['invalidate']>;
     kv?: PlannedChangeActions['kv'];
-}): PlannedChangeActions {
+}): ExtendedPlannedChangeActions {
     return {
         changes: partial.changes ?? [],
         sessionIdsToCatchUp: partial.sessionIdsToCatchUp ?? [],
+        sessionFolderAssignmentSessionIds: partial.sessionFolderAssignmentSessionIds ?? [],
         unsupportedChanges: partial.unsupportedChanges ?? [],
         invalidate: {
             sessions: false,
+            sessionFolderAssignments: false,
             machines: false,
             artifacts: false,
             settings: false,
@@ -142,6 +152,86 @@ describe('changesApplier', () => {
         expect(invalidateMessagesForSession).toHaveBeenCalledWith('s1');
         expect(invalidateScmStatusForSession).toHaveBeenCalledTimes(1);
         expect(invalidateScmStatusForSession).toHaveBeenCalledWith('s1');
+    });
+
+    it('refreshes session folder assignments without requiring message materialization', async () => {
+        const invalidateSessionFolderAssignments = vi.fn(async () => {});
+        const invalidateMessagesForSession = vi.fn(async () => {});
+        const invalidateSessions = vi.fn(async () => {});
+
+        const result = await applyPlannedChangeActions({
+            planned: buildPlanned({
+                changes: [
+                    buildChange({
+                        cursor: 1,
+                        kind: 'session',
+                        entityId: 's1',
+                        hint: { sessionFolderAssignment: true, folderId: 'folder-a' },
+                    }),
+                ],
+                sessionFolderAssignmentSessionIds: ['s1'],
+                invalidate: { sessionFolderAssignments: true },
+            }),
+            credentials,
+            isSessionMessagesLoaded: () => true,
+            invalidate: {
+                sessions: invalidateSessions,
+                sessionFolderAssignments: invalidateSessionFolderAssignments,
+            } as Parameters<typeof applyPlannedChangeActions>[0]['invalidate'] & {
+                sessionFolderAssignments: () => Promise<void>;
+            },
+            invalidateMessagesForSession,
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(result).toEqual({
+            status: 'complete',
+            safeAdvanceCursor: '1',
+            processedChanges: 1,
+            blockedChanges: 0,
+        });
+        expect(invalidateSessionFolderAssignments).toHaveBeenCalledWith(['s1']);
+        expect(invalidateSessions).not.toHaveBeenCalled();
+        expect(invalidateMessagesForSession).not.toHaveBeenCalled();
+    });
+
+    it('blocks assignment cursor advancement when assignment refresh fails', async () => {
+        const result = await applyPlannedChangeActions({
+            planned: buildPlanned({
+                changes: [
+                    buildChange({
+                        cursor: 1,
+                        kind: 'session',
+                        entityId: 's1',
+                        hint: { sessionFolderAssignment: true, folderId: 'folder-a' },
+                    }),
+                ],
+                sessionFolderAssignmentSessionIds: ['s1'],
+                invalidate: { sessionFolderAssignments: true },
+            }),
+            credentials,
+            isSessionMessagesLoaded: () => true,
+            invalidate: {
+                sessionFolderAssignments: async () => {
+                    throw new Error('assignment refresh failed');
+                },
+            } as Parameters<typeof applyPlannedChangeActions>[0]['invalidate'] & {
+                sessionFolderAssignments: () => Promise<void>;
+            },
+            invalidateMessagesForSession: async () => {},
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(result).toMatchObject({
+            status: 'partial',
+            safeAdvanceCursor: null,
+            blockedCursor: '1',
+            blockedReason: 'partial-materialization',
+        });
     });
 
     it('respects concurrencyLimit when applying planned invalidations', async () => {

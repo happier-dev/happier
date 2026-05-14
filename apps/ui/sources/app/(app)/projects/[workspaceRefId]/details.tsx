@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -25,6 +25,7 @@ import { useFullscreenDetailsRouteController } from '@/components/workspaceCockp
 import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { t } from '@/text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export default function ProjectDetailsScreenRoute() {
     const { theme } = useUnistyles();
@@ -156,7 +157,7 @@ export default function ProjectDetailsScreenRoute() {
             <Stack.Screen options={screenOptions} />
             <React.Suspense fallback={(
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator color={theme.colors.text.secondary} />
+                    <ActivitySpinner color={theme.colors.text.secondary} />
                 </View>
             )}>
                 {cockpitEnabled ? (

@@ -4,12 +4,7 @@ import {
     buildLightShadowLevels,
     buildShadowPopoverArrowBoxShadow,
 } from '../shadowElevation';
-
-const verticalControlGradient = <TColors extends readonly [string, string, ...string[]]>(colors: TColors) => ({
-    colors,
-    start: { x: 0.5, y: 1 },
-    end: { x: 0.5, y: 0 },
-} as const);
+import { createVerticalGradient } from './verticalGradient';
 
 // Shared spacing, sizing constants (DRY - used by both themes)
 const sharedSpacing = {
@@ -170,14 +165,14 @@ export const lightTheme = {
         fab: {
             background: '#000000',
             backgroundPressed: '#1a1a1a',
-            gradient: verticalControlGradient(['#000000', '#171717']),
+            gradient: createVerticalGradient(['#000000', '#171717']),
             icon: '#FFFFFF',
         },
         segmentedControl: {
             trackBackground: '#f0f0f0',
             trackGradient: undefined,
             activeBackground: '#ffffff',
-            activeGradient: verticalControlGradient(['#FDFDFD', '#FFFFFF']),
+            activeGradient: createVerticalGradient(['#FDFDFD', '#FFFFFF']),
         },
         radio: {
             active: '#007AFF',
@@ -187,7 +182,7 @@ export const lightTheme = {
         button: {
             primary: {
                 background: '#000000',
-                gradient: verticalControlGradient(['#000000', '#020202']),
+                gradient: createVerticalGradient(['#000000', '#020202']),
                 tint: '#FFFFFF',
                 disabled: '#C0C0C0',
             },
@@ -468,14 +463,14 @@ export const darkTheme = {
         fab: {
             background: '#303030',
             backgroundPressed: '#1b1b1b',
-            gradient: verticalControlGradient(['#303030', '#343434']),
+            gradient: createVerticalGradient(['#303030', '#323232']),
             icon: '#ffffff',
         },
         segmentedControl: {
             trackBackground: '#292929',
             trackGradient: undefined,
             activeBackground: '#202020',
-            activeGradient: verticalControlGradient(['#202020', '#232323']),
+            activeGradient: createVerticalGradient(['#202020', '#212121']),
         },
         radio: {
             active: '#0A84FF',
@@ -485,7 +480,7 @@ export const darkTheme = {
         button: {
             primary: {
                 background: '#1b1b1b',
-                gradient: verticalControlGradient(['#1b1b1b', '#1d1d1d']),
+                gradient: createVerticalGradient(['#1b1b1b', '#1c1c1c']),
                 tint: '#FFFFFF',
                 disabled: '#C0C0C0',
             },

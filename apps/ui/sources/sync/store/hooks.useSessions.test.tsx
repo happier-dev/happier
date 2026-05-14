@@ -237,7 +237,10 @@ describe('useSessionListRenderableWithServerScope', () => {
                 { flushOptions: { cycles: 1, turns: 4 } },
             );
 
-            expect(hook.getCurrent()).toBe(renderable);
+            expect(hook.getCurrent()).toEqual(expect.objectContaining({
+                id: renderable.id,
+                metadata: renderable.metadata,
+            }));
 
             await hook.unmount();
         } finally {
@@ -273,7 +276,73 @@ describe('useSessionListRenderableWithServerScope', () => {
                 { flushOptions: { cycles: 1, turns: 4 } },
             );
 
-            expect(hook.getCurrent()).toBe(renderable);
+            expect(hook.getCurrent()).toEqual(expect.objectContaining({
+                id: renderable.id,
+                metadata: renderable.metadata,
+            }));
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('keeps scoped row renderables stable when only streaming version counters change', async () => {
+        const previousState = storage.getState();
+        try {
+            const renderable: SessionListRenderableSession = {
+                ...makeRenderable('session-1'),
+                seq: 10,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                pendingVersion: 1,
+                metadata: { path: '/repo', machineId: 'm-1', host: 'localhost' },
+                metadataVersion: 1,
+                agentStateVersion: 1,
+                thinking: true,
+                thinkingAt: 2,
+                presence: 'online',
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionListRenderables: {
+                    'session-1': renderable,
+                },
+                sessionListRowStateByServerId: {},
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(
+                () => {
+                    renderCount += 1;
+                    return useSessionListRenderableWithServerScope(null, 'session-1');
+                },
+                { flushOptions: { cycles: 1, turns: 4 } },
+            );
+            const initial = hook.getCurrent();
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionListRenderables: {
+                        'session-1': {
+                            ...renderable,
+                            seq: 11,
+                            updatedAt: 3,
+                            pendingVersion: 2,
+                            metadataVersion: 2,
+                            agentStateVersion: 2,
+                            thinkingAt: 3,
+                        },
+                    },
+                }));
+            });
+
+            expect(hook.getCurrent()).toBe(initial);
+            expect(renderCount).toBe(1);
 
             await hook.unmount();
         } finally {
@@ -315,7 +384,10 @@ describe('useSessionListRenderableWithServerScope', () => {
                 { flushOptions: { cycles: 1, turns: 4 } },
             );
 
-            expect(hook.getCurrent()).toBe(renderable);
+            expect(hook.getCurrent()).toEqual(expect.objectContaining({
+                id: renderable.id,
+                metadata: renderable.metadata,
+            }));
 
             await act(async () => {
                 activeServerRuntimeState.snapshot = {

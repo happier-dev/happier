@@ -13,8 +13,10 @@ import { useSelectableMenu, CREATE_ITEM_ID } from '@/components/ui/forms/dropdow
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { TextInput } from '@/components/ui/text/Text';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollRectIntoView';
 
 
 export type DropdownMenuItem = Readonly<{
@@ -227,16 +229,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
             right: item.rightElement
                 ? item.rightElement
                 : item.shortcut
-                    ? (
-                        <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: theme.colors.surface.pressedOverlay, borderRadius: 6 }}>
-                            <Text style={{ fontSize: 12, color: theme.colors.text.secondary, fontWeight: '500' }}>
-                                {item.shortcut}
-                            </Text>
-                        </View>
-                    )
+                    ? <KeyHint label={item.shortcut} />
                     : null,
         }));
-    }, [props.items, rowVariant, theme.colors.text.secondary]);
+    }, [props.items]);
 
     const closeOnSelect = props.closeOnSelect !== false;
     const onRequestClose = React.useCallback(() => props.onOpenChange(false), [props]);
@@ -362,6 +358,12 @@ export function DropdownMenu(props: DropdownMenuProps) {
             : null,
     });
 
+    const resultScroll = useScrollRectIntoViewRegistry({
+        activeKey: selectedIndex >= 0 ? String(selectedIndex) : null,
+        padding: 8,
+        animated: true,
+    });
+
     const handleCreate = React.useCallback(() => {
         const query = searchQuery.trim();
         if (!query || !props.onCreateItem) return;
@@ -429,9 +431,12 @@ export function DropdownMenu(props: DropdownMenuProps) {
                             edgeFades={{ top: true, bottom: true }}
                             edgeIndicators={{ size: 14, opacity: 0.35 }}
                             arrow={overlayArrowCfg ? { placement, size: overlayArrowCfg.size } : false}
+                            surfaceChrome="theme"
+                            scrollViewRef={resultScroll.scrollRef}
+                            onScrollViewLayout={resultScroll.onViewportLayout}
+                            onScrollViewContentSizeChange={resultScroll.onContentSizeChange}
+                            onScrollViewScroll={resultScroll.onScroll}
                             containerStyle={[
-                                // Dropdowns should be shadow-only (no borders).
-                                { borderWidth: 0, borderColor: 'transparent' } as any,
                                 props.connectToTrigger
                                     ? (placement === 'top'
                                         ? ({
@@ -497,6 +502,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                     showCategoryTitles={props.showCategoryTitles ?? false}
                                     rowKind={props.rowKind}
                                     itemProps={props.itemRowProps}
+                                    registerItemLayout={resultScroll.registerItemLayout}
                                 />
                             </View>
                         </FloatingOverlay>

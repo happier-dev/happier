@@ -11,7 +11,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
-import { PathSelector } from '@/components/sessions/new/components/PathSelector';
+import { PathSelectionList } from '@/components/sessions/new/components/PathSelectionList';
 import { WizardSectionHeaderRow } from '@/components/sessions/new/components/WizardSectionHeaderRow';
 import { NewSessionModelSelectionContent } from '@/components/sessions/new/components/NewSessionModelSelectionContent';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
@@ -35,6 +35,11 @@ import { InstallableDepInstaller, type InstallableDepInstallerProps } from '@/co
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
+import {
+    resolveDirectoryFavoriteComparisonKey,
+    toggleHomeAwareDirectoryFavorite,
+} from '@/utils/sessions/favoriteDirectoriesToggle';
 import type { CreatedSessionFollowUpContext } from '../hooks/useCreateNewSession';
 import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/new/components/buildNewSessionProfileSelectionPopover';
 import { NewSessionProfilesBrowserContent } from '@/components/sessions/new/components/NewSessionProfilesBrowserContent';
@@ -372,7 +377,6 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         setFavoriteMachines,
         selectedPath,
         recentPaths,
-        usePathPickerSearch,
         favoriteDirectories,
         setFavoriteDirectories,
     } = props.machine;
@@ -380,6 +384,12 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         if (!selectedMachine) return false;
         return !isMachineOnline(selectedMachine);
     }, [selectedMachine]);
+    const selectedMachineHomeDir = selectedMachine?.metadata?.homeDir || '/home';
+    const favoriteDirectoryKeys = React.useMemo(() => new Set(
+        favoriteDirectories.map((path) =>
+            resolveDirectoryFavoriteComparisonKey(path, selectedMachineHomeDir)
+        ),
+    ), [favoriteDirectories, selectedMachineHomeDir]);
 
       const {
           sessionPrompt,
@@ -446,6 +456,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     const hasModelOptionsProbeAffordance = modelOptionsProbeIsBusy || typeof modelOptionsProbe?.onRefresh === 'function';
     const shouldRenderModelSection = modelOptions.length > 0 || hasModelOptionsProbeAffordance;
     const pairAgentAndModelSections = useSelectionColumns && shouldRenderModelSection;
+    const warningStateColors = theme.colors.state.warning;
+    const neutralStateColors = theme.colors.state.neutral;
+    const dangerStateColors = theme.colors.state.danger;
+    const defaultBorderColor = theme.colors.border.default;
     const handleSelectMachine = React.useCallback((machine: Machine) => {
         setSelectedMachineId(machine.id);
         const bestPath = getBestPathForMachine(machine.id);
@@ -561,15 +575,15 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         {/* Missing CLI Installation Banners */}
                                         {selectedMachineId && tmuxRequested && cliAvailability.tmux === false && (
                                             <View style={{
-                                                backgroundColor: theme.colors.state.warning.background,
+                                                backgroundColor: warningStateColors.background,
                                                 borderRadius: 10,
                                                 padding: 12,
                                                 marginBottom: 12,
                                                 borderWidth: 1,
-                                                borderColor: theme.colors.state.warning.border,
+                                                borderColor: warningStateColors.border ?? defaultBorderColor,
                                             }}>
                                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                                                    {renderIconNode('warning', 16, theme.colors.state.neutral.foreground)}
+                                                    {renderIconNode('warning', 16, neutralStateColors.foreground ?? theme.colors.text.secondary)}
                                                     <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                                                         {t('machine.tmux.notDetectedSubtitle')}
                                                     </Text>
@@ -818,15 +832,15 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                         borderRadius: 10,
                                                         padding: 12,
                                                         borderWidth: 1,
-                                                        backgroundColor: theme.colors.state.warning.background,
-                                                        borderColor: theme.colors.state.warning.border,
+                                                        backgroundColor: warningStateColors.background,
+                                                        borderColor: warningStateColors.border ?? defaultBorderColor,
                                                     }}
                                                 >
                                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                                                         {renderIconNode(
                                                             'warning-outline',
                                                             16,
-                                                            theme.colors.state.neutral.foreground ?? theme.colors.state.danger.foreground,
+                                                            neutralStateColors.foreground ?? dangerStateColors.foreground ?? theme.colors.text.secondary,
                                                         )}
                                                         <Text style={{ color: theme.colors.text.primary, fontWeight: '600', ...Typography.default('semiBold') }}>
                                                             {t('newSession.machineOfflineInlineTitle')}
@@ -855,27 +869,31 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         </Text>
 
                                         <View style={{ marginBottom: 24 }}>
-                                            <PathSelector
-                                                machineHomeDir={selectedMachine?.metadata?.homeDir || '/home'}
-                                                selectedPath={selectedPath}
-                                                onChangeSelectedPath={setSelectedPath}
-                                                onChangeDraftSelectedPath={setDraftSelectedPath}
-                                                commitDraftOnBlur={true}
-                                                recentPaths={recentPaths}
-                                                usePickerSearch={usePathPickerSearch}
-                                                searchVariant="group"
-                                                pathEntryPresentation="itemGroup"
-                                                savedPathsPresentation={pathPresentation === 'compact' ? 'dropdown' : 'list'}
-                                                favoriteGroupPlacement="beforeRecent"
-                                                popoverBoundaryRef={props.popoverBoundaryRef}
-                                                focusInputOnSelect={false}
-                                                favoriteDirectories={favoriteDirectories}
-                                                onChangeFavoriteDirectories={setFavoriteDirectories}
-                                                machineBrowse={{
-                                                    enabled: true,
-                                                    machineId: selectedMachine?.id ?? null,
-                                                    serverId: serverId ?? null,
+                                            <PathSelectionList
+                                                initialValue={selectedPath}
+                                                machineHomeDir={selectedMachineHomeDir}
+                                                favorites={favoriteDirectories.map((path) => ({ path }))}
+                                                recents={recentPaths.map((path, index) => ({ path, lastUsedAt: index }))}
+                                                machineId={selectedMachine?.id ?? null}
+                                                serverId={serverId ?? null}
+                                                machinePlatform={machineMetadataPlatformToTarget(selectedMachine?.metadata?.platform)}
+                                                onCommit={(path) => {
+                                                    setDraftSelectedPath?.(path);
+                                                    setSelectedPath(path);
                                                 }}
+                                                onChangeDraftPath={setDraftSelectedPath}
+                                                onRequestClose={() => {}}
+                                                isFavorite={(path) =>
+                                                    favoriteDirectoryKeys.has(resolveDirectoryFavoriteComparisonKey(path, selectedMachineHomeDir))
+                                                }
+                                                onToggleFavorite={(path) => {
+                                                    setFavoriteDirectories([...toggleHomeAwareDirectoryFavorite(
+                                                        favoriteDirectories,
+                                                        path,
+                                                        selectedMachineHomeDir,
+                                                    )]);
+                                                }}
+                                                maxHeight={pathPresentation === 'compact' ? 320 : 420}
                                             />
                                         </View>
                                     </View>
@@ -953,7 +971,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 shadowOpacity: 0.08,
                                 shadowRadius: 14,
                             },
-                            android: { borderTopWidth: 1, borderTopColor: theme.colors.border.default },
+                            android: { borderTopWidth: 1, borderTopColor: defaultBorderColor },
                             default: {},
                         }),
                     }}>

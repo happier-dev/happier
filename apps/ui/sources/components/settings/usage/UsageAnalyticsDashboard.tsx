@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { CardGrid, CardGridColumn, CardMasonry, CardMasonryItem, CardSection, MetricCard, PanelCard } from '@/components/ui/cards';
@@ -38,6 +38,7 @@ import type {
     UsageFocus,
     UsageMetric,
 } from '@/sync/api/account/usageAnalytics';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const Ionicons = SafeIonicons;
 
@@ -669,7 +670,7 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
                                     pointerEvents="none"
                                     style={styles.refreshOverlay}
                                 >
-                                    <ActivityIndicator size="small" color={theme.colors.accent.blue} />
+                                    <ActivitySpinner size="small" color={theme.colors.accent.blue} />
                                 </View>
                             ) : null}
                         </View>
@@ -757,7 +758,7 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
                                     <Text style={styles.sectionSubtitle}>{t('usage.summary.thisWeekSubtitle')}</Text>
                                 </View>
                                 {isRefreshing ? (
-                                    <ActivityIndicator size="small" color={theme.colors.accent.blue} />
+                                    <ActivitySpinner size="small" color={theme.colors.accent.blue} />
                                 ) : null}
                             </View>
                             <View style={styles.chipRow}>

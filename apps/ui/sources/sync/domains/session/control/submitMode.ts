@@ -38,7 +38,9 @@ export function chooseSubmitMode(opts: {
     const isBusy = Boolean(session?.thinking);
     const isOnline = session?.presence === 'online';
     const agentReady = Boolean(session && session.agentStateVersion > 0);
-    const inFlightSteer = Boolean(session?.agentState?.capabilities?.inFlightSteer);
+    const capabilities = session?.agentState?.capabilities;
+    const inFlightSteerSupported = capabilities?.inFlightSteerSupported ?? capabilities?.inFlightSteer;
+    const inFlightSteerAvailable = capabilities?.inFlightSteerAvailable ?? capabilities?.inFlightSteer;
     const busySteerSendPolicy: BusySteerSendPolicy = opts.busySteerSendPolicy ?? 'steer_immediately';
 
     // Prefer the metadata-backed queue when:
@@ -49,7 +51,15 @@ export function chooseSubmitMode(opts: {
     //
     // Exception: if the agent supports in-flight steer and is online+ready, do NOT auto-enqueue while busy.
     // Steering preserves the current turn (Codex-style) and is the more intuitive default.
-    if (isBusy && inFlightSteer && !controlledByUser && isOnline && agentReady && busySteerSendPolicy === 'steer_immediately') {
+    if (
+        isBusy
+        && inFlightSteerSupported === true
+        && inFlightSteerAvailable === true
+        && !controlledByUser
+        && isOnline
+        && agentReady
+        && busySteerSendPolicy === 'steer_immediately'
+    ) {
         return 'agent_queue';
     }
 

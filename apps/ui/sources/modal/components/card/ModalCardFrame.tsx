@@ -3,6 +3,7 @@ import { Platform, ScrollView, View, type StyleProp, type ViewStyle } from 'reac
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
+import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { ModalCardBody } from './ModalCardBody';
 import { ModalCardHeader } from './ModalCardHeader';
 import { useModalCardDimensions, type ModalCardDimensionOptions, type ModalCardSizePreset } from './useModalCardDimensions';
@@ -33,6 +34,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         backgroundColor: theme.colors.surface.base,
         borderRadius: 14,
+        ...resolveThemeSurfaceBorderStyle({
+            borderColor: theme.colors.border.surface,
+            highlightColor: theme.colors.effect.surfaceHighlight,
+        }),
         overflow: 'hidden',
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
         alignSelf: 'center',

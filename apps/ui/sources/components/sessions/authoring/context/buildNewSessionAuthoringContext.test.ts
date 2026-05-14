@@ -37,6 +37,34 @@ const BASE_DRAFT: SessionAuthoringDraft = {
 };
 
 describe('buildNewSessionAuthoringContext', () => {
+    it('allows live launch only when the selected machine has exact spawn readiness', () => {
+        const context = buildNewSessionAuthoringContext({
+            automationDraft: {
+                enabled: false,
+                name: '',
+                description: '',
+                scheduleKind: 'interval',
+                everyMinutes: 60,
+                cronExpr: '0 * * * *',
+                timezone: null,
+            },
+            automationFeatureEnabled: true,
+            selectedMachineId: 'machine-1',
+            selectedMachine: {
+                id: 'machine-1',
+                active: true,
+                activeAt: Date.now(),
+                spawnReadinessStatus: 'ready',
+            } as any,
+            selectedPath: '/repo/project',
+            automationEditId: null,
+            buildDraft: () => BASE_DRAFT,
+        });
+
+        expect(context.submissionMode).toBe('launch');
+        expect(context.canSubmit).toBe(true);
+    });
+
     it('builds automation authoring context that allows offline-machine save and edit mode', () => {
         const context = buildNewSessionAuthoringContext({
             automationDraft: {

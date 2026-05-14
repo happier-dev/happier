@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
@@ -11,6 +11,7 @@ import { t } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { resolveAgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 interface QuestionOption {
@@ -506,7 +507,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                             activeOpacity={0.7}
                         >
                             {isSubmitting ? (
-                                <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
+                                <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
                             ) : (
                                 <Text style={styles.submitButtonText}>{t('tools.askUserQuestion.submit')}</Text>
                             )}

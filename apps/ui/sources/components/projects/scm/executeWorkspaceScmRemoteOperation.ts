@@ -6,7 +6,12 @@ import type { ScmPushRejectPolicy, ScmRemoteConfirmPolicy } from '@/scm/settings
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { machineScmRemoteFetch, machineScmRemotePull, machineScmRemotePush } from '@/sync/ops/scm/machineScm';
+import {
+    machineScmRemoteFetch,
+    machineScmRemotePull,
+    machineScmRemotePush,
+    machineScmRepositoryRemoveIndexLock,
+} from '@/sync/ops/scm/machineScm';
 
 export async function executeWorkspaceScmRemoteOperation(input: Readonly<{
     kind: ScmRemoteOperationKind;
@@ -62,6 +67,8 @@ export async function executeWorkspaceScmRemoteOperation(input: Readonly<{
                         branch: remoteTarget.branch ?? undefined,
                     });
         },
+        removeIndexLock: async (request) =>
+            await machineScmRepositoryRemoveIndexLock(input.scope.machineId, request),
         reportOperation: ({ operation, status, detail, rawError, errorCode }) => {
             reportWorkspaceScmOperation({
                 state: storage.getState(),

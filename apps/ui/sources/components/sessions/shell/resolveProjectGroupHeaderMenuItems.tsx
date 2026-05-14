@@ -13,12 +13,14 @@ const PROJECT_GROUP_HEADER_MENU_ITEMS_CACHE = new LruMap<string, ReadonlyArray<D
 export function resolveProjectGroupHeaderMenuItems(input: Readonly<{
     menuEnabled: boolean;
     canOpenProject: boolean;
+    canAddFolder: boolean;
     hasCustomLabel: boolean;
     actionIconColor: string;
 }>): ReadonlyArray<DropdownMenuItem> {
     const cacheKey = [
         getPreferredLanguage(),
         input.canOpenProject ? '1' : '0',
+        input.canAddFolder ? '1' : '0',
         input.hasCustomLabel ? '1' : '0',
         input.actionIconColor,
     ].join('|');
@@ -32,6 +34,12 @@ export function resolveProjectGroupHeaderMenuItems(input: Readonly<{
             id: 'openProject',
             title: t('sessionsList.openProject'),
             icon: <Ionicons name="folder-outline" size={16} color={input.actionIconColor} />,
+        } satisfies DropdownMenuItem] : []),
+        ...(input.canAddFolder ? [{
+            id: 'addFolder',
+            testID: 'session-folder-add-root',
+            title: t('sessionsList.addFolder'),
+            icon: <Ionicons name="folder-open-outline" size={16} color={input.actionIconColor} />,
         } satisfies DropdownMenuItem] : []),
         {
             id: 'rename',

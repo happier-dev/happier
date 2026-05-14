@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('sessionListProjectGroupingKeys', () => {
-    it('normalizes windows separators and expands ~ using homeDir', async () => {
+    it('normalizes windows separators and expands ~ using homeDir without grouping by host', async () => {
         const { resolveSessionProjectGroupingKeyParts } = await import('./sessionListProjectGroupingKeys');
         const parts = resolveSessionProjectGroupingKeyParts({
             host: 'example',
@@ -12,19 +12,18 @@ describe('sessionListProjectGroupingKeys', () => {
 
         expect(parts.homeDir).toBe('C:/Users/Bob');
         expect(parts.pathKey).toBe('C:/Users/Bob/repo');
-        expect(parts.machineGroupId).toBe('host:example');
+        expect(parts.machineGroupId).toBe('id:m1');
     });
 
-    it('normalizes host names before deriving grouping ids', async () => {
+    it('does not use host as a legacy grouping identity when machine id is missing', async () => {
         const { resolveSessionProjectGroupingKeyParts } = await import('./sessionListProjectGroupingKeys');
         const parts = resolveSessionProjectGroupingKeyParts({
             host: ' DEVBOX.local ',
-            machineId: 'm1',
             path: '/repo',
         });
 
         expect(parts.host).toBe('devbox');
-        expect(parts.machineGroupId).toBe('host:devbox');
+        expect(parts.machineGroupId).toBe('unknown');
     });
 
     it('preserves UNC/network share prefixes when normalizing slashes', async () => {
@@ -36,7 +35,7 @@ describe('sessionListProjectGroupingKeys', () => {
         });
 
         expect(parts.pathKey).toBe('//server/share/repo');
-        expect(parts.machineGroupId).toBe('host:example');
+        expect(parts.machineGroupId).toBe('id:m1');
     });
 
     it('prefers machine metadata when deriving session project grouping key parts', async () => {
@@ -57,7 +56,7 @@ describe('sessionListProjectGroupingKeys', () => {
 
         expect(parts).toEqual({
             displayPath: '~/repo',
-            machineGroupId: 'host:machine-host',
+            machineGroupId: 'id:m1',
             host: 'machine-host',
             machineId: 'm1',
             homeDir: '/home/machine',
@@ -79,7 +78,7 @@ describe('sessionListProjectGroupingKeys', () => {
         );
 
         expect(parts.host).toBe('machine-host');
-        expect(parts.machineGroupId).toBe('host:machine-host');
+        expect(parts.machineGroupId).toBe('id:m1');
     });
 
     it('reuses canonical grouping key parts for repeated equal inputs', async () => {

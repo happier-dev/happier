@@ -6,6 +6,21 @@ export type StoryDeckKeyboardShortcutsProps = Readonly<{
     onDismiss?: () => void;
 }>;
 
+function isEditableKeyboardTarget(target: unknown): boolean {
+    if (!target || typeof target !== 'object') return false;
+    const element = target as {
+        tagName?: unknown;
+        isContentEditable?: boolean;
+        closest?: (selector: string) => unknown;
+    };
+    const tagName = String(element.tagName ?? '').toLowerCase();
+    return tagName === 'input'
+        || tagName === 'textarea'
+        || tagName === 'select'
+        || element.isContentEditable === true
+        || element.closest?.('[contenteditable="true"], [data-keyboard-shortcuts-owned="true"]') != null;
+}
+
 /**
  * Web-only keyboard handler:
  *   - Right / Enter -> advance
@@ -19,6 +34,8 @@ export function StoryDeckKeyboardShortcuts(props: StoryDeckKeyboardShortcutsProp
 
         const handler = (event: KeyboardEvent) => {
             if (event.defaultPrevented) return;
+            if (event.isComposing === true) return;
+            if (isEditableKeyboardTarget(event.target)) return;
             if (event.metaKey || event.ctrlKey || event.altKey) return;
             switch (event.key) {
                 case 'ArrowRight':

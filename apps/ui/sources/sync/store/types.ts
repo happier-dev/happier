@@ -38,6 +38,7 @@ import type { SessionActionDraft } from '../domains/sessionActions/sessionAction
 import type { SessionActionDraftStatus } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import type { WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
+import type { SessionFoldersDomain } from './domains/sessionFolders';
 
 export type KnownEntitlements = 'voice' | 'pro';
 export type SessionModelMode = NonNullable<Session['modelMode']>;
@@ -335,6 +336,7 @@ export interface BootstrapSlice {
 export type StorageState = SettingsDomainSlice
     & ProfileDomainSlice
     & SessionsDomainSlice
+    & SessionFoldersDomain
     & MachinesDomainSlice
     & MessagesDomainSlice
     & PendingDomainSlice

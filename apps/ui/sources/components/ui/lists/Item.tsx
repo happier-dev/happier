@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, ActivityIndicator, type AccessibilityRole } from 'react-native';
+import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, type AccessibilityRole } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -19,6 +19,7 @@ import {
     ITEM_SUBTITLE_TEXT_METRICS,
     ITEM_TITLE_TEXT_METRICS,
 } from '@/components/ui/lists/itemDensityMetrics';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function resizeItemIconForDensity(icon: React.ReactNode, iconSize: number): React.ReactNode {
     if (!React.isValidElement(icon) || icon.type === React.Fragment) {
@@ -38,6 +39,7 @@ export interface ItemProps {
     subtitleAccessory?: React.ReactNode;
     subtitleLines?: number; // set 0 or undefined for auto/multiline
     detail?: string;
+    detailTestID?: string;
     icon?: React.ReactNode;
     leftElement?: React.ReactNode;
     leftElementWhenHovered?: React.ReactNode;
@@ -50,6 +52,7 @@ export interface ItemProps {
     onHoverIn?: () => void;
     onHoverOut?: () => void;
     accessibilityRole?: AccessibilityRole;
+    webRole?: React.AriaRole;
     disabled?: boolean;
     loading?: boolean;
     selected?: boolean;
@@ -233,6 +236,7 @@ export const Item = React.memo<ItemProps>((props) => {
         subtitleAccessory,
         subtitleLines,
         detail,
+        detailTestID,
         icon,
         leftElement,
         leftElementWhenHovered,
@@ -245,6 +249,7 @@ export const Item = React.memo<ItemProps>((props) => {
         onHoverIn,
         onHoverOut,
         accessibilityRole,
+        webRole,
         disabled,
         loading,
         selected,
@@ -529,6 +534,7 @@ export const Item = React.memo<ItemProps>((props) => {
             <View style={styles.rightSection}>
                 {detail && (
                     <Text
+                        testID={detailTestID}
                         style={[
                             styles.detail,
                             detailSizeStyle,
@@ -541,7 +547,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     </Text>
                 )}
                 {loading && (
-                    <ActivityIndicator
+                    <ActivitySpinner
                         size="small"
                         color={theme.colors.text.secondary}
                         style={{ marginRight: showAccessory ? 6 : 0 }}
@@ -554,6 +560,7 @@ export const Item = React.memo<ItemProps>((props) => {
     ), [
         chevronAccessory,
         detail,
+        detailTestID,
         detailSizeStyle,
         detailStyle,
         iconContainerStyle,
@@ -674,6 +681,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 } : undefined}
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
+                {...(isWeb && webRole ? { role: webRole } : undefined)}
                 accessibilityRole={interactiveAccessibilityRole}
                 accessibilityState={interactiveAccessibilityState}
                 aria-selected={selected !== undefined ? selected : undefined}

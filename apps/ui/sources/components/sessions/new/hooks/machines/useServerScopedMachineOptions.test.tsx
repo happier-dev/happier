@@ -80,7 +80,7 @@ function createMachine(id: string): Machine {
         createdAt: 1,
         updatedAt: 1,
         active: true,
-        activeAt: 1,
+        activeAt: Date.now(),
         metadata: {
             host: id,
             displayName: id,
@@ -137,6 +137,8 @@ describe('useServerScopedMachineOptions', () => {
         const remoteGroup = latest.find((group) => group.serverId === 'server-b');
         expect(activeGroup?.machines.map((m) => m.id)).toEqual(['machine-a']);
         expect(remoteGroup?.machines.map((m) => m.id)).toEqual(['machine-cache']);
+        expect((activeGroup?.machines[0] as any)?.spawnReadinessStatus).toBe('unknown');
+        expect((remoteGroup?.machines[0] as any)?.spawnReadinessStatus).toBe('unknown');
         expect(remoteGroup?.loading).toBe(false);
         expect(fetchAndApplyMachinesMock).not.toHaveBeenCalled();
     });
@@ -238,6 +240,56 @@ describe('useServerScopedMachineOptions', () => {
                     allowedServerIds={['server-a', 'server-b']}
                     activeServerId="server-a"
                     activeMachines={[activeRevoked]}
+                    onGroups={(groups) => captured.push(groups)}
+                />);
+
+        const latest = captured.at(-1) ?? [];
+        const activeGroup = latest.find((group) => group.serverId === 'server-a');
+        const remoteGroup = latest.find((group) => group.serverId === 'server-b');
+        expect(activeGroup?.machines).toEqual([]);
+        expect(remoteGroup?.machines).toEqual([]);
+    });
+
+    it('filters replaced machines out of all groups', async () => {
+        const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
+
+        getCredentialsForServerUrlMock.mockReset();
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token', secret: 'secret' });
+        fetchAndApplyMachinesMock.mockReset();
+
+        const activeReplaced = {
+            ...createMachine('machine-a'),
+            replacedByMachineId: 'machine-current',
+            replacedAt: 123,
+            replacementReason: 'manual_repair',
+            replacementSource: 'manual',
+        } as Machine;
+        const remoteReplaced = {
+            ...createMachine('machine-b'),
+            replacedByMachineId: 'machine-current',
+            replacedAt: 456,
+            replacementReason: 'manual_repair',
+            replacementSource: 'manual',
+        } as Machine;
+
+        act(() => {
+            storage.setState((state) => ({
+                ...state,
+                machineListByServerId: {
+                    ...state.machineListByServerId,
+                    'server-b': [remoteReplaced],
+                },
+                machineListStatusByServerId: {
+                    ...state.machineListStatusByServerId,
+                    'server-b': 'idle',
+                },
+            }));
+        });
+
+        await renderScreen(<Probe
+                    allowedServerIds={['server-a', 'server-b']}
+                    activeServerId="server-a"
+                    activeMachines={[activeReplaced]}
                     onGroups={(groups) => captured.push(groups)}
                 />);
 

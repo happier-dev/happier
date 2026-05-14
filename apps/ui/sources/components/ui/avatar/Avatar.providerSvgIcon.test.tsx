@@ -20,10 +20,24 @@ installAvatarCommonModuleMocks({
         return createUnistylesMock({
             theme: {
                 colors: {
-                    surface: '#ffffff',
+                    surface: {
+                        base: '#ffffff',
+                        inset: '#f8f8f8',
+                        elevated: '#eeeeee',
+                    },
                     shadow: { color: '#000000' },
-                    text: '#111111',
-                    textLink: '#2266ee',
+                    text: {
+                        secondary: '#6c6c70',
+                    },
+                    accent: {
+                        blue: '#007aff',
+                        green: '#34c759',
+                        orange: '#ff9500',
+                        yellow: '#ffcc00',
+                        red: '#ff3b30',
+                        indigo: '#5856d6',
+                        purple: '#af52de',
+                    },
                 },
             },
         });

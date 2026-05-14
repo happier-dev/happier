@@ -1,6 +1,6 @@
 import type { FileDiffOptions } from '@pierre/diffs';
 
-import { HAPPIER_PIERRE_THEME_IDS } from './pierreThemeRegistry.web';
+import { HAPPIER_PIERRE_THEME_IDS, type HappierPierreThemeIds } from './pierreThemeRegistry.web';
 import { countTextLinesUpTo } from '@/utils/strings/countTextLinesUpTo';
 
 export type PierreDiffOptionsBaseParams = Readonly<{
@@ -11,6 +11,7 @@ export type PierreDiffOptionsBaseParams = Readonly<{
     showLineNumbers: boolean;
     showPrefix: boolean;
     tokenizeMaxLineLength: number;
+    themeIds?: HappierPierreThemeIds;
     intraLineDiff: Readonly<{
         enabled: boolean;
         maxPatchLines: number;
@@ -24,8 +25,8 @@ export function buildPierreDiffOptionsBase<TAnnotation = unknown>(params: Pierre
 
     return {
         theme: {
-            light: HAPPIER_PIERRE_THEME_IDS.light,
-            dark: HAPPIER_PIERRE_THEME_IDS.dark,
+            light: params.themeIds?.light ?? HAPPIER_PIERRE_THEME_IDS.light,
+            dark: params.themeIds?.dark ?? HAPPIER_PIERRE_THEME_IDS.dark,
         },
         themeType: params.isDark ? 'dark' : 'light',
         diffStyle: params.diffStyle,

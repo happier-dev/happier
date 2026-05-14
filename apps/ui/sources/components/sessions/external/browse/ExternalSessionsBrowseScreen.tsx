@@ -14,7 +14,7 @@ import { Modal } from '@/modal';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { machineExternalSessionLinkEnsure } from '@/sync/ops/machineExternalSessions';
 import { useProfile, useSettings } from '@/sync/store/hooks';
-import { lightTheme } from '@/theme';
+import type { Theme } from '@/theme';
 import { t } from '@/text';
 
 import { readExternalSessionBrowseCandidatePath } from './buildExternalSessionBrowseCandidatePresentation';
@@ -29,7 +29,7 @@ import { ExternalSessionBrowseCandidatesList } from './ExternalSessionBrowseCand
 import { useExternalSessionBrowseCandidates, type ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
 
 type ExternalSessionBrowseProviderId = ExternalSessionsProviderId;
-type AppTheme = typeof lightTheme;
+type AppTheme = Theme;
 
 export type ExternalSessionsBrowseScopeLock = Readonly<{
     machineId: string;

@@ -1,14 +1,7 @@
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 import {
-    I18nManager,
-    Pressable,
-    ScrollView,
-    View,
-    type StyleProp,
-    type TextStyle,
-    type ViewStyle,
-} from 'react-native';
+    I18nManager, Pressable, ScrollView, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { PetCompanionTrayItem } from '@/components/pets/activity';

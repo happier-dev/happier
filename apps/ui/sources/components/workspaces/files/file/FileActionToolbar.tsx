@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, Pressable, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -38,13 +38,22 @@ type FileActionToolbarProps = {
     virtualSelectionEnabled: boolean;
     isSelectedForCommit: boolean;
     lineSelectionEnabled: boolean;
+    lineSelectionCanStart?: boolean;
+    lineSelectionActive?: boolean;
+    rangeSelectionActive?: boolean;
+    reviewCommentsEnabled?: boolean;
+    commentModeActive?: boolean;
     selectedLineCount: number;
+    appliedLineSelectionCount?: number;
     isApplyingStage: boolean;
     inFlightScmOperation: ScmProjectInFlightOperation | null;
     onStageFile: () => void;
     onUnstageFile: () => void;
-    onApplySelectedLines: () => void;
+    onApplySelectedLines: () => void | Promise<void>;
     onClearSelection: () => void;
+    onStartLineSelection?: () => void;
+    onStartRangeSelection?: () => void;
+    onToggleCommentMode?: (active: boolean) => void;
     fileEditorEnabled?: boolean;
     isEditingFile?: boolean;
     fileEditorDirty?: boolean;
@@ -75,13 +84,22 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         virtualSelectionEnabled,
         isSelectedForCommit,
         lineSelectionEnabled,
+        lineSelectionCanStart,
+        lineSelectionActive,
+        rangeSelectionActive,
+        reviewCommentsEnabled,
+        commentModeActive,
         selectedLineCount,
+        appliedLineSelectionCount,
         isApplyingStage,
         inFlightScmOperation,
         onStageFile,
         onUnstageFile,
         onApplySelectedLines,
         onClearSelection,
+        onStartLineSelection,
+        onStartRangeSelection,
+        onToggleCommentMode,
         fileEditorEnabled,
         isEditingFile,
         fileEditorDirty,
@@ -109,7 +127,20 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
     const stageLabel = virtualSelectionEnabled ? t('files.fileActions.selectForCommit') : t('files.fileActions.stageFile');
     const unstageLabel = virtualSelectionEnabled ? t('files.fileActions.removeFromCommitSelection') : t('files.fileActions.unstageFile');
     const commandIconSize = 14;
-    const hasSelectedLines = lineSelectionEnabled && selectedLineCount > 0;
+    const isLineSelectionActive = lineSelectionActive === true;
+    const canStartLineSelection = lineSelectionCanStart === true || lineSelectionEnabled;
+    const isCommentModeActive = commentModeActive === true;
+    const isRangeSelectionActive = rangeSelectionActive === true;
+    const hasSelectedLines = isLineSelectionActive && lineSelectionEnabled && selectedLineCount > 0;
+    const hasAppliedPartialLineSelection = !isLineSelectionActive
+        && lineSelectionEnabled
+        && virtualSelectionEnabled
+        && (appliedLineSelectionCount ?? 0) > 0;
+    const showEmptyLineSelectionActions = lineSelectionEnabled && isLineSelectionActive && !hasSelectedLines;
+    const stageFileActionLabel = showEmptyLineSelectionActions && virtualSelectionEnabled
+        ? t('files.fileActions.selectEntireFileForCommit')
+        : stageLabel;
+    const showCompactCommitSelectionEntry = virtualSelectionEnabled && !isLineSelectionActive;
     const selectedLineActionIsRemoval = !virtualSelectionEnabled && diffMode === 'included';
     const selectedLineActionColor = selectedLineActionIsRemoval ? theme.colors.state.neutral.foreground : theme.colors.state.success.foreground;
     const selectedLineActionLabel = virtualSelectionEnabled
@@ -117,6 +148,48 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         : selectedLineActionIsRemoval
             ? t('files.fileActions.selectedLines.unstageSelectedLines')
             : t('files.fileActions.selectedLines.stageSelectedLines');
+    const handleStageFilePress = React.useCallback(() => {
+        if (canStartLineSelection && !isLineSelectionActive) {
+            onStartLineSelection?.();
+            return;
+        }
+        onStageFile();
+    }, [canStartLineSelection, isLineSelectionActive, onStageFile, onStartLineSelection]);
+    const stageFileButtonStyle = (showCompactCommitSelectionEntry
+        ? {
+            width: 32,
+            height: 32,
+            minHeight: 32,
+            paddingHorizontal: 0,
+            paddingVertical: 0,
+            borderRadius: 10,
+            backgroundColor: theme.colors.surface.base,
+            borderWidth: 1,
+            borderColor: theme.colors.border.default,
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: actionBusy ? 0.6 : 1,
+        }
+        : {
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            minHeight: 32,
+            borderRadius: 10,
+            backgroundColor: theme.colors.surface.base,
+            borderWidth: 1,
+            borderColor: theme.colors.state.success.foreground,
+            opacity: actionBusy ? 0.6 : 1,
+        }) satisfies ViewStyle;
+    const stageFileButtonContent = showCompactCommitSelectionEntry ? (
+        <Octicons name="plus" size={commandIconSize} color={theme.colors.text.secondary} />
+    ) : (
+        <Text
+            pointerEvents="none"
+            style={{ color: theme.colors.state.success.foreground, fontSize: 13, ...Typography.default('semiBold') }}
+        >
+            {stageFileActionLabel}
+        </Text>
+    );
     const pathDir = typeof filePathDir === 'string' ? filePathDir.trim().replace(/\/+$/, '') : '';
     const pathName = typeof fileName === 'string' ? fileName.trim() : '';
     const pathLabel = pathDir && pathName
@@ -323,6 +396,22 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                 </Pressable>
             ) : null}
 
+            {reviewCommentsEnabled === true && onToggleCommentMode ? (
+                <Pressable
+                    onPress={() => onToggleCommentMode(!isCommentModeActive)}
+                    testID="file-details-comment-mode"
+                    style={[chipStyle(isCommentModeActive), { width: 32, height: 32, paddingHorizontal: 0, paddingVertical: 0 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('files.reviewComments.addCommentA11y')}
+                >
+                    <Octicons
+                        name="comment-discussion"
+                        size={commandIconSize}
+                        color={isCommentModeActive ? theme.colors.text.primary : theme.colors.text.secondary}
+                    />
+                </Pressable>
+            ) : null}
+
             {showFileEditorActions && displayMode === 'file' && isEditingFile ? (
                 <>
                     <Pressable
@@ -389,27 +478,57 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                 flexShrink: useCompactSelectedLineActions ? 0 : undefined,
             }}
         >
+            {lineSelectionEnabled ? (
+                <View
+                    testID="file-details-line-selection-available"
+                    style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+                />
+            ) : null}
+            {isLineSelectionActive && lineSelectionEnabled ? (
+                <View
+                    testID="file-details-line-selection-active"
+                    style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+                />
+            ) : null}
+            {isLineSelectionActive && lineSelectionEnabled && onStartRangeSelection ? (
+                <Pressable
+                    onPress={onStartRangeSelection}
+                    testID="file-details-range-selection"
+                    style={chipStyle(isRangeSelectionActive)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('files.fileActions.rangeSelection')}
+                >
+                    <Text style={{ color: theme.colors.text.primary, fontSize: 13, ...Typography.default('semiBold') }}>
+                        {t('files.fileActions.rangeSelection')}
+                    </Text>
+                </Pressable>
+            ) : null}
             {scmWriteEnabled && canUseSelectionActions && canIncludeFileInSelection && !hasSelectedLines && (
                 <Pressable
                     disabled={actionBusy}
-                    onPress={onStageFile}
+                    onPress={handleStageFilePress}
                     testID="file-details-stage-file"
-                    style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                        minHeight: 32,
-                        borderRadius: 10,
-                        backgroundColor: theme.colors.surface.base,
-                        borderWidth: 1,
-                        borderColor: theme.colors.state.success.foreground,
-                        opacity: actionBusy ? 0.6 : 1,
-                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={stageFileActionLabel}
+                    style={stageFileButtonStyle}
                 >
-                    <Text style={{ color: theme.colors.state.success.foreground, fontSize: 13, ...Typography.default('semiBold') }}>
-                        {stageLabel}
-                    </Text>
+                    {stageFileButtonContent}
                 </Pressable>
             )}
+
+            {showEmptyLineSelectionActions ? (
+                <Pressable
+                    onPress={onClearSelection}
+                    testID="file-details-clear-selection"
+                    style={chipStyle(false)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.cancel')}
+                >
+                    <Text style={{ color: theme.colors.text.primary, fontSize: 13, ...Typography.default('semiBold') }}>
+                        {t('common.cancel')}
+                    </Text>
+                </Pressable>
+            ) : null}
 
             {scmWriteEnabled && canUseSelectionActions && canRemoveFromSelection && !hasSelectedLines && (
                 <Pressable
@@ -432,6 +551,19 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     </Text>
                 </Pressable>
             )}
+
+            {scmWriteEnabled && canUseSelectionActions && hasAppliedPartialLineSelection && onStartLineSelection ? (
+                <Pressable
+                    disabled={actionBusy}
+                    onPress={onStartLineSelection}
+                    testID="file-details-edit-line-selection"
+                    style={[chipStyle(false), { width: 32, height: 32, paddingHorizontal: 0, paddingVertical: 0 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.edit')}
+                >
+                    <Octicons name="pencil" size={commandIconSize} color={theme.colors.text.primary} />
+                </Pressable>
+            ) : null}
 
             {scmWriteEnabled && canUseSelectionActions && diffMode === 'both' && !hasSelectedLines && (
                 <Text

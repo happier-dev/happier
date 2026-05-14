@@ -75,6 +75,8 @@ export function useWorkspaceFileEditorState(input: Readonly<{
     const editorOriginalTextRef = React.useRef('');
     const isEditingFileRef = React.useRef(false);
     const persistDraftRef = React.useRef(input.persistDraft);
+    const latestInputRef = React.useRef(input);
+    latestInputRef.current = input;
 
     React.useEffect(() => {
         hydratedFromPersistedRef.current = false;
@@ -126,6 +128,7 @@ export function useWorkspaceFileEditorState(input: Readonly<{
 
     React.useEffect(() => {
         if (typeof input.fileText !== 'string') return;
+        if (isEditingFileRef.current) return;
         const fileText = input.fileText;
         if (editorDirty) return;
         setEditorOriginalText(fileText);
@@ -258,8 +261,9 @@ export function useWorkspaceFileEditorState(input: Readonly<{
 
     const saveFileEdits = React.useCallback(() => {
         void (async () => {
+            const latestInput = latestInputRef.current;
             if (!editorSurfaceEnabled) return;
-            if (!input.filePath) return;
+            if (!latestInput.filePath) return;
             if (editorTextRef.current === editorOriginalTextRef.current) return;
 
             setIsSavingEdits(true);
@@ -271,8 +275,8 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                 if (latestText === editorOriginalTextRef.current) return;
 
                 const response = await workspaceWriteFile({
-                    scope: input.scope,
-                    path: input.filePath,
+                    scope: latestInput.scope,
+                    path: latestInput.filePath,
                     content: latestText,
                 });
 
@@ -286,12 +290,12 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                             onRetry: () => {
                                 saveFileEdits();
                             },
-                            shouldContinue: () => input.mountedRef.current,
+                            shouldContinue: () => latestInputRef.current.mountedRef.current,
                         });
                         return;
                     }
                     if (code === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
-                        input.setFileWriteSupported(false);
+                        latestInput.setFileWriteSupported(false);
                         setIsEditingFile(false);
                         Modal.alert(t('common.error'), t('files.fileEditingUnsupported'));
                         return;
@@ -307,11 +311,11 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                 setEditorDirty(false);
                 workspaceFileEditorDraftCache.setDraft({
                     workspaceCacheKey,
-                    filePath: input.filePath,
+                    filePath: latestInput.filePath,
                     draft: null,
                 });
-                input.persistDraft?.(null);
-                await input.refreshAll();
+                latestInput.persistDraft?.(null);
+                await latestInput.refreshAll();
             } catch (err) {
                 const shown = tryShowDaemonUnavailableAlertForRpcError({
                     error: err,
@@ -319,7 +323,7 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                     onRetry: () => {
                         saveFileEdits();
                     },
-                    shouldContinue: () => input.mountedRef.current,
+                    shouldContinue: () => latestInputRef.current.mountedRef.current,
                 });
                 if (!shown) {
                     const message = err instanceof Error ? err.message : t('files.fileWriteFailed');
@@ -329,7 +333,7 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                 setIsSavingEdits(false);
             }
         })();
-    }, [editorSurfaceEnabled, input, sizeAndPersistDebounce, workspaceCacheKey]);
+    }, [editorSurfaceEnabled, sizeAndPersistDebounce, workspaceCacheKey]);
 
     React.useEffect(() => {
         if (!input.filesEditorAutoSave) return;

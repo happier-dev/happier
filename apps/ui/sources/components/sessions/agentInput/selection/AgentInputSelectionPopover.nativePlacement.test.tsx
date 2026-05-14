@@ -18,7 +18,10 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => mockKeyboardHeight,
 }));
 
-type CapturedPopoverProps = Record<string, unknown> & { placement?: string };
+type CapturedPopoverProps = Record<string, unknown> & {
+    keyboardBottomInset?: number;
+    placement?: string;
+};
 const capturedPopoverProps: { current: CapturedPopoverProps | null } = { current: null };
 
 vi.mock('@/components/ui/popover', () => ({
@@ -51,7 +54,7 @@ describe('AgentInputSelectionPopover (native placement)', () => {
         expect(capturedPopoverProps.current?.placement).toBe('top');
     });
 
-    it('uses placement=auto when the keyboard is visible', async () => {
+    it('uses keyboard-safe auto-vertical placement when the keyboard is visible', async () => {
         mockKeyboardHeight = 320;
         const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
         const anchorRef = { current: { nodeType: 'View' } } as any;
@@ -62,6 +65,7 @@ describe('AgentInputSelectionPopover (native placement)', () => {
             </AgentInputSelectionPopover>,
         );
 
-        expect(capturedPopoverProps.current?.placement).toBe('auto');
+        expect(capturedPopoverProps.current?.placement).toBe('auto-vertical');
+        expect(capturedPopoverProps.current?.keyboardBottomInset).toBe(320);
     });
 });

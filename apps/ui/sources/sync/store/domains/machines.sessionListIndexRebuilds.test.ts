@@ -102,6 +102,71 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         expect(resolveMachineSessionListIndexImpact).toBe(resolveMachineSessionIndexImpactFromHelper);
     });
 
+    it('rebuilds project-grouped session indexes when a referenced machine becomes replaced', () => {
+        const impact = resolveMachineSessionIndexImpactFromHelper({
+            usesProjectGrouping: true,
+            sessions: [
+                {
+                    id: 's1',
+                    metadata: { machineId: 'm-old', path: '/home/u/repo', homeDir: '/home/u' },
+                    createdAt: 1,
+                    updatedAt: 1,
+                } as any,
+            ],
+            previousMachineDisplays: {
+                'm-old': {
+                    id: 'm-old',
+                    updatedAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    revokedAt: null,
+                    replacedByMachineId: null,
+                    replacedAt: null,
+                    replacementReason: null,
+                    replacementSource: null,
+                    replacementActorUserId: null,
+                    metadataVersion: 1,
+                    metadata: { displayName: 'Old machine', host: 'same-host', homeDir: '/home/u' },
+                },
+            },
+            nextMachineDisplays: {
+                'm-old': {
+                    id: 'm-old',
+                    updatedAt: 2,
+                    active: false,
+                    activeAt: 1,
+                    revokedAt: null,
+                    replacedByMachineId: 'm-current',
+                    replacedAt: 2,
+                    replacementReason: 'manual_repair',
+                    replacementSource: 'manual',
+                    replacementActorUserId: 'user-1',
+                    metadataVersion: 1,
+                    metadata: { displayName: 'Old machine', host: 'same-host', homeDir: '/home/u' },
+                },
+                'm-current': {
+                    id: 'm-current',
+                    updatedAt: 2,
+                    active: true,
+                    activeAt: 2,
+                    revokedAt: null,
+                    replacedByMachineId: null,
+                    replacedAt: null,
+                    replacementReason: null,
+                    replacementSource: null,
+                    replacementActorUserId: null,
+                    metadataVersion: 1,
+                    metadata: { displayName: 'Current machine', host: 'same-host', homeDir: '/home/u' },
+                },
+            },
+        });
+
+        expect(impact).toEqual({
+            needsSessionListIndexRebuild: true,
+            needsProjectManagerUpdate: true,
+        });
+    });
+
     it('invalidates cached transfer routes when a machine daemonStateVersion advances', async () => {
         mockMachineDomainBoundaries();
 
@@ -800,7 +865,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         expect(get().sessionListIndexByServerId['server_a']).toBe(seededIndex);
     });
 
-    it('rebuilds the active-server sessionListIndex when project-group host headers depend on a different machine than the session machineId', async () => {
+    it('keeps the active-server sessionListIndex stable when an unrelated same-host machine changes', async () => {
         mockMachineDomainBoundaries();
 
         const { createMachinesDomain } = await import('./machines');
@@ -920,7 +985,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
             },
         ]);
 
-        expect(get().sessionListIndexByServerId['server_a']).not.toBe(seededIndex);
+        expect(get().sessionListIndexByServerId['server_a']).toBe(seededIndex);
     });
 
     it('updates active server machine cache without leaking machines from other scopes', async () => {

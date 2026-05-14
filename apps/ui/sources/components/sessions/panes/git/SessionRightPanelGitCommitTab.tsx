@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FlatList, Platform, Pressable, ScrollView, View } from 'react-native';
+import { FlatList, Platform, Pressable, ScrollView, View, type ViewStyle } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 
 import { SourceControlBranchSummary } from '@/components/workspaces/scm/SourceControlBranchSummary';
@@ -86,6 +86,16 @@ export type SessionRightPanelGitCommitTabProps = Readonly<{
     onOpenReviewAllChanges?: () => void;
     onOpenStashDetails?: () => void;
 }>;
+
+const commitChangedFilesListContentContainerStyle: ViewStyle = { paddingBottom: 12 };
+const repositoryChangedFileKeyExtractor = (file: ScmFileStatus) => `repo-all-${file.fullPath}`;
+const selectedChangedFileKeyExtractor = (file: ScmFileStatus) => `selected-${file.fullPath}`;
+const compactScmChangeRowWebItemLayout = (_data: unknown, index: number) => {
+    // ScmChangeRow in compact density is effectively fixed-height on web.
+    // Providing a layout hint improves RN-web VirtualizedList performance with large diffs.
+    const length = 38;
+    return { length, offset: length * index, index };
+};
 
 export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPanelGitCommitTabProps) => {
     const showCommitComposer = props.showCommitComposer !== false;
@@ -357,6 +367,11 @@ function resolveChangedFilesScopeDescriptions(params: Readonly<{
 }
 
 const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
+    const themeBorderDefault = props.theme.colors.border?.default ?? props.theme.colors.divider;
+    const themeSurfaceBase = props.theme.colors.surface?.base ?? props.theme.colors.surface;
+    const themeSurfaceInset = props.theme.colors.surface?.inset ?? props.theme.colors.surfaceHigh ?? themeSurfaceBase;
+    const themeTextPrimary = props.theme.colors.text?.primary ?? props.theme.colors.text;
+    const themeTextSecondary = props.theme.colors.text?.secondary ?? props.theme.colors.textSecondary;
     const repositoryMode = props.changedFilesViewMode === 'repository';
     const selectedMode = props.changedFilesViewMode === 'selected';
     const repositoryChangedFiles = React.useMemo(() => {
@@ -370,6 +385,9 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         () => resolveScmChangeStatsColumnWidth(virtualizedChangedFiles),
         [virtualizedChangedFiles],
     );
+    const virtualizedKeyExtractor = selectedMode
+        ? selectedChangedFileKeyExtractor
+        : repositoryChangedFileKeyExtractor;
     const showSelectedViewToggle = props.showSelectedViewToggle === true || selectedChangedFiles.length > 0;
     const hasChangedFilesViewSelector = props.showTurnViewToggle === true
         || props.showTurnAgentReportedViewToggle === true
@@ -471,25 +489,25 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                             paddingHorizontal: 12,
                             paddingVertical: 10,
                             borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                            borderBottomColor: props.theme.colors.border.default,
-                            backgroundColor: props.theme.colors.surface.base,
+                            borderBottomColor: themeBorderDefault,
+                            backgroundColor: themeSurfaceBase,
                             opacity: pressed ? 0.85 : 1,
                         })}
                     >
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                            <Octicons name="archive" size={14} color={props.theme.colors.text.secondary} />
+                            <Octicons name="archive" size={14} color={themeTextSecondary} />
                             <Text
                                 numberOfLines={1}
-                                style={{ fontSize: 12, color: props.theme.colors.text.primary, ...Typography.default('semiBold') }}
+                                style={{ fontSize: 12, color: themeTextPrimary, ...Typography.default('semiBold') }}
                             >
                                 {t('files.stash.summaryTitle')}
                             </Text>
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                            <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
+                            <Text style={{ fontSize: 12, color: themeTextSecondary, ...Typography.mono('semiBold') }}>
                                 {String(stashCount)}
                             </Text>
-                            <Octicons name="chevron-right" size={14} color={props.theme.colors.text.secondary} />
+                            <Octicons name="chevron-right" size={14} color={themeTextSecondary} />
                         </View>
                     </Pressable>
                 ) : null}
@@ -507,8 +525,8 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                         paddingTop: 10,
                         paddingBottom: 8,
                         borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                        borderBottomColor: props.theme.colors.border.default,
-                        backgroundColor: props.theme.colors.surface.inset,
+                        borderBottomColor: themeBorderDefault,
+                        backgroundColor: themeSurfaceInset,
                     }}
                 >
                     <View
@@ -533,16 +551,16 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                                     onChangedFilesViewMode={props.onChangedFilesViewMode}
                                     testID="session-rightpanel-git-view-mode-menu"
                                     triggerLabel={scopedChangedFilesTitle}
-                                    triggerLabelColor={props.theme.colors.text.primary}
+                                    triggerLabelColor={themeTextPrimary}
                                     triggerStyle={{ alignSelf: 'flex-start', maxWidth: '100%' }}
                                     popoverAnchorAlign="start"
                                 />
                             ) : (
                                 <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-                                    <Text style={{ fontSize: 12, color: props.theme.colors.text.primary, ...Typography.default('semiBold') }}>
+                                    <Text style={{ fontSize: 12, color: themeTextPrimary, ...Typography.default('semiBold') }}>
                                         {t('files.toolbar.changedFiles')}
                                     </Text>
-                                    <Text style={{ fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
+                                    <Text style={{ fontSize: 11, color: themeTextSecondary, ...Typography.mono('semiBold') }}>
                                         {String(repositoryChangedFiles.length)}
                                     </Text>
                                 </View>
@@ -563,14 +581,14 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                                         height: 30,
                                         borderRadius: 10,
                                         borderWidth: 1,
-                                        borderColor: props.theme.colors.border.default,
-                                        backgroundColor: props.theme.colors.surface.base,
+                                        borderColor: themeBorderDefault,
+                                        backgroundColor: themeSurfaceBase,
                                         opacity: pressed ? 0.78 : 1,
                                         gap: 6,
                                     })}
                                 >
-                                    <Octicons name="diff" size={14} color={props.theme.colors.text.secondary} />
-                                    <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default('semiBold') }}>
+                                    <Octicons name="diff" size={14} color={themeTextSecondary} />
+                                    <Text style={{ fontSize: 12, color: themeTextSecondary, ...Typography.default('semiBold') }}>
                                         {t('files.toolbar.review')}
                                     </Text>
                                 </Pressable>
@@ -586,7 +604,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                                     style={{
                                         marginTop: index === 0 ? 0 : 2,
                                         fontSize: index === 0 ? 12 : 11,
-                                        color: props.theme.colors.text.secondary,
+                                        color: themeTextSecondary,
                                         ...Typography.default(),
                                     }}
                                 >
@@ -618,46 +636,84 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         props.showTurnAgentReportedViewToggle,
         props.showTurnCheckpointViewToggle,
         props.showTurnViewToggle,
-        props.theme,
+        themeBorderDefault,
+        themeSurfaceBase,
+        themeSurfaceInset,
+        themeTextPrimary,
+        themeTextSecondary,
         scopedChangedFilesDescriptions,
         scopedChangedFilesTitle,
     ]);
 
+    const virtualizedRowStateRef = React.useRef({
+        onFilePress: props.onFilePress,
+        onFilePressPinned: props.onFilePressPinned,
+        onToggleSelectionForFile: props.onToggleSelectionForFile,
+        renderFileActions: props.renderFileActions,
+        renderFileTrailingActions: props.renderFileTrailingActions,
+        theme: props.theme,
+        virtualizedChangedFilesLength: virtualizedChangedFiles.length,
+        virtualizedStatsColumnWidth,
+    });
+    virtualizedRowStateRef.current = {
+        onFilePress: props.onFilePress,
+        onFilePressPinned: props.onFilePressPinned,
+        onToggleSelectionForFile: props.onToggleSelectionForFile,
+        renderFileActions: props.renderFileActions,
+        renderFileTrailingActions: props.renderFileTrailingActions,
+        theme: props.theme,
+        virtualizedChangedFilesLength: virtualizedChangedFiles.length,
+        virtualizedStatsColumnWidth,
+    };
+    const virtualizedRowExtraData = React.useMemo(() => ({
+        statsColumnWidth: virtualizedStatsColumnWidth,
+        textPrimary: themeTextPrimary,
+        textSecondary: themeTextSecondary,
+        virtualizedChangedFilesLength: virtualizedChangedFiles.length,
+    }), [
+        themeTextPrimary,
+        themeTextSecondary,
+        virtualizedChangedFiles.length,
+        virtualizedStatsColumnWidth,
+    ]);
+
     const renderVirtualizedRow = React.useCallback(({ item: file, index }: { item: ScmFileStatus; index: number }) => {
+        const {
+            onFilePress,
+            onFilePressPinned,
+            onToggleSelectionForFile,
+            renderFileActions,
+            renderFileTrailingActions,
+            theme,
+            virtualizedChangedFilesLength,
+            virtualizedStatsColumnWidth,
+        } = virtualizedRowStateRef.current;
         return (
             <ScmChangeRow
-                theme={props.theme}
+                theme={theme}
                 file={file}
                 density="compact"
-                leadingElement={props.renderFileActions ? props.renderFileActions(file) : null}
-                trailingElement={props.renderFileTrailingActions ? props.renderFileTrailingActions(file) : null}
-                onPress={() => props.onFilePress(file)}
-                onPressPinned={() => props.onFilePressPinned(file)}
-                onToggleSelection={props.onToggleSelectionForFile ? () => props.onToggleSelectionForFile(file) : undefined}
+                leadingElement={renderFileActions ? renderFileActions(file) : null}
+                trailingElement={renderFileTrailingActions ? renderFileTrailingActions(file) : null}
+                onPress={() => onFilePress(file)}
+                onPressPinned={() => onFilePressPinned(file)}
+                onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(file) : undefined}
                 statsColumnWidth={virtualizedStatsColumnWidth}
-                showDivider={index < virtualizedChangedFiles.length - 1}
+                showDivider={index < virtualizedChangedFilesLength - 1}
             />
         );
-    }, [
-        props.onFilePress,
-        props.onFilePressPinned,
-        props.onToggleSelectionForFile,
-        props.renderFileActions,
-        props.renderFileTrailingActions,
-        props.theme,
-        virtualizedStatsColumnWidth,
-        virtualizedChangedFiles.length,
-    ]);
+    }, []);
 
     return (
         <View style={{ flex: 1, position: 'relative' }}>
             {repositoryMode || selectedMode ? (
                 <FlatList
                     data={virtualizedChangedFiles}
-                    keyExtractor={(file) => `${selectedMode ? 'selected' : 'repo-all'}-${file.fullPath}`}
+                    keyExtractor={virtualizedKeyExtractor}
                     ListHeaderComponent={headerContent}
-                    contentContainerStyle={{ paddingBottom: 12 }}
+                    contentContainerStyle={commitChangedFilesListContentContainerStyle}
                     renderItem={renderVirtualizedRow}
+                    extraData={virtualizedRowExtraData}
                     initialNumToRender={Math.min(24, virtualizedChangedFiles.length)}
                     maxToRenderPerBatch={24}
                     windowSize={7}
@@ -666,16 +722,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                     onContentSizeChange={scrollFades.onContentSizeChange}
                     onScroll={scrollFades.onScroll}
                     scrollEventThrottle={16}
-                    getItemLayout={
-                        Platform.OS === 'web'
-                            ? (_, index) => {
-                                // ScmChangeRow in compact density is effectively fixed-height on web.
-                                // Providing a layout hint improves RN-web VirtualizedList performance with large diffs.
-                                const length = 38;
-                                return { length, offset: length * index, index };
-                            }
-                            : undefined
-                    }
+                    getItemLayout={Platform.OS === 'web' ? compactScmChangeRowWebItemLayout : undefined}
                 />
             ) : (
                 <ScrollView
@@ -712,13 +759,13 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
             )}
 
             <ScrollEdgeFades
-                color={props.theme.colors.surface.base}
+                color={themeSurfaceBase}
                 size={18}
                 edges={scrollFades.visibility}
             />
             <ScrollEdgeIndicators
                 edges={scrollFades.visibility}
-                color={props.theme.colors.text.secondary}
+                color={themeTextSecondary}
                 size={14}
                 opacity={0.35}
             />

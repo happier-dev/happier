@@ -2,7 +2,14 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
-import { flushHookEffects, pressTestInstance, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    createThemeFixture,
+    flushHookEffects,
+    pressTestInstance,
+    pressTestInstanceAsync,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
@@ -918,20 +925,7 @@ describe('ChangedFilesReview', () => {
         standardCleanup();
     });
 
-    const theme = {
-        colors: {
-            surface: '#111',
-            surfaceHigh: '#222',
-            divider: '#333',
-            text: '#eee',
-            textSecondary: '#aaa',
-            textLink: '#08f',
-            warning: '#f80',
-            success: '#0f0',
-            textDestructive: '#f00',
-        },
-        dark: false,
-    } as any;
+    const theme = createThemeFixture();
 
     const snapshot = {
         projectKey: 'p',

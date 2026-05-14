@@ -9,11 +9,15 @@ import { installSettingsViewCommonModuleMocks, resetSettingsViewCommonModuleMock
 const capture = vi.hoisted(() => ({
     items: [] as Array<Record<string, unknown>>,
     searchHeaders: [] as Array<Record<string, unknown>>,
+    statusTexts: [] as Array<Record<string, unknown>>,
+    windowWidth: 800,
     setRawSettings: vi.fn(),
     routerPush: vi.fn(),
     reset() {
         this.items = [];
         this.searchHeaders = [];
+        this.statusTexts = [];
+        this.windowWidth = 800;
         this.setRawSettings.mockReset();
         this.routerPush.mockReset();
     },
@@ -24,6 +28,17 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            useWindowDimensions: () => ({
+                width: capture.windowWidth,
+                height: 844,
+                scale: 2,
+                fontScale: 1,
+            }),
+        });
+    },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
@@ -66,12 +81,23 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown> & { children?: React.ReactNode }) => {
         capture.items.push(props);
-        return React.createElement(React.Fragment, null, props.children, props.rightElement as React.ReactNode);
+        return React.createElement(
+            React.Fragment,
+            null,
+            props.children,
+            props.subtitleAccessory as React.ReactNode,
+            props.rightElement as React.ReactNode,
+        );
     },
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+    Text: (props: { children?: React.ReactNode; testID?: string }) => {
+        if (props.testID?.endsWith(':status')) {
+            capture.statusTexts.push(props as Record<string, unknown>);
+        }
+        return React.createElement('TextMock', { testID: props.testID }, props.children);
+    },
 }));
 
 afterEach(() => {
@@ -120,5 +146,20 @@ describe('ActionsSettingsView', () => {
         expect(reviewRow?.showChevron).toBe(false);
         expect(await screen.findByTestId('settings-actions:action:review.start:status')).toBeTruthy();
         expect(await screen.findByTestId('settings-actions:action:review.start:configure')).toBeTruthy();
+    });
+
+    it('moves compact status into the text column on narrow mobile widths', async () => {
+        capture.reset();
+        capture.windowWidth = 390;
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+
+        const reviewRow = capture.items.find((item) => item.testID === 'settings-actions:action:review.start');
+        expect(reviewRow).toBeTruthy();
+        expect(reviewRow?.subtitleAccessory).toBeTruthy();
+        expect(capture.statusTexts.some((status) =>
+            status.testID === 'settings-actions:action:review.start:status',
+        )).toBe(true);
     });
 });

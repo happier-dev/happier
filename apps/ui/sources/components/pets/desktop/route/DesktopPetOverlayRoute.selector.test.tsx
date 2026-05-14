@@ -197,6 +197,14 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
+    const readAccountSettings = (): typeof settingsDefaults => ({
+        ...settingsDefaults,
+        ...settingsState.current,
+    });
+    const readLocalSettings = (): typeof localSettingsDefaults => ({
+        ...localSettingsDefaults,
+        ...localSettingsState.current,
+    });
 
     const createPetsStorageStore = () =>
         createStorageStoreMock({
@@ -262,14 +270,10 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         importOriginal,
         overrides: {
             ...actual,
-            useSettings: () => ({
-                ...settingsDefaults,
-                ...settingsState.current,
-            }),
-            useLocalSettings: () => ({
-                ...localSettingsDefaults,
-                ...localSettingsState.current,
-            }),
+            useSettings: readAccountSettings,
+            useSetting: ((name) => readAccountSettings()[name]) as typeof actual.useSetting,
+            useLocalSettings: readLocalSettings,
+            useLocalSetting: ((name) => readLocalSettings()[name]) as typeof actual.useLocalSetting,
             useAllMachines: () => [createMachineFixture({ id: 'machine-pets' })],
             useAllSessions: () => sessionsState.current,
             useHasUnreadMessages: (sessionId: string) =>

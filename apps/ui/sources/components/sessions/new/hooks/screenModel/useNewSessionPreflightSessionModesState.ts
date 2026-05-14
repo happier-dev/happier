@@ -48,6 +48,9 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
     const [refreshedAt, setRefreshedAt] = React.useState<number | null>(null);
     const [refreshNonce, setRefreshNonce] = React.useState(0);
     const lastHandledRefreshNonceRef = React.useRef(0);
+    const preflightModesRef = React.useRef<PreflightSessionModeList | null>(null);
+    const refreshedAtRef = React.useRef<number | null>(null);
+    const lastScopeKeyRef = React.useRef<string | null>(null);
 
     const onRefresh = React.useCallback(() => {
         setRefreshNonce((n) => n + 1);
@@ -93,6 +96,19 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         });
     }, [backendTargetKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCacheKeySuffixParts]);
 
+    const probeScopeKey = React.useMemo(() => {
+        const machineId = String(params.selectedMachineId ?? '').trim();
+        if (!machineId) return null;
+        const serverId = String(params.capabilityServerId ?? '').trim() || 'active';
+        return JSON.stringify([
+            'dynamicSessionModeProbeScope',
+            serverId,
+            machineId,
+            backendTargetKey,
+            ...(probeContextCacheKeySuffixParts ?? []),
+        ]);
+    }, [backendTargetKey, params.capabilityServerId, params.selectedMachineId, probeContextCacheKeySuffixParts]);
+
     const supportsPreflightModeProbe = React.useMemo(() => {
         if (!agentType) return false;
         const core = getAgentCore(agentType);
@@ -137,10 +153,18 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
     }, [agentType]);
 
     React.useEffect(() => {
+        preflightModesRef.current = preflightModes;
+        refreshedAtRef.current = refreshedAt;
+    }, [preflightModes, refreshedAt]);
+
+    React.useEffect(() => {
         if (!preflightModesKey) {
             setPreflightModes(null);
+            preflightModesRef.current = null;
             setProbePhase('idle');
             setRefreshedAt(null);
+            refreshedAtRef.current = null;
+            lastScopeKeyRef.current = probeScopeKey;
             return;
         }
 
@@ -152,8 +176,19 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
         const cacheEntry = readDynamicSessionModeProbeCache(preflightModesKey);
         const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
-        setPreflightModes(cached);
-        setRefreshedAt(cacheEntry?.kind === 'success' ? cacheEntry.updatedAt : null);
+        const scopeStable = lastScopeKeyRef.current !== null && probeScopeKey !== null && lastScopeKeyRef.current === probeScopeKey;
+        lastScopeKeyRef.current = probeScopeKey;
+        if (cached) {
+            setPreflightModes(cached);
+            preflightModesRef.current = cached;
+            setRefreshedAt(cacheEntry?.updatedAt ?? null);
+            refreshedAtRef.current = cacheEntry?.updatedAt ?? null;
+        } else if (!scopeStable) {
+            setPreflightModes(null);
+            preflightModesRef.current = null;
+            setRefreshedAt(null);
+            refreshedAtRef.current = null;
+        }
 
         const nowMs = Date.now();
         if (!shouldForceProbe && cacheEntry && nowMs >= 0 && nowMs < cacheEntry.expiresAt) {
@@ -172,7 +207,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
             if (!params.selectedMachineId) return;
             const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
 
-            setProbePhase(cached ? 'refreshing' : 'loading');
+            setProbePhase(preflightModesRef.current ? 'refreshing' : 'loading');
             const attempt = await runDynamicSessionModeProbeDedupe<Readonly<{
                 list: PreflightSessionModeList;
                 cacheable: boolean;
@@ -245,6 +280,15 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                 return;
             }
 
+            const stale = preflightModesRef.current;
+            const staleUpdatedAt = refreshedAtRef.current;
+            if (stale && staleUpdatedAt) {
+                setPreflightModes(stale);
+                setRefreshedAt(staleUpdatedAt);
+                setProbePhase('idle');
+                return;
+            }
+
             writeDynamicSessionModeProbeCacheError(preflightModesKey, commitNowMs);
             setProbePhase('idle');
             retryTimeout = setTimeout(() => {
@@ -257,7 +301,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTargetForProbe, preflightModesKey, probeContextCapabilityParams, refreshNonce, supportsPreflightModeProbe]);
+    }, [agentType, backendTargetForProbe, preflightModesKey, params.selectedMachineId, params.capabilityServerId, params.cwd, probeContextKey, probeContextCapabilityParams, probeScopeKey, refreshNonce, supportsPreflightModeProbe]);
 
     const modeOptions = React.useMemo(() => {
         if (staticModeOptions.length > 0) return staticModeOptions;

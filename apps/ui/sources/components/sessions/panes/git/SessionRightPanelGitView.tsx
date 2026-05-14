@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { router } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -79,6 +79,7 @@ import {
     sessionScmRemoteSetUrl,
 } from '@/sync/ops/sessions';
 import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type SessionRightPanelGitViewProps = Readonly<{
     sessionId: string;
@@ -107,9 +108,24 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const resumeSession = useSessionResumeAction();
     const { activeGitSubTab, commitDraftMessage, setCommitDraftMessage, setActiveGitSubTab } = useSessionRightPanelGitTabState(pane);
     const defaultOpenDetails = useSessionRightPanelGitOpenDetails(pane);
-    const openFileInDetails = props.onOpenFile ?? defaultOpenDetails.openFileInDetails;
-    const openFileInDetailsPinned = props.onOpenFilePinned ?? defaultOpenDetails.openFileInDetailsPinned;
-    const openCommitInDetails = props.onOpenCommit ?? defaultOpenDetails.openCommitInDetails;
+    const openFileInDetailsSource = props.onOpenFile ?? defaultOpenDetails.openFileInDetails;
+    const openFileInDetailsPinnedSource = props.onOpenFilePinned ?? defaultOpenDetails.openFileInDetailsPinned;
+    const openCommitInDetailsSource = props.onOpenCommit ?? defaultOpenDetails.openCommitInDetails;
+    const openFileInDetailsRef = React.useRef(openFileInDetailsSource);
+    const openFileInDetailsPinnedRef = React.useRef(openFileInDetailsPinnedSource);
+    const openCommitInDetailsRef = React.useRef(openCommitInDetailsSource);
+    openFileInDetailsRef.current = openFileInDetailsSource;
+    openFileInDetailsPinnedRef.current = openFileInDetailsPinnedSource;
+    openCommitInDetailsRef.current = openCommitInDetailsSource;
+    const openFileInDetails = React.useCallback((fullPath: string) => {
+        openFileInDetailsRef.current(fullPath);
+    }, []);
+    const openFileInDetailsPinned = React.useCallback((fullPath: string) => {
+        openFileInDetailsPinnedRef.current(fullPath);
+    }, []);
+    const openCommitInDetails = React.useCallback((sha: string) => {
+        openCommitInDetailsRef.current(sha);
+    }, []);
 
     const session = useSession(props.sessionId);
     const scmSnapshot = useSessionProjectScmSnapshot(props.sessionId);
@@ -235,12 +251,12 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         && pullPreflightReason !== 'write_disabled'
         && pushPreflightReason !== 'write_disabled';
 
-    const availableTabs: Array<{ id: 'commit' | 'update' | 'history'; label: string }> = [
+    const availableTabs = React.useMemo<Array<{ id: 'commit' | 'update' | 'history'; label: string }>>(() => [
         { id: 'commit', label: t('files.toolbar.changedFiles') },
         ...(remoteWriteEnabled ? [{ id: 'update', label: t('common.update') } as const] : []),
         { id: 'history', label: t('common.history') },
-    ];
-    const availableTabIdSet = new Set(availableTabs.map((tab) => tab.id));
+    ], [remoteWriteEnabled]);
+    const availableTabIdSet = React.useMemo(() => new Set(availableTabs.map((tab) => tab.id)), [availableTabs]);
     const displayActiveGitSubTab: 'commit' | 'update' | 'history' =
         availableTabIdSet.has(activeGitSubTab)
             ? activeGitSubTab
@@ -300,8 +316,18 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const defaultOpenStashDetails = React.useCallback(() => {
         pane.openDetailsTab(createSessionScmStashDetailsTab(), { intent: 'pinned' });
     }, [pane.openDetailsTab]);
-    const onOpenReviewAllChanges = props.onOpenReviewAllChanges ?? defaultOpenReviewAllChanges;
-    const onOpenStashDetails = props.onOpenStashDetails ?? defaultOpenStashDetails;
+    const onOpenReviewAllChangesSource = props.onOpenReviewAllChanges ?? defaultOpenReviewAllChanges;
+    const onOpenStashDetailsSource = props.onOpenStashDetails ?? defaultOpenStashDetails;
+    const onOpenReviewAllChangesRef = React.useRef(onOpenReviewAllChangesSource);
+    const onOpenStashDetailsRef = React.useRef(onOpenStashDetailsSource);
+    onOpenReviewAllChangesRef.current = onOpenReviewAllChangesSource;
+    onOpenStashDetailsRef.current = onOpenStashDetailsSource;
+    const onOpenReviewAllChanges = React.useCallback(() => {
+        onOpenReviewAllChangesRef.current();
+    }, []);
+    const onOpenStashDetails = React.useCallback(() => {
+        onOpenStashDetailsRef.current();
+    }, []);
 
     const scmStatusFilesSummary: ScmStatusFiles | null = React.useMemo(() => {
         if (!effectiveScmSnapshot?.repo.isRepo) return null;
@@ -664,7 +690,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     if (!effectiveScmSnapshot) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 40 }}>
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text style={{ marginTop: 12, fontSize: 12, color: theme.colors.text.secondary }}>
                     {t('common.loading')}
                 </Text>
@@ -843,6 +869,14 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
 });
 
 const GitSubTabSurface = React.memo((props: Readonly<{ testID?: string; isActive: boolean; children: React.ReactNode }>) => {
+    const [hasMounted, setHasMounted] = React.useState(props.isActive);
+    React.useEffect(() => {
+        if (!props.isActive) return;
+        setHasMounted(true);
+    }, [props.isActive]);
+
+    if (!props.isActive && !hasMounted) return null;
+
     const a11yHiddenProps =
         Platform.OS === 'web'
             ? null

@@ -1,10 +1,5 @@
 import * as React from 'react';
-import {
-    Pressable,
-    View,
-    type StyleProp,
-    type ViewStyle,
-} from 'react-native';
+import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { PetPackageSourceV1 } from '@happier-dev/protocol';

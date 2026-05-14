@@ -14,6 +14,13 @@ type RawMachine = {
     active: boolean;
     activeAt: number;
     revokedAt: number | null;
+    replacedByMachineId?: string | null;
+    replacedAt?: number | null;
+    replacementReason?: string | null;
+    replacementSource?: string | null;
+    replacementActorUserId?: string | null;
+    installationId?: string | null;
+    contentPublicKeyFingerprint?: string | null;
     createdAt: number;
     updatedAt: number;
 };
@@ -176,6 +183,73 @@ describe('fetchAndApplyMachines request override', () => {
                     host: 'mbp',
                     homeDir: '/home/u',
                 }),
+            }),
+        ], { replace: false });
+    });
+
+    it('carries machine replacement metadata from fetched rows into applied machine state', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
+            jsonResponse([
+                {
+                    id: 'm_replaced',
+                    metadata: 'encrypted-meta',
+                    metadataVersion: 5,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                    dataEncryptionKey: 'key-1',
+                    seq: 1,
+                    active: false,
+                    activeAt: 10,
+                    revokedAt: null,
+                    replacedByMachineId: 'm_current',
+                    replacedAt: 11,
+                    replacementReason: 'reauth',
+                    replacementSource: 'automatic',
+                    replacementActorUserId: 'user-1',
+                    installationId: 'installation-1',
+                    contentPublicKeyFingerprint: 'content-key-1',
+                    createdAt: 1,
+                    updatedAt: 12,
+                } satisfies RawMachine,
+            ]),
+        );
+
+        const encryption = createEncryptionHarness();
+        const applyMachines = vi.fn();
+        const applyMachineDisplayEntries = vi.fn();
+
+        await fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applyMachines,
+            ...( {
+                applyMachineDisplayEntries,
+            } as any),
+        } as any);
+
+        expect(applyMachines).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'm_replaced',
+                replacedByMachineId: 'm_current',
+                replacedAt: 11,
+                replacementReason: 'reauth',
+                replacementSource: 'automatic',
+                replacementActorUserId: 'user-1',
+                installationId: 'installation-1',
+                contentPublicKeyFingerprint: 'content-key-1',
+            }),
+        ], false);
+        expect(applyMachineDisplayEntries).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'm_replaced',
+                replacedByMachineId: 'm_current',
+                replacedAt: 11,
+                replacementReason: 'reauth',
+                replacementSource: 'automatic',
+                replacementActorUserId: 'user-1',
             }),
         ], { replace: false });
     });

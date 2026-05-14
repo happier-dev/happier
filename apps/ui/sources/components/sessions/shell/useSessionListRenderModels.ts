@@ -4,6 +4,7 @@ import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionLis
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import type { WorkspaceDisplayEllipsizeMode } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
+import type { WorkspacePathDisplayModeV1 } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { useSessionListRowStateByServerId } from '@/sync/domains/state/storage';
 
@@ -78,6 +79,7 @@ export function useSessionListRenderModels(input: Readonly<{
     allMachines: ReadonlyArray<Machine>;
     workspaceLabels: Readonly<Record<string, string>>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
+    workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
     pinnedKeySet: ReadonlySet<string>;
     sessionTags: Readonly<Record<string, string[]>>;
     selectedSessionId: string | null;
@@ -129,6 +131,7 @@ export function useSessionListRenderModels(input: Readonly<{
                 listItems,
                 machinesById,
                 workspaceRefs: normalizedShellState.workspaceRefs,
+                workspacePathDisplayModeV1: input.workspacePathDisplayModeV1,
                 resolveSessionRenderable: (item) => {
                     const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
                     const sessionId = String(item.sessionId ?? '').trim();
@@ -139,15 +142,16 @@ export function useSessionListRenderModels(input: Readonly<{
                 },
             }),
         );
-    }, [listItems, machinesById, normalizedShellState.workspaceRefs, sessionRowStateByServerId]);
+    }, [input.workspacePathDisplayModeV1, listItems, machinesById, normalizedShellState.workspaceRefs, sessionRowStateByServerId]);
 
     const projectHeaderViewModelState = React.useMemo(() => {
         return buildSessionListProjectHeaderViewModels({
             listItems,
             workspaceLabels: normalizedShellState.workspaceLabels,
             workspaceRefs: normalizedShellState.workspaceRefs,
+            workspacePathDisplayModeV1: input.workspacePathDisplayModeV1,
         });
-    }, [listItems, normalizedShellState.workspaceLabels, normalizedShellState.workspaceRefs]);
+    }, [input.workspacePathDisplayModeV1, listItems, normalizedShellState.workspaceLabels, normalizedShellState.workspaceRefs]);
 
     const rowViewModels = React.useMemo(() => {
         return measureSessionListRenderDerivation(

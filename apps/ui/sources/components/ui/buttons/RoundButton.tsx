@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleProp, TextStyle, View, ViewStyle } from 'react-native';
+import { Platform, Pressable, StyleProp, TextStyle, View, ViewStyle } from 'react-native';
 import { iOSUIKit } from 'react-native-typography';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { GradientSurface, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 export type RoundButtonSize = 'large' | 'normal' | 'small';
@@ -129,7 +130,7 @@ export const RoundButton = React.memo((props: {
                 ) : null}
                 {doLoading && (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator color={display.textColor} size='small' />
+                        <ActivitySpinner color={display.textColor} size='small' />
                     </View>
                 )}
                 <Text 

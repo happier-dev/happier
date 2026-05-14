@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -8,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import type { AuthEntryOptions } from './useAuthEntryOptions';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type AuthEntryViewProps = Readonly<{
     layout: 'portrait' | 'landscape';
@@ -53,7 +54,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
 
     const renderServerLoading = () => (
         <View style={styles.serverLoadingBlock}>
-            <ActivityIndicator color={theme.colors.text.primary} />
+            <ActivitySpinner color={theme.colors.text.primary} />
             <Text testID="welcome-server-loading" style={styles.serverLoadingText}>{t('common.loading')}</Text>
         </View>
     );

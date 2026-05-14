@@ -1,6 +1,6 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
@@ -8,7 +8,11 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const dropdownMenuSpy = vi.fn();
+const resolveWorkspaceFaviconMock = vi.hoisted(() => vi.fn());
+const setSessionFolderViewMode = vi.fn();
 let platformOs: 'ios' | 'web' = 'ios';
+let sessionFolderViewMode: 'off' | 'tree' = 'off';
+let sessionFoldersFeatureEnabled = true;
 type DropdownTriggerParams = {
     open: boolean;
     toggle: ReturnType<typeof vi.fn>;
@@ -39,6 +43,20 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
+vi.mock('expo-image', () => ({
+    Image: 'Image',
+}));
+
+vi.mock('@/sync/ops/workspaceFavicon', () => ({
+    resolveWorkspaceFavicon: resolveWorkspaceFaviconMock,
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => featureId === 'sessions.folders'
+        ? sessionFoldersFeatureEnabled
+        : true,
+}));
+
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -66,6 +84,22 @@ installSessionShellCommonModuleMocks({
             },
         });
     },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: ((key: string) => {
+                    if (key === 'sessionFolderViewModeV1') return [sessionFolderViewMode, setSessionFolderViewMode];
+                    if (key === 'sessionListOrderingModeV1') return ['custom', vi.fn()];
+                    if (key === 'sessionListActiveGroupingV1') return ['project', vi.fn()];
+                    if (key === 'sessionListInactiveGroupingV1') return ['date', vi.fn()];
+                    if (key === 'hideInactiveSessions') return [false, vi.fn()];
+                    return [null, vi.fn()];
+                }) as any,
+            },
+        });
+    },
 });
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -88,11 +122,33 @@ function findStyledTextNode(root: any) {
     )[0] ?? null;
 }
 
+function childTreeContainsPressable(node: any): boolean {
+    return (
+        Array.isArray(node.children)
+        && node.children.some((child: any) => (
+            child
+            && typeof child === 'object'
+            && (
+                child.type === 'Pressable'
+                || childTreeContainsPressable(child)
+            )
+        ))
+    );
+}
+
 describe('ProjectGroupHeader menu items', () => {
+    beforeEach(() => {
+        resolveWorkspaceFaviconMock.mockReset();
+        resolveWorkspaceFaviconMock.mockResolvedValue({ status: 'missing' });
+    });
+
     afterEach(() => {
         standardCleanup();
         dropdownMenuSpy.mockClear();
+        setSessionFolderViewMode.mockClear();
         platformOs = 'ios';
+        sessionFolderViewMode = 'off';
+        sessionFoldersFeatureEnabled = true;
     });
 
     it('reuses the same menu item array when rerendered with identical scope values', async () => {
@@ -119,6 +175,7 @@ describe('ProjectGroupHeader menu items', () => {
                 canOpenProject={true}
                 onOpenProject={vi.fn()}
                 onCreateSession={vi.fn()}
+                onAddFolder={vi.fn()}
                 onRename={vi.fn()}
                 onReset={vi.fn()}
                 collapsed={false}
@@ -146,6 +203,7 @@ describe('ProjectGroupHeader menu items', () => {
                     canOpenProject={true}
                     onOpenProject={vi.fn()}
                     onCreateSession={vi.fn()}
+                    onAddFolder={vi.fn()}
                     onRename={vi.fn()}
                     onReset={vi.fn()}
                     collapsed={false}
@@ -189,6 +247,7 @@ describe('ProjectGroupHeader menu items', () => {
                 canOpenProject={true}
                 onOpenProject={vi.fn()}
                 onCreateSession={vi.fn()}
+                onAddFolder={vi.fn()}
                 onRename={vi.fn()}
                 onReset={vi.fn()}
                 collapsed={false}
@@ -231,6 +290,317 @@ describe('ProjectGroupHeader menu items', () => {
         expect(latestMenuProps?.popoverAnchorAlign).toBe('end');
     });
 
+    it('adds the folder tree toggle to the existing ordering menu', async () => {
+        const { CollapsibleSectionHeader } = await import('./sessionListChrome');
+
+        await renderScreen(
+            <CollapsibleSectionHeader
+                title="Active"
+                collapsed={false}
+                onPress={vi.fn()}
+                showOrderingMenu={true}
+            />,
+        );
+
+        const latestMenuProps = dropdownMenuSpy.mock.calls.at(-1)?.[0] as any;
+        expect(latestMenuProps?.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'sessionFolderViewModeTree', testID: 'session-folder-view-toggle' }),
+        ]));
+
+        latestMenuProps?.onSelect?.('sessionFolderViewModeTree');
+        expect(setSessionFolderViewMode).toHaveBeenCalledWith('tree');
+    });
+
+    it('routes folder row press, collapse, and menu actions separately', async () => {
+        const onFocus = vi.fn();
+        const onToggleCollapse = vi.fn();
+        const onNewSession = vi.fn();
+        const onAddSubfolder = vi.fn();
+        const onRename = vi.fn();
+        const onDelete = vi.fn();
+        const { FolderGroupHeader } = await import('./sessionListChrome');
+
+        const screen = await renderScreen(
+            <FolderGroupHeader
+                title="Planning"
+                depth={1}
+                collapsed={false}
+                item={{
+                    type: 'header',
+                    title: 'Planning',
+                    headerKind: 'folder',
+                    folderId: 'folder_planning',
+                    folderDepth: 1,
+                    serverId: 'server_a',
+                    workspace: {
+                        t: 'workspaceRef',
+                        serverId: 'server_a',
+                        workspaceRefId: 'workspace_a',
+                    },
+                }}
+                onPress={onFocus}
+                onToggleCollapse={onToggleCollapse}
+                onNewSession={onNewSession}
+                onAddSubfolder={onAddSubfolder}
+                onRename={onRename}
+                onDelete={onDelete}
+            />,
+        );
+
+        const row = screen.findByProps({ testID: 'session-folder-header-folder_planning' });
+        expect(row.props.style).toEqual(expect.arrayContaining([
+            expect.objectContaining({ paddingLeft: 32 }),
+        ]));
+        expect(screen.findByProps({ testID: 'session-folder-reorder-handle-folder_planning' })).toBeTruthy();
+        const focusButton = screen.findByProps({ testID: 'session-folder-header-folder_planning-focus' });
+        await act(async () => {
+            focusButton.props.onPress();
+        });
+        expect(onFocus).toHaveBeenCalledTimes(1);
+        expect(onToggleCollapse).not.toHaveBeenCalled();
+
+        const collapseButton = screen.findByProps({ testID: 'session-folder-collapse-folder_planning' });
+        await act(async () => {
+            collapseButton.props.onPress({ stopPropagation: vi.fn() });
+        });
+        expect(onToggleCollapse).toHaveBeenCalledTimes(1);
+
+        const latestMenuProps = dropdownMenuSpy.mock.calls.at(-1)?.[0] as any;
+        expect(latestMenuProps?.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'new-session' }),
+            expect.objectContaining({ id: 'add-subfolder' }),
+            expect.objectContaining({ id: 'rename' }),
+            expect.objectContaining({ id: 'delete' }),
+        ]));
+
+        await act(async () => {
+            await latestMenuProps?.onSelect?.('add-subfolder');
+            await latestMenuProps?.onSelect?.('rename');
+            await latestMenuProps?.onSelect?.('delete');
+            await latestMenuProps?.onSelect?.('new-session');
+        });
+        expect(onAddSubfolder).toHaveBeenCalledTimes(1);
+        expect(onRename).toHaveBeenCalledTimes(1);
+        expect(onDelete).toHaveBeenCalledTimes(1);
+        expect(onNewSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows the folder outline only while it is the active drop target', async () => {
+        platformOs = 'web';
+        const { FolderGroupHeader } = await import('./sessionListChrome');
+
+        const renderHeader = (activeDropTargetId: string | null) => (
+            <FolderGroupHeader
+                title="Planning"
+                depth={0}
+                collapsed={false}
+                item={{
+                    type: 'header',
+                    title: 'Planning',
+                    headerKind: 'folder',
+                    folderId: 'folder_planning',
+                    folderDepth: 0,
+                    serverId: 'server_a',
+                    workspace: {
+                        t: 'workspaceRef',
+                        serverId: 'server_a',
+                        workspaceRefId: 'workspace_a',
+                    },
+                }}
+                onPress={vi.fn()}
+                onToggleCollapse={vi.fn()}
+                onNewSession={vi.fn()}
+                onAddSubfolder={vi.fn()}
+                onRename={vi.fn()}
+                onDelete={vi.fn()}
+                activeDropTargetId={activeDropTargetId}
+            />
+        );
+
+        const screen = await renderScreen(renderHeader(null));
+
+        const row = screen.findByTestId('session-folder-header-folder_planning');
+        expect(row).not.toBeNull();
+        if (!row) throw new Error('expected folder header row');
+        expect(flattenStyle(row.props.style).borderWidth).toBeUndefined();
+
+        await act(async () => {
+            row.parent?.props.onPointerEnter?.();
+        });
+
+        expect(flattenStyle(row.props.style).borderWidth).toBeUndefined();
+
+        await screen.update(renderHeader('folder:folder_planning'));
+
+        expect(flattenStyle(row.props.style).borderWidth).toBe(1);
+    });
+
+    it('does not nest folder header pressable controls inside another pressable on web', async () => {
+        const { FolderGroupHeader } = await import('./sessionListChrome');
+
+        const screen = await renderScreen(
+            <FolderGroupHeader
+                title="Planning"
+                depth={1}
+                collapsed={false}
+                item={{
+                    type: 'header',
+                    title: 'Planning',
+                    headerKind: 'folder',
+                    folderId: 'folder_planning',
+                    folderDepth: 1,
+                    serverId: 'server_a',
+                    workspace: {
+                        t: 'workspaceRef',
+                        serverId: 'server_a',
+                        workspaceRefId: 'workspace_a',
+                    },
+                }}
+                onPress={vi.fn()}
+                onToggleCollapse={vi.fn()}
+                onNewSession={vi.fn()}
+                onAddSubfolder={vi.fn()}
+                onRename={vi.fn()}
+                onDelete={vi.fn()}
+            />,
+        );
+
+        for (const pressable of screen.findAllByType('Pressable' as never)) {
+            expect(childTreeContainsPressable(pressable)).toBe(false);
+        }
+    });
+
+    it('does not nest project header pressable controls inside another pressable on web', async () => {
+        platformOs = 'web';
+        const { ProjectGroupHeader } = await import('./sessionListChrome');
+
+        const screen = await renderScreen(
+            <ProjectGroupHeader
+                item={{
+                    type: 'header',
+                    title: '/repo',
+                    headerKind: 'project',
+                    groupKey: 'project:repo',
+                    workspaceKey: 'legacy_repo',
+                    workspaceScopeHint: {
+                        serverId: 'server_a',
+                        machineId: 'machine_a',
+                        rootPath: '/repo',
+                    },
+                } as any}
+                hasMultipleMachines={false}
+                displayTitle="Important Repo"
+                hasCustomLabel={true}
+                canOpenProject={true}
+                onOpenProject={vi.fn()}
+                onCreateSession={vi.fn()}
+                onAddFolder={vi.fn()}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+            />,
+        );
+
+        for (const pressable of screen.findAllByType('Pressable' as never)) {
+            expect(childTreeContainsPressable(pressable)).toBe(false);
+        }
+    });
+
+    it('renders focused folder breadcrumbs with root and folder targets', async () => {
+        const onClear = vi.fn();
+        const onSelectFolder = vi.fn();
+        const { SessionFolderFocusBreadcrumbs } = await import('./sessionListChrome');
+
+        const screen = await renderScreen(
+            <SessionFolderFocusBreadcrumbs
+                breadcrumbs={[
+                    {
+                        id: 'root',
+                        name: 'Root',
+                        parentId: null,
+                        workspace: { t: 'workspaceRef', serverId: 'server_a', workspaceRefId: 'workspace_a' },
+                        renderWorkspaceKey: 'workspace_a',
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                    {
+                        id: 'child',
+                        name: 'Child',
+                        parentId: 'root',
+                        workspace: { t: 'workspaceRef', serverId: 'server_a', workspaceRefId: 'workspace_a' },
+                        renderWorkspaceKey: 'workspace_a',
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ]}
+                onClear={onClear}
+                onSelectFolder={onSelectFolder}
+            />,
+        );
+
+        await act(async () => {
+            screen.findByProps({ testID: 'session-folder-breadcrumb-root' }).props.onPress();
+            screen.findByProps({ testID: 'session-folder-breadcrumb-root' }).props.onPress();
+            screen.findByProps({ testID: 'session-folder-breadcrumb-folder-child' }).props.onPress();
+        });
+
+        expect(onClear).toHaveBeenCalledTimes(2);
+        expect(onSelectFolder).toHaveBeenCalledWith('child');
+    });
+
+    it('hides folder actions while the sessions.folders gate is disabled', async () => {
+        sessionFoldersFeatureEnabled = false;
+        const { CollapsibleSectionHeader, ProjectGroupHeader } = await import('./sessionListChrome');
+
+        await renderScreen(
+            <CollapsibleSectionHeader
+                title="Active"
+                collapsed={false}
+                onPress={vi.fn()}
+                showOrderingMenu={true}
+            />,
+        );
+
+        const orderingMenuProps = dropdownMenuSpy.mock.calls.at(-1)?.[0] as any;
+        expect(orderingMenuProps?.items).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'sessionFolderViewModeTree' }),
+        ]));
+
+        await renderScreen(
+            <ProjectGroupHeader
+                item={{
+                    type: 'header',
+                    title: '/repo',
+                    headerKind: 'project',
+                    groupKey: 'project:repo',
+                    workspaceKey: 'legacy_repo',
+                    workspaceScopeHint: {
+                        serverId: 'server_a',
+                        machineId: 'machine_a',
+                        rootPath: '/repo',
+                    },
+                } as any}
+                hasMultipleMachines={false}
+                displayTitle="Important Repo"
+                hasCustomLabel={false}
+                canOpenProject={true}
+                onOpenProject={vi.fn()}
+                onCreateSession={vi.fn()}
+                onAddFolder={vi.fn()}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+            />,
+        );
+
+        const projectMenuProps = dropdownMenuSpy.mock.calls.at(-1)?.[0] as any;
+        expect(projectMenuProps?.items).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'addFolder' }),
+        ]));
+    });
+
     it('keeps the project add action visible while hover-only controls appear on demand', async () => {
         platformOs = 'web';
         const onCreateSession = vi.fn();
@@ -258,6 +628,7 @@ describe('ProjectGroupHeader menu items', () => {
                 canOpenProject={true}
                 onOpenProject={vi.fn()}
                 onCreateSession={onCreateSession}
+                onAddFolder={vi.fn()}
                 onRename={vi.fn()}
                 onReset={vi.fn()}
                 collapsed={false}
@@ -312,6 +683,7 @@ describe('ProjectGroupHeader menu items', () => {
                 canOpenProject={true}
                 onOpenProject={vi.fn()}
                 onCreateSession={vi.fn()}
+                onAddFolder={vi.fn()}
                 onRename={vi.fn()}
                 onReset={vi.fn()}
                 collapsed={true}
@@ -320,6 +692,107 @@ describe('ProjectGroupHeader menu items', () => {
         );
 
         expect(collapsedScreen.root.findAllByType('Ionicons')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 1 })]));
+    });
+
+    it('shows detected workspace favicons on project headers when enabled', async () => {
+        resolveWorkspaceFaviconMock.mockResolvedValueOnce({
+            status: 'found',
+            uri: 'data:image/svg+xml;base64,PHN2Zy8+',
+            relativePath: 'public/favicon.svg',
+        });
+        const { ProjectGroupHeader } = await import('./sessionListChrome');
+
+        const screen = await renderScreen(
+            <ProjectGroupHeader
+                item={{
+                    type: 'header',
+                    title: '/repo',
+                    headerKind: 'project',
+                    groupKey: 'project:repo',
+                    workspaceKey: 'legacy_repo',
+                    workspaceScopeHint: {
+                        serverId: 'server_a',
+                        machineId: 'machine_a',
+                        rootPath: '/repo',
+                    },
+                    serverId: 'server_a',
+                } as any}
+                hasMultipleMachines={false}
+                displayTitle="Important Repo"
+                hasCustomLabel={true}
+                canOpenProject={true}
+                workspaceFaviconsEnabled={true}
+                onOpenProject={vi.fn()}
+                onCreateSession={vi.fn()}
+                onAddFolder={vi.fn()}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+            />,
+        );
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(resolveWorkspaceFaviconMock).toHaveBeenCalledWith(expect.objectContaining({
+            enabled: true,
+            serverId: 'server_a',
+            machineId: 'machine_a',
+            workspacePath: '/repo',
+        }));
+        const images = screen.root.findAllByType('Image' as any);
+        expect(images).toHaveLength(1);
+        expect(images[0].props.source).toEqual({ uri: 'data:image/svg+xml;base64,PHN2Zy8+' });
+        expect(screen.root.findByProps({ testID: 'session-list-workspace-favicon' }).props.style).toEqual(expect.objectContaining({
+            width: 16,
+            minWidth: 16,
+            height: 16,
+            flexShrink: 0,
+        }));
+        expect(images[0].props.style).toEqual(expect.objectContaining({
+            width: 16,
+            height: 16,
+        }));
+    });
+
+    it('hides machine subtitles when workspace machine subtitles are disabled', async () => {
+        const { ProjectGroupHeader } = await import('./sessionListChrome');
+
+        const screen = await renderScreen(
+            <ProjectGroupHeader
+                item={{
+                    type: 'header',
+                    title: '/repo',
+                    subtitle: 'leeroy-mbp',
+                    headerKind: 'project',
+                    groupKey: 'project:repo',
+                    workspaceKey: 'legacy_repo',
+                    workspaceScopeHint: {
+                        serverId: 'server_a',
+                        machineId: 'machine_a',
+                        rootPath: '/repo',
+                    },
+                    serverId: 'server_a',
+                } as any}
+                hasMultipleMachines={true}
+                displayTitle="Important Repo"
+                hasCustomLabel={true}
+                canOpenProject={true}
+                workspaceMachineSubtitlesEnabled={false}
+                onOpenProject={vi.fn()}
+                onCreateSession={vi.fn()}
+                onAddFolder={vi.fn()}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('Important Repo');
+        expect(screen.getTextContent()).not.toContain('leeroy-mbp');
     });
 
     it('uses the secondary header typography tier for date headers', async () => {
@@ -361,6 +834,7 @@ describe('ProjectGroupHeader menu items', () => {
                 canOpenProject={false}
                 onOpenProject={vi.fn()}
                 onCreateSession={vi.fn()}
+                onAddFolder={vi.fn()}
                 onRename={vi.fn()}
                 onReset={vi.fn()}
                 collapsed={false}

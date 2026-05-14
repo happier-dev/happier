@@ -130,14 +130,88 @@ function defaultTypography(
     return { fontFamily };
 }
 
+function tabularTypography(): Pick<TextStyle, 'fontVariant'> {
+    return { fontVariant: ['tabular-nums'] };
+}
+
+function eyebrowTypography(): Pick<TextStyle, 'fontFamily' | 'fontWeight' | 'fontSize' | 'lineHeight' | 'letterSpacing' | 'textTransform'> {
+    return {
+        ...defaultTypography('semiBold'),
+        fontSize: Platform.select({ ios: 11, default: 12 }),
+        lineHeight: Platform.select({ ios: 14, default: 16 }),
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    };
+}
+
+function rowTitleTypography(): Pick<TextStyle, 'fontFamily' | 'fontWeight' | 'fontSize' | 'lineHeight' | 'letterSpacing'> {
+    return {
+        ...defaultTypography('semiBold'),
+        fontSize: Platform.select({ ios: 15, default: 14 }),
+        lineHeight: Platform.select({ ios: 20, default: 18 }),
+        letterSpacing: Platform.select({ ios: -0.12, default: -0.08 }),
+    };
+}
+
+function rowMetaTypography(): Pick<TextStyle, 'fontFamily' | 'fontSize' | 'lineHeight' | 'letterSpacing'> {
+    return {
+        ...defaultTypography('regular'),
+        fontSize: Platform.select({ ios: 13, default: 12 }),
+        lineHeight: Platform.select({ ios: 17, default: 16 }),
+        letterSpacing: Platform.select({ ios: -0.08, default: 0 }),
+    };
+}
+
+function pillLabelTypography(): Pick<TextStyle, 'fontFamily' | 'fontWeight' | 'fontSize' | 'lineHeight' | 'letterSpacing'> {
+    return {
+        ...defaultTypography('semiBold'),
+        fontSize: Platform.select({ ios: 11, default: 10 }),
+        lineHeight: Platform.select({ ios: 14, default: 12 }),
+        letterSpacing: 0.2,
+    };
+}
+
+function keyHintTypography(): Pick<TextStyle, 'fontFamily' | 'fontSize' | 'lineHeight' | 'fontVariant'> {
+    return {
+        ...Typography.mono(),
+        ...tabularTypography(),
+        fontSize: Platform.select({ ios: 12, default: 11 }),
+        lineHeight: Platform.select({ ios: 16, default: 14 }),
+    };
+}
+
+function timestampTypography(): Pick<TextStyle, 'fontFamily' | 'fontSize' | 'lineHeight' | 'fontVariant'> {
+    return {
+        ...defaultTypography('regular'),
+        ...tabularTypography(),
+        fontSize: Platform.select({ ios: 12, default: 11 }),
+        lineHeight: Platform.select({ ios: 16, default: 14 }),
+    };
+}
+
 export const Typography = {
     // Default font styles (Inter, except Apple web system stack)
     default: defaultTypography,
 
     // Monospace font styles (IBM Plex Mono)
     mono: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
-        fontFamily: getMonoFont(weight),
-    }),
+            fontFamily: getMonoFont(weight),
+        }),
+
+    // Tabular numbers (fontVariant: ['tabular-nums']) for jitter-free dynamic counts/times
+    tabular: tabularTypography,
+
+    // Uppercase, tracked section/kicker labels (non-editable typography primitive)
+    eyebrow: eyebrowTypography,
+
+    // Standard two-tier row rhythm (non-editable typography primitives)
+    rowTitle: rowTitleTypography,
+    rowMeta: rowMetaTypography,
+
+    // Compact label primitives for status pills and keyboard hints
+    pillLabel: pillLabelTypography,
+    keyHint: keyHintTypography,
+    timestamp: timestampTypography,
 
     // Logo font style (Bricolage Grotesque)
     logo: () => ({

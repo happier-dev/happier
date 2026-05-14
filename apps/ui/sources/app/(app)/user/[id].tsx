@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, ActivityIndicator, Linking } from 'react-native';
+import { View, Linking } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -21,6 +21,7 @@ import { useSessionSharingSupport } from '@/hooks/session/useSessionSharingSuppo
 import { HappyError } from '@/utils/errors/errors';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { isSafeBadgeUrl } from '@/utils/url/urlSafety';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const USERNAME_PREFIX = '@';
 
@@ -121,7 +122,7 @@ export default function UserProfileScreen() {
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={theme.colors.accent.blue} />
+                <ActivitySpinner size="large" color={theme.colors.accent.blue} />
             </View>
         );
     }

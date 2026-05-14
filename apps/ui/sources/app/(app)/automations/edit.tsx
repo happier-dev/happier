@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -33,6 +33,7 @@ import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
 import { isAutomationSettingsDraftValid } from '@/sync/domains/automations/isAutomationSettingsDraftValid';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function isExistingSessionAutomationEditDraftValid(params: Readonly<{
     draft: SessionAuthoringDraft | null;
@@ -248,12 +249,12 @@ export default React.memo(function AutomationEditScreen() {
                     <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                         {isWaitingForExistingSessionHydration ? (
                             <View style={stylesMessage.loadingContainer}>
-                                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                             </View>
                         ) : null}
                         {automation?.targetType === 'new_session' && !isWaitingForExistingSessionHydration ? (
                             <View style={stylesMessage.loadingContainer}>
-                                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                             </View>
                         ) : null}
                         {automation?.targetType === 'existing_session' && existingSessionAvailability ? (

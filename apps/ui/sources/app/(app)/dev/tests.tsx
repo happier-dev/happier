@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ScrollView, Text, ActivityIndicator } from 'react-native';
+import { View, ScrollView, Text } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -13,6 +13,7 @@ import '@/encryption/deriveKey.appspec';
 import '@/sync/encryption/encryptor.appspec';
 import '@/encryption/aes.appspec';
 import '@/encryption/base64.appspec';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 interface TestRunState {
     running: boolean;
@@ -192,7 +193,7 @@ export default function TestsScreen() {
 
             {state.running && (
                 <View style={{ padding: 32, alignItems: 'center' }}>
-                    <ActivityIndicator size="large" color="#007AFF" />
+                    <ActivitySpinner size="large" color="#007AFF" />
                     <Text style={{ ...Typography.default(), fontSize: 16, color: '#8E8E93', marginTop: 16 }}>
                         Running tests...
                     </Text>

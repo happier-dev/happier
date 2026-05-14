@@ -2,7 +2,18 @@ import { parseMarkdownBlock } from "./parseMarkdownBlock"
 
 export type MarkdownTableAlignment = 'left' | 'center' | 'right' | 'default';
 
-export type MarkdownBlock = {
+export type MarkdownSourceRange = {
+    startLine: number;
+    endLine: number;
+    startColumn?: number;
+    endColumn?: number;
+};
+
+type MarkdownSourceFields = {
+    sourceRange?: MarkdownSourceRange;
+};
+
+export type MarkdownBlock = ({
     type: 'text'
     content: MarkdownSpan[]
 } | {
@@ -32,7 +43,7 @@ export type MarkdownBlock = {
     headers: string[],
     rows: string[][],
     alignments: MarkdownTableAlignment[],
-}
+}) & MarkdownSourceFields;
 
 export type MarkdownSpan = {
     styles: ('italic' | 'bold' | 'semibold' | 'code')[],

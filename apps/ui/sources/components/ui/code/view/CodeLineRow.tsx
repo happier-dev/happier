@@ -1,7 +1,7 @@
 import React from 'react';
-import { Pressable, View, Platform } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { TextStyle } from 'react-native';
+import { Pressable, View, Platform, StyleSheet } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import type { GestureResponderEvent, TextStyle, ViewStyle } from 'react-native';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { Typography } from '@/constants/Typography';
@@ -10,6 +10,21 @@ import { ReviewCommentLineAffordance } from '@/components/ui/code/reviewComments
 
 import { CodeGutter } from './CodeGutter';
 import { Text } from '@/components/ui/text/Text';
+
+export type CodeLinePressEvent = GestureResponderEvent & Readonly<{
+    shiftKey?: boolean;
+    nativeEvent: GestureResponderEvent['nativeEvent'] & Readonly<{ shiftKey?: boolean }>;
+}>;
+type PreventableInteractionEvent = Readonly<{
+    preventDefault?: () => void;
+    nativeEvent?: Readonly<{ preventDefault?: () => void }>;
+}>;
+
+const WEB_RANGE_GESTURE_PRESSABLE_STYLE = {
+    cursor: 'default',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+} as unknown as ViewStyle;
 
 const resolveMonoTypography = (): TextStyle => (
     typeof Typography.mono === 'function'
@@ -21,7 +36,11 @@ export function CodeLineRow(props: {
     line: CodeLine;
     selected: boolean;
     highlighted?: boolean;
-    onPressLine?: (line: CodeLine) => void;
+    onPressLine?: (line: CodeLine, event?: CodeLinePressEvent) => void;
+    onPressInLine?: (line: CodeLine, event?: PreventableInteractionEvent) => void;
+    onHoverLine?: (line: CodeLine, event?: PreventableInteractionEvent) => void;
+    onPressOutLine?: (line: CodeLine, event?: PreventableInteractionEvent) => void;
+    pressLineWhenNotSelectable?: boolean;
     onPressAddComment?: (line: CodeLine) => void;
     commentActive?: boolean;
     wrapLines?: boolean;
@@ -36,7 +55,16 @@ export function CodeLineRow(props: {
 }) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const { line, selected, onPressLine, onPressAddComment } = props;
+    const {
+        line,
+        selected,
+        onPressLine,
+        onPressInLine,
+        onHoverLine,
+        onPressOutLine,
+        onPressAddComment,
+        pressLineWhenNotSelectable,
+    } = props;
     const wrapLines = props.wrapLines ?? true;
     const showLineNumbers = props.showLineNumbers ?? true;
     const showPrefix = props.showPrefix ?? true;
@@ -51,8 +79,17 @@ export function CodeLineRow(props: {
         ? line.renderIntraLineDiffSegments
         : null;
 
-    const onPress = line.selectable && onPressLine ? () => onPressLine(line) : undefined;
+    const onPress = !line.renderIsHeaderLine && (line.selectable || pressLineWhenNotSelectable === true) && onPressLine
+        ? (event: GestureResponderEvent) => onPressLine(line, event as CodeLinePressEvent)
+        : undefined;
     const onLongPress = !isWeb && onPressAddComment && !line.renderIsHeaderLine ? () => onPressAddComment(line) : undefined;
+    const onHoverIn = React.useCallback((event?: PreventableInteractionEvent) => {
+        if (isWeb && onPressAddComment) setIsHovered(true);
+        onHoverLine?.(line, event);
+    }, [isWeb, line, onHoverLine, onPressAddComment]);
+    const onHoverOut = React.useCallback(() => {
+        if (isWeb && onPressAddComment) setIsHovered(false);
+    }, [isWeb, onPressAddComment]);
 
     const backgroundColor = selected
         ? theme.colors.surface.inset
@@ -146,17 +183,30 @@ export function CodeLineRow(props: {
             nativeID={line.id}
             style={[
                 styles.row,
-                highlighted ? styles.rowHighlighted : null,
+                highlighted ? [
+                    styles.rowHighlighted,
+                    { borderLeftColor: theme.colors.text.link ?? theme.colors.text.secondary },
+                ] : null,
                 { backgroundColor },
-                selected ? styles.rowSelected : null,
+                selected ? [
+                    styles.rowSelected,
+                    { borderLeftColor: theme.colors.state.success.foreground },
+                ] : null,
             ]}
         >
             <Pressable
-                style={styles.rowPressable}
+                style={[
+                    styles.rowPressable,
+                    isWeb && (onPressInLine || onHoverLine || onPressOutLine)
+                        ? WEB_RANGE_GESTURE_PRESSABLE_STYLE
+                        : null,
+                ]}
                 onPress={onPress}
+                onPressIn={onPressInLine ? (event) => onPressInLine(line, event as PreventableInteractionEvent) : undefined}
+                onPressOut={onPressOutLine ? (event) => onPressOutLine(line, event as PreventableInteractionEvent) : undefined}
                 onLongPress={onLongPress}
-                onHoverIn={isWeb && onPressAddComment ? () => setIsHovered(true) : undefined}
-                onHoverOut={isWeb && onPressAddComment ? () => setIsHovered(false) : undefined}
+                onHoverIn={(isWeb && onPressAddComment) || onHoverLine ? (event) => onHoverIn(event as PreventableInteractionEvent) : undefined}
+                onHoverOut={isWeb && onPressAddComment ? onHoverOut : undefined}
             >
                 {canShowCommentAffordance && onPressAddComment ? (
                     <View testID="review-comment-line-affordance-lane" style={styles.commentButtonLane}>
@@ -253,7 +303,7 @@ export function CodeLineRow(props: {
     );
 }
 
-const stylesheet = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create({
     row: {
         flexDirection: 'row',
         paddingVertical: 1,
@@ -262,12 +312,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rowHighlighted: {
         borderLeftWidth: 3,
-        borderLeftColor: theme.colors.text.link ?? theme.colors.text.secondary,
         paddingLeft: 5,
     },
     rowSelected: {
         borderLeftWidth: 3,
-        borderLeftColor: theme.colors.state.success.foreground,
         paddingLeft: 5,
     },
     rowPressable: {
@@ -294,4 +342,4 @@ const stylesheet = StyleSheet.create((theme) => ({
     noWrap: {
         flexShrink: 0,
     },
-}));
+});

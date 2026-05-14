@@ -13,6 +13,7 @@ const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const shouldRenderChatTimelineForSessionMock = vi.fn((_args: any) => true);
 const realtimeStatusValue = vi.hoisted(() => ({ current: { status: 'connected' } as any }));
 const onSessionVisibleSpy = vi.hoisted(() => vi.fn());
+const chatListRenderSpy = vi.hoisted(() => vi.fn());
 const themeColors = vi.hoisted(() => ({
     text: '#000',
     textSecondary: '#666',
@@ -185,7 +186,10 @@ vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
     ChatHeaderView: () => null,
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
-    ChatList: () => React.createElement('ChatList'),
+    ChatList: (props: any) => {
+        chatListRenderSpy(props);
+        return React.createElement('ChatList');
+    },
 }));
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({
     EmptyMessages: () => React.createElement('EmptyMessages'),
@@ -360,6 +364,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         sessionState = {
             id: 's1',
             seq: 25,
+            updatedAt: 100,
             presence: 'online',
             active: true,
             accessLevel: 'edit',
@@ -372,6 +377,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         transcriptIdsLoadedState = true;
         shouldRenderChatTimelineForSessionMock.mockClear();
         onSessionVisibleSpy.mockClear();
+        chatListRenderSpy.mockClear();
     });
 
     afterEach(() => {
@@ -599,6 +605,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
             (storageModule as any).__setSessionForTest({
                 id: 's1',
                 seq: 25,
+                updatedAt: 100,
                 presence: 'online',
                 active: true,
                 accessLevel: 'edit',
@@ -608,5 +615,82 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         }
 
         expect(error).toBeNull();
+    });
+
+    it('keeps the transcript host stable for session timestamp-only updates', async () => {
+        const screen = await renderSessionView();
+        const { SessionView } = await import('./SessionView');
+
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        chatListRenderSpy.mockClear();
+
+        sessionState = {
+            ...sessionState,
+            updatedAt: 200,
+            activeAt: 200,
+            thinkingAt: 200,
+        };
+        await screen.update(<SessionView id="s1" />);
+
+        expect(chatListRenderSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('keeps the transcript host stable for read-cursor-only updates', async () => {
+        sessionState = {
+            ...sessionState,
+            lastViewedSessionSeq: 25,
+            metadata: {
+                ...sessionState.metadata,
+                readStateV1: {
+                    v: 1,
+                    sessionSeq: 25,
+                    pendingActivityAt: 0,
+                    updatedAt: 100,
+                },
+            },
+        };
+
+        const screen = await renderSessionView();
+        const { SessionView } = await import('./SessionView');
+
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        chatListRenderSpy.mockClear();
+
+        sessionState = {
+            ...sessionState,
+            lastViewedSessionSeq: 26,
+            metadata: {
+                ...sessionState.metadata,
+                readStateV1: {
+                    v: 1,
+                    sessionSeq: 26,
+                    pendingActivityAt: 0,
+                    updatedAt: 200,
+                },
+            },
+        };
+        await screen.update(<SessionView id="s1" />);
+
+        expect(chatListRenderSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('keeps the transcript viewport callback stable across session rerenders', async () => {
+        const screen = await renderSessionView();
+        const { SessionView } = await import('./SessionView');
+
+        const initialViewportChange = chatListRenderSpy.mock.calls.at(-1)?.[0]?.onViewportChange;
+        expect(typeof initialViewportChange).toBe('function');
+        chatListRenderSpy.mockClear();
+
+        await screen.update(<SessionView id="s1" jumpToSeq={99} />);
+
+        const nextViewportChange = chatListRenderSpy.mock.calls.at(-1)?.[0]?.onViewportChange;
+        expect(nextViewportChange).toBe(initialViewportChange);
+
+        await screen.unmount();
     });
 });

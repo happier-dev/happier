@@ -2,8 +2,9 @@ import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionLis
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { resolveSessionWorkspaceDisplayPresentation } from '@/sync/domains/session/listing/sessionWorkspaceDisplayPresentation';
 import type { WorkspaceDisplayEllipsizeMode } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
+import type { WorkspacePathDisplayModeV1 } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readDisplayMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { LruMap } from '@/utils/cache/lruMap';
 
@@ -33,6 +34,7 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
     listItems: ReadonlyArray<SessionListIndexItem>;
     machinesById: ReadonlyMap<string, unknown>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
+    workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
     resolveSessionRenderable: (item: Extract<SessionListIndexItem, { type: 'session' }>) => SessionListRenderableSession | null;
 }>): SessionListReachabilitySummary {
     const sessionDisplayRows: Array<Readonly<{
@@ -54,7 +56,10 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
         const renderable = input.resolveSessionRenderable(item);
         const metadata = renderable?.metadata ?? null;
 
-        const machineTarget = readMachineTargetForSession(sessionId);
+        const machineTarget = readDisplayMachineTargetForSession({
+            sessionId,
+            metadata,
+        });
         const machineId = machineTarget?.machineId ?? (String(metadata?.machineId ?? '').trim() || null);
         const machineLabel = machineId
             ? getMachineDisplayName(input.machinesById.get(machineId) as Parameters<typeof getMachineDisplayName>[0])
@@ -65,6 +70,7 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
             metadata,
             machineTarget,
             workspaceRefs: input.workspaceRefs,
+            workspacePathDisplayModeV1: input.workspacePathDisplayModeV1,
         });
 
         sessionDisplayRows.push({

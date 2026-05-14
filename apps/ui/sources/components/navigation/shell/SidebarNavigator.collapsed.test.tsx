@@ -262,7 +262,7 @@ vi.mock('./SidebarIcons', () => ({
 }));
 
 function getDrawer(tree: renderer.ReactTestRenderer) {
-  return tree.findByType('Drawer' as any);
+  return tree.root.findByType('Drawer' as any);
 }
 
 function getResizableSidebarPane(tree: renderer.ReactTestRenderer) {
@@ -292,9 +292,11 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     const { SidebarNavigator } = await import('./SidebarNavigator');
     let tree!: renderer.ReactTestRenderer;
 
-    tree = (await renderScreen(<SidebarNavigator />)).tree;
+    await act(async () => {
+      tree = renderer.create(<SidebarNavigator />);
+    });
 
-    const wheelBoundary = tree.find((node) => {
+    const wheelBoundary = tree.root.find((node) => {
       return (node.type as any) === 'View' && typeof (node.props as any)?.onWheel === 'function';
     });
 
@@ -311,7 +313,9 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     const { SidebarNavigator } = await import('./SidebarNavigator');
     let tree!: renderer.ReactTestRenderer;
 
-    tree = (await renderScreen(<SidebarNavigator />)).tree;
+    await act(async () => {
+      tree = renderer.create(<SidebarNavigator />);
+    });
 
     const drawer = getDrawer(tree);
     expect(drawer.props.screenOptions.drawerStyle.width).toBe(72);
@@ -332,19 +336,6 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
 
   it('hides the permanent drawer when min edge is below 600px (e.g. landscape phone)', async () => {
     hoistedState.mockWindowDimensions = { width: 812, height: 375 };
-
-    const { SidebarNavigator } = await import('./SidebarNavigator');
-    let tree!: renderer.ReactTestRenderer;
-
-    tree = (await renderScreen(<SidebarNavigator />)).tree;
-
-    expect(mockDrawerLifecycle.mounts).toBe(0);
-    expect(tree.findAllByType('Drawer' as any)).toHaveLength(0);
-  });
-
-  it('bypasses the desktop drawer shell for terminal-connect routes on web', async () => {
-    hoistedState.mockPathname = '/terminal/connect';
-    hoistedState.mockSegments = ['(app)', 'terminal', 'connect'];
 
     const { SidebarNavigator } = await import('./SidebarNavigator');
     let tree!: renderer.ReactTestRenderer;
@@ -532,16 +523,25 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     expect(mockLocalSettingsStore.sidebarCollapsed).toBe(false);
   });
 
-  it('bypasses the desktop drawer shell for terminal connect on web', async () => {
+  it('keeps the drawer navigator mounted with hidden chrome on terminal-connect desktop web routes', async () => {
     hoistedState.mockPathname = '/terminal/connect';
     hoistedState.mockSegments = ['(app)', 'terminal', 'connect'];
 
     const { SidebarNavigator } = await import('./SidebarNavigator');
     let tree!: renderer.ReactTestRenderer;
 
-    tree = (await renderScreen(<SidebarNavigator />)).tree;
+    await act(async () => {
+      tree = renderer.create(<SidebarNavigator />);
+    });
 
-    expect(mockDrawerLifecycle.mounts).toBe(0);
-    expect(tree.findAllByType('Drawer' as any)).toHaveLength(0);
+    expect(mockDrawerLifecycle.mounts).toBe(1);
+    expect(mockDrawerLifecycle.unmounts).toBe(0);
+
+    const hiddenDrawer = getDrawer(tree);
+    expect(hiddenDrawer.props.screenOptions.drawerType).toBe('permanent');
+    expect(hiddenDrawer.props.screenOptions.drawerStyle.width).toBe(0);
+    expect(tree.root.findAllByType('SidebarView' as any)).toHaveLength(0);
+    expect(tree.root.findAllByType('CollapsedSidebarView' as any)).toHaveLength(0);
+
   });
 });

@@ -5,6 +5,8 @@ import { Gesture, type ComposedGesture, type GestureType } from 'react-native-ge
 import { scheduleOnRN } from 'react-native-worklets';
 import { useUnistyles } from 'react-native-unistyles';
 
+export const DRAGGED_SESSION_ROW_OPACITY = 0.38;
+
 export type UseSessionInlineDragParams = Readonly<{
     sessionKey: string | null;
     groupKey: string;
@@ -21,7 +23,20 @@ export type UseSessionInlineDragParams = Readonly<{
      * React's keyed reconciliation to unmount/remount the dragged item's DOM
      * node, which releases pointer capture and kills the Pan gesture.
      */
-    onDragEnd: (sessionKey: string, groupKey: string, positionDelta: number) => void;
+    onDragEnd: (
+        sessionKey: string,
+        groupKey: string,
+        positionDelta: number,
+        context?: SessionInlineDragEndContext,
+    ) => void;
+    onDragUpdate?: (event: Readonly<{
+        sessionKey: string;
+        groupKey: string;
+        positionDelta: number;
+        dataIndex: number;
+        absoluteX: number;
+        absoluteY: number;
+    }>) => void;
     /** Flat-list data index of this row (used for drop indicator computation). */
     dataIndex: number;
     /** Total number of items in the FlatList data array. */
@@ -49,6 +64,13 @@ export type UseSessionInlineDragParams = Readonly<{
      * begins dragging to reorder.
      */
     onLongPressActivated?: (sessionKey: string) => void;
+}>;
+
+export type SessionInlineDragEndContext = Readonly<{
+    absoluteX: number | null;
+    absoluteY: number | null;
+    positionDelta: number;
+    dataIndex: number;
 }>;
 
 export type UseSessionInlineDragResult = Readonly<{
@@ -80,6 +102,8 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
     onDragStartRef.current = onDragStart;
     const onDragEndRef = useRef(onDragEnd);
     onDragEndRef.current = onDragEnd;
+    const onDragUpdateRef = useRef(params.onDragUpdate);
+    onDragUpdateRef.current = params.onDragUpdate;
     const onLongPressActivatedRef = useRef(onLongPressActivated);
     onLongPressActivatedRef.current = onLongPressActivated;
 
@@ -97,8 +121,23 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         const fireDragStart = (sk: string) => {
             onDragStartRef.current(sk);
         };
-        const fireDragEnd = (sk: string, gk: string, delta: number) => {
-            onDragEndRef.current(sk, gk, delta);
+        const fireDragEnd = (sk: string, gk: string, delta: number, absoluteX: number | null, absoluteY: number | null) => {
+            onDragEndRef.current(sk, gk, delta, {
+                absoluteX,
+                absoluteY,
+                positionDelta: delta,
+                dataIndex,
+            });
+        };
+        const fireDragUpdate = (sk: string, gk: string, delta: number, absoluteX: number, absoluteY: number) => {
+            onDragUpdateRef.current?.({
+                sessionKey: sk,
+                groupKey: gk,
+                positionDelta: delta,
+                dataIndex,
+                absoluteX,
+                absoluteY,
+            });
         };
         const fireLongPressActivated = (sk: string) => {
             onLongPressActivatedRef.current?.(sk);
@@ -141,6 +180,9 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
 
                 // Compute which row should show the drop indicator line.
                 const delta = Math.round(e.translationY / rowHeight);
+                if (typeof e.absoluteX === 'number' && typeof e.absoluteY === 'number') {
+                    scheduleOnRN(fireDragUpdate, sessionKey, groupKey, delta, e.absoluteX, e.absoluteY);
+                }
                 if (delta === 0) {
                     dropIndicatorIdx.value = -1;
                 } else if (delta > 0) {
@@ -162,10 +204,12 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                     dropIndicatorEdge.value = 0; // top
                 }
             })
-            .onEnd(() => {
+            .onEnd((e) => {
                 'worklet';
                 const positionDelta = Math.round(translateY.value / rowHeight);
                 const didDrag = didStartDrag.value === true;
+                const absoluteX = typeof e.absoluteX === 'number' ? e.absoluteX : null;
+                const absoluteY = typeof e.absoluteY === 'number' ? e.absoluteY : null;
 
                 // Reset immediately — the reorder callback will commit the new
                 // position, so the item should snap to its slot once React
@@ -177,10 +221,10 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 didStartDrag.value = false;
                 isDragging.value = false;
                 if (didDrag) {
-                    scheduleOnRN(fireDragEnd, sessionKey, groupKey, positionDelta);
+                    scheduleOnRN(fireDragEnd, sessionKey, groupKey, positionDelta, absoluteX, absoluteY);
                 }
             })
-            .onFinalize(() => {
+            .onFinalize((e) => {
                 'worklet';
                 // Covers gesture cancel / system interrupt.
                 // Skip if onEnd already handled it.
@@ -190,13 +234,15 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 }
                 const positionDelta = Math.round(translateY.value / rowHeight);
                 const didDrag = didStartDrag.value === true;
+                const absoluteX = typeof e.absoluteX === 'number' ? e.absoluteX : null;
+                const absoluteY = typeof e.absoluteY === 'number' ? e.absoluteY : null;
                 translateY.value = 0;
                 scale.value = withSpring(1);
                 dropIndicatorIdx.value = -1;
                 didStartDrag.value = false;
                 isDragging.value = false;
                 if (didDrag) {
-                    scheduleOnRN(fireDragEnd, sessionKey, groupKey, positionDelta);
+                    scheduleOnRN(fireDragEnd, sessionKey, groupKey, positionDelta, absoluteX, absoluteY);
                 }
             });
 
@@ -243,6 +289,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
             shadowOpacity: isDragging.value ? dragLiftShadow.shadowOpacity : 0,
             shadowRadius: isDragging.value ? dragLiftShadow.shadowRadius : 0,
             elevation: isDragging.value ? dragLiftShadow.elevation : 0,
+            opacity: isDragging.value ? DRAGGED_SESSION_ROW_OPACITY : 1,
         };
     });
 

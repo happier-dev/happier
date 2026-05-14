@@ -200,20 +200,20 @@ export function useWorkspaceFileScmStageActions(input: {
         }
     }, [filePath, mountedRef, refreshAll, scmCommitStrategy, scmSnapshot, scmWriteEnabled, scope, setIsApplyingStageSafe]);
 
-    const applySelectedLines = React.useCallback(async () => {
-        if (!scope) return;
-        if (!diffContent) return;
-        if (selectedLineKeys.size === 0) return;
-        if (!lineSelectionEnabled) return;
+    const applySelectedLines = React.useCallback(async (): Promise<boolean> => {
+        if (!scope) return false;
+        if (!diffContent) return false;
+        if (selectedLineKeys.size === 0) return false;
+        if (!lineSelectionEnabled) return false;
 
         const atomicVirtualLineSelectionEnabled = isAtomicCommitStrategy(scmCommitStrategy)
             && scmSnapshot?.capabilities?.writeCommitLineSelection === true;
-        if (!includeExcludeEnabled && !atomicVirtualLineSelectionEnabled) return;
+        if (!includeExcludeEnabled && !atomicVirtualLineSelectionEnabled) return false;
 
         const stageSelected = diffMode !== 'included';
         if (atomicVirtualLineSelectionEnabled && diffMode !== 'pending') {
             Modal.alert(t('common.error'), t('files.stageActions.selectPendingDiffMode'));
-            return;
+            return false;
         }
 
         const patch = buildPatchFromSelectedDiffLines(diffContent, selectedLineKeys, {
@@ -221,27 +221,33 @@ export function useWorkspaceFileScmStageActions(input: {
         });
         if (!patch) {
             Modal.alert(t('common.error'), t('files.stageActions.unableToBuildPatchFromSelection'));
-            return;
+            return false;
         }
 
         if (atomicVirtualLineSelectionEnabled) {
-            storage.getState().unmarkWorkspaceScmCommitSelectionPaths(scope, [filePath]);
-            storage.getState().upsertWorkspaceScmCommitSelectionPatch(scope, {
-                path: filePath,
-                patch,
-            });
-            reportWorkspaceScmOperation({
-                state: storage.getState(),
-                scope,
-                operation: 'stage',
-                status: 'success',
-                path: filePath,
-                detail: `${filePath} (${selectedLineKeys.size} selected lines)`,
-                surface: 'file',
-                tracking,
-            });
-            setSelectedLineKeys(new Set());
-            return;
+            try {
+                storage.getState().unmarkWorkspaceScmCommitSelectionPaths(scope, [filePath]);
+                storage.getState().upsertWorkspaceScmCommitSelectionPatch(scope, {
+                    path: filePath,
+                    patch,
+                });
+                reportWorkspaceScmOperation({
+                    state: storage.getState(),
+                    scope,
+                    operation: 'stage',
+                    status: 'success',
+                    path: filePath,
+                    detail: `${filePath} (${selectedLineKeys.size} selected lines)`,
+                    surface: 'file',
+                    tracking,
+                });
+                setSelectedLineKeys(new Set());
+                return true;
+            } catch (error) {
+                const message = error instanceof Error ? error.message : t('files.stageActions.diffChangedRefreshAndReselect');
+                Modal.alert(t('common.error'), message);
+                return false;
+            }
         }
 
         const preflight = evaluateScmOperationPreflight({
@@ -260,9 +266,10 @@ export function useWorkspaceFileScmStageActions(input: {
                 tracking,
             });
             Modal.alert(t('common.error'), preflight.message);
-            return;
+            return false;
         }
 
+        let applied = false;
         const lockResult = await withWorkspaceScmOperationLock({
             state: storage.getState(),
             scope,
@@ -317,6 +324,7 @@ export function useWorkspaceFileScmStageActions(input: {
                     if (mountedRef.current) {
                         setSelectedLineKeys(new Set());
                     }
+                    applied = true;
                     await refreshWorkspaceScmSnapshot(scope);
                     if (mountedRef.current) {
                         await refreshAll();
@@ -335,7 +343,9 @@ export function useWorkspaceFileScmStageActions(input: {
                 tracking,
             });
             Modal.alert(t('common.error'), lockResult.message);
+            return false;
         }
+        return applied;
     }, [
         diffContent,
         diffMode,

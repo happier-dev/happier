@@ -8,6 +8,8 @@ import { ItemGroupSelectionContext } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
 import type { SelectableMenuCategory, SelectableMenuItem } from './selectableMenuTypes';
 import { Text } from '@/components/ui/text/Text';
+import { Eyebrow } from '@/components/ui/text/Eyebrow';
+import type { ScrollItemLayoutHandler } from '@/components/ui/scroll/useScrollRectIntoView';
 
 type WebMouseDownActivationEvent = Readonly<{
     button?: number;
@@ -41,12 +43,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 16,
         paddingTop: 16,
         paddingBottom: 8,
-        fontSize: 12,
         color: theme.colors.input.placeholder,
-        textTransform: 'uppercase',
-        letterSpacing: 0.8,
-        fontWeight: '600',
-        ...Typography.default('semiBold'),
     },
 }));
 
@@ -62,6 +59,7 @@ export function SelectableMenuResults(props: {
     itemProps?: Partial<
         Omit<ItemProps, 'title' | 'subtitle' | 'icon' | 'rightElement' | 'selected' | 'disabled' | 'showChevron' | 'showDivider' | 'onPress'>
     >;
+    registerItemLayout?: (key: string) => ScrollItemLayoutHandler;
 }) {
     const styles = stylesheet;
     const mouseDownActivatedItemIdRef = React.useRef<string | null>(null);
@@ -166,17 +164,24 @@ export function SelectableMenuResults(props: {
                         />
                     );
 
-                    return React.cloneElement(itemNode, {
-                        key: item.id,
-                    });
+                    const scrollFrameLayout = props.registerItemLayout?.(String(itemIndex));
+                    return (
+                        <View
+                            key={item.id}
+                            testID={`${optionTestID}:scroll-frame`}
+                            {...(scrollFrameLayout ? { onLayout: scrollFrameLayout } : {})}
+                        >
+                            {itemNode}
+                        </View>
+                    );
                 });
 
                 return (
                     <View key={category.id}>
                         {showCategoryTitles && category.title.trim().length > 0 ? (
-                            <Text style={styles.categoryTitle}>
+                            <Eyebrow style={styles.categoryTitle}>
                                 {category.title}
-                            </Text>
+                            </Eyebrow>
                         ) : null}
                         {categoryItems}
                     </View>

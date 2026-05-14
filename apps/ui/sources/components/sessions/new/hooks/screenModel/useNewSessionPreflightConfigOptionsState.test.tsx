@@ -8,6 +8,66 @@ import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/n
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('useNewSessionPreflightConfigOptionsState', () => {
+    it('keeps previous config options visible while a new cwd probe is pending', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesInvokeMock = vi.fn()
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: {
+                        configOptions: [{ id: 'opt1', name: 'Option 1', type: 'boolean', currentValue: true }],
+                    },
+                },
+            }))
+            .mockImplementationOnce(async () => new Promise<never>(() => undefined));
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+        const { resetDynamicConfigOptionsProbeCacheForTests } = await import('@/sync/domains/sessionControl/dynamicConfigOptionsProbeCache');
+        resetDynamicConfigOptionsProbeCacheForTests();
+
+        const { useNewSessionPreflightConfigOptionsState } = await import('./useNewSessionPreflightConfigOptionsState');
+
+        let cwd = '/repo';
+        let latest: ReturnType<typeof useNewSessionPreflightConfigOptionsState> | null = null;
+        const readLatest = () => {
+            const value = latest as ReturnType<typeof useNewSessionPreflightConfigOptionsState> | null;
+            if (!value) throw new Error('Expected preflight config options state to render');
+            return value;
+        };
+        function Harness() {
+            latest = useNewSessionPreflightConfigOptionsState({
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd,
+            } as any);
+            return null;
+        }
+
+        const root = (await renderScreen(React.createElement(Harness))).tree;
+        await act(async () => {
+            await Promise.resolve();
+        });
+        expect((readLatest().configOptions ?? []).map((option) => option.id)).toEqual(['opt1']);
+
+        cwd = '/repo-2';
+        await act(async () => {
+            root.update(React.createElement(Harness));
+            await Promise.resolve();
+        });
+
+        const refreshed = readLatest();
+        expect(refreshed.probe.phase).toBe('refreshing');
+        expect((refreshed.configOptions ?? []).map((option) => option.id)).toEqual(['opt1']);
+
+        await act(async () => {
+            root.unmount();
+        });
+    });
+
     it('probes config options for non-Codex providers (provider-agnostic)', async () => {
         vi.resetModules();
 

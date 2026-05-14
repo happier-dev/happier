@@ -665,4 +665,72 @@ describe('SessionRightPanelGitCommitTabContent', () => {
         const props = commitTabRenderSpy.mock.calls.at(-1)?.[0];
         expect(props.renderFileActions({ fullPath: 'src/a.ts' })).toBeNull();
     });
+
+    it('keeps file-open callbacks stable when the mounted commit tab becomes inactive', async () => {
+        useChangedFilesDataSpy.mockClear();
+        useChangedFilesDataSpy.mockReturnValue(makeChangedFilesData());
+        commitTabRenderSpy.mockClear();
+        useDerivedSessionChangeSetSpy.mockReturnValue({
+            turnChangeSets: [],
+            latestTurnChangeSet: null,
+            latestTurnScopedChangeSet: null,
+            sessionChangeSet: null,
+            latestTurnDiffByPath: null,
+            providerDiffByPath: null,
+        });
+
+        const openFileInDetails = vi.fn();
+        const openFileInDetailsPinned = vi.fn();
+        const { SessionRightPanelGitCommitTabContent } = await import('./SessionRightPanelGitCommitTabContent');
+
+        const baseProps = {
+            theme: {},
+            sessionId: 's1',
+            sessionPath: '/tmp/repo',
+            scmSnapshot: { capabilities: {} } as any,
+            touchedPaths: [],
+            operationLog: [],
+            projectSessionIds: [],
+            commitSelectionPaths: [],
+            commitSelectionPatches: [],
+            scmCommitStrategy: 'atomic' as const,
+            scmWriteEnabled: true,
+            inFlightScmOperation: null,
+            hasGlobalOperationInFlight: false,
+            scmOperationBusy: false,
+            scmOperationStatus: null,
+            backendLabel: 'Git',
+            commitActionLabel: 'Commit',
+            hasConflicts: false,
+            commitAllowedForComposer: true,
+            commitBlockedMessageForComposer: null,
+            commitWriteEnabled: true,
+            commitSelectionUiEnabled: false,
+            commitDraftMessage: '',
+            onCommitDraftMessageChange: vi.fn(),
+            onCommitFromMessage: vi.fn(),
+            commitMessageGeneratorEnabled: false,
+            onGenerateCommitMessageSuggestion: async () => ({ ok: true, message: '' } as const),
+            onOpenFilesSidebar: vi.fn(),
+            onOpenReviewAllChanges: vi.fn(),
+            onOpenStashDetails: vi.fn(),
+            openFileInDetails,
+            openFileInDetailsPinned,
+        };
+
+        const { tree } = await renderScreen(
+            <SessionRightPanelGitCommitTabContent {...baseProps} showBranchSummary={true} />,
+        );
+        const firstProps = commitTabRenderSpy.mock.calls.at(-1)?.[0];
+        const firstCallCount = commitTabRenderSpy.mock.calls.length;
+
+        await act(async () => {
+            tree.update(<SessionRightPanelGitCommitTabContent {...baseProps} showBranchSummary={false} />);
+        });
+
+        const nextProps = commitTabRenderSpy.mock.calls.at(-1)?.[0];
+        expect(commitTabRenderSpy.mock.calls.length).toBeGreaterThan(firstCallCount);
+        expect(nextProps.onFilePress).toBe(firstProps.onFilePress);
+        expect(nextProps.onFilePressPinned).toBe(firstProps.onFilePressPinned);
+    });
 });

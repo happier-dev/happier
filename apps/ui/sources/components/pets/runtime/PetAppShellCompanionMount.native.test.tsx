@@ -162,18 +162,22 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
+    const readAccountSettings = (): typeof settingsDefaults => ({
+        ...settingsDefaults,
+        ...settingsState.account,
+    });
+    const readLocalSettings = (): typeof localSettingsDefaults => ({
+        ...localSettingsDefaults,
+        ...settingsState.local,
+    });
     return createStorageModuleMock({
         importOriginal,
         overrides: {
             ...actual,
-            useSettings: () => ({
-                ...settingsDefaults,
-                ...settingsState.account,
-            }),
-            useLocalSettings: () => ({
-                ...localSettingsDefaults,
-                ...settingsState.local,
-            }),
+            useSettings: readAccountSettings,
+            useSetting: ((name) => readAccountSettings()[name]) as typeof actual.useSetting,
+            useLocalSettings: readLocalSettings,
+            useLocalSetting: ((name) => readLocalSettings()[name]) as typeof actual.useLocalSetting,
             useAllSessions: () => sessionsState.current,
         },
     });

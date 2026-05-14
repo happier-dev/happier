@@ -158,4 +158,48 @@ describe('buildSessionListIndexFromViewData', () => {
         });
         expect(second?.[0]).not.toBe(first?.[0]);
     });
+
+    it('preserves folder header metadata and session depth in stable node ids', () => {
+        const session = makeRenderable('s1');
+        const viewData: SessionListViewItem[] = [
+            {
+                type: 'header',
+                title: 'Planning',
+                headerKind: 'folder',
+                groupKey: 'folder:server-a:workspace-a:folder-a',
+                serverId: 'server-a',
+                folderId: 'folder-a',
+                folderDepth: 1,
+            } as any,
+            {
+                type: 'session',
+                session,
+                serverId: 'server-a',
+                groupKey: 'folder:server-a:workspace-a:folder-a',
+                groupKind: 'folder',
+                folderId: 'folder-a',
+                folderDepth: 2,
+            } as any,
+        ];
+
+        const first = buildSessionListIndexFromViewData(viewData);
+        expect(first?.[0]).toMatchObject({
+            type: 'header',
+            headerKind: 'folder',
+            folderId: 'folder-a',
+            folderDepth: 1,
+        });
+        expect(first?.[1]).toMatchObject({
+            type: 'session',
+            groupKind: 'folder',
+            folderId: 'folder-a',
+            folderDepth: 2,
+        });
+
+        const folderNodeId = buildSessionListIndexNodeId(first![0]!);
+        expect(folderNodeId).toContain('folder-a');
+
+        const second = buildSessionListIndexFromViewData(viewData, first);
+        expect(second).toBe(first);
+    });
 });

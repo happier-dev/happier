@@ -17,6 +17,53 @@ type SyncEncryption = {
     getMachineEncryption: (machineId: string) => MachineEncryption | null;
 };
 
+type MachineIdentityFields = Pick<
+    Machine,
+    | 'replacedByMachineId'
+    | 'replacedAt'
+    | 'replacementReason'
+    | 'replacementSource'
+    | 'replacementActorUserId'
+    | 'installationId'
+    | 'contentPublicKeyFingerprint'
+>;
+
+type MachineIdentityFieldSource = Readonly<Partial<MachineIdentityFields>>;
+
+type FetchedMachineRow = Readonly<{
+    id: string;
+    metadata: string;
+    metadataVersion: number;
+    daemonState?: string | null;
+    daemonStateVersion?: number;
+    dataEncryptionKey?: string | null;
+    seq: number;
+    active: boolean;
+    activeAt: number;
+    revokedAt?: number | null;
+    replacedByMachineId?: string | null;
+    replacedAt?: number | string | null;
+    replacementReason?: string | null;
+    replacementSource?: string | null;
+    replacementActorUserId?: string | null;
+    installationId?: string | null;
+    contentPublicKeyFingerprint?: string | null;
+    createdAt: number;
+    updatedAt: number;
+}>;
+
+function readMachineIdentityFields(source: MachineIdentityFieldSource): MachineIdentityFields {
+    return {
+        replacedByMachineId: source.replacedByMachineId ?? null,
+        replacedAt: source.replacedAt ?? null,
+        replacementReason: source.replacementReason ?? null,
+        replacementSource: source.replacementSource ?? null,
+        replacementActorUserId: source.replacementActorUserId ?? null,
+        installationId: source.installationId ?? null,
+        contentPublicKeyFingerprint: source.contentPublicKeyFingerprint ?? null,
+    };
+}
+
 const warnedMachineDataEncryptionKeyFailuresByEncryption = new WeakMap<SyncEncryption, Set<string>>();
 
 function warnMachineDataEncryptionKeyDecryptFailureOnce(encryption: SyncEncryption, machineId: string): void {
@@ -62,6 +109,10 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
         metadataVersion: existingMachine?.metadataVersion ?? 0,
         daemonState: existingMachine?.daemonState ?? null,
         daemonStateVersion: existingMachine?.daemonStateVersion ?? 0,
+        ...readMachineIdentityFields({
+            ...existingMachine,
+            ...machineUpdate,
+        }),
     };
 
     // Get machine-specific encryption (might not exist if machine wasn't initialized).
@@ -187,20 +238,7 @@ export async function fetchAndApplyMachines(params: {
         }
         return;
     }
-    const machines = data as Array<{
-        id: string;
-        metadata: string;
-        metadataVersion: number;
-        daemonState?: string | null;
-        daemonStateVersion?: number;
-        dataEncryptionKey?: string | null; // Add support for per-machine encryption keys
-        seq: number;
-        active: boolean;
-        activeAt: number; // Changed from lastActiveAt
-        revokedAt?: number | null;
-        createdAt: number;
-        updatedAt: number;
-    }>;
+    const machines = data as FetchedMachineRow[];
 
     if (!shouldContinue()) {
         return;
@@ -256,12 +294,13 @@ export async function fetchAndApplyMachines(params: {
         return typeof machine.daemonState === 'string' && machine.daemonState.length > 0;
     };
 
-    const buildDisplayFromRowAndCache = (machine: typeof machines[number], cachedEntry: MachineDisplayCacheEntryV1 | undefined): MachineDisplayRenderable => ({
+    const buildDisplayFromRowAndCache = (machine: FetchedMachineRow, cachedEntry: MachineDisplayCacheEntryV1 | undefined): MachineDisplayRenderable => ({
         id: machine.id,
         updatedAt: machine.updatedAt,
         active: machine.active,
         activeAt: machine.activeAt,
         revokedAt: machine.revokedAt ?? null,
+        ...readMachineIdentityFields(machine),
         metadataVersion: machine.metadataVersion,
         metadata: cachedEntry?.metadataVersion === machine.metadataVersion
             ? {
@@ -273,7 +312,7 @@ export async function fetchAndApplyMachines(params: {
     });
 
     const buildMachineFromRowAndCache = (
-        machine: typeof machines[number],
+        machine: FetchedMachineRow,
         cachedEntry: MachineDisplayCacheEntryV1 | undefined,
         existingMachine: Machine | null | undefined,
     ): Machine => {
@@ -300,6 +339,7 @@ export async function fetchAndApplyMachines(params: {
             daemonStateVersion: hasEncryptedDaemonState
                 ? existingMachine?.daemonStateVersion ?? (machine.daemonStateVersion || 0)
                 : (machine.daemonStateVersion || 0),
+            ...readMachineIdentityFields(machine),
         });
     };
 
@@ -319,6 +359,7 @@ export async function fetchAndApplyMachines(params: {
                 metadataVersion: machine.metadataVersion,
                 daemonState: null,
                 daemonStateVersion: machine.daemonStateVersion || 0,
+                ...readMachineIdentityFields(machine),
             };
         }
 
@@ -342,6 +383,7 @@ export async function fetchAndApplyMachines(params: {
                 metadataVersion: machine.metadataVersion,
                 daemonState,
                 daemonStateVersion: machine.daemonStateVersion || 0,
+                ...readMachineIdentityFields(machine),
             };
         } catch (error) {
             console.error(`Failed to decrypt machine ${machine.id}:`, error);
@@ -357,6 +399,7 @@ export async function fetchAndApplyMachines(params: {
                 metadataVersion: machine.metadataVersion,
                 daemonState: null,
                 daemonStateVersion: 0,
+                ...readMachineIdentityFields(machine),
             };
         }
     };

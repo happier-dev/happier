@@ -1,6 +1,4 @@
 import type { Machine, MachineMetadata } from '@/sync/domains/state/storageTypes';
-import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
-import { normalizeMachineHost } from '@happier-dev/protocol';
 
 export interface MachineDisplayMetadata {
     displayName?: string | null;
@@ -14,6 +12,11 @@ export interface MachineDisplayRenderable {
     active: boolean;
     activeAt: number;
     revokedAt?: number | null;
+    replacedByMachineId?: string | null;
+    replacedAt?: number | string | null;
+    replacementReason?: string | null;
+    replacementSource?: string | null;
+    replacementActorUserId?: string | null;
     metadataVersion: number;
     metadata: MachineDisplayMetadata | null;
 }
@@ -34,6 +37,11 @@ export function buildMachineDisplayRenderableFromMachine(machine: Machine): Mach
         active: machine.active,
         activeAt: machine.activeAt,
         revokedAt: machine.revokedAt ?? null,
+        replacedByMachineId: machine.replacedByMachineId ?? null,
+        replacedAt: machine.replacedAt ?? null,
+        replacementReason: machine.replacementReason ?? null,
+        replacementSource: machine.replacementSource ?? null,
+        replacementActorUserId: machine.replacementActorUserId ?? null,
         metadataVersion: machine.metadataVersion,
         metadata: buildMachineDisplayMetadata(machine.metadata),
     };
@@ -45,35 +53,4 @@ export function getMachineDisplaySubtitle(machine: MachineDisplayRenderable | un
     const host = typeof machine?.metadata?.host === 'string' ? machine.metadata.host.trim() : '';
     if (host) return host;
     return machine?.id ?? machineId;
-}
-
-export function resolveBestMachineDisplayRenderableForHost(
-    machines: Record<string, MachineDisplayRenderable>,
-    hostInput: string,
-): MachineDisplayRenderable | null {
-    const host = normalizeMachineHost(hostInput);
-    if (!host) return null;
-
-    let best: MachineDisplayRenderable | null = null;
-    for (const machine of Object.values(machines)) {
-        const machineHost = normalizeMachineHost(normalizeNonEmptyString(machine.metadata?.host));
-        if (!machineHost || machineHost !== host) continue;
-        if (!best) {
-            best = machine;
-            continue;
-        }
-
-        if (machine.metadataVersion !== best.metadataVersion) {
-            if (machine.metadataVersion > best.metadataVersion) {
-                best = machine;
-            }
-            continue;
-        }
-
-        if (machine.id.localeCompare(best.id) > 0) {
-            best = machine;
-        }
-    }
-
-    return best;
 }

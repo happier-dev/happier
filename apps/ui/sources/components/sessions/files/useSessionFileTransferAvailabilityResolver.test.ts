@@ -144,6 +144,41 @@ describe('useSessionFileTransferAvailabilityResolver', () => {
         expect(hook.getCurrent()(512)).toBe(true);
     });
 
+    it('keeps the resolver stable while availability inputs stay unchanged', async () => {
+        state.session = { active: true } as any;
+        state.machineReachability = { machineRpcTargetAvailable: true } as any;
+        state.machineTarget = { machineId: 'machine-1', basePath: '/repo' } as any;
+        state.serverScopedMachine = null as any;
+        state.cachedMachineRpcDirectRoute = { status: 'viable' as const, checkedAt: 10, expiresAt: 20 } as any;
+        state.serverSnapshot = {
+            status: 'ready' as const,
+            features: {
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: {
+                                enabled: false,
+                            },
+                            serverRouted: { enabled: false },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        } as any;
+
+        const { useSessionFileTransferAvailabilityResolver } = await import('./useSessionFileTransferAvailability');
+        const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
+
+        const initialResolver = hook.getCurrent();
+
+        await hook.rerender();
+
+        expect(hook.getCurrent()).toBe(initialResolver);
+    });
+
     it('allows session file transfers when the daemon direct transfer listener is active and direct peer is enabled', async () => {
         state.session = { active: true } as any;
         state.machineReachability = { machineRpcTargetAvailable: true } as any;

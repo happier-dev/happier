@@ -2,6 +2,7 @@ import type { ActionId } from '@happier-dev/protocol';
 import { listActionSpecs } from '@happier-dev/protocol';
 
 import type { Command } from './types';
+import type { KeyboardCommandId } from '@/keyboard';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { storage } from '@/sync/domains/state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
@@ -24,9 +25,9 @@ function extractRecentSessionIds(sessionsById: Record<string, any>): string[] {
 
 function readSessionLabel(session: any): Readonly<{ title: string; subtitle: string }> {
   const name = typeof session?.metadata?.name === 'string' ? session.metadata.name.trim() : '';
-  const title = name || `Session ${String(session?.id ?? '').slice(0, 6)}`;
+  const title = name || t('commandPalette.commands.sessionFallbackTitle', { id: String(session?.id ?? '').slice(0, 6) });
   const path = typeof session?.metadata?.path === 'string' ? session.metadata.path.trim() : '';
-  const subtitle = path || 'Switch to session';
+  const subtitle = path || t('commandPalette.commands.sessionFallbackSubtitle');
   return { title, subtitle };
 }
 
@@ -35,7 +36,7 @@ async function requireSession(
   alert: (title: string, message: string) => void | Promise<void>,
 ): Promise<string | null> {
   if (activeSessionId) return activeSessionId;
-  await alert('Session required', 'Open a session first so this command can target it.');
+  await alert(t('commandPalette.commands.sessionRequiredTitle'), t('commandPalette.commands.sessionRequiredBody'));
   return null;
 }
 
@@ -59,6 +60,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
     memorySearchEnabled: boolean;
     petsCompanionEnabled?: boolean;
   }>;
+  shortcutLabels?: Partial<Record<KeyboardCommandId, string>>;
   petControls?: PetCommandControls;
   nav: Readonly<{
     push: (path: string) => void;
@@ -84,44 +86,44 @@ export function buildCommandPaletteCommands(params: Readonly<{
   const cmds: Command[] = [
     {
       id: 'new-session',
-      title: 'New Session',
-      subtitle: 'Start a new chat session',
+      title: t('commandPalette.commands.newSessionTitle'),
+      subtitle: t('commandPalette.commands.newSessionSubtitle'),
       icon: 'add-circle-outline',
-      category: 'Sessions',
-      shortcut: '⌘N',
+      category: t('commandPalette.commands.sessionsCategory'),
+      shortcut: params.shortcutLabels?.['session.new'],
       action: () => nav.push('/new'),
     },
     {
       id: 'sessions',
-      title: 'View All Sessions',
-      subtitle: 'Browse your chat history',
+      title: t('commandPalette.commands.viewAllSessionsTitle'),
+      subtitle: t('commandPalette.commands.viewAllSessionsSubtitle'),
       icon: 'chatbubbles-outline',
-      category: 'Sessions',
+      category: t('commandPalette.commands.sessionsCategory'),
       action: () => nav.push('/'),
     },
     {
       id: 'settings',
-      title: 'Settings',
-      subtitle: 'Configure your preferences',
+      title: t('commandPalette.commands.settingsTitle'),
+      subtitle: t('commandPalette.commands.settingsSubtitle'),
       icon: 'settings-outline',
-      category: 'Navigation',
-      shortcut: '⌘,',
+      category: t('commandPalette.commands.navigationCategory'),
+      shortcut: params.shortcutLabels?.['settings.open'],
       action: () => nav.push('/settings'),
     },
     {
       id: 'account',
-      title: 'Account',
-      subtitle: 'Manage your account',
+      title: t('commandPalette.commands.accountTitle'),
+      subtitle: t('commandPalette.commands.accountSubtitle'),
       icon: 'person-circle-outline',
-      category: 'Navigation',
+      category: t('commandPalette.commands.navigationCategory'),
       action: () => nav.push('/settings/account'),
     },
     {
       id: 'connect',
-      title: 'Scan QR to connect terminal',
-      subtitle: 'Approve the connection shown in your terminal',
+      title: t('commandPalette.commands.connectTerminalTitle'),
+      subtitle: t('commandPalette.commands.connectTerminalSubtitle'),
       icon: 'link-outline',
-      category: 'Navigation',
+      category: t('commandPalette.commands.navigationCategory'),
       action: () => nav.push('/scan/terminal'),
     },
   ];
@@ -129,10 +131,10 @@ export function buildCommandPaletteCommands(params: Readonly<{
   if (features.memorySearchEnabled) {
     cmds.push({
       id: 'memory-search',
-      title: 'Search Memory',
-      subtitle: 'Search across past conversations',
+      title: t('commandPalette.commands.memorySearchTitle'),
+      subtitle: t('commandPalette.commands.memorySearchSubtitle'),
       icon: 'search-outline',
-      category: 'Navigation',
+      category: t('commandPalette.commands.navigationCategory'),
       action: () => nav.push('/search'),
     });
   }
@@ -196,14 +198,14 @@ export function buildCommandPaletteCommands(params: Readonly<{
       title: label.title,
       subtitle: label.subtitle,
       icon: 'time-outline',
-      category: 'Recent Sessions',
+      category: t('commandPalette.commands.recentSessionsCategory'),
       action: () => nav.navigateToSession(sessionId),
     });
   }
 
   const state = storage.getState() as any;
   const actionSpecs = listActionSpecs().filter((spec) =>
-    isActionEnabledInState(state as any, spec.id, { surface: 'ui', placement: 'command_palette' } as any),
+    isActionEnabledInState(state as any, spec.id, { surface: 'ui_button', placement: 'command_palette' } as any),
   );
   const commandPaletteActionSpecs = actionSpecs.filter((spec) => (spec.placements ?? []).includes('command_palette'));
   const byId = new Map(commandPaletteActionSpecs.map((spec) => [spec.id, spec]));
@@ -213,17 +215,17 @@ export function buildCommandPaletteCommands(params: Readonly<{
     const startPlan = byId.get('subagents.plan.start');
     const startDelegate = byId.get('subagents.delegate.start');
     for (const entry of [
-      startReview ? { spec: startReview, title: 'Start review run', intent: 'review' as const } : null,
-      startPlan ? { spec: startPlan, title: 'Start plan run', intent: 'plan' as const } : null,
-      startDelegate ? { spec: startDelegate, title: 'Start delegation run', intent: 'delegate' as const } : null,
+      startReview ? { spec: startReview, title: t('commandPalette.commands.startReviewRunTitle'), intent: 'review' as const } : null,
+      startPlan ? { spec: startPlan, title: t('commandPalette.commands.startPlanRunTitle'), intent: 'plan' as const } : null,
+      startDelegate ? { spec: startDelegate, title: t('commandPalette.commands.startDelegationRunTitle'), intent: 'delegate' as const } : null,
     ]) {
       if (!entry) continue;
       cmds.push({
         id: `action:${entry.spec.id}`,
         title: entry.title,
-        subtitle: 'Execution runs',
+        subtitle: t('commandPalette.commands.executionRunsSubtitle'),
         icon: 'code-slash-outline',
-        category: 'Runs',
+        category: t('commandPalette.commands.runsCategory'),
         action: async () => {
           const sessionId = await requireSession(activeSessionId, alert);
           if (!sessionId) return;
@@ -254,10 +256,10 @@ export function buildCommandPaletteCommands(params: Readonly<{
     if (list) {
       cmds.push({
         id: `action:${list.id}`,
-        title: 'Open session runs',
-        subtitle: activeSessionId ? 'Runs for current session' : 'Runs across machines',
+        title: t('commandPalette.commands.openSessionRunsTitle'),
+        subtitle: activeSessionId ? t('commandPalette.commands.runsForCurrentSessionSubtitle') : t('commandPalette.commands.runsAcrossMachinesSubtitle'),
         icon: 'list-outline',
-        category: 'Runs',
+        category: t('commandPalette.commands.runsCategory'),
         action: async () => {
           if (activeSessionId) {
             nav.push(`/session/${encodeURIComponent(activeSessionId)}/runs`);
@@ -274,10 +276,10 @@ export function buildCommandPaletteCommands(params: Readonly<{
     if (reset) {
       cmds.push({
         id: `action:${reset.id}`,
-        title: 'Reset voice agent',
-        subtitle: 'Voice',
+        title: t('commandPalette.commands.resetVoiceAgentTitle'),
+        subtitle: t('commandPalette.commands.voiceSubtitle'),
         icon: 'refresh-outline',
-        category: 'Voice',
+        category: t('commandPalette.commands.voiceCategory'),
         action: async () => {
           await actions.execute('ui.voice_global.reset', {}, { defaultSessionId: activeSessionId });
         },
@@ -287,10 +289,10 @@ export function buildCommandPaletteCommands(params: Readonly<{
 
   cmds.push({
     id: 'sign-out',
-    title: 'Sign Out',
-    subtitle: 'Sign out of your account',
+    title: t('commandPalette.commands.signOutTitle'),
+    subtitle: t('commandPalette.commands.signOutSubtitle'),
     icon: 'log-out-outline',
-    category: 'System',
+    category: t('commandPalette.commands.systemCategory'),
     action: async () => {
       await auth.logout();
     },
@@ -299,10 +301,10 @@ export function buildCommandPaletteCommands(params: Readonly<{
   if (isDev) {
     cmds.push({
       id: 'dev-menu',
-      title: 'Developer Menu',
-      subtitle: 'Access developer tools',
+      title: t('commandPalette.commands.developerMenuTitle'),
+      subtitle: t('commandPalette.commands.developerMenuSubtitle'),
       icon: 'code-slash-outline',
-      category: 'Developer',
+      category: t('commandPalette.commands.developerCategory'),
       action: () => nav.push('/dev'),
     });
   }

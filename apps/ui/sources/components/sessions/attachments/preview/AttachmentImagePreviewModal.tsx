@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, useWindowDimensions, View } from 'react-native';
+import { Platform, Pressable, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -10,6 +10,7 @@ import { Typography } from '@/constants/Typography';
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type AttachmentImagePreviewModalImage =
     | Readonly<{
@@ -128,7 +129,7 @@ function AttachmentImagePreviewCurrentImage(props: Readonly<{
 
     return (
         <View style={styles.centeredState}>
-            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
         </View>
     );
 }

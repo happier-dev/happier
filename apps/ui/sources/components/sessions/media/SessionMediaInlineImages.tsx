@@ -1,15 +1,11 @@
 import * as React from 'react';
-import {
-    Image,
-    Pressable,
-    View,
-    type ImageLoadEvent,
-} from 'react-native';
+import { Image, Pressable, View, type ImageLoadEvent } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
 import { useSessionImagePreview } from '@/components/sessions/files/content/imagePreview/useSessionImagePreview';
 import {
     AttachmentImagePreviewModal,
@@ -20,7 +16,11 @@ import {
     resolveSessionMediaInlineImageLayout,
     type SessionMediaInlineImageDimensions,
 } from '@/components/sessions/media/resolveSessionMediaInlineImageLayout';
-import type { SessionMediaInlineImageSummary } from '@/sync/domains/session/media/sessionMediaMessageMeta';
+import type {
+    SessionMediaInlineImageAvailableSummary,
+    SessionMediaInlineImageSummary,
+    SessionMediaInlineImageUnavailableSummary,
+} from '@/sync/domains/session/media/sessionMediaMessageMeta';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -47,7 +47,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         backgroundColor: theme.colors.surface.elevated,
     },
+    unavailableText: {
+        marginTop: 6,
+        color: theme.colors.text.secondary,
+        textAlign: 'center',
+    },
 }));
+
+function isUnavailableInlineImage(
+    media: SessionMediaInlineImageSummary,
+): media is SessionMediaInlineImageUnavailableSummary {
+    return media.status === 'unavailable';
+}
 
 function resolveInlineImageAccessibilityLabel(media: SessionMediaInlineImageSummary): string {
     if (media.category === 'attachment') {
@@ -61,7 +72,7 @@ function resolveInlineImageAccessibilityLabel(media: SessionMediaInlineImageSumm
 
 function SessionMediaInlineImageTile(props: Readonly<{
     sessionId: string;
-    media: SessionMediaInlineImageSummary;
+    media: SessionMediaInlineImageAvailableSummary;
     imageIndex: number;
     testIdPrefix: string;
     onOpenPath: (path: string) => void;
@@ -136,6 +147,31 @@ function SessionMediaInlineImageTile(props: Readonly<{
     );
 }
 
+function SessionMediaUnavailableInlineImageTile(props: Readonly<{
+    media: SessionMediaInlineImageUnavailableSummary;
+    testIdPrefix: string;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    return (
+        <View
+            testID={`${props.testIdPrefix}-inline-image-unavailable:${props.media.id}`}
+            accessibilityRole="image"
+            accessibilityLabel={t('files.sessionMedia.unavailableImageA11y', { name: props.media.name })}
+            style={[styles.tile, styles.placeholder, { width: 84, height: 84 }]}
+        >
+            <Ionicons
+                name="alert-circle-outline"
+                size={22}
+                color={theme.colors.text.secondary}
+            />
+            <Text style={styles.unavailableText} numberOfLines={2}>
+                {t('files.sessionMedia.previewUnavailableA11y')}
+            </Text>
+        </View>
+    );
+}
+
 export const SessionMediaInlineImages = React.memo(function SessionMediaInlineImages(props: Readonly<{
     sessionId: string;
     media: readonly SessionMediaInlineImageSummary[];
@@ -145,44 +181,72 @@ export const SessionMediaInlineImages = React.memo(function SessionMediaInlineIm
     const styles = stylesheet;
     const testIdPrefix = props.testIdPrefix ?? 'message-session-media';
 
-    const images = React.useMemo(() => props.media.map((media): Readonly<{
-        media: SessionMediaInlineImageSummary;
-        modalImage: AttachmentImagePreviewModalImage;
-    }> => ({
-        media,
-        modalImage: {
-            kind: 'session-image',
-            title: media.name,
-            sessionId: props.sessionId,
-            filePath: media.path,
-            mimeType: media.mimeType,
-            sizeBytes: media.sizeBytes,
-            cacheKey: media.sha256 ?? null,
-        },
-    })), [props.media, props.sessionId]);
+    const images = React.useMemo(() => {
+        let nextModalIndex = 0;
+        return props.media.map((media): Readonly<{
+            media: SessionMediaInlineImageSummary;
+            modalImage: AttachmentImagePreviewModalImage | null;
+            modalIndex: number | null;
+        }> => {
+            if (isUnavailableInlineImage(media)) {
+                return {
+                    media,
+                    modalImage: null,
+                    modalIndex: null,
+                };
+            }
+
+            const modalIndex = nextModalIndex;
+            nextModalIndex += 1;
+            return {
+                media,
+                modalImage: {
+                    kind: 'session-image',
+                    title: media.name,
+                    sessionId: props.sessionId,
+                    filePath: media.path,
+                    mimeType: media.mimeType,
+                    sizeBytes: media.sizeBytes,
+                    cacheKey: media.sha256 ?? null,
+                },
+                modalIndex,
+            };
+        });
+    }, [props.media, props.sessionId]);
 
     if (images.length === 0) return null;
 
     return (
         <View testID={`${testIdPrefix}-inline-images`} style={styles.container}>
             {images.map((entry, index) => (
-                <SessionMediaInlineImageTile
-                    key={`${entry.media.id}:${entry.media.path}`}
-                    sessionId={props.sessionId}
-                    media={entry.media}
-                    imageIndex={index}
-                    testIdPrefix={testIdPrefix}
-                    onOpenPath={props.onOpenPath}
-                    onOpenPreview={(imageIndex) => {
-                        Modal.show({
-                            component: AttachmentImagePreviewModal,
-                            props: {
-                                images: images.map((imageEntry) => imageEntry.modalImage),
-                                initialIndex: imageIndex,
-                            },
-                        });
-                    }}
-                />
+                isUnavailableInlineImage(entry.media) ? (
+                    <SessionMediaUnavailableInlineImageTile
+                        key={entry.media.id}
+                        media={entry.media}
+                        testIdPrefix={testIdPrefix}
+                    />
+                ) : (
+                    <SessionMediaInlineImageTile
+                        key={`${entry.media.id}:${entry.media.path}`}
+                        sessionId={props.sessionId}
+                        media={entry.media}
+                        imageIndex={entry.modalIndex ?? 0}
+                        testIdPrefix={testIdPrefix}
+                        onOpenPath={props.onOpenPath}
+                        onOpenPreview={(imageIndex) => {
+                            const modalImages = images.flatMap((imageEntry) => (
+                                imageEntry.modalImage ? [imageEntry.modalImage] : []
+                            ));
+                            Modal.show({
+                                component: AttachmentImagePreviewModal,
+                                props: {
+                                    images: modalImages,
+                                    initialIndex: Math.min(imageIndex, Math.max(0, modalImages.length - 1)),
+                                },
+                            });
+                        }}
+                    />
+                )
             ))}
         </View>
     );

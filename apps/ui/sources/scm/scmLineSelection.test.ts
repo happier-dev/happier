@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildFileLineSelectionFingerprint, canUseLineSelection } from './scmLineSelection';
+import { buildFileLineSelectionFingerprint, canStartLineSelection, canUseLineSelection } from './scmLineSelection';
 
 describe('canUseLineSelection', () => {
     it('allows line selection only when write operations are enabled and diff mode is explicit', () => {
@@ -90,6 +90,50 @@ describe('canUseLineSelection', () => {
                 diffMode: 'pending',
                 diffContent: '',
             })
+        ).toBe(false);
+    });
+});
+
+describe('canStartLineSelection', () => {
+    it('allows starting line selection from a combined diff when a pending delta can be line-selected', () => {
+        expect(
+            canStartLineSelection({
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualLineSelectionEnabled: true,
+                hasConflicts: false,
+                isBinary: false,
+                hasPendingDelta: true,
+                hasIncludedDelta: true,
+                diffContent: 'diff --git a/a b/a\n@@ -1 +1 @@\n-old\n+new\n',
+            }),
+        ).toBe(true);
+    });
+
+    it('blocks starting line selection when no selectable delta or no renderable diff exists', () => {
+        expect(
+            canStartLineSelection({
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualLineSelectionEnabled: true,
+                hasConflicts: false,
+                isBinary: false,
+                hasPendingDelta: false,
+                hasIncludedDelta: true,
+                diffContent: 'diff --git a/a b/a\n@@ -1 +1 @@\n-old\n+new\n',
+            }),
+        ).toBe(false);
+        expect(
+            canStartLineSelection({
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualLineSelectionEnabled: true,
+                hasConflicts: false,
+                isBinary: false,
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                diffContent: '',
+            }),
         ).toBe(false);
     });
 });

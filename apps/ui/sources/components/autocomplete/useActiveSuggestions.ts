@@ -1,6 +1,15 @@
 import { ValueSync } from '@/utils/sessions/sync';
 import * as React from 'react';
 
+type AutocompleteSuggestion = {
+    key: string;
+    text: string;
+    label?: string;
+    description?: string;
+    component?: React.ElementType;
+    rowHeight?: number;
+};
+
 interface SuggestionOptions {
     clampSelection?: boolean;  // If true, clamp instead of preserving exact position
     autoSelectFirst?: boolean; // If true, automatically select first item when suggestions appear
@@ -9,11 +18,7 @@ interface SuggestionOptions {
 
 export function useActiveSuggestions(
     query: string | null, 
-    handler: (query: string) => Promise<{
-        key: string,
-        text: string,
-        component: React.ElementType
-    }[]>,
+    handler: (query: string) => Promise<AutocompleteSuggestion[]>,
     options: SuggestionOptions = {}
 ) {
     const { 
@@ -24,7 +29,7 @@ export function useActiveSuggestions(
 
     // State for suggestions
     const [state, setState] = React.useState<{
-        suggestions: { key: string, text: string, component: React.ElementType }[];
+        suggestions: AutocompleteSuggestion[];
         selected: number,
     }>({
         suggestions: [],

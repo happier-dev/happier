@@ -771,6 +771,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const savedModelModeUpdatedAt = savedModelModeUpdatedAts[session.id];
                 const existingOptimisticThinkingAt = state.sessions[session.id]?.optimisticThinkingAt ?? null;
                 const existingThinkingGraceUntil = state.sessions[session.id]?.thinkingGraceUntil ?? null;
+                const previousSession = state.sessions[session.id];
+                const wasThinking = previousSession?.thinking === true;
                 const existingLastTurnCompletedAt = state.sessions[session.id]?.lastTurnCompletedAt ?? null;
                 const incomingLastTurnCompletedAt = typeof session.lastTurnCompletedAt === 'number'
                     && Number.isFinite(session.lastTurnCompletedAt)
@@ -852,6 +854,13 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         thinkingGraceTimeoutBySessionId.delete(session.id);
                     }
                 } else if (session.thinking === true) {
+                    mergedThinkingGraceUntil = null;
+                    const graceTimeout = thinkingGraceTimeoutBySessionId.get(session.id);
+                    if (graceTimeout) {
+                        clearTimeout(graceTimeout);
+                        thinkingGraceTimeoutBySessionId.delete(session.id);
+                    }
+                } else if (wasThinking) {
                     mergedThinkingGraceUntil = localNowMs + SESSION_THINKING_GRACE_TIMEOUT_MS;
 
                     const existingTimeout = thinkingGraceTimeoutBySessionId.get(session.id);
@@ -910,7 +919,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     modelMode: mergedModelMode,
                     modelModeUpdatedAt: mergedModelModeUpdatedAt,
                 };
-                const previousSession = state.sessions[session.id];
                 const mergedSession = areStoredSessionsEqual(previousSession, nextSession)
                     ? previousSession
                     : nextSession;

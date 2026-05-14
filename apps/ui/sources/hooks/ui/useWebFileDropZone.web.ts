@@ -17,52 +17,58 @@ export function useWebFileDropZone(params: Readonly<{
     onDragOver: (event: any) => void;
     onDrop: (event: any) => void;
 }> {
+    const { enabled, onFileDragActiveChange, onFilesDropped } = params;
     const dragDepthRef = React.useRef(0);
     const activeRef = React.useRef(false);
     const setActive = React.useCallback((active: boolean) => {
         if (activeRef.current === active) return;
         activeRef.current = active;
-        params.onFileDragActiveChange?.(active);
-    }, [params.onFileDragActiveChange]);
+        onFileDragActiveChange?.(active);
+    }, [onFileDragActiveChange]);
 
     React.useEffect(() => {
-        if (params.enabled) return;
+        if (enabled) return;
         dragDepthRef.current = 0;
         setActive(false);
-    }, [params.enabled, setActive]);
+    }, [enabled, setActive]);
 
     const onDragEnter = React.useCallback((event: any) => {
-        if (!params.enabled) return;
+        if (!enabled) return;
         if (!isWebFileDragEvent(event as DragEventLike)) return;
         dragDepthRef.current += 1;
         if (dragDepthRef.current === 1) {
             setActive(true);
         }
-    }, [params.enabled, setActive]);
+    }, [enabled, setActive]);
 
     const onDragLeave = React.useCallback((event: any) => {
-        if (!params.enabled) return;
+        if (!enabled) return;
         if (!isWebFileDragEvent(event as DragEventLike)) return;
         dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
         if (dragDepthRef.current === 0) {
             setActive(false);
         }
-    }, [params.enabled, setActive]);
+    }, [enabled, setActive]);
 
     const onDragOver = React.useCallback((event: any) => {
-        if (!params.enabled) return;
+        if (!enabled) return;
         if (!isWebFileDragEvent(event as DragEventLike)) return;
         event.preventDefault?.();
-    }, [params.enabled]);
+    }, [enabled]);
 
     const onDrop = React.useCallback((event: any) => {
-        if (!params.enabled) return;
+        if (!enabled) return;
         if (!isWebFileDragEvent(event as DragEventLike)) return;
         event.preventDefault?.();
         dragDepthRef.current = 0;
         setActive(false);
-        void params.onFilesDropped(event);
-    }, [params.enabled, params.onFilesDropped, setActive]);
+        void onFilesDropped(event);
+    }, [enabled, onFilesDropped, setActive]);
 
-    return { onDragEnter, onDragLeave, onDragOver, onDrop };
+    return React.useMemo(() => ({
+        onDragEnter,
+        onDragLeave,
+        onDragOver,
+        onDrop,
+    }), [onDragEnter, onDragLeave, onDragOver, onDrop]);
 }

@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
 
 import type { Option } from './MarkdownBlockView';
+import type { MarkdownSourceRange } from './parseMarkdown';
 import {
     normalizeMarkdownRenderingProfile,
     type MarkdownRenderingProfile,
@@ -12,6 +13,12 @@ import type { MarkdownStreamingMode } from './streaming/useStreamingMarkdownBloc
 
 export type { Option };
 export type { MarkdownRenderingProfile };
+export type { MarkdownSourceRange };
+
+export type MarkdownSourceRangeAction = Readonly<{
+    sourceRange: MarkdownSourceRange;
+    markdown: string;
+}>;
 
 export const MarkdownView = React.memo((props: {
     testID?: string;
@@ -25,6 +32,10 @@ export const MarkdownView = React.memo((props: {
     streamingMode?: MarkdownStreamingMode;
     streamingAnimated?: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    staticRenderPlaceholderEnabled?: boolean;
+    onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
+    renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
+    highlightSourceRange?: MarkdownSourceRange | null;
 }) => {
     const profile = normalizeMarkdownRenderingProfile({
         profile: props.profile,
@@ -44,6 +55,10 @@ export const MarkdownView = React.memo((props: {
             streamingMode={props.streamingMode === 'streaming' ? 'streaming' : 'static'}
             streamingAnimated={props.streamingAnimated === true}
             streamingRevealPreset={props.streamingRevealPreset}
+            staticRenderPlaceholderEnabled={props.staticRenderPlaceholderEnabled}
+            onPressSourceRange={props.onPressSourceRange}
+            renderAfterSourceRange={props.renderAfterSourceRange}
+            highlightSourceRange={props.highlightSourceRange}
         />
     );
 });

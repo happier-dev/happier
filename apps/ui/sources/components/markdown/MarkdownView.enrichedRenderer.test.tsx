@@ -23,6 +23,14 @@ vi.mock('./MermaidRenderer', () => ({
         React.createElement('MermaidRenderer', props),
 }));
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}
+
 describe('MarkdownView (enriched renderer)', () => {
     it('renders package-safe prose as one selectable enriched markdown run', async () => {
         const { MarkdownView } = await import('./MarkdownView');
@@ -90,5 +98,33 @@ describe('MarkdownView (enriched renderer)', () => {
         enrichedRun.props.onLinkPress({ url: 'http://localhost:18829/repo/src/index.ts:8' });
 
         expect(onLinkPress).toHaveBeenCalledWith('http://localhost:18829/repo/src/index.ts:8');
+    });
+
+    it('lets callers handle markdown source ranges without centering markdown content', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const onPressSourceRange = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(MarkdownView as any, {
+                markdown: '# Title',
+                selectable: true,
+                profile: 'transcript',
+                onPressSourceRange,
+            }),
+        );
+
+        const trigger = screen.findByProps({ testID: 'markdown-source-range-trigger:1-1' });
+        trigger.props.onPress();
+
+        expect(onPressSourceRange).toHaveBeenCalledWith({
+            sourceRange: { startLine: 1, endLine: 1 },
+            markdown: '# Title',
+        });
+        expect(flattenStyle(trigger.props.style)).toMatchObject({
+            width: '100%',
+            alignSelf: 'stretch',
+            alignItems: 'stretch',
+        });
+        expect(screen.findAllByType('EnrichedMarkdownText')).toHaveLength(1);
     });
 });

@@ -37,6 +37,8 @@ installCodeDiffCommonModuleMocks({
 
 vi.mock('./pierreThemeRegistry.web', () => ({
     ensureHappierPierreThemesRegistered: () => {},
+    ensureHappierPierreThemeRegistered: () => {},
+    resolveHappierPierreThemeIds: () => ({ light: 'light', dark: 'dark' }),
     HAPPIER_PIERRE_THEME_IDS: { light: 'light', dark: 'dark' },
 }));
 
@@ -159,11 +161,9 @@ describe('PierreDiffViewer (web)', () => {
 
         expect(resolvePierreSelectionStyle({
             colors: {
-                surface: {
-                    base: '#surface',
-                    inset: '#surface-inset',
-                },
-                success: '#success',
+                surface: { base: '#surface', inset: '#surface-inset' },
+                state: { success: { foreground: '#success' } },
+                text: { link: '#link' },
             },
         })).toMatchObject({
             '--diffs-bg-selection': '#surface-inset',
@@ -409,6 +409,58 @@ describe('PierreDiffViewer (web)', () => {
                 numberElement: {} as any,
                 numberColumn: false,
                 event: {} as any,
+            });
+        });
+
+        expect(onPressLine).toHaveBeenCalledTimes(1);
+        const lineArg = onPressLine.mock.calls[0]?.[0];
+        expect(lineArg?.newLine).toBe(1);
+        expect(lineArg?.renderPrefixText).toBe('+');
+    });
+
+    it('maps bubbled Pierre row clicks to onPressLine with a mapped CodeLine', async () => {
+        fileDiffSpy.mockClear();
+        const onPressLine = vi.fn();
+
+        const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+
+        const patch = [
+            'diff --git a/a.ts b/a.ts',
+            '--- a/a.ts',
+            '+++ b/a.ts',
+            '@@ -1,1 +1,1 @@',
+            '-foo',
+            '+bar',
+            '',
+        ].join('\n');
+
+        let screen!: Awaited<ReturnType<typeof renderScreen>>;
+        await renderer.act(async () => {
+            screen = await renderScreen(<PierreDiffViewer
+                    mode="unified"
+                    filePath="src/a.ts"
+                    unifiedDiff={patch}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    onPressLine={onPressLine as any}
+                />);
+        });
+
+        const wrapper = screen.findByProps({ 'data-testid': 'pierre-diff-viewer' });
+        const row = {
+            getAttribute: (name: string) => {
+                if (name === 'data-line-type') return 'change-addition';
+                if (name === 'data-line') return '1';
+                return null;
+            },
+        };
+
+        await renderer.act(async () => {
+            wrapper.props.onClickCapture?.({
+                nativeEvent: {
+                    composedPath: () => [row],
+                },
             });
         });
 

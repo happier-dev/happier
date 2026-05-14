@@ -218,6 +218,12 @@ export interface ResumeSessionOptions {
     codexBackendMode?: import('@happier-dev/agents').CodexBackendMode;
     runtimeDescriptorV1?: import('@happier-dev/protocol').RuntimeDescriptorV1;
     /**
+     * Transcript cursor to use when the resume request is caused by a just-committed
+     * wake message. The daemon should catch up after this seq so that prompt is
+     * consumed without replaying older turns.
+     */
+    initialTranscriptAfterSeq?: number;
+    /**
      * Internal daemon freshness barrier. Resume callers should normally omit this and let
      * `resumeSession` capture a freshly flushed account-settings version at the RPC boundary.
      */
@@ -260,6 +266,7 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             codexBackendMode,
             runtimeDescriptorV1,
             accountSettingsVersionHint,
+            initialTranscriptAfterSeq,
             preferRequestedMachineTarget,
             preferScopedMachineRpc,
         } = options;
@@ -296,6 +303,7 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             ...(modelId ? { modelId } : {}),
             ...(typeof modelUpdatedAt === 'number' ? { modelUpdatedAt } : {}),
             ...(typeof accountSettingsVersionHint === 'number' ? { accountSettingsVersionHint } : {}),
+            ...(typeof initialTranscriptAfterSeq === 'number' ? { initialTranscriptAfterSeq } : {}),
             ...preparation,
             experimentalCodexAcp,
             codexBackendMode,
@@ -366,6 +374,9 @@ export type ContinueSessionWithReplayOptions = Readonly<{
 
 export async function continueSessionWithReplay(options: ContinueSessionWithReplayOptions): Promise<SessionContinueWithReplayRpcResult> {
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+    const replayTarget = readMachineTargetForSession(options.replay.previousSessionId);
+    const machineId = replayTarget?.machineId ?? options.machineId;
+    const directory = replayTarget?.basePath ?? options.directory;
     const canonicalAgent = isLegacyCompatAgentType(options.agent) ? undefined : options.agent;
     const backendTarget = options.backendTarget
         ? readBackendTargetRefV2(options.backendTarget)
@@ -379,10 +390,10 @@ export async function continueSessionWithReplay(options: ContinueSessionWithRepl
         : canonicalAgent;
     try {
         const raw = await machineRpcWithServerScope<unknown, unknown>({
-            machineId: options.machineId,
+            machineId,
             method: RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
             payload: {
-                directory: options.directory,
+                directory,
                 ...(legacyAgent ? { agent: legacyAgent } : {}),
                 ...(backendTarget ? { backendTarget } : {}),
                 approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,

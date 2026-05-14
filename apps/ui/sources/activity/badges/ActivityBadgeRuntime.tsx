@@ -199,11 +199,17 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
         serverSnapshotAllowed,
     ]);
 
-    React.useEffect(() => {
-        if (!badgeState) return;
+    const badgeCount = badgeState?.count;
+    const showNonNumericDot = badgeState?.showNonNumericDot;
 
+    React.useEffect(() => {
+        if (badgeCount === undefined || showNonNumericDot === undefined) return;
+        const nextBadgeState = {
+            count: badgeCount,
+            showNonNumericDot,
+        };
         if (isTauriDesktopHost) {
-            fireAndForget(applyTauriBadgeState(badgeState), {
+            fireAndForget(applyTauriBadgeState(nextBadgeState), {
                 tag: 'ActivityBadgeRuntime.applyTauriBadgeState',
             });
             return;
@@ -211,10 +217,10 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
 
         if (Platform.OS === 'web') return;
 
-        fireAndForget(applyExpoNativeBadgeState(badgeState), {
+        fireAndForget(applyExpoNativeBadgeState(nextBadgeState), {
             tag: 'ActivityBadgeRuntime.applyExpoNativeBadgeState',
         });
-    }, [badgeState, isTauriDesktopHost]);
+    }, [badgeCount, isTauriDesktopHost, showNonNumericDot]);
 
     return null;
 }

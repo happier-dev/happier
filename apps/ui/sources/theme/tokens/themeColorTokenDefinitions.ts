@@ -35,6 +35,14 @@ export type EditableThemeColorTokenDefinition = EditableThemeColorTokenDefinitio
     id: ThemeColorTokenId;
 }>;
 
+export type ThemeColorTokenClassificationStatus = 'internal' | 'derived' | 'deprecated';
+
+export type ThemeColorTokenClassification = Readonly<{
+    path: readonly string[];
+    status: ThemeColorTokenClassificationStatus;
+    reason: string;
+}>;
+
 const textOnCanvasAndSurface = [
     { tokenId: 'background.canvas', minRatio: 4.5 },
     { tokenId: 'surface.base', minRatio: 4.5 },
@@ -57,7 +65,7 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'border.surface', path: ['border', 'surface'], group: 'border', label: 'Surface border', description: 'Outer stroke for cards, popovers, dropdowns, composer panels, and other bounded surfaces.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'border.strong', path: ['border', 'strong'], group: 'border', label: 'Strong border', description: 'Higher-emphasis outline for elevated or focused surface boundaries.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'border.modal', path: ['border', 'modal'], group: 'border', label: 'Modal border', description: 'Border color for modal card and dialog chrome surfaces.', valueKind: 'color' }),
-    defineEditableThemeColorToken({ id: 'effect.surfaceHighlight', path: ['effect', 'surfaceHighlight'], group: 'effect', label: 'Surface highlight', description: 'Color-only edge highlight for premium card, popover, and composer surfaces.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'effect.surfaceHighlight', path: ['effect', 'surfaceHighlight'], group: 'effect', label: 'Surface highlight', description: 'Surface chrome accent for bounded cards, popovers, and composer surfaces.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'chrome.header.background', path: ['chrome', 'header', 'background'], group: 'chrome', label: 'Header background', description: 'Navigation and screen header background color.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'chrome.header.foreground', path: ['chrome', 'header', 'foreground'], group: 'chrome', label: 'Header foreground', description: 'Navigation header title and icon color.', valueKind: 'color', contrastPairs: stateContrast('chrome.header.background') }),
 
@@ -143,8 +151,12 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'diff.removed.background', path: ['diff', 'removed', 'background'], group: 'diff', label: 'Diff removed background', description: 'Background for removed lines in diff views.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'diff.removed.foreground', path: ['diff', 'removed', 'foreground'], group: 'diff', label: 'Diff removed foreground', description: 'Foreground for removed lines in diff views.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'diff.hunk.background', path: ['diff', 'hunk', 'background'], group: 'diff', label: 'Diff hunk background', description: 'Background for diff hunk header lines.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'diff.hunk.foreground', path: ['diff', 'hunk', 'foreground'], group: 'diff', label: 'Diff hunk foreground', description: 'Foreground for diff hunk header lines.', valueKind: 'color', contrastPairs: stateContrast('diff.hunk.background') }),
+    defineEditableThemeColorToken({ id: 'diff.context.foreground', path: ['diff', 'context', 'foreground'], group: 'diff', label: 'Diff context foreground', description: 'Foreground for unchanged context lines in diff views.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'diff.inlineAdded.background', path: ['diff', 'inlineAdded', 'background'], group: 'diff', label: 'Inline added background', description: 'Background for inline added segments in diff views.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'diff.inlineAdded.foreground', path: ['diff', 'inlineAdded', 'foreground'], group: 'diff', label: 'Inline added foreground', description: 'Foreground for inline added segments in diff views.', valueKind: 'color', contrastPairs: stateContrast('diff.inlineAdded.background') }),
     defineEditableThemeColorToken({ id: 'diff.inlineRemoved.background', path: ['diff', 'inlineRemoved', 'background'], group: 'diff', label: 'Inline removed background', description: 'Background for inline removed segments in diff views.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'diff.inlineRemoved.foreground', path: ['diff', 'inlineRemoved', 'foreground'], group: 'diff', label: 'Inline removed foreground', description: 'Foreground for inline removed segments in diff views.', valueKind: 'color', contrastPairs: stateContrast('diff.inlineRemoved.background') }),
 
     defineEditableThemeColorToken({ id: 'permission.default', path: ['permission', 'default'], group: 'permission', label: 'Default permission', description: 'Default permission-mode color.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'permission.acceptEdits', path: ['permission', 'acceptEdits'], group: 'permission', label: 'Accept-edits permission', description: 'Permission-mode color for accepting edits.', valueKind: 'color' }),
@@ -163,6 +175,86 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
 ] as const;
 
 export type ThemeColorTokenId = typeof EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS[number]['id'];
+
+const accentPaletteTokenClassifications = [
+    'blue',
+    'green',
+    'indigo',
+    'orange',
+    'purple',
+    'red',
+    'yellow',
+].map((key) => ({
+    path: ['accent', key],
+    status: 'internal',
+    reason: 'Decorative accent palette; public customization routes semantic uses through text, state, and control tokens.',
+} as const));
+
+const desktopPetOverlayTokenClassifications = [
+    'background',
+    'backgroundPressed',
+    'controlBackground',
+    'controlBackgroundPressed',
+    'text',
+    'textSecondary',
+].map((key) => ({
+    path: ['desktopPetOverlay', 'bubble', key],
+    status: 'internal',
+    reason: 'Feature-specific desktop pet bubble palette; not part of the V1 public theme profile surface.',
+} as const));
+
+const shadowLevelTokenClassifications = [1, 2, 3, 4, 5].flatMap((level) => [
+    {
+        path: ['shadowLevels', String(level), 'boxShadow'],
+        status: 'internal',
+        reason: 'Shadow recipe string, not a standalone editable color token.',
+    },
+    {
+        path: ['shadowLevels', String(level), 'shadowColor'],
+        status: 'internal',
+        reason: 'Native shadow recipe color, not a standalone editable color token.',
+    },
+] as const);
+
+export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
+    ...accentPaletteTokenClassifications,
+    ...desktopPetOverlayTokenClassifications,
+    ...shadowLevelTokenClassifications,
+
+    { path: ['button', 'primary', 'gradient', 'colors', '0'], status: 'derived', reason: 'Primary button gradient stop derived from the primary button background recipe.' },
+    { path: ['button', 'primary', 'gradient', 'colors', '1'], status: 'derived', reason: 'Primary button gradient stop derived from the primary button background recipe.' },
+    { path: ['fab', 'gradient', 'colors', '0'], status: 'derived', reason: 'FAB gradient stop derived from the FAB background recipe.' },
+    { path: ['fab', 'gradient', 'colors', '1'], status: 'derived', reason: 'FAB gradient stop derived from the FAB background recipe.' },
+    { path: ['segmentedControl', 'activeGradient', 'colors', '0'], status: 'derived', reason: 'Segmented-control active gradient stop derived from active segment background.' },
+    { path: ['segmentedControl', 'activeGradient', 'colors', '1'], status: 'derived', reason: 'Segmented-control active gradient stop derived from active segment background.' },
+
+    { path: ['diff', 'added', 'border'], status: 'internal', reason: 'Diff added line border detail; V1 exposes added background and foreground only.' },
+    { path: ['diff', 'removed', 'border'], status: 'internal', reason: 'Diff removed line border detail; V1 exposes removed background and foreground only.' },
+    { path: ['diff', 'context', 'background'], status: 'internal', reason: 'Context-line background is currently an internal renderer detail; visible context foreground is public editable.' },
+    { path: ['diff', 'error'], status: 'derived', reason: 'Diff error summary color follows state danger semantics.' },
+    { path: ['diff', 'leadingSpaceDot'], status: 'internal', reason: 'Whitespace marker tint is an internal diff-rendering detail.' },
+    { path: ['diff', 'lineNumber', 'background'], status: 'internal', reason: 'Diff gutter background is an internal renderer detail.' },
+    { path: ['diff', 'lineNumber', 'foreground'], status: 'internal', reason: 'Diff gutter foreground is an internal renderer detail.' },
+    { path: ['diff', 'outline'], status: 'internal', reason: 'Diff outline is an internal renderer detail rather than a V1 public token.' },
+    { path: ['diff', 'success'], status: 'derived', reason: 'Diff success summary color follows state success semantics.' },
+
+    { path: ['feed', 'card', 'background'], status: 'derived', reason: 'Tool feed card surface derived from surface.elevated so private transcript chrome follows active theme profiles.' },
+    { path: ['shadow', 'color'], status: 'internal', reason: 'Legacy tint helper for computed shadows, not a standalone editable color token.' },
+    { path: ['shadowPopoverArrowBoxShadow'], status: 'internal', reason: 'Popover arrow shadow recipe string, not a standalone editable color token.' },
+
+    { path: ['status', 'actionRequired'], status: 'derived', reason: 'Connection status color derived from state warning semantics.' },
+    { path: ['status', 'connected'], status: 'derived', reason: 'Connection status color derived from state success semantics.' },
+    { path: ['status', 'connecting'], status: 'derived', reason: 'Connection status color derived from state info semantics.' },
+    { path: ['status', 'default'], status: 'derived', reason: 'Connection status color derived from state neutral semantics.' },
+    { path: ['status', 'disconnected'], status: 'derived', reason: 'Connection status color derived from state neutral semantics.' },
+    { path: ['status', 'error'], status: 'derived', reason: 'Connection status color derived from state danger semantics.' },
+
+    { path: ['syntax', 'bracket1'], status: 'internal', reason: 'Bracket-pair syntax color is internal until bracket colorization is exposed as a public editor token.' },
+    { path: ['syntax', 'bracket2'], status: 'internal', reason: 'Bracket-pair syntax color is internal until bracket colorization is exposed as a public editor token.' },
+    { path: ['syntax', 'bracket3'], status: 'internal', reason: 'Bracket-pair syntax color is internal until bracket colorization is exposed as a public editor token.' },
+    { path: ['syntax', 'bracket4'], status: 'internal', reason: 'Bracket-pair syntax color is internal until bracket colorization is exposed as a public editor token.' },
+    { path: ['syntax', 'bracket5'], status: 'internal', reason: 'Bracket-pair syntax color is internal until bracket colorization is exposed as a public editor token.' },
+] as const satisfies readonly ThemeColorTokenClassification[];
 
 const editableThemeColorTokenDefinitionsById = new Map<ThemeColorTokenId, EditableThemeColorTokenDefinition>(
     EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS.map((definition) => [definition.id, definition]),

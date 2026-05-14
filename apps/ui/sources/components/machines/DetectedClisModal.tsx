@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, ActivityIndicator, ScrollView } from 'react-native';
+import { Pressable, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -9,6 +9,7 @@ import { t } from '@/text';
 import type { CustomModalInjectedProps } from '@/modal';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 type Props = CustomModalInjectedProps & {
@@ -50,7 +51,7 @@ export function DetectedClisModal({ onClose, setChrome, machineId, isOnline, ser
             disabled={!isOnline || state.status === 'loading'}
         >
             {state.status === 'loading'
-                ? <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                ? <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 : <Ionicons name="refresh" size={20} color={isOnline ? theme.colors.text.secondary : theme.colors.border.default} />}
         </Pressable>
     ), [isOnline, refresh, state.status, styles.headerActionButton, theme.colors.border.default, theme.colors.text.secondary]);

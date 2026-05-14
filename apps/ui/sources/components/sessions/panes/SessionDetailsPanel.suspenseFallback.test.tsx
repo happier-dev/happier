@@ -41,7 +41,11 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: {
+        default: () => ({}),
+        eyebrow: () => ({}),
+        keyHint: () => ({}),
+    },
 }));
 
 vi.mock('@/components/ui/scroll/useWebScrollLockBypass', () => ({

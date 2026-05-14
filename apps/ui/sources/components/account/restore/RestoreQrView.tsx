@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, ScrollView, ActivityIndicator } from 'react-native';
+import { View, ScrollView } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -20,6 +20,7 @@ import type { RestoreRedirectReason, RestoreRedirectNotice } from '@/auth/provid
 import { Text } from '@/components/ui/text/Text';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { trackAccountRestored } from '@/track';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -193,7 +194,8 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
 
                 const credentials = await authQRWait(
                     keypair,
-                    () => isCancelledRef.current
+                    undefined,
+                    () => isCancelledRef.current,
                 );
 
                 if (credentials && !isCancelledRef.current) {
@@ -242,7 +244,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                 <View style={[styles.qrBlock, embedded ? styles.embeddedQrBlock : null]}>
                     {!authReady ? (
                         <View style={{ width: qrSize, height: qrSize, alignItems: 'center', justifyContent: 'center' }}>
-                            <ActivityIndicator size="small" color={theme.colors.text.primary} />
+                            <ActivitySpinner size="small" color={theme.colors.text.primary} />
                         </View>
                     ) : (
                         <QRCode

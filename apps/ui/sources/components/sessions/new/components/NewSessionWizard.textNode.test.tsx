@@ -69,8 +69,8 @@ vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
         return null;
     },
 }));
-vi.mock('@/components/sessions/new/components/PathSelector', () => ({
-    PathSelector: (props: Record<string, unknown>) => {
+vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({
+    PathSelectionList: (props: Record<string, unknown>) => {
         pathSelectorPropsRef.current = props;
         return null;
     },
@@ -1070,11 +1070,8 @@ describe('NewSessionWizard', () => {
                 />);
 
         expect(pathSelectorPropsRef.current).toMatchObject({
-            machineBrowse: {
-                enabled: true,
-                machineId: 'machine-1',
-                serverId: 'server-1',
-            },
+            machineId: 'machine-1',
+            serverId: 'server-1',
         });
     });
 
@@ -1403,9 +1400,8 @@ describe('NewSessionWizard', () => {
             dropdownTestID: 'new-session-machine-dropdown-trigger',
         });
         expect(pathSelectorPropsRef.current).toMatchObject({
-            pathEntryPresentation: 'itemGroup',
-            savedPathsPresentation: 'dropdown',
-            favoriteGroupPlacement: 'beforeRecent',
+            initialValue: '/tmp',
+            maxHeight: 320,
         });
         expect(modelSelectionPropsRef.current).toMatchObject({
             presentation: 'compact',

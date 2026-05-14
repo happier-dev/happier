@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 
@@ -23,6 +23,7 @@ import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForR
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { SessionFullscreenPaneSafeAreaView } from '@/components/sessions/panes/SessionFullscreenPaneSafeAreaView';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type SessionDetailsRouteParamsShape = Readonly<{
     details?: string;
@@ -200,7 +201,7 @@ export default function SessionDetailsScreenRoute() {
                 )
             ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator />
+                    <ActivitySpinner />
                 </View>
             )}
         </SessionFullscreenPaneSafeAreaView>

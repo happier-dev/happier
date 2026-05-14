@@ -144,6 +144,17 @@ describe('useResolvedSettingsPageCatalog', () => {
         await hook.unmount();
     });
 
+    it('includes keyboard shortcuts in the dev settings catalog and search results', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        const current = hook.getCurrent();
+        expect(flattenIds(current.tree)).toContain('keyboard');
+        expect(current.search('shortcut').some((result: any) => result.id === 'keyboard')).toBe(true);
+
+        await hook.unmount();
+    });
+
     it('supports fuzzy search for minor typos', async () => {
         const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
         const hook = await renderHook(() => useResolvedSettingsPageCatalog());

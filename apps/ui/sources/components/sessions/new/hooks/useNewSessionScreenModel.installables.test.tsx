@@ -1463,7 +1463,12 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(storageChip?.controlId).toBe('storage');
         expect(storageChip?.collapsedAction).toBeUndefined();
         expect(storageChip?.collapsedOptionsPopover?.selectedOptionId).toBe('direct');
-        expect(storageChip?.collapsedOptionsPopover?.options.map((option: { id: string }) => option.id)).toEqual([
+        expect(storageChip?.collapsedOptionsPopover?.presentation).toBe('list');
+        const storageOptions = storageChip?.collapsedOptionsPopover?.presentation === 'list'
+            ? storageChip.collapsedOptionsPopover.rootStep.sections.flatMap((section) =>
+                section.kind === 'static' ? section.options.map((option) => option.id) : [])
+            : [];
+        expect(storageOptions).toEqual([
             'persisted',
             'direct',
         ]);
@@ -1670,7 +1675,15 @@ describe('useNewSessionScreenModel (installables)', () => {
             }));
         expect(chipScreen.getTextContent()).toContain('windowsRemoteSessionLaunchMode.shortConsole');
 
-        await invokeHookAction(() => windowsChip.collapsedOptionsPopover?.onSelect('hidden'));
+        const windowsModeOptions = windowsChip.collapsedOptionsPopover?.presentation === 'list'
+            ? windowsChip.collapsedOptionsPopover.rootStep.sections.flatMap((section) =>
+                section.kind === 'static' ? section.options : []
+            )
+            : [];
+        const hiddenModeOption = windowsModeOptions.find((option) => option.id === 'hidden');
+        expect(hiddenModeOption).toBeTruthy();
+
+        await invokeHookAction(() => hiddenModeOption?.onSelect?.());
 
         model = hook.getCurrent();
 
@@ -1690,6 +1703,16 @@ describe('useNewSessionScreenModel (installables)', () => {
                 popoverAnchorRef: { current: null },
             }));
         expect(updatedChipScreen.getTextContent()).toContain('windowsRemoteSessionLaunchMode.shortHidden');
+    });
+
+    it('enables slash autocomplete for provider-independent new-session commands', async () => {
+        const hook = await renderNewSessionScreenModel();
+        const model = hook.getCurrent();
+
+        expect(model?.simpleProps?.emptyAutocompletePrefixes).toEqual(['/']);
+
+        const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions?.('/happier');
+        expect(suggestions?.some((suggestion: { text: string }) => suggestion.text === '/happier-diagnose')).toBe(true);
     });
 
 });

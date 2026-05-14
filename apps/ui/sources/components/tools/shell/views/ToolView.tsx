@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import { View, TouchableOpacity, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
@@ -33,6 +33,7 @@ import { Typography } from '@/constants/Typography';
 import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 interface ToolViewProps {
@@ -234,7 +235,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         switch (statusKind) {
             case 'running':
                 if (!noStatus) {
-                    statusIcon = <ActivityIndicator size="small" color={theme.colors.text.primary} style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }} />;
+                    statusIcon = <ActivitySpinner size="small" color={theme.colors.text.secondary} style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }} />;
                 }
                 break;
             case 'error':

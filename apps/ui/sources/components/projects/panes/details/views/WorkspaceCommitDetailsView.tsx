@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -9,6 +9,7 @@ import { machineScmDiffCommit } from '@/sync/ops/scm/machineScm';
 import { buildDiffBlocks, buildDiffFileEntries } from '@/components/ui/code/model/diff/diffViewModel';
 import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
 import { useSetting } from '@/sync/domains/state/storage';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type WorkspaceCommitDetailsViewProps = Readonly<{
     scopeId: string;
@@ -62,7 +63,7 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
     if (loading) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, gap: 10 }}>
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text style={{ color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.loading')}
                 </Text>

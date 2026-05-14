@@ -1,20 +1,40 @@
 import * as React from 'react';
-import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+    Platform,
+    View,
+    type LayoutChangeEvent,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
+    type ScrollView,
+    type StyleProp,
+    type ViewStyle,
+} from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades, type ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
-    container: {
+    modalContainer: {
         borderRadius: 12,
         overflow: 'hidden',
         backgroundColor: theme.colors.surface.base,
         borderWidth: Platform.OS === 'web' ? 0 : 0.5,
         borderColor: theme.colors.border.modal,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
+    },
+    themedSurfaceContainer: {
+        borderRadius: 12,
+        overflow: 'hidden',
+        backgroundColor: theme.colors.surface.base,
+        ...resolveThemeSurfaceChromeStyle({
+            borderColor: theme.colors.border.surface,
+            highlightColor: theme.colors.effect.surfaceHighlight,
+            shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[4]),
+        }),
     },
 }));
 
@@ -57,12 +77,18 @@ interface FloatingOverlayProps {
     edgeIndicators?: boolean | Readonly<{ size?: number; opacity?: number }>;
     /** Optional arrow that points back to the anchor (useful for context menus). */
     arrow?: FloatingOverlayArrow;
+    /** Defaults to legacy modal chrome; bounded popovers can opt into theme surface chrome. */
+    surfaceChrome?: 'modal' | 'theme';
     /**
      * Initial visibility for scroll edge fades before measurement.
      * Useful for optimistic trailing-edge fades (e.g., bottom: true for lists
      * that typically have more content below).
      */
     initialVisibility?: Partial<ScrollEdgeVisibility>;
+    scrollViewRef?: React.Ref<ScrollView>;
+    onScrollViewLayout?: (event: LayoutChangeEvent) => void;
+    onScrollViewContentSizeChange?: (width: number, height: number) => void;
+    onScrollViewScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 }
 
 export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
@@ -77,8 +103,13 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         edgeFades = false,
         edgeIndicators = false,
         arrow = false,
+        surfaceChrome = 'modal',
         containerStyle,
         scrollViewStyle,
+        scrollViewRef,
+        onScrollViewLayout,
+        onScrollViewContentSizeChange,
+        onScrollViewScroll,
     } = props;
 
     const fadeCfg = React.useMemo(() => {
@@ -140,14 +171,27 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
 
     const content = scrollEnabled ? (
         <Animated.ScrollView
+            ref={scrollViewRef}
             style={[{ maxHeight }, scrollViewStyle]}
             keyboardShouldPersistTaps={keyboardShouldPersistTaps}
             showsVerticalScrollIndicator={showScrollIndicator}
             scrollEventThrottle={32}
-            onLayout={fadeCfg || indicatorCfg ? fades.onViewportLayout : undefined}
-            onContentSizeChange={fadeCfg || indicatorCfg ? fades.onContentSizeChange : undefined}
-            onScroll={fadeCfg || indicatorCfg ? fades.onScroll : undefined}
-            onMomentumScrollEnd={fadeCfg || indicatorCfg ? fades.onMomentumScrollEnd : undefined}
+            onLayout={(event) => {
+                if (fadeCfg || indicatorCfg) fades.onViewportLayout(event);
+                onScrollViewLayout?.(event);
+            }}
+            onContentSizeChange={(width, height) => {
+                if (fadeCfg || indicatorCfg) fades.onContentSizeChange(width, height);
+                onScrollViewContentSizeChange?.(width, height);
+            }}
+            onScroll={(event) => {
+                if (fadeCfg || indicatorCfg) fades.onScroll(event);
+                onScrollViewScroll?.(event);
+            }}
+            onMomentumScrollEnd={(event) => {
+                if (fadeCfg || indicatorCfg) fades.onMomentumScrollEnd(event);
+                onScrollViewScroll?.(event);
+            }}
         >
             {children}
         </Animated.ScrollView>
@@ -158,7 +202,11 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     );
 
     const overlay = (
-        <Animated.View style={[styles.container, { maxHeight }, containerStyle]}>
+        <Animated.View style={[
+            surfaceChrome === 'theme' ? styles.themedSurfaceContainer : styles.modalContainer,
+            { maxHeight },
+            containerStyle,
+        ]}>
             {content}
             {scrollEnabled && fadeCfg ? (
                 <ScrollEdgeFades
@@ -188,17 +236,29 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         width: arrowSize,
         height: arrowSize,
         backgroundColor: theme.colors.surface.base,
-        borderWidth: Platform.OS === 'web' ? 0 : 0.5,
-        borderColor: theme.colors.border.modal,
         transform: [{ rotate: '45deg' as const }],
     };
 
-    if (Platform.OS === 'web') {
-        // RN-web can be inconsistent with shadow props on transformed views.
-        // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
-        arrowBoxStyle.boxShadow = theme.colors.shadowPopoverArrowBoxShadow;
+    if (surfaceChrome === 'theme') {
+        Object.assign(arrowBoxStyle, resolveThemeSurfaceChromeStyle({
+            borderColor: theme.colors.border.surface,
+            highlightColor: theme.colors.effect.surfaceHighlight,
+            shadowStyle: Platform.OS === 'web'
+                ? { boxShadow: theme.colors.shadowPopoverArrowBoxShadow }
+                : shadowLevelStyle(theme.colors.shadowLevels[4]),
+        }));
     } else {
-        Object.assign(arrowBoxStyle, shadowLevelStyle(theme.colors.shadowLevels[4]));
+        Object.assign(arrowBoxStyle, {
+            borderWidth: Platform.OS === 'web' ? 0 : 0.5,
+            borderColor: theme.colors.border.modal,
+        });
+        if (Platform.OS === 'web') {
+            // RN-web can be inconsistent with shadow props on transformed views.
+            // Use CSS box-shadow to ensure the arrow is visible, even on light backdrops.
+            arrowBoxStyle.boxShadow = theme.colors.shadowPopoverArrowBoxShadow;
+        } else {
+            Object.assign(arrowBoxStyle, shadowLevelStyle(theme.colors.shadowLevels[4]));
+        }
     }
 
     const arrowWrapperStyle: ViewStyle = {

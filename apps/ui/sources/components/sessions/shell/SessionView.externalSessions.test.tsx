@@ -98,6 +98,7 @@ const storageState = vi.hoisted(() => ({
       agentState: {},
     } as any,
   },
+  artifacts: {} as Record<string, any>,
   settings: {} as Record<string, unknown>,
   concurrentSessionListCacheByServerId: {} as Record<string, unknown>,
 }));
@@ -220,6 +221,7 @@ installSessionShellCommonModuleMocks({
         useSessionMessages: () => ({ messages: [], isLoaded: true }),
         useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+        useArtifacts: () => Object.values(storageState.artifacts),
         useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionUsage: () => sessionUsageState.current,
@@ -521,6 +523,7 @@ describe('SessionView (direct sessions)', () => {
       agentState: {},
     };
     storageState.settings = settingsState.current;
+    storageState.artifacts = {};
     storageState.concurrentSessionListCacheByServerId = {};
     delete (storageState as any).sessionListRenderables;
     delete (storageState as any).machines;
@@ -667,6 +670,57 @@ describe('SessionView (direct sessions)', () => {
         id: 'req_question_1',
         tool: 'AskUserQuestion',
         kind: 'user_action',
+      }),
+    ]);
+  });
+
+  it('passes session-scoped open approval artifacts to AgentInput', async () => {
+    storageState.artifacts = {
+      'approval-1': {
+        id: 'approval-1',
+        header: {
+          v: 1,
+          kind: 'approval_request.v1',
+          title: 'Approve',
+          approvalStatus: 'open',
+          sessionId: 's1',
+          actionId: 'session.list',
+          approvalSummary: 'List sessions',
+        },
+        title: 'Approve',
+        headerVersion: 1,
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        isDecrypted: true,
+      },
+      'approval-other': {
+        id: 'approval-other',
+        header: {
+          v: 1,
+          kind: 'approval_request.v1',
+          title: 'Approve',
+          approvalStatus: 'open',
+          sessionId: 's2',
+          actionId: 'session.status.get',
+          approvalSummary: 'Read status',
+        },
+        title: 'Approve',
+        headerVersion: 1,
+        seq: 2,
+        createdAt: 2,
+        updatedAt: 2,
+        isDecrypted: true,
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    const agentInput = findAgentInput(screen);
+    expect(agentInput.props.approvalRequests).toEqual([
+      expect.objectContaining({
+        artifact: expect.objectContaining({ id: 'approval-1' }),
+        approval: expect.objectContaining({ actionId: 'session.list' }),
       }),
     ]);
   });
@@ -916,7 +970,8 @@ describe('SessionView (direct sessions)', () => {
       key: string;
       controlId?: string;
       collapsedOptionsPopover?: {
-        options?: Array<{ id: string }>;
+        presentation?: 'picker' | 'list';
+        rootStep?: { sections: ReadonlyArray<{ kind: 'static' | 'dynamic'; options?: ReadonlyArray<{ id: string }> }> };
         selectedOptionId?: string | null;
         onSelect?: (id: string) => void;
       };
@@ -926,7 +981,12 @@ describe('SessionView (direct sessions)', () => {
       key: 'participants-recipient',
       controlId: 'recipient',
     }));
-    expect(recipientChip?.collapsedOptionsPopover?.options?.map((option: { id: string }) => option.id)).toEqual([
+    expect(recipientChip?.collapsedOptionsPopover?.presentation).toBe('list');
+    const recipientFirstSection = recipientChip?.collapsedOptionsPopover?.rootStep?.sections?.[0];
+    const recipientOptions = recipientFirstSection?.kind === 'static'
+      ? recipientFirstSection.options ?? []
+      : [];
+    expect(recipientOptions.map((option: { id: string }) => option.id)).toEqual([
       'lead',
       'member-1',
       'run-1',
@@ -1083,7 +1143,8 @@ describe('SessionView (direct sessions)', () => {
       controlId?: string;
       collapsedOptionsPopover?: {
         label?: string | null;
-        options?: Array<{ id: string }>;
+        presentation?: 'picker' | 'list';
+        rootStep?: { sections: ReadonlyArray<{ kind: 'static' | 'dynamic'; options?: ReadonlyArray<{ id: string }> }> };
         selectedOptionId?: string | null;
         onSelect?: (id: string) => void;
       };
@@ -1094,7 +1155,12 @@ describe('SessionView (direct sessions)', () => {
       controlId: 'delivery',
     }));
     expect(deliveryChip?.collapsedOptionsPopover?.label).toBe('runs.delivery.cardDelivery');
-    expect(deliveryChip?.collapsedOptionsPopover?.options?.map((option: { id: string }) => option.id)).toEqual([
+    expect(deliveryChip?.collapsedOptionsPopover?.presentation).toBe('list');
+    const deliveryFirstSection = deliveryChip?.collapsedOptionsPopover?.rootStep?.sections?.[0];
+    const deliveryOptions = deliveryFirstSection?.kind === 'static'
+      ? deliveryFirstSection.options ?? []
+      : [];
+    expect(deliveryOptions.map((option: { id: string }) => option.id)).toEqual([
       'prompt',
       'steer_if_supported',
       'interrupt',

@@ -7,6 +7,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sessionListState = vi.hoisted(() => ({
+    calls: 0,
     paneState: {
         summary: {
             sessionsReady: false,
@@ -39,7 +40,10 @@ installSessionShellCommonModuleMocks({
 });
 
 vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
-    useVisibleSessionListPaneState: () => sessionListState.paneState,
+    useVisibleSessionListPaneState: () => {
+        sessionListState.calls += 1;
+        return sessionListState.paneState;
+    },
 }));
 
 vi.mock('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel', () => ({
@@ -68,7 +72,45 @@ vi.mock('@/components/sessions/shell/HiddenInactiveSessionsEmptyState', () => ({
 }));
 
 describe('SessionsListPaneContent (loading)', () => {
+    it('passes the already resolved pane state into the rendered session list', async () => {
+        sessionListState.calls = 0;
+        sessionListState.paneState = {
+            summary: {
+                sessionsReady: true,
+                sessionCount: 1,
+            },
+            visibleSessionListViewData: [{ type: 'session', session: { id: 'session-1' } }] as any[],
+            hasHiddenInactiveSessions: false,
+            showLoading: false,
+            showEmptyState: false,
+        };
+
+        const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
+        const screen = await renderScreen(
+            <SessionsListPaneContent storageKind="persisted" fallbackGuidanceVariant="sidebar" />,
+            {
+                flushOptions: { cycles: 0 },
+            },
+        );
+
+        const list = screen.findByType('SessionsListView' as any);
+        expect(list.props.paneState).toBe(sessionListState.paneState);
+        expect(sessionListState.calls).toBe(1);
+    });
+
     it('shows the loading indicator while the canonical session summary is not ready', async () => {
+        sessionListState.calls = 0;
+        sessionListState.paneState = {
+            summary: {
+                sessionsReady: false,
+                sessionCount: 0,
+            },
+            visibleSessionListViewData: [{ type: 'session', session: { id: 'session-1' } }] as any[],
+            hasHiddenInactiveSessions: false,
+            showLoading: true,
+            showEmptyState: false,
+        };
+
         const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
         const screen = await renderScreen(
             <SessionsListPaneContent storageKind="persisted" fallbackGuidanceVariant="sidebar" />,

@@ -2,18 +2,11 @@ import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from
 import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/sync/domains/settings/voiceSettings';
 import { normalizeTurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
 import {
-  createTurnEndpointController,
-  type TurnEndpointController,
-  type TurnEndpointSignal,
-} from '@/voice/runtime/input/TurnEndpointController';
+  createTurnEndpointController, type TurnEndpointController, type TurnEndpointSignal, } from '@/voice/runtime/input/TurnEndpointController';
 import {
-  createNativeVadController,
-  type NativeVadController,
-} from '@/voice/runtime/input/NativeVadController';
+  createNativeVadController, type NativeVadController, } from '@/voice/runtime/input/NativeVadController';
 import {
-  createWebVadController,
-  type WebVadController,
-} from '@/voice/runtime/input/WebVadController';
+  createWebVadController, type WebVadController, } from '@/voice/runtime/input/WebVadController';
 import type { MicSession } from '@/voice/runtime/mic/MicSession';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { Platform } from 'react-native';

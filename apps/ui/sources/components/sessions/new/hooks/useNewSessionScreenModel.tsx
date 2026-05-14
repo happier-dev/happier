@@ -87,10 +87,19 @@ import type { NewSessionScreenModel } from '@/components/sessions/new/hooks/newS
 import { randomUUID } from '@/platform/randomUUID';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { isProfileCompatibleWithResolvedBackendEntry } from '@/components/profiles/edit/profileBackendEntryStorage';
+import {
+    areRememberedEngineSelectionsEquivalent,
+    readRememberedEngineSelection,
+    upsertRememberedEngineSelection,
+    type RememberedEngineSelectionV1,
+} from '@/sync/domains/session/authoring/rememberedEngineSelections';
+import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2 } from '@happier-dev/protocol';
 
 
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
+const NEW_SESSION_COMMAND_SUGGESTION_SESSION_ID = '__new_session__';
 const styles = newSessionScreenStyles;
 
 export function useNewSessionScreenModel(): NewSessionScreenModel {
@@ -200,6 +209,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const settings = useSettings() ?? settingsDefaults;
+    const executionRunsEnabled = resolveLocalFeaturePolicyEnabled('execution.runs', settings);
     const activeServerSnapshot = useActiveServerSnapshot();
     const {
         serverProfiles,
@@ -237,6 +247,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
     const [favoriteModelSelections, setFavoriteModelSelections] = useSettingMutable('favoriteModelSelectionsV1');
+    const rememberLastEngineSelections = useSetting('rememberLastEngineSelectionsV1') !== false;
+    const [lastEngineSelectionsByScope, setLastEngineSelectionsByScope] = useSettingMutable('lastEngineSelectionsByScopeV1');
     const [dismissedCLIWarnings, setDismissedCLIWarnings] = useSettingMutable('dismissedCLIWarnings');
     const draftScope = useActiveServerAccountScope();
 
@@ -385,11 +397,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
     }, [useProfiles, selectedProfileId]);
 
-    // AgentInput autocomplete is unused on this screen today, but passing a new
-    // function/array each render forces autocomplete hooks to re-sync.
-    // Keep these stable to avoid unnecessary work during taps/selection changes.
-    const emptyAutocompletePrefixes = React.useMemo(() => [], []);
-    const emptyAutocompleteSuggestions = React.useCallback(async () => [], []);
+    const emptyAutocompletePrefixes = React.useMemo(() => ['/'], []);
+    const emptyAutocompleteSuggestions = React.useCallback(async (query: string) => {
+        if (!query.startsWith('/')) {
+            return [];
+        }
+        const { getCommandSuggestions } = await import('@/components/autocomplete/suggestions');
+        return getCommandSuggestions(NEW_SESSION_COMMAND_SUGGESTION_SESSION_ID, query);
+    }, []);
 
     const effectiveMachineIdParam = React.useMemo(() => {
         const normalizedMachineIdParam = normalizeOptionalParam(machineIdParam);
@@ -504,6 +519,18 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const selectedBackendEntry = React.useMemo(() => {
         return resolvedBackendEntries.find((entry) => entry.backendTargetKey === selectedBackendTargetKey) ?? null;
     }, [resolvedBackendEntries, selectedBackendTargetKey]);
+    const rememberedEngineSelection = React.useMemo(() => readRememberedEngineSelection({
+        enabled: rememberLastEngineSelections,
+        selectionsByScope: lastEngineSelectionsByScope,
+        serverId: capabilityServerId,
+        backendTarget: selectedBackendEntry?.backendTarget ?? backendTarget,
+    }), [
+        backendTarget,
+        capabilityServerId,
+        lastEngineSelectionsByScope,
+        rememberLastEngineSelections,
+        selectedBackendEntry?.backendTarget,
+    ]);
     const agentLabel = selectedBackendEntry?.title ?? t(getAgentCore(selectedUiAgentType as AgentId).displayNameKey);
 
     React.useEffect(() => {
@@ -541,7 +568,62 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft,
+        rememberedEngineSelection,
     });
+    const rememberEngineSelection = React.useCallback((
+        target: BackendTargetRefV2,
+        selection: Readonly<{
+            modelId: string;
+            acpSessionModeId: string | null;
+            sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
+        }>,
+    ) => {
+        if (!rememberLastEngineSelections) return;
+        const updatedAt = Date.now();
+        const nextSelectionsByScope = upsertRememberedEngineSelection({
+            selectionsByScope: lastEngineSelectionsByScope,
+            serverId: capabilityServerId,
+            backendTarget: target,
+            selection,
+            updatedAt,
+        });
+        const nextSelection = readRememberedEngineSelection({
+            enabled: true,
+            selectionsByScope: nextSelectionsByScope,
+            serverId: capabilityServerId,
+            backendTarget: target,
+        });
+        const currentSelection = readRememberedEngineSelection({
+            enabled: true,
+            selectionsByScope: lastEngineSelectionsByScope,
+            serverId: capabilityServerId,
+            backendTarget: target,
+        });
+        if (areRememberedEngineSelectionsEquivalent(currentSelection, nextSelection)) {
+            return;
+        }
+        setLastEngineSelectionsByScope(nextSelectionsByScope);
+    }, [
+        capabilityServerId,
+        lastEngineSelectionsByScope,
+        rememberLastEngineSelections,
+        setLastEngineSelectionsByScope,
+    ]);
+
+    React.useEffect(() => {
+        rememberEngineSelection(selectedBackendEntry?.backendTarget ?? backendTarget, {
+            modelId: String(modelMode),
+            acpSessionModeId,
+            sessionConfigOptionOverrides,
+        });
+    }, [
+        acpSessionModeId,
+        backendTarget,
+        modelMode,
+        rememberEngineSelection,
+        selectedBackendEntry?.backendTarget,
+        sessionConfigOptionOverrides,
+    ]);
 
     const [pathPickerSearchQuery, setPathPickerSearchQuery] = React.useState('');
     const repoScmSnapshot = useNewSessionRepoScmSnapshot({
@@ -588,6 +670,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         getCompatibleProfileBackendEntries,
         profileAvailabilityById,
         selectedMachineIsWindows,
+        selectedMachineSpawnReadiness,
         windowsTerminalAvailable,
     } = useNewSessionAvailabilityState({
         selectedMachineId,
@@ -986,6 +1069,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         settings,
         favoriteModelSelections,
         setFavoriteModelSelections,
+        rememberEngineSelectionsEnabled: rememberLastEngineSelections,
+        rememberedEngineSelectionsByScope: lastEngineSelectionsByScope,
+        rememberedEngineSelectionServerId: capabilityServerId,
+        onRememberEngineSelection: rememberEngineSelection,
         refreshProbe: cliAvailabilityProbe ?? null,
     });
 
@@ -1018,6 +1105,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         automationFeatureEnabled,
         selectedMachineId,
         selectedMachine,
+        selectedMachineSpawnReadiness,
         selectedPath,
         checkoutCreationDraft,
         sessionPrompt,
@@ -1065,6 +1153,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         backendTarget,
         spawnBackendTarget,
+        executionRunsEnabled,
         permissionMode,
         modelMode,
         acpSessionModeId,
@@ -1094,6 +1183,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     } = useNewSessionScreenAgentInputPresentation({
         theme,
         selectedMachine,
+        selectedMachineSpawnReadiness,
         automationFeatureEnabled,
         automationDraft,
         effectiveAutomationDraft,

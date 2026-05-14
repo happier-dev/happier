@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
-import { usePathname, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -11,10 +11,11 @@ import {
     isReviewCommentDraftIncludedInPrompt,
 } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { formatReviewCommentAnchorLabel } from '@/sync/domains/input/reviewComments/reviewCommentPresentation';
 import { t } from '@/text';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
-import { prepareMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
+import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 
 function renderSnippetLines(params: {
     draftId: string;
@@ -36,6 +37,7 @@ function renderSnippetLines(params: {
 
 export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Readonly<{
     sessionId?: string;
+    reviewScope?: WorkspaceScopeBase | null;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
     onUpdateDraft: (draft: ReviewCommentDraft) => void;
     onDeleteDraft: (draftId: string) => void;
@@ -43,7 +45,6 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const router = useRouter();
-    const pathname = usePathname();
     const {
         onClose,
         onDeleteDraft,
@@ -54,6 +55,28 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
         ? props.sessionId
         : null;
     const [drafts, setDrafts] = React.useState(() => [...reviewCommentDrafts]);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        setDrafts([...reviewCommentDrafts]);
+        if (!props.reviewScope || reviewCommentDrafts.length === 0) {
+            return () => {
+                cancelled = true;
+            };
+        }
+
+        void resolveReviewCommentDraftAnchorsForPrompt({
+            drafts: reviewCommentDrafts,
+            reviewScope: props.reviewScope,
+        }).then((resolvedDrafts) => {
+            if (!cancelled) {
+                setDrafts(resolvedDrafts);
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [props.reviewScope, reviewCommentDrafts]);
 
     const updateDraft = React.useCallback((draftId: string, updater: (draft: ReviewCommentDraft) => ReviewCommentDraft) => {
         setDrafts((current) => current.map((draft) => {
@@ -78,13 +101,8 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
             source: draft.source,
             anchor: draft.anchor,
         });
-        prepareMobileSurfaceTransition({
-            currentPathname: pathname,
-            targetHref: href,
-            operation: 'push',
-        });
         router.push(href as any);
-    }, [onClose, pathname, router, sessionId]);
+    }, [onClose, router, sessionId]);
 
     const includedCount = drafts.filter(isReviewCommentDraftIncludedInPrompt).length;
 
@@ -149,13 +167,13 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
                             <View style={styles.snippet} testID={`review-comment-draft-context-preview:${draft.id}`}>
                                 {renderSnippetLines({
                                     draftId: draft.id,
-                                    lines: draft.snapshot.beforeContext,
+                                    lines: draft.anchorResolution?.preview?.beforeContext ?? draft.snapshot.beforeContext,
                                     style: styles.snippetText,
                                     testIDPrefix: 'before-line',
                                 })}
                                 {renderSnippetLines({
                                     draftId: draft.id,
-                                    lines: draft.snapshot.selectedLines,
+                                    lines: draft.anchorResolution?.preview?.selectedLines ?? draft.snapshot.selectedLines,
                                     style: styles.snippetSelectedText,
                                     testIDPrefix: 'selected-line',
                                 })}
@@ -170,7 +188,7 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
                                 />
                                 {renderSnippetLines({
                                     draftId: draft.id,
-                                    lines: draft.snapshot.afterContext,
+                                    lines: draft.anchorResolution?.preview?.afterContext ?? draft.snapshot.afterContext,
                                     style: styles.snippetText,
                                     testIDPrefix: 'after-line',
                                 })}

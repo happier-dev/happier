@@ -9,6 +9,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { t } from '@/text';
 import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
+import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { resolveMachinePickerPresence } from './resolveMachinePickerPresence';
 
 export interface MachineSelectorProps {
     machines: ReadonlyArray<Machine>;
@@ -52,6 +54,20 @@ export interface MachineSelectorProps {
     popoverBoundaryRef?: React.RefObject<RNView> | null;
 }
 
+function isMachineSelectableForLaunch(machine: Machine): boolean {
+    return resolveMachinePickerPresence(machine).selectable;
+}
+
+function prioritizeSelectableMachines<T extends Machine>(machines: ReadonlyArray<T>): T[] {
+    return machines
+        .map((machine, index) => ({ machine, index, selectable: isMachineSelectableForLaunch(machine) }))
+        .sort((left, right) => {
+            if (left.selectable !== right.selectable) return left.selectable ? -1 : 1;
+            return left.index - right.index;
+        })
+        .map((entry) => entry.machine);
+}
+
 export function MachineSelector({
     machines,
     selectedMachine,
@@ -88,40 +104,78 @@ export function MachineSelector({
     const favoritesSectionTitle = favoritesSectionTitleProp ?? t('newSession.machinePicker.favoritesTitle');
     const allSectionTitle = allSectionTitleProp ?? t('newSession.machinePicker.allTitle');
     const noItemsMessage = noItemsMessageProp ?? t('newSession.machinePicker.emptyMessage');
+    const machineOptionTestIdPrefix = typeof testIdPrefix === 'string' && testIdPrefix.trim()
+        ? `${testIdPrefix.trim()}-option`
+        : undefined;
+    const machineReadinessTestIdPrefix = typeof testIdPrefix === 'string' && testIdPrefix.trim()
+        ? `${testIdPrefix.trim()}-readiness`
+        : undefined;
+    const getMachineOptionTestID = React.useCallback((machine: Machine) => {
+        return machineOptionTestIdPrefix ? `${machineOptionTestIdPrefix}:${machine.id}` : undefined;
+    }, [machineOptionTestIdPrefix]);
+    const getMachineReadinessTestID = React.useCallback((machine: Machine) => {
+        return machineReadinessTestIdPrefix ? `${machineReadinessTestIdPrefix}:${machine.id}` : undefined;
+    }, [machineReadinessTestIdPrefix]);
 
-    const visibleMachines = React.useMemo(() => machines.filter((machine) => !machine.revokedAt), [machines]);
+    const visibleMachines = React.useMemo(
+        () => machines.filter(isMachineVisibleForLaunchSelection),
+        [machines],
+    );
     const visibleRecentMachines = React.useMemo(
-        () => recentMachines.filter((machine) => !machine.revokedAt),
+        () => recentMachines.filter(isMachineVisibleForLaunchSelection),
         [recentMachines],
     );
     const visibleFavoriteMachines = React.useMemo(
-        () => favoriteMachines.filter((machine) => !machine.revokedAt),
+        () => favoriteMachines.filter(isMachineVisibleForLaunchSelection),
         [favoriteMachines],
+    );
+    const launchPinnedRecentMachines = React.useMemo(
+        () => disableOfflineMachines
+            ? visibleRecentMachines.filter(isMachineSelectableForLaunch)
+            : visibleRecentMachines,
+        [disableOfflineMachines, visibleRecentMachines],
+    );
+    const launchPinnedFavoriteMachines = React.useMemo(
+        () => disableOfflineMachines
+            ? visibleFavoriteMachines.filter(isMachineSelectableForLaunch)
+            : visibleFavoriteMachines,
+        [disableOfflineMachines, visibleFavoriteMachines],
     );
     const favoriteMachineIdSet = React.useMemo(() => {
         if (!showFavorites) return new Set<string>();
-        return new Set<string>(visibleFavoriteMachines.map((machine) => machine.id));
-    }, [showFavorites, visibleFavoriteMachines]);
+        return new Set<string>(launchPinnedFavoriteMachines.map((machine) => machine.id));
+    }, [launchPinnedFavoriteMachines, showFavorites]);
     const visibleRecentMachinesWithoutFavorites = React.useMemo(() => {
-        if (!showRecent) return visibleRecentMachines;
-        if (favoriteMachineIdSet.size === 0) return visibleRecentMachines;
-        return visibleRecentMachines.filter((machine) => !favoriteMachineIdSet.has(machine.id));
-    }, [favoriteMachineIdSet, showRecent, visibleRecentMachines]);
+        if (!showRecent) return launchPinnedRecentMachines;
+        if (favoriteMachineIdSet.size === 0) return launchPinnedRecentMachines;
+        return launchPinnedRecentMachines.filter((machine) => !favoriteMachineIdSet.has(machine.id));
+    }, [favoriteMachineIdSet, launchPinnedRecentMachines, showRecent]);
     const visibleAllMachines = React.useMemo(() => {
         const pinnedIds = new Set<string>();
-        if (showFavorites) for (const machine of visibleFavoriteMachines) pinnedIds.add(machine.id);
+        if (showFavorites) for (const machine of launchPinnedFavoriteMachines) pinnedIds.add(machine.id);
         if (showRecent) for (const machine of visibleRecentMachinesWithoutFavorites) pinnedIds.add(machine.id);
-        if (pinnedIds.size === 0) return visibleMachines;
-        return visibleMachines.filter((machine) => !pinnedIds.has(machine.id));
-    }, [showFavorites, showRecent, visibleFavoriteMachines, visibleMachines, visibleRecentMachinesWithoutFavorites]);
+        const unpinnedMachines = pinnedIds.size === 0
+            ? visibleMachines
+            : visibleMachines.filter((machine) => !pinnedIds.has(machine.id));
+        return disableOfflineMachines
+            ? prioritizeSelectableMachines(unpinnedMachines)
+            : unpinnedMachines;
+    }, [
+        disableOfflineMachines,
+        launchPinnedFavoriteMachines,
+        showFavorites,
+        showRecent,
+        visibleMachines,
+        visibleRecentMachinesWithoutFavorites,
+    ]);
     const selectedMachineId = selectedMachine?.id ?? null;
     const machineById = React.useMemo(() => {
         return new Map([
             ...visibleMachines,
-            ...visibleRecentMachines,
-            ...visibleFavoriteMachines,
+            ...visibleRecentMachinesWithoutFavorites,
+            ...launchPinnedFavoriteMachines,
         ].map((machine) => [machine.id, machine] as const));
-    }, [visibleFavoriteMachines, visibleMachines, visibleRecentMachines]);
+    }, [launchPinnedFavoriteMachines, visibleMachines, visibleRecentMachinesWithoutFavorites]);
 
     const renderFavoriteToggle = React.useCallback((machine: Machine, isFavorite: boolean) => {
         if (!showFavorites || !onToggleFavorite) return null;
@@ -150,13 +204,15 @@ export function MachineSelector({
         isFavorite: boolean,
         iconName: React.ComponentProps<typeof Ionicons>['name'],
     ): DropdownMenuItem => {
-        const offline = !isMachineOnline(machine);
+        const presence = resolveMachinePickerPresence(machine);
+        const unavailable = !presence.selectable;
         return {
             id: machine.id,
+            testID: getMachineOptionTestID(machine),
             title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
-            subtitle: offline ? t('status.offline') : t('status.online'),
+            subtitle: unavailable ? t('common.unavailable') : t('status.online'),
             category,
-            disabled: disableOfflineMachines && offline,
+            disabled: disableOfflineMachines && unavailable,
             icon: (
                 <Ionicons
                     name={iconName}
@@ -166,11 +222,11 @@ export function MachineSelector({
             ),
             rightElement: renderFavoriteToggle(machine, isFavorite),
         };
-    }, [disableOfflineMachines, renderFavoriteToggle, theme.colors.text.secondary]);
+    }, [disableOfflineMachines, getMachineOptionTestID, renderFavoriteToggle, theme.colors.text.secondary]);
 
     const dropdownItems = React.useMemo(() => {
         const favoriteItems = showFavorites
-            ? visibleFavoriteMachines.map((machine) => toDropdownItem(
+            ? launchPinnedFavoriteMachines.map((machine) => toDropdownItem(
                 machine,
                 favoritesSectionTitle,
                 true,
@@ -200,12 +256,12 @@ export function MachineSelector({
         favoriteGroupPlacement,
         favoriteMachineIdSet,
         favoritesSectionTitle,
+        launchPinnedFavoriteMachines,
         recentSectionTitle,
         showFavorites,
         showRecent,
         toDropdownItem,
         visibleAllMachines,
-        visibleFavoriteMachines,
         visibleRecentMachinesWithoutFavorites,
     ]);
 
@@ -220,7 +276,7 @@ export function MachineSelector({
                     onSelect={(machineId) => {
                         const machine = machineById.get(machineId);
                         if (!machine) return;
-                        if (disableOfflineMachines && !isMachineOnline(machine)) return;
+                        if (disableOfflineMachines && !resolveMachinePickerPresence(machine).selectable) return;
                         onSelect(machine);
                     }}
                     rowKind="item"
@@ -271,15 +327,22 @@ export function MachineSelector({
                     />
                 ),
                 getItemStatus: (machine) => {
-                    const offline = !isMachineOnline(machine);
+                    const presence = resolveMachinePickerPresence(machine);
+                    const offline = !presence.selectable;
+                    const testID = getMachineReadinessTestID(machine);
                     return {
                         text: offline ? t('status.offline') : t('status.online'),
                         color: offline ? theme.colors.status.disconnected : theme.colors.status.connected,
                         dotColor: offline ? theme.colors.status.disconnected : theme.colors.status.connected,
                         isPulsing: !offline,
+                        state: presence.selectable ? 'ready' : presence.status,
+                        testID,
                     };
                 },
-                isItemDisabled: disableOfflineMachines ? (machine) => !isMachineOnline(machine) : undefined,
+                getItemStatusTestID: getMachineReadinessTestID,
+                isItemDisabled: disableOfflineMachines
+                    ? (machine) => !resolveMachinePickerPresence(machine).selectable
+                    : undefined,
                 ...(showCliGlyphs ? {
                     getItemStatusExtra: (machine: Machine) => (
                         <MachineCliGlyphs
@@ -315,13 +378,13 @@ export function MachineSelector({
             }}
             items={visibleAllMachines}
             recentItems={visibleRecentMachinesWithoutFavorites}
-            favoriteItems={visibleFavoriteMachines}
+            favoriteItems={launchPinnedFavoriteMachines}
             selectedItem={selectedMachine}
             onSelect={onSelect}
             onToggleFavorite={onToggleFavorite}
             searchPlacement={searchPlacement}
             groupOrder={favoriteGroupPlacement === 'beforeRecent' ? 'favoritesFirst' : 'recentFirst'}
-            testIdPrefix={testIdPrefix}
+            testIdPrefix={machineOptionTestIdPrefix}
         />
     );
 }

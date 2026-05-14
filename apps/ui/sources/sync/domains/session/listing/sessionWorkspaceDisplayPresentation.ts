@@ -1,6 +1,7 @@
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import {
     type WorkspaceDisplayEllipsizeMode,
+    type WorkspacePathDisplayModeV1,
     resolveWorkspaceDisplayPresentation,
 } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import { normalizeWorkspaceRootPath, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -35,6 +36,7 @@ export function resolveSessionWorkspaceDisplayPresentation(input: Readonly<{
     metadata: SessionWorkspaceDisplayMetadata;
     machineTarget?: SessionWorkspaceDisplayMachineTarget;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
+    workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
 }>): SessionWorkspaceDisplayPresentation {
     const rawRootPath = input.machineTarget?.basePath ?? input.metadata?.path ?? null;
     const homeDir = normalizeId(input.metadata?.homeDir) || undefined;
@@ -50,6 +52,7 @@ export function resolveSessionWorkspaceDisplayPresentation(input: Readonly<{
         scope: workspaceScope,
         workspaceRefs: input.workspaceRefs,
         fallbackPathLabel,
+        fallbackPathDisplayMode: input.workspacePathDisplayModeV1,
     });
 
     return {

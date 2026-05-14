@@ -261,6 +261,63 @@ describe('Popover (native keyboard)', () => {
         vi.useRealTimers();
     });
 
+    it('uses the provided keyboard inset immediately when the keyboard is already visible before opening', async () => {
+        vi.useFakeTimers();
+
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            measureInWindow: (cb: any) => cb(0, 200, 1000, 600),
+        } as any;
+
+        const anchorY = 400;
+        const anchorNode = {
+            measureInWindow: (cb: any) => cb(0, anchorY, 100, 40),
+            measureLayout: (_relativeTo: any, onSuccess: any) => onSuccess(0, anchorY - 200, 100, 40),
+        } as any;
+
+        const anchorRef = { current: anchorNode } as any;
+        const portalTarget = {
+            rootRef: { current: portalRootNode },
+            layout: { width: 1000, height: 600 },
+        } as const;
+
+        let latestRenderProps: { placement?: string; maxHeight?: number } = {};
+
+        await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover
+                        open
+                        anchorRef={anchorRef}
+                        boundaryRef={null}
+                        portal={{ native: true }}
+                        placement="auto-vertical"
+                        gap={0}
+                        maxHeightCap={320}
+                        keyboardBottomInset={300}
+                        onRequestClose={() => {}}
+                    >
+                        {(renderProps) => {
+                            latestRenderProps = renderProps;
+                            return React.createElement('PopoverChild');
+                        }}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+
+        await flushHookEffects({ cycles: 4, turns: 10, frames: 6, advanceTimersMs: 120 });
+
+        expect(latestRenderProps.placement).toBe('top');
+        expect(latestRenderProps.maxHeight).toBe(200);
+
+        vi.useRealTimers();
+    });
+
     it('does not re-render portal content when recompute geometry is unchanged', async () => {
         vi.useFakeTimers();
 

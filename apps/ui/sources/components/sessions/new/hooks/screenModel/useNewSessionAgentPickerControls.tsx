@@ -7,6 +7,7 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
+import type { RememberedEngineSelectionsByScopeV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import {
     favoriteModelSelectionMatchesBackend,
     normalizeFavoriteModelId,
@@ -47,6 +48,10 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     settings: Settings;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     setFavoriteModelSelections?: (favorites: FavoriteModelSelectionV1[]) => void;
+    rememberEngineSelectionsEnabled?: boolean;
+    rememberedEngineSelectionsByScope?: RememberedEngineSelectionsByScopeV1 | null;
+    rememberedEngineSelectionServerId?: string | null;
+    onRememberEngineSelection?: Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0]['onRememberEngineSelection'];
     /**
      * Optional probe surface to merge into the engine detail pane's refresh affordance.
      * This is used to make the model refresh button also refresh CLI detection.
@@ -70,6 +75,10 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         setModelMode: params.setModelMode,
         setAcpSessionModeId: params.setAcpSessionModeId,
         setSessionConfigOptionOverrides: params.setSessionConfigOptionOverrides,
+        rememberEngineSelectionsEnabled: params.rememberEngineSelectionsEnabled,
+        rememberedEngineSelectionsByScope: params.rememberedEngineSelectionsByScope,
+        rememberedEngineSelectionServerId: params.rememberedEngineSelectionServerId,
+        onRememberEngineSelection: params.onRememberEngineSelection,
     });
 
     const selectedBackendTargetKey = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;

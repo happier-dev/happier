@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, View, useWindowDimensions } from 'react-native';
+import { Pressable, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -17,6 +17,7 @@ import {
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type WebHoverablePressableState = Readonly<{
     pressed: boolean;
@@ -74,6 +75,16 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const { width: windowWidth } = useWindowDimensions();
+    const transientStyles = React.useMemo(() => ({
+        optionCardSelected: { backgroundColor: theme.colors.surface.selected },
+        optionCardHovered: { backgroundColor: theme.colors.surface.pressed },
+        optionCardPressed: { opacity: 0.86 },
+        refreshIconButtonPressed: { backgroundColor: theme.colors.surface.pressed },
+        refreshIconButtonDisabled: { opacity: 0.6 },
+    }), [
+        theme.colors.surface.pressed,
+        theme.colors.surface.selected,
+    ]);
     const [query, setQuery] = React.useState('');
     const optionValues = React.useMemo(() => {
         return new Set(props.options.map((option) => option.value));
@@ -273,8 +284,8 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                             onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
                             style={({ pressed }) => [
                                 styles.refreshIconButton,
-                                pressed && probe.phase === 'idle' ? styles.refreshIconButtonPressed : null,
-                                probe.phase !== 'idle' ? styles.refreshIconButtonDisabled : null,
+                                pressed && probe.phase === 'idle' ? transientStyles.refreshIconButtonPressed : null,
+                                probe.phase !== 'idle' ? transientStyles.refreshIconButtonDisabled : null,
                             ]}
                             accessibilityRole="button"
                             accessibilityLabel={probe.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y')}
@@ -283,7 +294,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                             {probe.phase === 'idle' ? (
                                 <Ionicons name="refresh-outline" size={18} color={theme.colors.text.secondary} />
                             ) : (
-                                <ActivityIndicator
+                                <ActivitySpinner
                                     size="small"
                                     color={theme.colors.text.secondary}
                                     accessibilityLabel={probe.phase === 'loading'
@@ -294,7 +305,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                         </Pressable>
                     ) : probe.phase !== 'idle' ? (
                         <View style={styles.refreshIconButton}>
-                            <ActivityIndicator
+                            <ActivitySpinner
                                 size="small"
                                 color={theme.colors.text.secondary}
                                 accessibilityLabel={probe.phase === 'loading'
@@ -349,9 +360,9 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                                         const hovered = (state as WebHoverablePressableState).hovered === true;
                                                         return [
                                                             styles.optionCard,
-                                                            isSelected ? styles.optionCardSelected : null,
-                                                            !isSelected && hovered ? styles.optionCardHovered : null,
-                                                            pressed ? styles.optionCardPressed : null,
+                                                            isSelected ? transientStyles.optionCardSelected : null,
+                                                            !isSelected && hovered ? transientStyles.optionCardHovered : null,
+                                                            pressed ? transientStyles.optionCardPressed : null,
                                                         ];
                                                     }}
                                                 >
@@ -427,10 +438,9 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                 const hovered = (state as WebHoverablePressableState).hovered === true;
                                 return [
                                     styles.customEntryRow,
-                                    styles.optionCard,
-                                    customEditorVisible ? styles.optionCardSelected : null,
-                                    !customEditorVisible && hovered ? styles.optionCardHovered : null,
-                                    pressed && !customEditorVisible ? styles.optionCardPressed : null,
+                                    customEditorVisible ? transientStyles.optionCardSelected : null,
+                                    !customEditorVisible && hovered ? transientStyles.optionCardHovered : null,
+                                    pressed && !customEditorVisible ? transientStyles.optionCardPressed : null,
                                 ];
                             }}
                         >
@@ -528,12 +538,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: 'transparent',
         flexShrink: 0,
     },
-    refreshIconButtonPressed: {
-        backgroundColor: theme.colors.surface.pressed,
-    },
-    refreshIconButtonDisabled: {
-        opacity: 0.6,
-    },
     noteText: {
         fontSize: 11,
         color: theme.colors.text.tertiary,
@@ -557,15 +561,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 7,
         paddingVertical: 7,
         backgroundColor: theme.colors.surface.base,
-    },
-    optionCardSelected: {
-        backgroundColor: theme.colors.surface.selected,
-    },
-    optionCardHovered: {
-        backgroundColor: theme.colors.surface.pressed,
-    },
-    optionCardPressed: {
-        opacity: 0.86,
     },
     optionCardHeader: {
         flexDirection: 'row',
@@ -655,6 +650,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
     },
     customEntryRow: {
+        position: 'relative',
+        borderRadius: 12,
+        paddingHorizontal: 7,
+        paddingVertical: 7,
+        backgroundColor: theme.colors.surface.base,
         marginTop: 4,
         marginHorizontal: 0
     },

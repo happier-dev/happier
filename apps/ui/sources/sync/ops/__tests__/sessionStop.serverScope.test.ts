@@ -173,6 +173,73 @@ describe('sessionStopWithServerScope', () => {
     expect(mockApiSend).not.toHaveBeenCalled();
   });
 
+  it('falls back to session kill RPC when daemon machine stop returns a method-not-found envelope', async () => {
+    mockStorageState.sessions = {
+      'sid-old-daemon-envelope': {
+        id: 'sid-old-daemon-envelope',
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': {
+        id: 'machine-1',
+        active: true,
+        activeAt: Date.now(),
+      },
+    };
+    mockMachineRpcWithServerScope.mockResolvedValue({
+      ok: false,
+      error: 'Method not found',
+      errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+    });
+    mockSessionRpcWithServerScope.mockResolvedValue({ success: true });
+
+    const res = await sessionStopWithServerScope('sid-old-daemon-envelope', { serverId: 'server-a' });
+
+    expect(res).toEqual({ success: true });
+    expect(mockSessionRpcWithServerScope).toHaveBeenCalledWith({
+      method: 'killSession',
+      payload: {},
+      serverId: 'server-a',
+      sessionId: 'sid-old-daemon-envelope',
+    });
+    expect(mockApiSend).not.toHaveBeenCalled();
+  });
+
+  it('falls back to session kill RPC when daemon machine stop reports the session was not found', async () => {
+    mockStorageState.sessions = {
+      'sid-stale-machine-target': {
+        id: 'sid-stale-machine-target',
+        active: true,
+        metadata: { machineId: 'machine-1', path: '/repo' },
+      },
+    };
+    mockStorageState.machines = {
+      'machine-1': {
+        id: 'machine-1',
+        active: true,
+        activeAt: Date.now(),
+      },
+    };
+    mockMachineRpcWithServerScope.mockResolvedValue({
+      ok: false,
+      error: 'Session not found or failed to stop',
+    });
+    mockSessionRpcWithServerScope.mockResolvedValue({ success: true });
+
+    const res = await sessionStopWithServerScope('sid-stale-machine-target', { serverId: 'server-a' });
+
+    expect(res).toEqual({ success: true });
+    expect(mockSessionRpcWithServerScope).toHaveBeenCalledWith({
+      method: 'killSession',
+      payload: {},
+      serverId: 'server-a',
+      sessionId: 'sid-stale-machine-target',
+    });
+    expect(mockApiSend).not.toHaveBeenCalled();
+  });
+
   it('falls back to session-end on the active socket when scope is active and RPC method is unavailable', async () => {
     const err = Object.assign(new Error('RPC method not available'), {
       rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,

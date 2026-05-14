@@ -96,6 +96,14 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         icon: ({ theme }) => <Ionicons name="color-palette-outline" size={18} color={theme.colors.text.secondary} />,
                     },
                     {
+                        id: 'keyboard',
+                        titleKey: 'settingsKeyboard.title',
+                        subtitleKey: 'settingsKeyboard.entrySubtitle',
+                        route: SETTINGS_ROUTES.keyboard,
+                        keywords: ['keyboard', 'shortcut', 'shortcuts', 'hotkeys', 'commands'],
+                        icon: ({ theme }) => <Ionicons name="keypad-outline" size={18} color={theme.colors.text.secondary} />,
+                    },
+                    {
                         id: 'pets',
                         titleKey: 'settings.pets',
                         subtitleKey: 'settings.petsSubtitle',

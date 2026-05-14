@@ -21,14 +21,18 @@ export function useRepositoryTreeRowActions(params: Readonly<{
     onSelectRowMenuItem: (node: RepositoryTreeNodeLike, itemId: RepositoryTreeRowActionMenuItemId) => Promise<void>;
 }> {
     const workspaceTarget = resolveWorkspaceTargetForSession(params.sessionId);
-    return useWorkspaceRepositoryTreeRowActions({
-        workspaceScope: workspaceTarget
+    const workspaceScope = React.useMemo(() => (
+        workspaceTarget
             ? {
                 serverId: workspaceTarget.serverId,
                 machineId: workspaceTarget.machineId,
                 rootPath: workspaceTarget.rootPath,
             }
-            : null,
+            : null
+    ), [workspaceTarget?.machineId, workspaceTarget?.rootPath, workspaceTarget?.serverId]);
+
+    return useWorkspaceRepositoryTreeRowActions({
+        workspaceScope,
         writeActionsEnabled: params.writeActionsEnabled,
         expandedPaths: params.expandedPaths,
         onExpandedPathsChange: params.onExpandedPathsChange,

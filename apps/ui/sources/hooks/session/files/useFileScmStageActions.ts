@@ -100,18 +100,18 @@ export function useFileScmStageActions(input: {
         }
     }, [filePath, scmCommitStrategy, scmSnapshot, scmWriteEnabled, refreshAll, sessionId, sessionPath, mountedRef, setIsApplyingStageSafe]);
 
-    const applySelectedLines = React.useCallback(async () => {
-        if (!sessionId || !sessionPath || !diffContent) return;
-        if (selectedLineKeys.size === 0) return;
-        if (!lineSelectionEnabled) return;
+    const applySelectedLines = React.useCallback(async (): Promise<boolean> => {
+        if (!sessionId || !sessionPath || !diffContent) return false;
+        if (selectedLineKeys.size === 0) return false;
+        if (!lineSelectionEnabled) return false;
         const atomicVirtualLineSelectionEnabled = isAtomicCommitStrategy(scmCommitStrategy)
             && scmSnapshot?.capabilities?.writeCommitLineSelection === true;
-        if (!includeExcludeEnabled && !atomicVirtualLineSelectionEnabled) return;
+        if (!includeExcludeEnabled && !atomicVirtualLineSelectionEnabled) return false;
 
         const stageSelected = diffMode !== 'included';
         if (atomicVirtualLineSelectionEnabled && diffMode !== 'pending') {
             Modal.alert(t('common.error'), t('files.stageActions.selectPendingDiffMode'));
-            return;
+            return false;
         }
 
         const patch = buildPatchFromSelectedDiffLines(diffContent, selectedLineKeys, {
@@ -119,14 +119,15 @@ export function useFileScmStageActions(input: {
         });
         if (!patch) {
             Modal.alert(t('common.error'), t('files.stageActions.unableToBuildPatchFromSelection'));
-            return;
+            return false;
         }
 
         if (atomicVirtualLineSelectionEnabled) {
-            storage.getState().unmarkSessionProjectScmCommitSelectionPaths(sessionId, [filePath]);
-            storage.getState().upsertSessionProjectScmCommitSelectionPatch(sessionId, {
-                path: filePath,
-                patch,
+            try {
+                storage.getState().unmarkSessionProjectScmCommitSelectionPaths(sessionId, [filePath]);
+                storage.getState().upsertSessionProjectScmCommitSelectionPatch(sessionId, {
+                    path: filePath,
+                    patch,
                 });
                 reportSessionScmOperation({
                     state: storage.getState(),
@@ -139,7 +140,12 @@ export function useFileScmStageActions(input: {
                     tracking,
                 });
                 setSelectedLineKeys(new Set());
-            return;
+                return true;
+            } catch (error) {
+                const message = error instanceof Error ? error.message : t('files.stageActions.diffChangedRefreshAndReselect');
+                Modal.alert(t('common.error'), message);
+                return false;
+            }
         }
 
         const preflight = evaluateScmOperationPreflight({
@@ -158,9 +164,10 @@ export function useFileScmStageActions(input: {
                 tracking,
             });
             Modal.alert(t('common.error'), preflight.message);
-            return;
+            return false;
         }
 
+        let applied = false;
         const lockResult = await withSessionProjectScmOperationLock({
             state: storage.getState(),
             sessionId,
@@ -215,6 +222,7 @@ export function useFileScmStageActions(input: {
                     if (mountedRef.current) {
                         setSelectedLineKeys(new Set());
                     }
+                    applied = true;
                     await scmStatusSync.invalidateFromMutationAndAwait(sessionId);
                     if (mountedRef.current) {
                         await refreshAll();
@@ -233,7 +241,9 @@ export function useFileScmStageActions(input: {
                 tracking,
             });
             Modal.alert(t('common.error'), lockResult.message);
+            return false;
         }
+        return applied;
     }, [
         diffContent,
         diffMode,

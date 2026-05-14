@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable } from 'react-native';
+import { Platform, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -9,6 +9,7 @@ import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/ser
 import { t } from '@/text';
 import type { SessionRollbackTarget } from '@happier-dev/protocol';
 import { executeTranscriptRollbackAction, type CheckpointCodeRollbackEvidence } from './transcriptRollbackActionRunner';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export const TranscriptRollbackActionButton = React.memo((props: {
     sessionId: string;
@@ -70,7 +71,7 @@ export const TranscriptRollbackActionButton = React.memo((props: {
             ]}
         >
             {isRollingBack ? (
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             ) : (
                 <Ionicons name="arrow-undo-outline" size={12} color={theme.colors.text.secondary} />
             )}

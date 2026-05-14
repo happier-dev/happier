@@ -10,7 +10,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 
 import { sessionListStyles } from './sessionListStyles';
-import { SessionsListHeader } from './sessionListChrome';
+import { SessionFolderFocusBreadcrumbs, SessionsListHeader } from './sessionListChrome';
+import type { SessionFolderFocusScope } from '@/sync/domains/session/folders';
 
 const sessionListNodeKeyExtractor = (item: string): string => item;
 
@@ -63,6 +64,10 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     renderItem: (params: { item: string; index: number }) => React.ReactElement | null;
     onStopScrollEventPropagationOnWeb: (event: any) => void;
     onPressArchivedSessions: () => void;
+    folderFocus: SessionFolderFocusScope | null;
+    folderFocusRootTitle?: string | null;
+    onClearFolderFocus: () => void;
+    onSelectFolderBreadcrumb: (folderId: string) => void;
 }>) {
     const contentContainerStyle = React.useMemo(() => ({
         paddingBottom: props.safeAreaBottom + 128,
@@ -76,6 +81,26 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     const footerComponent = React.useMemo(() => (
         <SessionsListArchivedFooter onPress={handlePressArchivedSessions} />
     ), [handlePressArchivedSessions]);
+    const headerComponent = React.useMemo(() => {
+        const folderFocus = props.folderFocus;
+        const onClearFolderFocus = props.onClearFolderFocus;
+        const onSelectFolderBreadcrumb = props.onSelectFolderBreadcrumb;
+        return function SessionListCompositeHeader() {
+            return (
+                <>
+                    <SessionsListHeader />
+                    {folderFocus ? (
+                        <SessionFolderFocusBreadcrumbs
+                            breadcrumbs={folderFocus.breadcrumbs}
+                            onClear={onClearFolderFocus}
+                            onSelectFolder={onSelectFolderBreadcrumb}
+                            rootTitle={props.folderFocusRootTitle}
+                        />
+                    ) : null}
+                </>
+            );
+        };
+    }, [props.folderFocus, props.folderFocusRootTitle, props.onClearFolderFocus, props.onSelectFolderBreadcrumb]);
 
     if (Platform.OS === 'web') {
         return (
@@ -88,7 +113,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
                 renderItem={props.renderItem as any}
                 keyExtractor={sessionListNodeKeyExtractor}
                 contentContainerStyle={contentContainerStyle}
-                ListHeaderComponent={SessionsListHeader as any}
+                ListHeaderComponent={headerComponent as any}
                 ListFooterComponent={footerComponent as any}
             />
         );
@@ -101,7 +126,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             keyExtractor={sessionListNodeKeyExtractor}
             getItemType={getSessionListNodeType as any}
             contentContainerStyle={contentContainerStyle as any}
-            ListHeaderComponent={SessionsListHeader as any}
+            ListHeaderComponent={headerComponent as any}
             ListFooterComponent={footerComponent as any}
         />
     );

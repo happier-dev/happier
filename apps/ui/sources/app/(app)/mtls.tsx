@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 
 import { useAuth } from '@/auth/context/AuthContext';
@@ -10,6 +10,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperationFailedDebugMessage';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export default function MtlsCallbackScreen() {
     const auth = useAuth();
@@ -85,7 +86,7 @@ export default function MtlsCallbackScreen() {
 
     return (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator />
+            <ActivitySpinner />
         </View>
     );
 }

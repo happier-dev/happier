@@ -1,4 +1,4 @@
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import { normalizePluginBackendCapabilitiesV1, type PluginProjectionV2 } from '@happier-dev/protocol';
 
 export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
     v: 2,
@@ -35,9 +35,9 @@ export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
             subtitle: 'Plugin-backed review engine',
             providerAgentId: 'claude',
             iconAgentId: 'codex',
-            capabilities: {
+            capabilities: normalizePluginBackendCapabilitiesV1({
                 executionRun: { supported: true },
-            },
+            }),
         },
     },
     actionsById: {},

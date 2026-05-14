@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 
@@ -41,6 +41,7 @@ import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/fe
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { resolveTransferAvailability } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { WorkspaceRepositoryTreeList, type WorkspaceRepositoryTreeWebDropTarget } from './WorkspaceRepositoryTreeList';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
     workspaceCacheKey: string;
@@ -463,7 +464,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 priority: 10,
                 order: 5,
                 icon: treeRootLoading ? (
-                    <ActivityIndicator testID="workspace-repository-tree-refresh-loading" size="small" color={theme.colors.text.secondary} />
+                    <ActivitySpinner testID="workspace-repository-tree-refresh-loading" size="small" color={theme.colors.text.secondary} />
                 ) : (
                     <Octicons name="sync" size={16} color={theme.colors.text.secondary} />
                 ),

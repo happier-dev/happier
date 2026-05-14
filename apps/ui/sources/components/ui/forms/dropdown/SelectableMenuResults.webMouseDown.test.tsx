@@ -30,7 +30,7 @@ installDropdownCommonModuleMocks({
 });
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: { default: () => ({}), eyebrow: () => ({}) },
 }));
 
 vi.mock('@/components/ui/lists/SelectableRow', () => {

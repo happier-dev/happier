@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { ScmCommitSelectionPatch } from '@/sync/domains/state/storageTypes';
 import { installWorkspaceFileDetailsCommonModuleMocks } from './workspaceFileDetails/workspaceFileDetailsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -34,8 +35,12 @@ vi.mock('@/components/workspaces/files/file/FileHeader', () => ({
     FileHeader: (props: any) => React.createElement('FileHeader', props, props.rightElement ?? null),
 }));
 
+const fileActionToolbarProps = vi.hoisted(() => ({ current: null as any }));
 vi.mock('@/components/workspaces/files/file/FileActionToolbar', () => ({
-    FileActionToolbar: (props: any) => React.createElement('FileActionToolbar', props, props.rightElement ?? null),
+    FileActionToolbar: (props: any) => {
+        fileActionToolbarProps.current = props;
+        return React.createElement('FileActionToolbar', props, props.rightElement ?? null);
+    },
 }));
 
 vi.mock('@/components/workspaces/files/file/FileContentPanel', () => ({
@@ -67,8 +72,9 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     }),
 }));
 
+const featureEnabledMock = vi.hoisted(() => vi.fn((_featureId: string) => false));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => false,
+    useFeatureEnabled: (featureId: string) => featureEnabledMock(featureId),
 }));
 
 vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers', () => ({
@@ -83,8 +89,9 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
     useCodeLinesSyntaxHighlighting: () => ({ mode: 'off' }),
 }));
 
+const fileLanguageMock = vi.hoisted(() => vi.fn<(path: string) => string>(() => 'txt'));
 vi.mock('@/utils/code/fileLanguage', () => ({
-    getFileLanguageFromPath: () => 'txt',
+    getFileLanguageFromPath: (path: string) => fileLanguageMock(path),
 }));
 
 vi.mock('@/scm/settings/commitStrategy', () => ({
@@ -97,9 +104,12 @@ vi.mock('@/scm/diff/defaultMode', () => ({
     resolveDefaultDiffModeForFile: () => 'pending',
 }));
 
+const canUseLineSelectionMock = vi.fn(() => false);
+
 vi.mock('@/scm/scmLineSelection', () => ({
     buildFileLineSelectionFingerprint: () => 'fingerprint-1',
-    canUseLineSelection: () => false,
+    canUseLineSelection: () => canUseLineSelectionMock(),
+    canStartLineSelection: () => canUseLineSelectionMock(),
 }));
 
 vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
@@ -110,8 +120,19 @@ vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
     }),
 }));
 
-vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileEditorState', () => ({
-    useWorkspaceFileEditorState: () => ({
+const workspaceStageActionsMock = vi.hoisted(() => ({
+    applySelectedLines: vi.fn(async () => true),
+    handleStage: vi.fn(),
+}));
+vi.mock('@/hooks/workspaces/scm/useWorkspaceFileScmStageActions', () => ({
+    useWorkspaceFileScmStageActions: () => ({
+        isApplyingStage: false,
+        handleStage: (included: boolean) => workspaceStageActionsMock.handleStage(included),
+        applySelectedLines: () => workspaceStageActionsMock.applySelectedLines(),
+    }),
+}));
+
+const fileEditorState = vi.hoisted(() => ({
         editorSurfaceEnabled: false,
         isEditingFile: false,
         editorResetKey: 0,
@@ -127,7 +148,10 @@ vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspace
         startEditingFile: vi.fn(),
         cancelEditingFile: vi.fn(),
         saveFileEdits: vi.fn(),
-    }),
+}));
+
+vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileEditorState', () => ({
+    useWorkspaceFileEditorState: () => fileEditorState,
 }));
 
 const refreshSpy = vi.fn(async (_input: any) => ({
@@ -137,6 +161,7 @@ const refreshSpy = vi.fn(async (_input: any) => ({
     fileContent: { content: 'hello', isBinary: false },
     fileWriteSupported: true,
 }));
+let workspaceCommitSelectionPatches: ScmCommitSelectionPatch[] = [];
 
 vi.mock('@/components/workspaces/files/details/workspaceFileDetails/refreshWorkspaceFileDetails', () => ({
     refreshWorkspaceFileDetails: (input: any) => refreshSpy(input),
@@ -223,7 +248,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         useSessionProjectScmInFlightOperation: () => null,
         useWorkspaceScmSnapshot: () => workspaceSnapshot,
         useWorkspaceScmCommitSelectionPaths: () => [],
-        useWorkspaceScmCommitSelectionPatches: () => [],
+        useWorkspaceScmCommitSelectionPatches: () => workspaceCommitSelectionPatches,
         useWorkspaceScmInFlightOperation: () => null,
         useWorkspaceReviewCommentsDrafts: () => [],
         importOriginal,
@@ -231,6 +256,397 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 });
 
 describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
+    beforeEach(() => {
+        canUseLineSelectionMock.mockReset();
+        canUseLineSelectionMock.mockReturnValue(false);
+        workspaceStageActionsMock.applySelectedLines.mockReset();
+        workspaceStageActionsMock.applySelectedLines.mockResolvedValue(true);
+        workspaceStageActionsMock.handleStage.mockReset();
+        fileLanguageMock.mockReset();
+        fileLanguageMock.mockReturnValue('txt');
+        featureEnabledMock.mockReset();
+        featureEnabledMock.mockReturnValue(false);
+        workspaceCommitSelectionPatches = [];
+        refreshSpy.mockReset();
+        refreshSpy.mockImplementation(async (_input: any) => ({
+            status: 'ready' as const,
+            error: null,
+            diffContent: null,
+            fileContent: { content: 'hello', isBinary: false },
+            fileWriteSupported: true,
+        }));
+    });
+
+    it('keeps line selection active after the toolbar starts explicit commit selection mode', async () => {
+        canUseLineSelectionMock.mockReturnValueOnce(true).mockReturnValue(true);
+        refreshSpy.mockResolvedValueOnce({
+            status: 'ready' as const,
+            error: null,
+            diffContent: 'diff --git a/src/a.txt b/src/a.txt\n@@ -1 +1 @@\n-old\n+new\n',
+            fileContent: { content: 'new', isBinary: false },
+            fileWriteSupported: true,
+        } as any);
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+
+        await act(async () => {});
+
+        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        expect(toolbar?.props.lineSelectionEnabled).toBe(true);
+        expect(toolbar?.props.lineSelectionActive).toBe(false);
+
+        await act(async () => {
+            toolbar?.props.onStartLineSelection();
+        });
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        const contentPanel = screen.findAllByType('FileContentPanel')[0];
+        expect(toolbar?.props.lineSelectionActive).toBe(true);
+        expect(contentPanel?.props.lineSelectionEnabled).toBe(true);
+    });
+
+    it('owns range selection state and passes it to file content while selecting commit lines', async () => {
+        canUseLineSelectionMock.mockReturnValueOnce(true).mockReturnValue(true);
+        refreshSpy.mockResolvedValueOnce({
+            status: 'ready' as const,
+            error: null,
+            diffContent: 'diff --git a/src/a.txt b/src/a.txt\n@@ -1 +1 @@\n-old\n+new\n',
+            fileContent: { content: 'new', isBinary: false },
+            fileWriteSupported: true,
+        } as any);
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+
+        await act(async () => {});
+
+        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        await act(async () => {
+            toolbar?.props.onStartLineSelection();
+        });
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        let contentPanel = screen.findAllByType('FileContentPanel')[0];
+        expect(toolbar?.props.rangeSelectionActive).toBe(false);
+        expect(contentPanel?.props.rangeSelectionActive).toBe(false);
+
+        await act(async () => {
+            toolbar?.props.onStartRangeSelection();
+        });
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        contentPanel = screen.findAllByType('FileContentPanel')[0];
+        expect(toolbar?.props.rangeSelectionActive).toBe(true);
+        expect(contentPanel?.props.rangeSelectionActive).toBe(true);
+
+        await act(async () => {
+            contentPanel?.props.onToggleLine('additions:1');
+        });
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        contentPanel = screen.findAllByType('FileContentPanel')[0];
+        expect(toolbar?.props.rangeSelectionActive).toBe(false);
+        expect(contentPanel?.props.rangeSelectionActive).toBe(false);
+        expect(toolbar?.props.selectedLineCount).toBe(1);
+    });
+
+    it('passes explicit review comment mode from the toolbar into markdown file content', async () => {
+        featureEnabledMock.mockImplementation((featureId: string) => featureId === 'files.reviewComments');
+        fileLanguageMock.mockReturnValue('markdown');
+        refreshSpy.mockResolvedValueOnce({
+            status: 'ready' as const,
+            error: null,
+            diffContent: null,
+            fileContent: { content: '# Title\n\nBody', isBinary: false },
+            fileWriteSupported: true,
+        } as any);
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="README.md"
+                sessionIdForAugmentation={null}
+            />,
+        );
+
+        await act(async () => {});
+
+        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        let contentPanel = screen.findAllByType('FileContentPanel')[0];
+        expect(toolbar?.props.reviewCommentsEnabled).toBe(true);
+        expect(toolbar?.props.commentModeActive).toBe(false);
+        expect(contentPanel?.props.reviewCommentModeActive).toBe(false);
+
+        await act(async () => {
+            toolbar?.props.onToggleCommentMode(true);
+        });
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        contentPanel = screen.findAllByType('FileContentPanel')[0];
+        expect(toolbar?.props.commentModeActive).toBe(true);
+        expect(contentPanel?.props.reviewCommentModeActive).toBe(true);
+    });
+
+    it('clears range selection state when applying or canceling commit line selection', async () => {
+        canUseLineSelectionMock.mockReturnValueOnce(true).mockReturnValue(true);
+        refreshSpy.mockResolvedValueOnce({
+            status: 'ready' as const,
+            error: null,
+            diffContent: 'diff --git a/src/a.txt b/src/a.txt\n@@ -1 +1 @@\n-old\n+new\n',
+            fileContent: { content: 'new', isBinary: false },
+            fileWriteSupported: true,
+        } as any);
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+
+        await act(async () => {});
+
+        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        await act(async () => {
+            toolbar?.props.onStartLineSelection();
+        });
+
+        let contentPanel = screen.findAllByType('FileContentPanel')[0];
+        await act(async () => {
+            contentPanel?.props.onToggleLine('additions:1');
+        });
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        await act(async () => {
+            toolbar?.props.onStartRangeSelection();
+        });
+
+        expect(screen.findAllByType('FileContentPanel')[0]?.props.rangeSelectionActive).toBe(true);
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        await act(async () => {
+            await toolbar?.props.onApplySelectedLines();
+        });
+
+        expect(screen.findAllByType('FileContentPanel')[0]?.props.rangeSelectionActive).toBe(false);
+        expect(screen.findAllByType('FileActionToolbar')[0]?.props.lineSelectionActive).toBe(false);
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        await act(async () => {
+            toolbar?.props.onStartLineSelection();
+        });
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        await act(async () => {
+            toolbar?.props.onStartRangeSelection();
+        });
+
+        expect(screen.findAllByType('FileContentPanel')[0]?.props.rangeSelectionActive).toBe(true);
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        await act(async () => {
+            toolbar?.props.onClearSelection();
+        });
+
+        expect(screen.findAllByType('FileContentPanel')[0]?.props.rangeSelectionActive).toBe(false);
+        expect(screen.findAllByType('FileActionToolbar')[0]?.props.lineSelectionActive).toBe(false);
+    });
+
+    it('shows applied partial commit selection when reopening file details', async () => {
+        canUseLineSelectionMock.mockReturnValue(true);
+        workspaceCommitSelectionPatches = [{
+            path: 'src/a.txt',
+            patch: [
+                'diff --git a/src/a.txt b/src/a.txt',
+                '--- a/src/a.txt',
+                '+++ b/src/a.txt',
+                '@@ -1 +1 @@',
+                '-old',
+                '+new',
+                '',
+            ].join('\n'),
+        }];
+        refreshSpy.mockResolvedValueOnce({
+            status: 'ready' as const,
+            error: null,
+            diffContent: 'diff --git a/src/a.txt b/src/a.txt\n@@ -1 +1 @@\n-old\n+new\n',
+            fileContent: { content: 'new', isBinary: false },
+            fileWriteSupported: true,
+        } as any);
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+
+        await act(async () => {});
+
+        const toolbar = screen.findAllByType('FileActionToolbar')[0];
+        const contentPanel = screen.findAllByType('FileContentPanel')[0];
+        expect(toolbar?.props.lineSelectionActive).toBe(false);
+        expect(toolbar?.props.selectedLineCount).toBe(0);
+        expect(toolbar?.props.appliedLineSelectionCount).toBe(2);
+        expect(contentPanel?.props.lineSelectionEnabled).toBe(false);
+        expect(contentPanel?.props.selectedLineKeys).toEqual(new Set(['deletions:1', 'additions:1']));
+    });
+
+    it('seeds explicit line selection from an applied partial commit selection', async () => {
+        canUseLineSelectionMock.mockReturnValue(true);
+        workspaceCommitSelectionPatches = [{
+            path: 'src/a.txt',
+            patch: [
+                'diff --git a/src/a.txt b/src/a.txt',
+                '--- a/src/a.txt',
+                '+++ b/src/a.txt',
+                '@@ -1 +1 @@',
+                '-old',
+                '+new',
+                '',
+            ].join('\n'),
+        }];
+        refreshSpy.mockResolvedValueOnce({
+            status: 'ready' as const,
+            error: null,
+            diffContent: 'diff --git a/src/a.txt b/src/a.txt\n@@ -1 +1 @@\n-old\n+new\n',
+            fileContent: { content: 'new', isBinary: false },
+            fileWriteSupported: true,
+        } as any);
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+
+        await act(async () => {});
+
+        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        await act(async () => {
+            toolbar?.props.onStartLineSelection();
+        });
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        const contentPanel = screen.findAllByType('FileContentPanel')[0];
+        expect(toolbar?.props.lineSelectionActive).toBe(true);
+        expect(toolbar?.props.selectedLineCount).toBe(2);
+        expect(contentPanel?.props.lineSelectionEnabled).toBe(true);
+        expect(contentPanel?.props.selectedLineKeys).toEqual(new Set(['deletions:1', 'additions:1']));
+    });
+
+    it('keeps explicit line selection active when applying selected lines fails', async () => {
+        canUseLineSelectionMock.mockReturnValue(true);
+        workspaceStageActionsMock.applySelectedLines.mockResolvedValueOnce(false);
+        workspaceCommitSelectionPatches = [{
+            path: 'src/a.txt',
+            patch: [
+                'diff --git a/src/a.txt b/src/a.txt',
+                '--- a/src/a.txt',
+                '+++ b/src/a.txt',
+                '@@ -1 +1 @@',
+                '-old',
+                '+new',
+                '',
+            ].join('\n'),
+        }];
+        refreshSpy.mockResolvedValueOnce({
+            status: 'ready' as const,
+            error: null,
+            diffContent: 'diff --git a/src/a.txt b/src/a.txt\n@@ -1 +1 @@\n-old\n+new\n',
+            fileContent: { content: 'new', isBinary: false },
+            fileWriteSupported: true,
+        } as any);
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+
+        await act(async () => {});
+
+        let toolbar = screen.findAllByType('FileActionToolbar')[0];
+        await act(async () => {
+            toolbar?.props.onStartLineSelection();
+        });
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        expect(toolbar?.props.lineSelectionActive).toBe(true);
+
+        await act(async () => {
+            await toolbar?.props.onApplySelectedLines();
+        });
+
+        toolbar = screen.findAllByType('FileActionToolbar')[0];
+        expect(workspaceStageActionsMock.applySelectedLines).toHaveBeenCalledTimes(1);
+        expect(toolbar?.props.lineSelectionActive).toBe(true);
+    });
+
+    it('defaults markdown files to markdown view when the diff is not renderable', async () => {
+        fileLanguageMock.mockReturnValue('markdown');
+        refreshSpy.mockResolvedValueOnce({
+            status: 'ready' as const,
+            error: null,
+            diffContent: 'No changes',
+            fileContent: { content: '# Title', isBinary: false },
+            fileWriteSupported: true,
+        } as any);
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="README.md"
+                sessionIdForAugmentation={null}
+            />,
+        );
+
+        await act(async () => {});
+
+        const toolbar = screen.findAllByType('FileActionToolbar')[0];
+        expect(toolbar?.props.displayMode).toBe('markdown');
+    });
+
     it('passes workspace file entry kind into refreshWorkspaceFileDetails', async () => {
         const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
 
@@ -246,6 +662,71 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         expect(refreshSpy).toHaveBeenCalled();
         const firstCall = refreshSpy.mock.calls[0]?.[0];
         expect(firstCall?.fileEntryKind).toBe('modified');
+    });
+
+    it('keeps the toolbar edit callback stable across unchanged file-detail rerenders', async () => {
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+        const onStartEditingFile = vi.fn();
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+                onStartEditingFile={onStartEditingFile}
+            />,
+        );
+        await act(async () => {});
+
+        const firstCallback = fileActionToolbarProps.current?.onStartEditingFile;
+        expect(typeof firstCallback).toBe('function');
+
+        await act(async () => {
+            screen.tree.update(
+                <WorkspaceFileDetailsView
+                    scopeId="workspace:srv1:m1:/repo"
+                    scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                    filePath="src/a.txt"
+                    sessionIdForAugmentation={null}
+                    onStartEditingFile={onStartEditingFile}
+                />,
+            );
+        });
+        await act(async () => {});
+
+        expect(fileActionToolbarProps.current?.onStartEditingFile).toBe(firstCallback);
+    });
+
+    it('keeps the selected-line apply callback stable across unchanged file-detail rerenders', async () => {
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+        await act(async () => {});
+
+        const firstCallback = fileActionToolbarProps.current?.onApplySelectedLines;
+        expect(typeof firstCallback).toBe('function');
+
+        await act(async () => {
+            screen.tree.update(
+                <WorkspaceFileDetailsView
+                    scopeId="workspace:srv1:m1:/repo"
+                    scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                    filePath="src/a.txt"
+                    sessionIdForAugmentation={null}
+                />,
+            );
+        });
+        await act(async () => {});
+
+        expect(fileActionToolbarProps.current?.onApplySelectedLines).toBe(firstCallback);
     });
 
     it('renders a workspace-scoped download action when preview is too large (no sessionId required)', async () => {

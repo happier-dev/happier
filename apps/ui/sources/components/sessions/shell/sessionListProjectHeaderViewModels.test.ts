@@ -104,6 +104,34 @@ describe('buildSessionListProjectHeaderViewModels', () => {
         });
     });
 
+    it('uses the workspace basename for unlabeled project headers by default', () => {
+        const result = buildSessionListProjectHeaderViewModels({
+            listItems: [
+                {
+                    type: 'header',
+                    title: '~/Documents/Development/happier/remote-dev',
+                    headerKind: 'project',
+                    groupKey: 'project:repo',
+                    workspaceKey: 'legacy_repo',
+                    workspaceScopeHint: {
+                        serverId: 'server_a',
+                        machineId: 'machine_a',
+                        rootPath: '/Users/lee/Documents/Development/happier/remote-dev',
+                    },
+                    serverId: 'server_a',
+                    serverName: 'Server A',
+                },
+            ] as any,
+            workspaceRefs: [],
+            workspaceLabels: {},
+        });
+
+        expect(result.projectHeaderViewModelByGroupKey.get('project:repo')).toMatchObject({
+            displayTitle: 'remote-dev',
+            hasCustomLabel: false,
+        });
+    });
+
     it('reuses the same project-header state for identical non-empty inputs', () => {
         const listItems = [
             {

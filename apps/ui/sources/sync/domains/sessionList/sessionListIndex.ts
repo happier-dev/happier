@@ -1,12 +1,13 @@
 import type { MachineDisplayRenderable } from '../machines/machineDisplayRenderable';
 import type { SessionListViewItem } from '../session/listing/sessionListViewData';
 import { getSessionStorageKind } from '../session/sessionStorageKind';
+import type { SessionFolderWorkspaceRefV1 } from '../session/folders';
 
 export type SessionListIndexItem =
     | Readonly<{
         type: 'header';
         title: string;
-        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared';
+        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared' | 'folder';
         groupKey?: string;
         workspaceKey?: string;
         seedSessionId?: string | null;
@@ -15,6 +16,9 @@ export type SessionListIndexItem =
         serverName?: string;
         subtitle?: string;
         machine?: MachineDisplayRenderable;
+        folderId?: string;
+        folderDepth?: number;
+        workspace?: SessionFolderWorkspaceRefV1;
     }>
     | Readonly<{
         type: 'session';
@@ -22,13 +26,16 @@ export type SessionListIndexItem =
         storageKind?: 'persisted' | 'direct';
         section?: 'active' | 'inactive';
         groupKey?: string;
-        groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared';
+        groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared' | 'folder';
         pinned?: boolean;
         variant?: 'default' | 'no-path';
         archivedAt?: number | null;
         keepVisibleWhenInactive?: boolean;
         serverId?: string;
         serverName?: string;
+        folderId?: string | null;
+        folderDepth?: number;
+        workspace?: SessionFolderWorkspaceRefV1;
     }>;
 
 function areMachineDisplayRenderablesEqual(
@@ -69,7 +76,10 @@ function areSessionListIndexItemsEqual(
             && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
             && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
             && previous.serverId === next.serverId
-            && previous.serverName === next.serverName;
+            && previous.serverName === next.serverName
+            && (previous.folderId ?? null) === (next.folderId ?? null)
+            && (previous.folderDepth ?? null) === (next.folderDepth ?? null)
+            && JSON.stringify(previous.workspace ?? null) === JSON.stringify(next.workspace ?? null);
     }
 
     if (next.type !== 'header') return false;
@@ -84,6 +94,8 @@ function areSessionListIndexItemsEqual(
         && previous.serverId === next.serverId
         && previous.serverName === next.serverName
         && previous.subtitle === next.subtitle
+        && (previous.folderId ?? null) === (next.folderId ?? null)
+        && (previous.folderDepth ?? null) === (next.folderDepth ?? null)
         && (previousHint?.serverId ?? null) === (nextHint?.serverId ?? null)
         && (previousHint?.machineId ?? null) === (nextHint?.machineId ?? null)
         && (previousHint?.rootPath ?? null) === (nextHint?.rootPath ?? null)
@@ -95,18 +107,20 @@ function buildSessionListIndexHeaderNodeId(item: Extract<SessionListIndexItem, {
     const groupKey = String(item.groupKey ?? '').trim();
     const serverId = String(item.serverId ?? '').trim();
     const workspaceKey = String(item.workspaceKey ?? '').trim();
+    const folderId = String(item.folderId ?? '').trim();
     const machineId = String(item.machine?.id ?? '').trim();
     const workspaceScopeHint = item.workspaceScopeHint ?? null;
     const hintServerId = String(workspaceScopeHint?.serverId ?? '').trim();
     const hintMachineId = String(workspaceScopeHint?.machineId ?? '').trim();
     const hintRootPath = String(workspaceScopeHint?.rootPath ?? '').trim();
 
-    if (groupKey) return `header:${headerKind}:${groupKey}`;
+    if (groupKey) return `header:${headerKind}:${groupKey}${folderId ? `:${folderId}` : ''}`;
 
     const parts = [
         `header:${headerKind}`,
         serverId ? `server:${serverId}` : null,
         workspaceKey ? `workspace:${workspaceKey}` : null,
+        folderId ? `folder:${folderId}` : null,
         machineId ? `machine:${machineId}` : null,
         hintServerId ? `hintServer:${hintServerId}` : null,
         hintMachineId ? `hintMachine:${hintMachineId}` : null,
@@ -161,6 +175,9 @@ export function buildSessionListIndexFromViewData(
                 serverName: item.serverName,
                 subtitle: item.subtitle,
                 machine: item.machine,
+                folderId: item.folderId,
+                folderDepth: item.folderDepth,
+                workspace: item.workspace,
             };
             const key = buildSessionListIndexNodeId(nextItem);
             const previousItem = previousByKey?.get(key) ?? null;
@@ -184,6 +201,9 @@ export function buildSessionListIndexFromViewData(
             keepVisibleWhenInactive: item.session.keepVisibleWhenInactive === true,
             serverId: item.serverId,
             serverName: item.serverName,
+            folderId: item.folderId,
+            folderDepth: item.folderDepth,
+            workspace: item.workspace,
         };
         const key = buildSessionListIndexNodeId(nextItem);
         const previousItem = previousByKey?.get(key) ?? null;

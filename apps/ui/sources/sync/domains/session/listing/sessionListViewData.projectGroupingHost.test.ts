@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
-import { buildSessionListViewData } from './sessionListViewData';
+import { buildSessionListViewData, type SessionListViewItem } from './sessionListViewData';
 
 function makeMachineDisplay(partial: Partial<MachineDisplayRenderable> & Pick<MachineDisplayRenderable, 'id'>): MachineDisplayRenderable {
     const updatedAt = partial.updatedAt ?? 0;
@@ -50,8 +50,12 @@ function makeRenderableSession(
     };
 }
 
+function isProjectHeader(item: SessionListViewItem): item is Extract<SessionListViewItem, { type: 'header' }> {
+    return item.type === 'header' && item.headerKind === 'project';
+}
+
 describe('buildSessionListViewData (project grouping)', () => {
-    it('groups sessions by host when machine ids differ', () => {
+    it('does not group sessions by host when machine ids differ', () => {
         const host = 'lima-happier-wsrepl-qa-0324';
 
         const sessions: Record<string, SessionListRenderableSession> = {
@@ -100,14 +104,15 @@ describe('buildSessionListViewData (project grouping)', () => {
             inactiveGroupingV1: 'project',
         });
 
-        const projectHeaders = list.filter((item) => item.type === 'header' && item.headerKind === 'project');
-        expect(projectHeaders).toHaveLength(1);
+        const projectHeaders = list.filter(isProjectHeader);
+        expect(projectHeaders).toHaveLength(2);
+        expect(projectHeaders.map((item) => item.machine?.id).sort()).toEqual(['m_new', 'm_old']);
 
         const sessionRows = list.filter((item) => item.type === 'session');
         expect(sessionRows).toHaveLength(2);
     });
 
-    it('groups sessions by machine host when session metadata host is missing', () => {
+    it('does not use machine host as grouping identity when session metadata host is missing', () => {
         const host = 'lima-happier-wsrepl-qa-0324';
 
         const sessions: Record<string, SessionListRenderableSession> = {
@@ -155,8 +160,9 @@ describe('buildSessionListViewData (project grouping)', () => {
         const projectHeaders = list.filter((item): item is Extract<typeof item, { type: 'header' }> =>
             item.type === 'header' && item.headerKind === 'project',
         );
-        expect(projectHeaders).toHaveLength(1);
-        expect(projectHeaders[0]?.subtitle).toBe(host);
+        expect(projectHeaders).toHaveLength(2);
+        expect(projectHeaders.map((item) => item.machine?.id).sort()).toEqual(['m_new', 'm_old']);
+        expect(projectHeaders.map((item) => item.subtitle)).toEqual([host, host]);
 
         const sessionRows = list.filter((item) => item.type === 'session');
         expect(sessionRows).toHaveLength(2);

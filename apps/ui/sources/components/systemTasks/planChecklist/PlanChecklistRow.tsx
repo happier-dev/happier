@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -15,6 +15,7 @@ import type {
     PlanChecklistPhase,
     PlanChecklistVariant,
 } from './types';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function getRowStatus(
     item: PlanChecklistItem,
@@ -388,7 +389,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                             ]}
                         >
                             {status === 'running' ? (
-                                <ActivityIndicator
+                                <ActivitySpinner
                                     size={usesCompactNestedRow ? 16 : (usesOnboardingVariant ? 18 : 16)}
                                     color={theme.colors.accent.blue}
                                 />

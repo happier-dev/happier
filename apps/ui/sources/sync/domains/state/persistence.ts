@@ -2,6 +2,11 @@ import { z } from 'zod';
 import type { Settings } from '../settings/settings';
 import { voiceSettingsParse } from '../settings/voiceSettings';
 import { LocalSettings, localSettingsDefaults, localSettingsParse } from '../settings/localSettings';
+import {
+    migrateThemeProfileLocalStateTokenIds,
+    parseThemeProfilesLocalState,
+} from '@/theme/profiles/themeProfilePersistence';
+import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
 import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
 import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/registry/account/accountSettingArtifacts';
 import { isModelMode, isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
@@ -406,19 +411,62 @@ export function savePendingSettings(settings: Partial<Settings>) {
 }
 
 export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
-    const mmkv = getPersistenceStorage();
-    const localSettings = mmkv.getString('local-settings');
-    if (localSettings) {
-        try {
-            const parsed = JSON.parse(localSettings);
-            const settings = localSettingsParse(parsed);
-            return settings.themePreference;
-        } catch (e) {
-            console.error('Failed to parse local settings for theme preference', e);
-            return localSettingsDefaults.themePreference;
-        }
+    return loadThemeRuntimeLocalState().themePreference;
+}
+
+export type ThemeRuntimeLocalState = Readonly<{
+    themePreference: LocalSettings['themePreference'];
+    themeProfiles: ThemeProfilesLocalStateV1;
+}>;
+
+function readLocalSettingsJsonForThemeRuntime(raw: string): unknown | null {
+    try {
+        return JSON.parse(raw);
+    } catch (e) {
+        console.error('Failed to parse local settings for theme runtime', e);
+        return null;
     }
-    return localSettingsDefaults.themePreference;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function loadThemeRuntimeLocalState(): ThemeRuntimeLocalState {
+    const mmkv = getPersistenceStorage();
+    const localSettingsRaw = mmkv.getString('local-settings');
+    if (!localSettingsRaw) {
+        return {
+            themePreference: localSettingsDefaults.themePreference,
+            themeProfiles: localSettingsDefaults.themeProfiles,
+        };
+    }
+
+    const parsed = readLocalSettingsJsonForThemeRuntime(localSettingsRaw);
+    if (parsed === null) {
+        return {
+            themePreference: localSettingsDefaults.themePreference,
+            themeProfiles: localSettingsDefaults.themeProfiles,
+        };
+    }
+
+    const settings = localSettingsParse(parsed);
+    const parsedProfiles = parseThemeProfilesLocalState(isRecord(parsed) ? parsed.themeProfiles : undefined);
+    const migratedProfiles = migrateThemeProfileLocalStateTokenIds(parsedProfiles.state);
+    const themeProfiles = migratedProfiles.state;
+
+    if (parsedProfiles.changed || migratedProfiles.changed) {
+        const healedSettings = localSettingsParse({
+            ...(isRecord(parsed) ? parsed : {}),
+            themeProfiles,
+        });
+        mmkv.set('local-settings', JSON.stringify(healedSettings));
+    }
+
+    return {
+        themePreference: settings.themePreference,
+        themeProfiles,
+    };
 }
 
 export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessionDraft | null {

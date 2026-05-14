@@ -1,113 +1,11 @@
 import type { ThemeRegistration } from 'shiki';
 
 import { lightTheme, darkTheme } from '@/theme';
+import { buildHappierShikiTheme } from '@/components/ui/code/highlighting/shiki/buildHappierShikiTheme';
+import { buildHappierShikiThemeKey } from '@/components/ui/code/highlighting/shiki/happierThemeKey';
 
 type HappierThemeLike = typeof lightTheme;
-
-function withStableId<T extends object>(value: T, id: string): T {
-    Object.defineProperty(value, 'toString', {
-        value: () => id,
-        enumerable: false,
-        configurable: true,
-    });
-
-    Object.defineProperty(value, Symbol.toPrimitive, {
-        value: () => id,
-        enumerable: false,
-        configurable: true,
-    });
-
-    return value;
-}
-
-function toHex6(value: string): string {
-    const raw = String(value ?? '').trim();
-    if (!raw) return '#000000';
-    // Some platforms use 8-digit hex; Shiki/Pierre are tolerant, but strip alpha for consistency.
-    if (/^#[0-9a-fA-F]{8}$/.test(raw)) return raw.slice(0, 7);
-    return raw;
-}
-
-function buildHappierTextMateTheme(params: Readonly<{ id: string; type: 'light' | 'dark'; theme: HappierThemeLike }>): ThemeRegistration {
-    const colors = params.theme.colors as any;
-    const surface = colors?.surface as { base?: string; inset?: string } | undefined;
-    const text = colors?.text as { primary?: string; secondary?: string } | undefined;
-    const syntax = colors?.syntax as Record<string, string | undefined> | undefined;
-    const bg = toHex6(surface?.inset ?? surface?.base ?? '#000000');
-    const fg = toHex6(syntax?.default ?? text?.primary ?? '#ffffff');
-
-    const keyword = toHex6(syntax?.keyword ?? fg);
-    const string = toHex6(syntax?.string ?? fg);
-    const number = toHex6(syntax?.number ?? fg);
-    const comment = toHex6(syntax?.comment ?? text?.secondary ?? fg);
-    const func = toHex6(syntax?.function ?? keyword);
-    const punctuation = toHex6(syntax?.comment ?? fg);
-
-    return withStableId(
-        {
-            name: params.id,
-            type: params.type,
-            colors: {
-                'editor.background': bg,
-                'editor.foreground': fg,
-            },
-            tokenColors: [
-                // Comments
-                {
-                    scope: ['comment', 'punctuation.definition.comment', 'comment.documentation'],
-                    settings: { foreground: comment },
-                },
-                // Strings
-                {
-                    scope: ['string', 'punctuation.definition.string', 'string.quoted', 'markup.inline.raw.string.markdown'],
-                    settings: { foreground: string },
-                },
-                // Numbers / booleans
-                {
-                    scope: ['constant.numeric', 'constant.language.boolean', 'constant.language.json'],
-                    settings: { foreground: number },
-                },
-                // Keywords / storage / operators
-                {
-                    scope: ['keyword', 'storage', 'storage.type', 'keyword.operator'],
-                    settings: { foreground: keyword },
-                },
-                // Functions / methods / calls
-                {
-                    scope: ['entity.name.function', 'entity.name.function.method', 'support.function', 'variable.function', 'meta.function-call.generic'],
-                    settings: { foreground: func },
-                },
-                // Types / classes / interfaces
-                {
-                    scope: ['entity.name.type', 'entity.name.type.class', 'entity.name.type.interface', 'support.type', 'support.class', 'storage.type.class'],
-                    settings: { foreground: func },
-                },
-                // Tags / attributes (JSX/HTML/XML)
-                {
-                    scope: ['entity.name.tag', 'support.class.component'],
-                    settings: { foreground: keyword },
-                },
-                {
-                    scope: ['entity.other.attribute-name', 'meta.attribute'],
-                    settings: { foreground: func },
-                },
-                // Punctuation
-                {
-                    scope: [
-                        'punctuation',
-                        'punctuation.terminator',
-                        'punctuation.separator',
-                        'punctuation.definition.tag',
-                        'punctuation.section.block',
-                        'punctuation.definition.string',
-                    ],
-                    settings: { foreground: punctuation },
-                },
-            ],
-        },
-        params.id,
-    );
-}
+type HappierThemeColorsLike = HappierThemeLike['colors'] | Record<string, unknown>;
 
 export const HAPPIER_TEXTMATE_THEME_IDS = Object.freeze({
     light: 'happier-light',
@@ -115,18 +13,39 @@ export const HAPPIER_TEXTMATE_THEME_IDS = Object.freeze({
 } as const);
 
 const themeCache = new Map<string, ThemeRegistration>();
+const THEME_REGISTRATION_CACHE_CAP = 8;
 
-export function getHappierTextMateThemeRegistration(params: Readonly<{ isDark: boolean }>): ThemeRegistration {
-    const id = params.isDark ? HAPPIER_TEXTMATE_THEME_IDS.dark : HAPPIER_TEXTMATE_THEME_IDS.light;
+function touchCachedRegistration(id: string, registration: ThemeRegistration): ThemeRegistration {
+    if (themeCache.has(id)) themeCache.delete(id);
+    themeCache.set(id, registration);
+    while (themeCache.size > THEME_REGISTRATION_CACHE_CAP) {
+        const oldest = themeCache.keys().next().value as string | undefined;
+        if (!oldest) break;
+        themeCache.delete(oldest);
+    }
+    return registration;
+}
+
+export function resolveHappierTextMateThemeId(params: Readonly<{ isDark: boolean; colors?: HappierThemeColorsLike | null }>): string {
+    const type = params.isDark ? 'dark' : 'light';
+    if (!params.colors) return params.isDark ? HAPPIER_TEXTMATE_THEME_IDS.dark : HAPPIER_TEXTMATE_THEME_IDS.light;
+    return buildHappierShikiThemeKey({ type, colors: params.colors as Record<string, unknown> });
+}
+
+export function getHappierTextMateThemeRegistration(params: Readonly<{ isDark: boolean; colors?: HappierThemeColorsLike | null }>): ThemeRegistration {
+    const id = resolveHappierTextMateThemeId(params);
     const cached = themeCache.get(id);
-    if (cached) return cached;
+    if (cached) return touchCachedRegistration(id, cached);
 
     const theme = params.isDark ? darkTheme : lightTheme;
-    const registration = buildHappierTextMateTheme({
+    const registration = buildHappierShikiTheme({
         id,
         type: params.isDark ? 'dark' : 'light',
-        theme,
+        colors: (params.colors ?? theme.colors) as Record<string, unknown>,
     });
-    themeCache.set(id, registration);
-    return registration;
+    return touchCachedRegistration(id, registration);
+}
+
+export function clearHappierTextMateThemeRegistrationCacheForKey(key: string): void {
+    themeCache.delete(key);
 }

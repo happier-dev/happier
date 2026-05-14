@@ -244,6 +244,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/scm/scmLineSelection', () => ({
   buildFileLineSelectionFingerprint: () => 'fp',
   canUseLineSelection: () => false,
+    canStartLineSelection: () => false,
 }));
 
 vi.mock('@/utils/code/fileLanguage', () => ({

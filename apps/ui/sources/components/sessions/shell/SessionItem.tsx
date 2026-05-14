@@ -19,7 +19,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sessionArchiveWithServerScope, sessionRename, sessionSetManualReadStateWithServerScope, sessionStopWithServerScope } from '@/sync/ops';
-import { useHasUnreadMessages, useSessionListMeaningfulActivityAt, useSessionListRenderableWithServerScope, useSetting } from '@/sync/domains/state/storage';
+import { useHasUnreadMessages, useSessionListActivityTimeLabel, useSessionListRenderableWithServerScope, useSetting } from '@/sync/domains/state/storage';
 import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
 import { createSessionReadStateDropdownItem, resolveSessionReadStateFromActionId } from '@/components/sessions/actions/sessionReadStateActionItems';
 import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
@@ -30,8 +30,7 @@ import { PinIcon, PinSlashIcon } from './sessionPinIcons';
 import { TagIcon } from './sessionTagIcons';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ContextMenu } from '@/components/ui/forms/dropdown/ContextMenu';
-import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
-import { shouldEmphasizeSessionRowTitle, shouldShowMinimalSessionStatusLine } from './row/resolveSessionRowPresentation';
+import { shouldEmphasizeSessionRowTitle } from './row/resolveSessionRowPresentation';
 import {
     SESSION_LIST_ROW_HEIGHT_COMPACT,
     SESSION_LIST_ROW_HEIGHT_DEFAULT,
@@ -45,12 +44,16 @@ import { SessionSplitCanvasDragHandle } from '@/components/sessions/canvas/Sessi
 import { useSessionListRenderableStatus } from './row/useSessionListRenderableStatus';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { resolveSessionSplitCanvasScope } from '@/sync/domains/session/sessionSplitCanvasScope';
+import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
 const CONTEXT_MENU_DEFERRED_ACTION_DELAY_MS = 0;
 const CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS = 600;
 const SESSION_IDENTITY_SKELETON_ANIMATION_MS = 900;
+const SESSION_FOLDER_ROW_CHROME_INDENT_BASE = 38;
+const SESSION_FOLDER_ROW_CHROME_INDENT_STEP = 12;
 
 const stylesheet = StyleSheet.create((theme) => ({
     sessionItemContainer: {
@@ -134,19 +137,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     avatarLoadingCompact: {
         width: AVATAR_SIZE_COMPACT,
         height: AVATAR_SIZE_COMPACT,
-    },
-    minimalIndicatorColumn: {
-        width: 16,
-        height: 28,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 0,
-    },
-    minimalUnreadDot: {
-        width: 6,
-        height: 6,
         borderRadius: 999,
-        backgroundColor: theme.colors.text.link,
+        backgroundColor: theme.colors.surface.elevated,
     },
     pendingCountContainer: {
         position: 'absolute',
@@ -199,7 +191,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginLeft: 12,
     },
     sessionContentMinimal: {
-        marginLeft: 8,
+        marginLeft: 0,
     },
     sessionTitleRow: {
         flexDirection: 'row',
@@ -217,8 +209,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 14,
     },
     sessionTitleMinimal: {
-        fontSize: 12,
-        lineHeight: 16,
+        fontSize: 14,
+        lineHeight: 18,
     },
     sessionTitleEmphasized: {
         ...Typography.default('semiBold'),
@@ -239,11 +231,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '60%',
         height: 13,
         borderRadius: 7,
+        backgroundColor: theme.colors.surface.elevated,
     },
     sessionTitleLoadingMinimal: {
         width: '56%',
         height: 12,
         borderRadius: 6,
+        backgroundColor: theme.colors.surface.elevated,
     },
     sessionSubtitleLoading: {
         width: '46%',
@@ -255,6 +249,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     sessionSubtitleLoadingCompact: {
         width: '42%',
         height: 9,
+        borderRadius: 999,
+        backgroundColor: theme.colors.surface.inset,
         marginTop: 2,
     },
     serverBadgeContainer: {
@@ -276,6 +272,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'flex-end',
+    },
+    trailingMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 2,
     },
     rowActionsRow: {
         flexDirection: 'row',
@@ -399,7 +401,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     statusTextCompact: {
         fontSize: 11,
-        lineHeight: 11
+        lineHeight: 11,
     },
     statusTextMinimal: {
         fontSize: 10,
@@ -457,6 +459,9 @@ export const SessionItem = React.memo(
         secondaryLineMode,
         compact,
         compactMinimal,
+        folderDepth,
+        folderMoveTargets,
+        onMoveToSessionFolder,
         reorderHandleGesture,
         isBeingDragged,
         nativeInlineDragEnabled,
@@ -486,6 +491,9 @@ export const SessionItem = React.memo(
         secondaryLineMode?: SessionListSecondaryLineMode;
         compact?: boolean;
         compactMinimal?: boolean;
+        folderDepth?: number;
+        folderMoveTargets?: readonly SessionFolderMoveTarget[];
+        onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
         reorderHandleGesture?: GestureType | ComposedGesture;
         isBeingDragged?: boolean;
         nativeInlineDragEnabled?: boolean;
@@ -547,6 +555,8 @@ export const SessionItem = React.memo(
         const isActiveSession = resolvedSession.active === true;
         const isArchivedSession = resolvedSession.archivedAt != null;
         const isMinimal = Boolean(compact && compactMinimal);
+        const sessionListWorkingIndicatorStyle = useSetting('sessionListNarrowWorkingIndicatorStyle');
+        const workingIndicatorMode = sessionListWorkingIndicatorStyle === 'pulse' ? 'pulse' : 'spinner';
         const canStopSession = isOwnedByCurrentUser;
         const canArchiveSession = hasAdminAccess && !isArchivedSession;
         const canRenameSession = hasAdminAccess;
@@ -587,12 +597,13 @@ export const SessionItem = React.memo(
         React.useEffect(() => {
             isBeingDraggedRef.current = isBeingDragged === true;
         }, [isBeingDragged]);
-        const handleRowHoverIn = React.useCallback(() => {
+        const handleRowPointerEnter = React.useCallback(() => {
             setIsRowHovered(true);
         }, []);
 
-        const handleRowHoverOut = React.useCallback(() => {
+        const handleRowPointerLeave = React.useCallback(() => {
             setIsRowHovered(false);
+            setIsActionsHovered(false);
         }, []);
 
         const handleActionsHoverIn = React.useCallback(() => {
@@ -770,6 +781,20 @@ export const SessionItem = React.memo(
                     icon: <Ionicons name="pencil-outline" size={16} color={rowActionIconColor} />,
                 });
             }
+            if (folderMoveTargets && folderMoveTargets.length > 0 && typeof onMoveToSessionFolder === 'function') {
+                for (const target of folderMoveTargets) {
+                    items.push({
+                        id: target.id,
+                        testID: target.id,
+                        title: target.title,
+                        category: t('sessionsList.moveToFolder'),
+                        icon: target.folderId
+                            ? <Ionicons name="folder-outline" size={16} color={rowActionIconColor} />
+                            : <Ionicons name="file-tray-outline" size={16} color={rowActionIconColor} />,
+                        disabled: target.disabled,
+                    });
+                }
+            }
             if (isActiveSession && canStopSession) {
                 items.push({
                     id: 'stop',
@@ -785,7 +810,7 @@ export const SessionItem = React.memo(
                 });
             }
             return items;
-        }, [canArchiveSession, canRenameSession, canStopSession, isActiveSession, readStateMenuItem, rowActionIconColor, splitCanvasRowActions.mode]);
+        }, [canArchiveSession, canRenameSession, canStopSession, folderMoveTargets, isActiveSession, onMoveToSessionFolder, readStateMenuItem, rowActionIconColor, splitCanvasRowActions.mode]);
 
         const handleMoreMenuSelect = React.useCallback(async (itemId: string) => {
             const readState = resolveSessionReadStateFromActionId(itemId);
@@ -794,6 +819,9 @@ export const SessionItem = React.memo(
                 return;
             }
             switch (itemId) {
+                case 'session-folder-move-root':
+                    await onMoveToSessionFolder?.(null);
+                    break;
                 case 'openInSplitRight':
                     splitCanvasRowActions.openInSplitRight();
                     break;
@@ -812,8 +840,16 @@ export const SessionItem = React.memo(
                 case 'archive':
                     await confirmArchiveSession();
                     break;
+                default:
+                    if (itemId.startsWith('session-folder-move-')) {
+                        const target = folderMoveTargets?.find((candidate) => candidate.id === itemId);
+                        if (target) {
+                            await onMoveToSessionFolder?.(target.folderId);
+                        }
+                    }
+                    break;
             }
-        }, [confirmArchiveSession, confirmStopSession, handleReadStateAction, handleRenameSession, splitCanvasRowActions]);
+        }, [confirmArchiveSession, confirmStopSession, folderMoveTargets, handleReadStateAction, handleRenameSession, onMoveToSessionFolder, splitCanvasRowActions]);
 
         const contextMenuItems = React.useMemo((): DropdownMenuItem[] => {
             if (!isNativeMobile) return [];
@@ -916,11 +952,7 @@ export const SessionItem = React.memo(
         const unreadIndicatorTestID = `session-list-item-unread-indicator-${resolvedSession.id}`;
         const pendingCount = resolvedSession.pendingCount ?? 0;
         const pendingBadge = formatPendingCountBadge(pendingCount);
-        const meaningfulActivityAt = useSessionListMeaningfulActivityAt(resolvedSession.id);
-
-        const activityTimeLabel = typeof meaningfulActivityAt === 'number' && meaningfulActivityAt > 0
-            ? formatShortRelativeTime(meaningfulActivityAt)
-            : '';
+        const activityTimeLabel = useSessionListActivityTimeLabel(resolvedSession.id);
         const tagChipDensity: 'default' | 'compact' | 'minimal' = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
         const tagLimit = isMinimal ? 1 : compact ? 2 : 3;
         const tagChips = React.useMemo(() => {
@@ -943,7 +975,6 @@ export const SessionItem = React.memo(
         const shouldUsePathSubtitleStartEllipsis = effectiveSecondaryLineMode === 'path'
             && effectiveSubtitleEllipsizeMode === 'head';
         const shouldUseWebPathSubtitleStartEllipsis = shouldUsePathSubtitleStartEllipsis && isWeb;
-        const showMinimalStatusLine = isMinimal && shouldShowMinimalSessionStatusLine(sessionStatus);
         const shouldShowIdentitySubtitleSkeleton = !isMinimal && isSessionIdentityLoading && requestedSecondaryLineMode === 'path';
         const showStandardSecondaryLine = !isMinimal && (
             shouldShowIdentitySubtitleSkeleton
@@ -955,8 +986,26 @@ export const SessionItem = React.memo(
             pendingCount,
             sessionStatus,
         });
-        const showTagChips = tagChips.length > 0 && (!isMinimal || !showMinimalStatusLine);
+        const showTagChips = tagChips.length > 0;
+        const showTrailingStatusDot = isMinimal && (hasUnreadMessages || sessionStatus.shouldShowStatus);
+        const showWorkingSpinner = sessionStatus.shouldShowStatus
+            && sessionStatus.state === 'thinking'
+            && workingIndicatorMode === 'spinner';
+        const trailingStatusReplacesTime = showTrailingStatusDot
+            && sessionStatus.shouldShowStatus
+            && sessionStatus.state === 'thinking';
+        const showTrailingActivityTime = Boolean(activityTimeLabel) && !trailingStatusReplacesTime;
+        const trailingStatusDotColor = sessionStatus.shouldShowStatus
+            ? sessionStatus.statusDotColor
+            : theme.colors.text.link;
+        const trailingStatusDotPulsing = sessionStatus.shouldShowStatus ? sessionStatus.isPulsing : false;
 
+        const normalizedFolderDepth = Math.min(Math.max(Math.trunc(folderDepth ?? 0), 0), 3);
+        const identityTitleLoadingStyle = isMinimal
+            ? styles.sessionTitleLoadingMinimal
+            : compact
+                ? styles.sessionTitleLoadingCompact
+                : styles.sessionTitleLoading;
         const itemContent = (
             <Pressable
                 testID={`session-list-item-${resolvedSession.id}`}
@@ -975,8 +1024,6 @@ export const SessionItem = React.memo(
                     selected ? styles.sessionItemSelected : null,
                     embedded && !embeddedIsLast ? styles.embeddedSeparator : null,
                 ]}
-                onHoverIn={isWeb ? handleRowHoverIn : undefined}
-                onHoverOut={isWeb ? handleRowHoverOut : undefined}
                 onPress={() => {
                     if (suppressNextPressRef.current) {
                         suppressNextPressRef.current = false;
@@ -993,19 +1040,13 @@ export const SessionItem = React.memo(
                     setContextMenuOpen(true);
                 } : undefined}
             >
-                {isMinimal ? (
-                    <View style={styles.minimalIndicatorColumn}>
-                        {hasUnreadMessages ? <View testID={unreadIndicatorTestID} style={styles.minimalUnreadDot} /> : null}
-                        <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} />
-                    </View>
-                ) : (
+                {isMinimal ? null : (
                     <View style={[styles.avatarContainer, compact ? styles.avatarContainerCompact : null]}>
                         {isSessionIdentityLoading ? (
                             <Animated.View
                                 testID={`session-list-avatar-loading-${resolvedSession.id}`}
                                 style={[
-                                    styles.avatarLoading,
-                                    compact ? styles.avatarLoadingCompact : null,
+                                    compact ? styles.avatarLoadingCompact : styles.avatarLoading,
                                     { opacity: identitySkeletonOpacity },
                                 ]}
                             />
@@ -1050,9 +1091,7 @@ export const SessionItem = React.memo(
                             <Animated.View
                                 testID={`session-list-title-loading-${resolvedSession.id}`}
                                 style={[
-                                    styles.sessionTitleLoading,
-                                    compact ? styles.sessionTitleLoadingCompact : null,
-                                    isMinimal ? styles.sessionTitleLoadingMinimal : null,
+                                    identityTitleLoadingStyle,
                                     { opacity: identitySkeletonOpacity },
                                 ]}
                             />
@@ -1080,36 +1119,12 @@ export const SessionItem = React.memo(
                         ) : null}
                     </View>
 
-                    {showMinimalStatusLine ? (
-                        <View style={[styles.secondaryLineRow, styles.secondaryLineRowMinimal]}>
-                            <View
-                                style={[
-                                    styles.secondaryStatusDotContainer,
-                                    styles.secondaryStatusDotContainerMinimal,
-                                ]}
-                            >
-                                <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} />
-                            </View>
-                            <Text
-                                style={[
-                                    styles.statusText,
-                                    styles.statusTextMinimal,
-                                    { color: sessionStatus.statusColor },
-                                ]}
-                                numberOfLines={1}
-                            >
-                                {sessionStatus.statusText}
-                            </Text>
-                        </View>
-                    ) : null}
-
                     {showStandardSecondaryLine ? (
                         shouldShowIdentitySubtitleSkeleton ? (
                             <Animated.View
                                 testID={`session-list-subtitle-loading-${resolvedSession.id}`}
                                 style={[
-                                    styles.sessionSubtitleLoading,
-                                    compact ? styles.sessionSubtitleLoadingCompact : null,
+                                    compact ? styles.sessionSubtitleLoadingCompact : styles.sessionSubtitleLoading,
                                     { opacity: identitySkeletonOpacity },
                                 ]}
                             />
@@ -1121,7 +1136,15 @@ export const SessionItem = React.memo(
                                         compact ? styles.secondaryStatusDotContainerCompact : null,
                                     ]}
                                 >
-                                    <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} />
+                                    {showWorkingSpinner ? (
+                                        <ActivitySpinner
+                                            testID={`session-list-status-working-spinner-${resolvedSession.id}`}
+                                            size={12}
+                                            color={theme.colors.text.tertiary}
+                                        />
+                                    ) : (
+                                        <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} />
+                                    )}
                                 </View>
                                 <Text
                                     style={[
@@ -1327,22 +1350,42 @@ export const SessionItem = React.memo(
                                 />
                             ) : null}
                         </View>
-                    ) : (
-                        activityTimeLabel ? (
-                            <Text
-                                style={[styles.activityTime, isMinimal ? styles.activityTimeMinimal : null]}
-                                numberOfLines={1}
-                            >
-                                {activityTimeLabel}
-                            </Text>
-                        ) : null
-                    )}
+                    ) : showTrailingStatusDot || showTrailingActivityTime ? (
+                        <View style={styles.trailingMetaRow}>
+                            {showTrailingStatusDot ? (
+                                showWorkingSpinner ? (
+                                    <ActivitySpinner
+                                        testID={`session-item-trailing-working-spinner-${resolvedSession.id}`}
+                                        size={12}
+                                        color={theme.colors.text.tertiary}
+                                    />
+                                ) : (
+                                    <StatusDot
+                                        testID={`session-item-trailing-status-dot-${resolvedSession.id}`}
+                                        color={trailingStatusDotColor}
+                                        isPulsing={trailingStatusDotPulsing}
+                                    />
+                                )
+                            ) : null}
+                            {showTrailingActivityTime ? (
+                                <Text
+                                    style={[styles.activityTime, isMinimal ? styles.activityTimeMinimal : null]}
+                                    numberOfLines={1}
+                                >
+                                    {activityTimeLabel}
+                                </Text>
+                            ) : null}
+                        </View>
+                    ) : null}
                 </View>
             </Pressable>
         );
 
         const containerStyles = [
             embedded ? styles.sessionItemContainerEmbedded : styles.sessionItemContainer,
+            !embedded && normalizedFolderDepth > 0
+                ? { marginLeft: SESSION_FOLDER_ROW_CHROME_INDENT_BASE + normalizedFolderDepth * SESSION_FOLDER_ROW_CHROME_INDENT_STEP }
+                : null,
             embedded
                 ? null
                 : isSingle
@@ -1408,7 +1451,13 @@ export const SessionItem = React.memo(
 
         if (!swipeEnabled) {
             return (
-                <View ref={contextMenuAnchorRef} collapsable={false} style={containerStyles}>
+                <View
+                    ref={contextMenuAnchorRef}
+                    collapsable={false}
+                    style={containerStyles}
+                    onPointerEnter={isWeb ? handleRowPointerEnter : undefined}
+                    onPointerLeave={isWeb ? handleRowPointerLeave : undefined}
+                >
                     {itemContent}
                     {menuNodes}
                 </View>
@@ -1425,7 +1474,13 @@ export const SessionItem = React.memo(
         );
 
         return (
-            <View ref={contextMenuAnchorRef} collapsable={false} style={containerStyles}>
+            <View
+                ref={contextMenuAnchorRef}
+                collapsable={false}
+                style={containerStyles}
+                onPointerEnter={isWeb ? handleRowPointerEnter : undefined}
+                onPointerLeave={isWeb ? handleRowPointerLeave : undefined}
+            >
                 <Swipeable
                     ref={swipeableRef}
                     renderRightActions={renderRightActions}

@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createReviewCommentsActionChip } from '@/components/sessions/agentInput/definitions/createReviewCommentsActionChip';
+import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
@@ -177,6 +178,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
 
         if (hasDiscoverableReviewCommentDrafts) {
             const reviewCommentsChip = createReviewCommentsActionChip({
+                reviewScope: discoverableReviewCommentsScope,
                 reviewCommentDrafts: discoverableReviewCommentDrafts,
                 onSetDraftIncluded: setReviewCommentDraftIncluded,
                 onUpdateDraft: updateReviewCommentDraft,
@@ -249,10 +251,17 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                     };
                 }
 
+                const resolvedReviewCommentDrafts = hasReviewCommentDrafts
+                    ? await resolveReviewCommentDraftAnchorsForPrompt({
+                        drafts: includedReviewCommentDrafts,
+                        reviewScope: discoverableReviewCommentsScope,
+                    })
+                    : [];
+
                 const outbound = hasReviewCommentDrafts
                     ? buildReviewCommentsOutboundMessage({
                         sessionId,
-                        drafts: discoverableReviewCommentDrafts,
+                        drafts: resolvedReviewCommentDrafts,
                         additionalMessage: attachmentsBlock
                             ? (trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock)
                             : trimmed,
@@ -300,14 +309,15 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         attachmentsUploadsEnabled,
         clearReviewCommentsForFlow,
         clearDraftsForFlow,
+        discoverableReviewCommentsScope,
         drafts,
         getDraftsSnapshot,
         hasReviewCommentDrafts,
+        includedReviewCommentDrafts,
         params.handleCreateSession,
         params.selectedProfileId,
         params.sessionPrompt,
         params.targetServerId,
-        discoverableReviewCommentDrafts,
     ]);
 
     return {

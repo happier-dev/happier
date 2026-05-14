@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
-import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
+import type { AgentTextMessage, Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import { buildChatListItems, buildChatListItemsCached } from './chatListItems';
 
 function buildPending(params: {
@@ -174,6 +174,32 @@ describe('buildChatListItems', () => {
 });
 
 describe('buildChatListItemsCached', () => {
+    it('reuses the item array when only an existing message body streams', () => {
+        const agentMessage: AgentTextMessage = { kind: 'agent-text', id: 'm-2', localId: null, createdAt: 2, text: 'hello' };
+        const initialMessagesById: Record<string, Message> = {
+            'm-1': { kind: 'user-text', id: 'm-1', localId: 'u1', createdAt: 1, text: 'user' },
+            'm-2': agentMessage,
+        };
+
+        const before = buildChatListItemsCached({
+            cache: null,
+            messageIdsOldestFirst: ['m-1', 'm-2'],
+            messagesById: initialMessagesById,
+            pendingMessages: [],
+        });
+        const after = buildChatListItemsCached({
+            cache: before.cache,
+            messageIdsOldestFirst: ['m-1', 'm-2'],
+            messagesById: {
+                ...initialMessagesById,
+                'm-2': { ...agentMessage, text: 'hello streaming update' },
+            },
+            pendingMessages: [],
+        });
+
+        expect(after.items).toBe(before.items);
+    });
+
     it('reuses committed message item objects on append-only id growth', () => {
         const messages: Message[] = [
             { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'user' },

@@ -23,6 +23,37 @@ function createSessionMediaEnvelope(overrides: Record<string, unknown> = {}) {
 }
 
 describe('parseSessionMediaMessageMeta', () => {
+    it('keeps failure-only image rows renderable as unavailable media', async () => {
+        const { parseSessionMediaMessageMeta } = await import('./sessionMediaMessageMeta');
+
+        const parsed = parseSessionMediaMessageMeta({
+            kind: 'session_media.v1',
+            payload: {
+                media: [],
+                failures: [{
+                    index: 0,
+                    code: 'invalid_source_file',
+                    role: 'output',
+                    category: 'generated',
+                    mediaKind: 'image',
+                    name: 'generated.png',
+                    mimeType: 'image/png',
+                    origin: { source: 'provider-generated' },
+                }],
+            },
+        });
+
+        expect(parsed?.inlineImages).toEqual([{
+            id: 'failure-0',
+            status: 'unavailable',
+            name: 'generated.png',
+            mimeType: 'image/png',
+            category: 'generated',
+            role: 'output',
+            failureCode: 'invalid_source_file',
+        }]);
+    });
+
     it('keeps renderable image rows when advisory dimensions are invalid', async () => {
         const { parseSessionMediaMessageMeta } = await import('./sessionMediaMessageMeta');
 
@@ -33,6 +64,7 @@ describe('parseSessionMediaMessageMeta', () => {
 
         expect(parsed?.inlineImages).toEqual([{
             id: 'media-1',
+            status: 'available',
             name: 'generated.png',
             path: '.happier/uploads/generated/session-1/message-1/generated.png',
             mimeType: 'image/png',
@@ -50,12 +82,17 @@ describe('parseSessionMediaMessageMeta', () => {
             height: undefined,
         }));
 
-        expect(parsed?.inlineImages[0]).toMatchObject({
+        const image = parsed?.inlineImages[0];
+        expect(image).toMatchObject({
             id: 'media-1',
+            status: 'available',
             path: '.happier/uploads/generated/session-1/message-1/generated.png',
         });
-        expect(parsed?.inlineImages[0]?.width).toBeUndefined();
-        expect(parsed?.inlineImages[0]?.height).toBeUndefined();
+        if (!image || image.status === 'unavailable') {
+            throw new Error('Expected an available image row');
+        }
+        expect(image.width).toBeUndefined();
+        expect(image.height).toBeUndefined();
     });
 
     it('continues to reject unsafe media paths', async () => {

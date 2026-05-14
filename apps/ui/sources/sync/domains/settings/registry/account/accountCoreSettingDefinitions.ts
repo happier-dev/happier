@@ -4,6 +4,7 @@ import {
     defineSettingDefinitions,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
+import { SessionFolderViewModeV1Schema } from '@/sync/domains/session/folders';
 
 export const SessionListDensitySchema = z.preprocess((raw) => {
     if (raw === 'compact') return 'cozy';
@@ -166,6 +167,41 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Default session list ordering mode: custom manual order, created timestamp, or updated timestamp',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionFolderViewModeV1: {
+        schema: SessionFolderViewModeV1Schema,
+        default: 'off',
+        description: 'Session folder display mode for the session list',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionListNarrowWorkingIndicatorStyle: {
+        schema: z.enum(['spinner', 'pulse']),
+        default: 'spinner',
+        description: 'Working indicator style for session list rows',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    workspacePathDisplayModeV1: {
+        schema: z.enum(['name', 'path']),
+        default: 'name',
+        description: 'How workspace paths are displayed in the session list',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    workspaceFaviconsEnabled: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Show detected workspace favicons in the session list',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
+    workspaceMachineSubtitlesEnabled: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Show machine names below workspace names in the session list',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
     showEnvironmentBadge: {
         schema: z.boolean(),

@@ -66,7 +66,7 @@ export function resolveSessionRowInteractionPolicy(
         enableLongPressContextMenu:
             isNativeMobile
             && contextMenuItemCount > 0
-            && (!nativeInlineDragEnabled || hasReorderHandle),
+            && !nativeInlineDragEnabled,
         suppressNextPressOnNativeContextMenuOpen,
     };
 

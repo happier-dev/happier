@@ -50,17 +50,18 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
 }));
 
 let latestWorkspaceTransferParams: any = null;
+const workspaceTransferApi = {
+    uploadState: { status: 'idle' },
+    downloadState: { status: 'idle' },
+    startUploads: vi.fn(async () => ({ ok: true })),
+    cancelUploads: vi.fn(),
+    startDownload: vi.fn(async () => ({ ok: true })),
+    cancelDownload: vi.fn(),
+};
 vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     useWorkspaceFileTransfers: (params: any) => {
         latestWorkspaceTransferParams = params;
-        return {
-            uploadState: { status: 'idle' },
-            downloadState: { status: 'idle' },
-            startUploads: vi.fn(async () => ({ ok: true })),
-            cancelUploads: vi.fn(),
-            startDownload: vi.fn(async () => ({ ok: true })),
-            cancelDownload: vi.fn(),
-        };
+        return workspaceTransferApi;
     },
 }));
 
@@ -80,8 +81,12 @@ vi.mock('@/sync/domains/workspaces/files/workspaceFileSearch', () => ({
     workspaceFileSearchCache: { clearCache: vi.fn() },
 }));
 
+let workspaceRepositoryTreeListProps: any = null;
 vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
-    WorkspaceRepositoryTreeList: (props: any) => React.createElement('View', { ...props, testID: 'workspace-repository-tree-list' }),
+    WorkspaceRepositoryTreeList: (props: any) => {
+        workspaceRepositoryTreeListProps = props;
+        return React.createElement('View', { ...props, testID: 'workspace-repository-tree-list' });
+    },
 }));
 
 vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
@@ -207,6 +212,11 @@ describe('SessionRepositoryTreeBrowserView', () => {
         searchFilesSpy.mockReset();
         searchWorkspaceFilesSpy.mockReset();
         latestWorkspaceTransferParams = null;
+        workspaceRepositoryTreeListProps = null;
+        workspaceTransferApi.startUploads.mockClear();
+        workspaceTransferApi.cancelUploads.mockClear();
+        workspaceTransferApi.startDownload.mockClear();
+        workspaceTransferApi.cancelDownload.mockClear();
         sessionActive = true;
         machineReachable = true;
         machineRpcTargetAvailable = true;
@@ -224,6 +234,23 @@ describe('SessionRepositoryTreeBrowserView', () => {
     it('shows RepositoryTreeList when query is empty', async () => {
         const { screen } = await renderRepositoryTreeBrowserView();
 
+        expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
+    });
+
+    it('keeps repository tree action props stable across unchanged parent rerenders', async () => {
+        const { screen } = await renderRepositoryTreeBrowserView();
+        const firstProps = workspaceRepositoryTreeListProps;
+        expect(firstProps).toBeTruthy();
+
+        await act(async () => {
+            firstProps.onRootLoadingChange?.(true);
+        });
+
+        const nextProps = workspaceRepositoryTreeListProps;
+        expect(nextProps).toBeTruthy();
+        expect(nextProps.theme).toBe(firstProps.theme);
+        expect(nextProps.onExpandedPathsChange).toBe(firstProps.onExpandedPathsChange);
+        expect(nextProps.renderRowActions).toBe(firstProps.renderRowActions);
         expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
     });
 

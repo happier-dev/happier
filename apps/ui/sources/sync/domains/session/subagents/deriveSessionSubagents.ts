@@ -1,5 +1,4 @@
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import type { Session } from '@/sync/domains/state/storageTypes';
 
 import { deriveExecutionRunSubagents } from './executionRuns/deriveExecutionRunSubagents';
 import { deriveProviderSessionSubagents } from './providers';
@@ -21,7 +20,7 @@ function sortSubagents(subagents: readonly SessionSubagent[]): readonly SessionS
 }
 
 export function deriveSessionSubagents(params: Readonly<{
-    session: Session;
+    session: Readonly<{ metadata?: Readonly<{ flavor?: unknown }> | null }>;
     messages: readonly Message[];
     activeExecutionRuns?: readonly SessionSubagentActiveExecutionRunState[];
 }>): readonly SessionSubagent[] {

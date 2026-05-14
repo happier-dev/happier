@@ -41,6 +41,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
     const [codingPromptBehavior, setCodingPromptBehavior] = useSettingMutable('codingPromptBehaviorV1');
     const [rememberLastProjectSessionSelections, setRememberLastProjectSessionSelections] = useSettingMutable('rememberLastProjectSessionSelections');
+    const [rememberLastEngineSelections, setRememberLastEngineSelections] = useSettingMutable('rememberLastEngineSelectionsV1');
     const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
 
     const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
@@ -62,6 +63,10 @@ export default React.memo(function SessionSettingsScreen() {
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const [sessionListDensity, setSessionListDensity] = useSettingMutable('sessionListDensity');
     const [sessionListOrderingModeV1, setSessionListOrderingModeV1] = useSettingMutable('sessionListOrderingModeV1');
+    const [sessionListNarrowWorkingIndicatorStyle, setSessionListNarrowWorkingIndicatorStyle] = useSettingMutable('sessionListNarrowWorkingIndicatorStyle');
+    const [workspacePathDisplayModeV1, setWorkspacePathDisplayModeV1] = useSettingMutable('workspacePathDisplayModeV1');
+    const [workspaceFaviconsEnabled, setWorkspaceFaviconsEnabled] = useSettingMutable('workspaceFaviconsEnabled');
+    const [workspaceMachineSubtitlesEnabled, setWorkspaceMachineSubtitlesEnabled] = useSettingMutable('workspaceMachineSubtitlesEnabled');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const [sessionListActiveGroupingV1, setSessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
     const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
@@ -79,6 +84,8 @@ export default React.memo(function SessionSettingsScreen() {
     const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
     const [openSessionListDensityMenu, setOpenSessionListDensityMenu] = React.useState(false);
     const [openSessionListOrderingModeMenu, setOpenSessionListOrderingModeMenu] = React.useState(false);
+    const [openWorkspacePathDisplayMenu, setOpenWorkspacePathDisplayMenu] = React.useState(false);
+    const [openWorkingIndicatorMenu, setOpenWorkingIndicatorMenu] = React.useState(false);
     const [openWindowsRemoteSessionLaunchModeMenu, setOpenWindowsRemoteSessionLaunchModeMenu] = React.useState(false);
     const enterToSendEnabled = Platform.OS === 'web' ? agentInputEnterToSend : agentInputEnterToSendNative;
     const setEnterToSendEnabled = Platform.OS === 'web' ? setAgentInputEnterToSend : setAgentInputEnterToSendNative;
@@ -88,6 +95,7 @@ export default React.memo(function SessionSettingsScreen() {
             : t('settingsSession.inputBehavior.enterToSendEnabledNativeSubtitle')
         : t('settingsFeatures.enterToSendDisabled');
     const rememberProjectSelectionsEnabled = rememberLastProjectSessionSelections !== false;
+    const rememberEngineSelectionsEnabled = rememberLastEngineSelections !== false;
     const normalizedCodingPromptBehavior = React.useMemo<CodingPromptBehaviorV1>(() => {
         const raw = codingPromptBehavior && typeof codingPromptBehavior === 'object' && !Array.isArray(codingPromptBehavior)
             ? codingPromptBehavior as Partial<CodingPromptBehaviorV1>
@@ -172,6 +180,44 @@ export default React.memo(function SessionSettingsScreen() {
         if (itemId !== 'custom' && itemId !== 'created' && itemId !== 'updated') return;
         setSessionListOrderingModeV1(itemId);
     }, [setSessionListOrderingModeV1]);
+
+    const workspacePathDisplayMode = workspacePathDisplayModeV1 === 'path' ? 'path' : 'name';
+    const workspacePathDisplayItems = React.useMemo(() => [
+        {
+            id: 'name',
+            title: t('settingsSession.sessionList.workspacePathDisplayName'),
+            subtitle: t('settingsSession.sessionList.workspacePathDisplayNameDescription'),
+        },
+        {
+            id: 'path',
+            title: t('settingsSession.sessionList.workspacePathDisplayPath'),
+            subtitle: t('settingsSession.sessionList.workspacePathDisplayPathDescription'),
+        },
+    ], [preferredLanguage]);
+
+    const handleWorkspacePathDisplaySelect = React.useCallback((itemId: string) => {
+        if (itemId !== 'name' && itemId !== 'path') return;
+        setWorkspacePathDisplayModeV1(itemId);
+    }, [setWorkspacePathDisplayModeV1]);
+
+    const workingIndicatorStyle = sessionListNarrowWorkingIndicatorStyle === 'pulse' ? 'pulse' : 'spinner';
+    const workingIndicatorItems = React.useMemo(() => [
+        {
+            id: 'spinner',
+            title: t('settingsSession.sessionList.workingIndicatorSpinnerTitle'),
+            subtitle: t('settingsSession.sessionList.workingIndicatorSpinnerSubtitle'),
+        },
+        {
+            id: 'pulse',
+            title: t('settingsSession.sessionList.workingIndicatorPulseTitle'),
+            subtitle: t('settingsSession.sessionList.workingIndicatorPulseSubtitle'),
+        },
+    ], [preferredLanguage]);
+
+    const handleWorkingIndicatorSelect = React.useCallback((itemId: string) => {
+        if (itemId !== 'spinner' && itemId !== 'pulse') return;
+        setSessionListNarrowWorkingIndicatorStyle(itemId);
+    }, [setSessionListNarrowWorkingIndicatorStyle]);
 
     const options: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
         {
@@ -284,6 +330,23 @@ export default React.memo(function SessionSettingsScreen() {
                     showChevron={false}
                     onPress={() => setRememberLastProjectSessionSelections((!rememberProjectSelectionsEnabled) as any)}
                 />
+                <Item
+                    title={t('settingsSession.sessionCreation.rememberLastEngineSelectionsTitle')}
+                    subtitle={t(
+                        rememberEngineSelectionsEnabled
+                            ? 'settingsSession.sessionCreation.rememberLastEngineSelectionsEnabledSubtitle'
+                            : 'settingsSession.sessionCreation.rememberLastEngineSelectionsDisabledSubtitle',
+                    )}
+                    icon={<Ionicons name="hardware-chip-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            value={rememberEngineSelectionsEnabled}
+                            onValueChange={(next) => setRememberLastEngineSelections(Boolean(next) as any)}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setRememberLastEngineSelections((!rememberEngineSelectionsEnabled) as any)}
+                />
             </ItemGroup>
 
             <ItemGroup title={t('settingsSession.sessionList.title')} footer={t('settingsSession.sessionList.footer')}>
@@ -336,6 +399,86 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={sessionListOrderingModeItems}
                     onSelect={handleSessionListOrderingModeSelect}
+                />
+                <DropdownMenu
+                    open={openWorkspacePathDisplayMenu}
+                    onOpenChange={setOpenWorkspacePathDisplayMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={workspacePathDisplayMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.workspacePathDisplayTitle'),
+                        subtitle: workspacePathDisplayMode === 'path'
+                            ? t('settingsSession.sessionList.workspacePathDisplayPathSelectedSubtitle')
+                            : t('settingsSession.sessionList.workspacePathDisplayNameSelectedSubtitle'),
+                        icon: <Ionicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-workspacePathDisplay-trigger' },
+                    }}
+                    items={workspacePathDisplayItems}
+                    onSelect={handleWorkspacePathDisplaySelect}
+                />
+                <Item
+                    testID="settings-session-workspaceFavicons-item"
+                    title={t('settingsSession.sessionList.workspaceFaviconsTitle')}
+                    subtitle={workspaceFaviconsEnabled !== false
+                        ? t('settingsSession.sessionList.workspaceFaviconsEnabledSubtitle')
+                        : t('settingsSession.sessionList.workspaceFaviconsDisabledSubtitle')}
+                    icon={<Ionicons name="image-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-workspaceFavicons-toggle"
+                            value={workspaceFaviconsEnabled !== false}
+                            onValueChange={(next) => setWorkspaceFaviconsEnabled(Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setWorkspaceFaviconsEnabled(workspaceFaviconsEnabled === false)}
+                />
+                <Item
+                    testID="settings-session-workspaceMachineSubtitles-item"
+                    title={t('settingsSession.sessionList.workspaceMachineSubtitlesTitle')}
+                    subtitle={workspaceMachineSubtitlesEnabled !== false
+                        ? t('settingsSession.sessionList.workspaceMachineSubtitlesEnabledSubtitle')
+                        : t('settingsSession.sessionList.workspaceMachineSubtitlesDisabledSubtitle')}
+                    icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-workspaceMachineSubtitles-toggle"
+                            value={workspaceMachineSubtitlesEnabled !== false}
+                            onValueChange={(next) => setWorkspaceMachineSubtitlesEnabled(Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setWorkspaceMachineSubtitlesEnabled(workspaceMachineSubtitlesEnabled === false)}
+                />
+                <DropdownMenu
+                    open={openWorkingIndicatorMenu}
+                    onOpenChange={setOpenWorkingIndicatorMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={workingIndicatorStyle}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.workingIndicatorTitle'),
+                        subtitle: workingIndicatorStyle === 'pulse'
+                            ? t('settingsSession.sessionList.workingIndicatorPulseSelectedSubtitle')
+                            : t('settingsSession.sessionList.workingIndicatorSpinnerSelectedSubtitle'),
+                        icon: <Ionicons name={workingIndicatorStyle === 'pulse' ? 'radio-button-on-outline' : 'sync-outline'} size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-workingIndicator-trigger' },
+                    }}
+                    items={workingIndicatorItems}
+                    onSelect={handleWorkingIndicatorSelect}
                 />
                 <Item
                     title={t('settingsFeatures.hideInactiveSessions')}

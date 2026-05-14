@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -6,14 +7,36 @@ import {
   renderFlashListChatList,
   resetFlashListChatListHarness,
   standardCleanup,
-  withFlashListChatListWebScrollerDom,
 } from '@/dev/testkit';
+import {
+  installTranscriptCommonModuleMocks,
+  resetTranscriptCommonModuleMockState,
+} from './transcriptTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const scrollToOffsetSpy = vi.fn();
+let previousRequestAnimationFrame: typeof globalThis.requestAnimationFrame | undefined;
+let previousCancelAnimationFrame: typeof globalThis.cancelAnimationFrame | undefined;
+
+installTranscriptCommonModuleMocks({
+  reactNative: async () =>
+    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListReactNativeMock({
+      platformOs: 'ios',
+    }),
+  storage: async (importOriginal) =>
+    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListStorageMock(importOriginal),
+});
 
 beforeEach(() => {
+  resetTranscriptCommonModuleMockState();
+  previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  }) as typeof globalThis.requestAnimationFrame;
+  globalThis.cancelAnimationFrame = (() => {}) as typeof globalThis.cancelAnimationFrame;
   scrollToOffsetSpy.mockClear();
   resetFlashListChatListHarness({
     flashListRefHandle: { scrollToOffset: scrollToOffsetSpy, scrollToIndex: vi.fn() },
@@ -40,10 +63,6 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () =>
   (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListModuleMock()
 );
 
-vi.mock('react-native', async () => (
-    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListReactNativeMock({ platformOs: 'ios' })
-));
-
 vi.mock('@/utils/platform/responsive', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
@@ -55,10 +74,6 @@ vi.mock('@/utils/platform/responsive', async (importOriginal) => {
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListStorageMock(importOriginal)
-);
 
 vi.mock('@/components/sessions/chatListItems', async () =>
   (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock(({ messageIdsOldestFirst, messagesById }: any) =>
@@ -131,43 +146,71 @@ vi.mock('@/sync/sync', async () =>
 
 describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
   afterEach(() => {
+    globalThis.requestAnimationFrame = previousRequestAnimationFrame as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = previousCancelAnimationFrame as typeof globalThis.cancelAnimationFrame;
+    resetTranscriptCommonModuleMockState();
     standardCleanup();
   });
 
-  it('lets native FlashList maintain bottom position without an imperative content-growth scroll', async () => {
-    await withFlashListChatListWebScrollerDom(
-      {},
-      async () => {
-        const { ChatList } = await import('./ChatList');
+  it('keeps native FlashList pinned when followed content grows after initial fill', async () => {
+    const { ChatList } = await import('./ChatList');
 
-        const screen = await renderFlashListChatList(
-          <ChatList session={flashListChatListHarnessState.sessionState} />
-        );
-
-        expect(screen.getCapturedFlashListProps()).toBeTruthy();
-
-        // Initial measured correction is allowed on native; this test owns later content growth.
-        scrollToOffsetSpy.mockClear();
-
-        await screen.triggerInitialFill({
-          layoutHeight: 500,
-          contentHeight: 1000,
-          contentWidth: 0,
-        });
-
-        expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 500, animated: false });
-        scrollToOffsetSpy.mockClear();
-
-        screen.getCapturedFlashListProps().onContentSizeChange?.(0, 1200);
-        await screen.settle({ cycles: 1, turns: 1 });
-
-        expect(scrollToOffsetSpy).not.toHaveBeenCalled();
-        expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
-          startRenderingFromBottom: true,
-          animateAutoScrollToBottom: false,
-        });
-        expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition?.autoscrollToBottomThreshold).toBeGreaterThan(0);
-      },
+    const screen = await renderFlashListChatList(
+      <ChatList session={flashListChatListHarnessState.sessionState} />
     );
+
+    expect(screen.getCapturedFlashListProps()).toBeTruthy();
+
+    // Initial measured correction is allowed on native; this test owns later content growth.
+    scrollToOffsetSpy.mockClear();
+
+    await screen.triggerInitialFill({
+      layoutHeight: 500,
+      contentHeight: 1000,
+      contentWidth: 0,
+    });
+
+    expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 500, animated: false });
+    scrollToOffsetSpy.mockClear();
+
+    screen.getCapturedFlashListProps().onContentSizeChange?.(0, 1200);
+    await screen.settle({ cycles: 1, turns: 1 });
+
+    expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 700, animated: false });
+    expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
+      startRenderingFromBottom: true,
+      animateAutoScrollToBottom: false,
+    });
+    expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition?.autoscrollToBottomThreshold).toBeGreaterThan(0);
+  });
+
+  it('keeps native FlashList pinned when the viewport height changes while following', async () => {
+    const { ChatList } = await import('./ChatList');
+
+    const screen = await renderFlashListChatList(
+      <ChatList session={flashListChatListHarnessState.sessionState} />
+    );
+
+    await screen.triggerInitialFill({
+      layoutHeight: 500,
+      contentHeight: 1000,
+      contentWidth: 0,
+    });
+
+    scrollToOffsetSpy.mockClear();
+
+    await act(async () => {
+      screen.getCapturedFlashListProps().onLayout?.({
+        nativeEvent: {
+          layout: {
+            height: 420,
+            width: 400,
+          },
+        },
+      });
+    });
+    await screen.settle({ cycles: 1, turns: 1 });
+
+    expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 580, animated: false });
   });
 });

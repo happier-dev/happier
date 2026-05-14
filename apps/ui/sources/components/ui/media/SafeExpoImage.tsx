@@ -1,9 +1,5 @@
 import * as React from 'react';
-import {
-    Image as ReactNativeImage,
-    type ImageURISource,
-    type ImageProps as ReactNativeImageProps,
-} from 'react-native';
+import { Image as ReactNativeImage, type ImageURISource, type ImageProps as ReactNativeImageProps } from 'react-native';
 import { Image as ExpoImageImport } from 'expo-image';
 
 import { isRenderableElementType } from '@/components/ui/icons/isRenderableElementType';

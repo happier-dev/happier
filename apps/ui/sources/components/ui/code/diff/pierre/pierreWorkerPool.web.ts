@@ -1,7 +1,7 @@
 import type { SupportedLanguages } from '@pierre/diffs';
 import { WorkerPoolManager } from '@pierre/diffs/worker';
 
-import { ensureHappierPierreThemesRegistered, HAPPIER_PIERRE_THEME_IDS } from './pierreThemeRegistry.web';
+import { ensureHappierPierreThemesRegistered, HAPPIER_PIERRE_THEME_IDS, type HappierPierreThemeIds } from './pierreThemeRegistry.web';
 import { createPierreDiffWorker } from './pierreWorkerFactory.web';
 import type { PierreDiffPresentationStyle } from './resolvePierreWorkerPoolConfig';
 import { resolvePierreWorkerPoolConfig } from './resolvePierreWorkerPoolConfig';
@@ -22,11 +22,47 @@ const poolByStyle: Record<PierreDiffPresentationStyle, WorkerPoolManager | null 
     split: undefined,
 };
 
-export function getPierreDiffWorkerPool(params?: Readonly<{ style?: PierreDiffPresentationStyle }>): WorkerPoolManager | null {
+const poolThemeKeyByStyle: Record<PierreDiffPresentationStyle, string | undefined> = {
+    unified: undefined,
+    split: undefined,
+};
+
+function resolveWorkerPoolThemeIds(themeIds: HappierPierreThemeIds | undefined): HappierPierreThemeIds {
+    return themeIds ?? HAPPIER_PIERRE_THEME_IDS;
+}
+
+function buildWorkerPoolThemeKey(themeIds: HappierPierreThemeIds): string {
+    return `${themeIds.light}::${themeIds.dark}`;
+}
+
+export function getPierreDiffWorkerPool(params?: Readonly<{ style?: PierreDiffPresentationStyle; themeIds?: HappierPierreThemeIds }>): WorkerPoolManager | null {
     if (typeof window === 'undefined') return null;
     if (typeof requestAnimationFrame !== 'function') return null;
     const style: PierreDiffPresentationStyle = params?.style ?? 'split';
-    if (poolByStyle[style] !== undefined) return poolByStyle[style] ?? null;
+    const themeIds = resolveWorkerPoolThemeIds(params?.themeIds);
+    const themeKey = buildWorkerPoolThemeKey(themeIds);
+    const config = resolvePierreWorkerPoolConfig(style);
+    const existingPool = poolByStyle[style];
+    if (existingPool !== undefined) {
+        if (existingPool && poolThemeKeyByStyle[style] !== themeKey) {
+            poolThemeKeyByStyle[style] = themeKey;
+            const setRenderOptions = (existingPool as { setRenderOptions?: (options: unknown) => Promise<void> }).setRenderOptions;
+            if (typeof setRenderOptions === 'function') {
+                void setRenderOptions.call(existingPool, {
+                    theme: {
+                        light: themeIds.light,
+                        dark: themeIds.dark,
+                    },
+                    lineDiffType: config.defaultLineDiffType,
+                }).catch(() => {
+                    if (poolThemeKeyByStyle[style] === themeKey) {
+                        poolThemeKeyByStyle[style] = undefined;
+                    }
+                });
+            }
+        }
+        return existingPool ?? null;
+    }
 
     ensureHappierPierreThemesRegistered();
 
@@ -37,8 +73,6 @@ export function getPierreDiffWorkerPool(params?: Readonly<{ style?: PierreDiffPr
         const probe = createPierreDiffWorker();
         probe.terminate();
 
-        const config = resolvePierreWorkerPoolConfig(style);
-
         const created = new WorkerPoolManager(
             {
                 workerFactory: createPierreDiffWorker,
@@ -47,8 +81,8 @@ export function getPierreDiffWorkerPool(params?: Readonly<{ style?: PierreDiffPr
             },
             {
                 theme: {
-                    light: HAPPIER_PIERRE_THEME_IDS.light,
-                    dark: HAPPIER_PIERRE_THEME_IDS.dark,
+                    light: themeIds.light,
+                    dark: themeIds.dark,
                 },
                 langs: PRELOAD_LANGS,
                 lineDiffType: config.defaultLineDiffType,
@@ -60,10 +94,12 @@ export function getPierreDiffWorkerPool(params?: Readonly<{ style?: PierreDiffPr
         void created.initialize().catch(() => {});
 
         poolByStyle[style] = created;
+        poolThemeKeyByStyle[style] = themeKey;
         pool = created;
         return created;
     } catch {
         poolByStyle[style] = null;
+        poolThemeKeyByStyle[style] = undefined;
         pool = null;
         return poolByStyle[style];
     }

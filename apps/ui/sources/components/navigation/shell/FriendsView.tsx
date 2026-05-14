@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { View, ScrollView, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     useAcceptedFriends,
@@ -28,6 +28,7 @@ import { FeedItemCard } from '@/components/inbox/cards/FeedItemCard';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { Text } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -170,7 +171,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                 )}
                 <RecoveryKeyReminderBanner />
                 <View style={styles.emptyContainer}>
-                    <ActivityIndicator size="large" color={theme.colors.text.secondary} />
+                    <ActivitySpinner size="large" color={theme.colors.text.secondary} />
                 </View>
             </View>
         );

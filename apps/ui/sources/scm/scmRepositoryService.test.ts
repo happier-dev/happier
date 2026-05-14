@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ScmWorkingSnapshot as ProtocolScmWorkingSnapshot } from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import type {
+    ScmWorkingSnapshot as ProtocolScmWorkingSnapshot,
+    ScmWorktreesEnrichmentRequest,
+    ScmWorktreesEnrichmentResponse,
+} from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREES_ENRICHMENT_MAX_PATHS } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { sessionScmStatusSnapshot } from '@/sync/ops';
-import { machineScmStatusSnapshot } from '@/sync/ops/scm/machineScm';
+import { machineScmStatusSnapshot, runMachineScmRpc } from '@/sync/ops/scm/machineScm';
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot as UiScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { EMPTY_SCM_CAPABILITIES } from './core/snapshotMappers';
@@ -15,6 +20,7 @@ vi.mock('@/sync/ops', () => ({
 
 vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmStatusSnapshot: vi.fn(),
+    runMachineScmRpc: vi.fn(),
 }));
 
 afterEach(() => {
@@ -628,6 +634,142 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         const result = await service.fetchSnapshotForSession('session_1');
 
         expect(result?.capabilities).toEqual(EMPTY_SCM_CAPABILITIES);
+    });
+});
+
+describe('ScmRepositoryService.fetchWorktreesEnrichment', () => {
+    it('uses the dedicated worktrees enrichment rpc and caches the result by machine path', async () => {
+        vi.mocked(runMachineScmRpc<ScmWorktreesEnrichmentResponse, ScmWorktreesEnrichmentRequest>).mockResolvedValue({
+            success: true,
+            worktrees: [
+                { path: '/repo', changeCount: 4, lastActivityAt: 1_700_000_000_000 },
+                { path: '/repo/.worktrees/feature', changeCount: 0, lastActivityAt: 1_699_000_000_000 },
+            ],
+        });
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchWorktreesEnrichment({
+            machineId: 'machine-a',
+            path: '/repo',
+            worktreePaths: ['/repo', '/repo/.worktrees/feature'],
+        });
+
+        expect(runMachineScmRpc).toHaveBeenCalledWith(
+            'machine-a',
+            RPC_METHODS.SCM_WORKTREES_ENRICHMENT,
+            {
+                cwd: '/repo',
+                worktreePaths: ['/repo', '/repo/.worktrees/feature'],
+            },
+        );
+        expect(result).toEqual([
+            { path: '/repo', changeCount: 4, lastActivityAt: 1_700_000_000_000 },
+            { path: '/repo/.worktrees/feature', changeCount: 0, lastActivityAt: 1_699_000_000_000 },
+        ]);
+        expect(service.readCachedWorktreesEnrichment({
+            machineId: 'machine-a',
+            path: '/repo/subdir',
+            worktreePaths: ['/repo/.worktrees/feature'],
+        })).toEqual([
+            { path: '/repo/.worktrees/feature', changeCount: 0, lastActivityAt: 1_699_000_000_000 },
+        ]);
+    });
+
+    it('stores enrichment under the canonical repo identity after a child-path snapshot resolves the repo root', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(machineScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        } as any);
+        vi.mocked(runMachineScmRpc<ScmWorktreesEnrichmentResponse, ScmWorktreesEnrichmentRequest>).mockResolvedValue({
+            success: true,
+            worktrees: [
+                { path: '/Users/tester/repo', changeCount: 4, lastActivityAt: 1_700_000_000_000 },
+            ],
+        });
+
+        const service = new ScmRepositoryService();
+        await service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/src/components',
+        });
+        const result = await service.fetchWorktreesEnrichment({
+            machineId: 'machine-a',
+            path: '~/repo/src/components',
+            worktreePaths: ['/Users/tester/repo'],
+        });
+
+        expect(service.readCachedWorktreesEnrichment({
+            machineId: 'machine-a',
+            path: '~/repo',
+            worktreePaths: ['/Users/tester/repo'],
+        })).toEqual(result);
+    });
+
+    it('splits enrichment requests at the protocol path limit', async () => {
+        vi.mocked(runMachineScmRpc<ScmWorktreesEnrichmentResponse, ScmWorktreesEnrichmentRequest>).mockResolvedValue({
+            success: true,
+            worktrees: [],
+        });
+
+        const worktreePaths = Array.from(
+            { length: SCM_WORKTREES_ENRICHMENT_MAX_PATHS + 1 },
+            (_, index) => `/repo/.worktrees/wt-${index}`,
+        );
+
+        const service = new ScmRepositoryService();
+        await service.fetchWorktreesEnrichment({
+            machineId: 'machine-a',
+            path: '/repo',
+            worktreePaths,
+        });
+
+        expect(runMachineScmRpc).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(runMachineScmRpc).mock.calls[0]?.[2]).toMatchObject({
+            worktreePaths: worktreePaths.slice(0, SCM_WORKTREES_ENRICHMENT_MAX_PATHS),
+        });
+        expect(vi.mocked(runMachineScmRpc).mock.calls[1]?.[2]).toMatchObject({
+            worktreePaths: worktreePaths.slice(SCM_WORKTREES_ENRICHMENT_MAX_PATHS),
+        });
+    });
+
+    it('returns null and leaves the cache untouched when the enrichment rpc fails', async () => {
+        vi.mocked(runMachineScmRpc).mockResolvedValue({
+            success: false,
+            error: 'porcelain failed',
+        });
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchWorktreesEnrichment({
+            machineId: 'machine-a',
+            path: '/repo',
+            worktreePaths: ['/repo'],
+        });
+
+        expect(result).toBeNull();
+        expect(service.readCachedWorktreesEnrichment({
+            machineId: 'machine-a',
+            path: '/repo',
+            worktreePaths: ['/repo'],
+        })).toBeNull();
     });
 });
 

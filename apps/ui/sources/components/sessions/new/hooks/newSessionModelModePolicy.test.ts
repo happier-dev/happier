@@ -61,6 +61,40 @@ describe('newSessionModelModePolicy', () => {
         expect(out).toBe('gpt-5.5');
     });
 
+    it('prefers draft modelMode for dynamic backends even when the static catalog is stale', () => {
+        const out = resolveInitialNewSessionModelMode({
+            draftModelMode: 'gpt-5.5',
+            modelConfig: {
+                defaultMode: 'default',
+                allowedModes: ['gpt-5.4'],
+                supportsFreeform: false,
+                dynamicProbe: 'auto',
+            },
+        });
+
+        expect(out).toBe('gpt-5.5');
+    });
+
+    it('keeps a dynamic backend model selection when the refreshed model list does not include it yet', () => {
+        const out = coerceNewSessionModelMode({
+            modelMode: 'gpt-5.5',
+            modelConfig: {
+                defaultMode: 'default',
+                allowedModes: ['gpt-5.4'],
+                supportsFreeform: false,
+                dynamicProbe: 'auto',
+            },
+            preflight: {
+                targetKey: 'agent:codex',
+                availableModels: [{ id: 'gpt-5.4' }],
+                supportsFreeform: false,
+            },
+            currentTargetKey: 'agent:codex',
+        });
+
+        expect(out).toBe('gpt-5.5');
+    });
+
     it('keeps custom modelMode when freeform is enabled (no preflight)', () => {
         const out = coerceNewSessionModelMode({
             modelMode: 'custom-model-id',

@@ -102,11 +102,13 @@ describe('useFileScmStageActions (daemon unavailable)', () => {
           return React.createElement('View');
         }))).tree;
 
+    let result: unknown;
     await act(async () => {
-      await current!.applySelectedLines();
+      result = await current!.applySelectedLines();
     });
 
     expect(modalAlert).toHaveBeenCalled();
+    expect(result).toBe(false);
     const [title, message, buttons] = modalAlert.mock.calls[0] ?? [];
     expect(title).toBe('errors.daemonUnavailableTitle');
     expect(String(message ?? '')).toContain('errors.daemonUnavailableBody');

@@ -22,6 +22,7 @@ export type ThemePreferenceChangeInput = {
     nextPreference: ThemePreference;
     platform: ThemeTransitionPlatform;
     reduceMotion: boolean;
+    forceAnimate?: boolean;
     systemTheme: ColorSchemeName;
     webMutationCommit?: (mutation: () => void) => Promise<void> | void;
 };
@@ -50,6 +51,7 @@ export function shouldAnimateThemePreferenceChange(
     input: Omit<ThemePreferenceChangeInput, 'document' | 'mutation' | 'nativeController'>,
 ): boolean {
     if (input.reduceMotion) return false;
+    if (input.forceAnimate) return true;
     return resolveVisualTheme(input.currentPreference, input.systemTheme)
         !== resolveVisualTheme(input.nextPreference, input.systemTheme);
 }

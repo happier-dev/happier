@@ -44,6 +44,29 @@ describe('chooseSubmitMode', () => {
         })).toBe('agent_queue');
     });
 
+    it('keeps server_pending while thinking when in-flight steer is supported but unavailable for the active turn', () => {
+        expect(chooseSubmitMode({
+            configuredMode: 'server_pending',
+            busySteerSendPolicy: 'steer_immediately',
+            session: {
+                thinking: true,
+                presence: 'online',
+                agentStateVersion: 1,
+                agentState: {
+                    controlledByUser: false,
+                    capabilities: {
+                        inFlightSteer: true,
+                        inFlightSteerSupported: true,
+                        inFlightSteerAvailable: false,
+                    },
+                },
+                pendingVersion: 0,
+                pendingCount: 1,
+                metadata: {},
+            } as any,
+        })).toBe('server_pending');
+    });
+
     it('prefers server_pending while controlledByUser when queue is supported', () => {
         expect(chooseSubmitMode({
             configuredMode: 'agent_queue',

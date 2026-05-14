@@ -3,6 +3,17 @@ import { z } from 'zod';
 import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.activitySurfaces';
 import { LAYOUT_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.layout';
 import { serializeNormalizedPaneSizeWithBasisKey } from './localSettingDefinitions.shared';
+import {
+    DEFAULT_THEME_PROFILES_LOCAL_STATE,
+    ThemeProfilesLocalStateSchema,
+} from '@/theme/profiles/themeProfilePersistence';
+import { SessionListFocusedFolderV1Schema } from '@/sync/domains/session/folders';
+
+const SessionMruOrderSchema = z.array(z.unknown())
+    .transform((values) => values
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.trim()))
+    .catch([]);
 
 export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
     debugMode: {
@@ -17,12 +28,17 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Enable developer menu in settings',
         storageScope: 'local',
     },
-    commandPaletteEnabled: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Enable CMD+K command palette (web only)',
+    sessionMruOrderV1: {
+        schema: SessionMruOrderSchema,
+        default: [],
+        description: 'Local most-recently-used session navigation order',
         storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
+    },
+    sessionListFocusedFolderV1: {
+        schema: SessionListFocusedFolderV1Schema,
+        default: null,
+        description: 'Focused session folder navigation state for the local session list',
+        storageScope: 'local',
     },
     themePreference: {
         schema: z.enum(['light', 'dark', 'adaptive']),
@@ -30,6 +46,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Theme preference: light, dark, or adaptive (follows system)',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    themeProfiles: {
+        schema: ThemeProfilesLocalStateSchema,
+        default: DEFAULT_THEME_PROFILES_LOCAL_STATE,
+        description: 'Local custom theme profiles and active profile selection',
+        storageScope: 'local',
     },
     uiBackdropBlurEnabled: {
         schema: z.boolean(),

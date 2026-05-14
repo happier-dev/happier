@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type {
-    ScmFollowupAction,
     ScmHostingRepositoryDescribePublishTargetsResponse,
     ScmHostingRepositoryPublishRequest,
     ScmHostingRepositoryPublishResponse,
@@ -15,24 +14,21 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
 import { SourceControlUpdateButton, SourceControlUpdateInput, SourceControlUpdateSection, type SourceControlUpdateTheme } from './SourceControlUpdateControls';
 import { SourceControlUpdateDropdown } from './SourceControlUpdateDropdown';
 import { SourceControlUpdateSwitchRow } from './SourceControlUpdateSwitchRow';
 import {
+    PublishRemediationAction,
+    resolveRemediationHandlerAvailability,
+    runPublishRemediationAction,
+} from './PublishRemediationAction';
+import {
     resolveSourceControlPublishRepositoryRemediation,
     type SourceControlPublishRemediationAction,
 } from './resolveSourceControlPublishRepositoryRemediation';
-import { validateScmFollowupOpenUrl } from './validateScmFollowupOpenUrl';
 
 type PublishTargetsSuccess = Extract<ScmHostingRepositoryDescribePublishTargetsResponse, { success: true }>;
-type PublishRemediationHandlers = Readonly<{
-    onConnectGitHub?: () => Promise<void> | void;
-    onInstallGh?: () => Promise<void> | void;
-    onUseManagedGh?: () => Promise<void> | void;
-    onAuthenticateGh?: () => Promise<void> | void;
-}>;
 
 function isGithubFamilyUrl(value: string | undefined): boolean {
     if (!value) return false;
@@ -155,8 +151,20 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
         setRemoteUrlKind((current) => selectedTarget.supportedRemoteUrlKinds.includes(current) ? current : selectedTarget.supportedRemoteUrlKinds[0] ?? 'https');
     }, [selectedTarget]);
 
+    const disabled = props.disabled === true || busy || loadingTargets || !selectedTarget;
+    const remediationDisabled = props.disabled === true || busy || loadingTargets;
+    const remediation = resolveSourceControlPublishRepositoryRemediation({
+        targetsResponse: activeResolvedTargets,
+        selectedTarget,
+        publishFailure,
+        disabled: remediationDisabled,
+    });
+    const publishAuth = selectedTarget?.auth ?? successTargets?.auth ?? null;
+    const publishBlockedByAuth = selectedTarget !== null && publishAuth?.state !== 'authenticated';
+    const publishBlockedByRemediation = remediation.action !== null || remediation.authUnavailable || publishBlockedByAuth;
+
     const submit = React.useCallback(() => {
-        if (!selectedTarget || !repositoryName.trim()) return;
+        if (publishBlockedByRemediation || !selectedTarget || !repositoryName.trim()) return;
         void (async () => {
             setBusy(true);
             setErrorCode(null);
@@ -190,17 +198,10 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                 setBusy(false);
             }
         })();
-    }, [existingOriginRemote, props, pushCurrentBranch, remoteConflictStrategy, remoteUrlKind, repositoryName, selectedTarget, visibility]);
+    }, [existingOriginRemote, props, publishBlockedByRemediation, pushCurrentBranch, remoteConflictStrategy, remoteUrlKind, repositoryName, selectedTarget, visibility]);
 
     if (!canRender) return null;
 
-    const disabled = props.disabled === true || busy || loadingTargets || !selectedTarget;
-    const remediation = resolveSourceControlPublishRepositoryRemediation({
-        targetsResponse: activeResolvedTargets,
-        selectedTarget,
-        publishFailure,
-        disabled,
-    });
     const remediationAction = resolveRemediationHandlerAvailability(remediation.action, {
         onConnectGitHub: props.onConnectGitHub,
         onInstallGh: props.onInstallGh,
@@ -214,20 +215,20 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
     }));
     const visibilityItems = (selectedTarget?.supportedVisibilities ?? ['private']).map((item) => ({
         id: item,
-        title: t(`files.sourceControlOperations.update.publish.visibility.${item}`),
+        title: getPublishRepositoryVisibilityLabel(item),
     }));
     const remoteUrlKindItems = (selectedTarget?.supportedRemoteUrlKinds ?? ['https']).map((item) => ({
         id: item,
-        title: t(`files.sourceControlOperations.update.publish.protocol.${item}`),
+        title: getPublishRepositoryRemoteUrlKindLabel(item),
     }));
     const remoteConflictItems = [
         {
             id: 'fail',
-            title: t('files.sourceControlOperations.update.publish.remoteConflict.fail'),
+            title: t('files.sourceControlOperations.update.publishRepository.keepOrigin'),
         },
         {
             id: 'set-url',
-            title: t('files.sourceControlOperations.update.publish.remoteConflict.setUrl'),
+            title: t('files.sourceControlOperations.update.publishRepository.setOriginUrl'),
         },
     ];
     const runRemediationAction = (action: SourceControlPublishRemediationAction) => {
@@ -245,18 +246,18 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
     return (
         <SourceControlUpdateSection
             theme={props.theme}
-            title={t('files.sourceControlOperations.update.publish.title')}
+            title={t('files.sourceControlOperations.update.publishRepository.title')}
             testID="scm-publish-repository-section"
         >
             <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}>
-                {t('files.sourceControlOperations.update.publish.description')}
+                {t('files.sourceControlOperations.update.publishRepository.body')}
             </Text>
             {successTargets ? (
                 <View style={{ gap: 8 }}>
                     <SourceControlUpdateInput
                         theme={props.theme}
                         testID="scm-publish-repository-name-input"
-                        accessibilityLabel={t('files.sourceControlOperations.update.publish.repositoryNameLabel')}
+                        accessibilityLabel={t('files.sourceControlOperations.update.publishRepository.repositoryNameLabel')}
                         placeholder={successTargets.defaultRepositoryName}
                         value={repositoryName}
                         editable={!disabled}
@@ -264,7 +265,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                     />
                     <SourceControlUpdateDropdown
                         testID="scm-publish-owner-dropdown"
-                        title={t('files.sourceControlOperations.update.publish.ownerLabel')}
+                        title={t('files.sourceControlOperations.update.publishRepository.ownerLabel')}
                         items={ownerItems}
                         selectedId={selectedTarget?.owner ?? ''}
                         disabled={disabled}
@@ -272,7 +273,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                     />
                     <SourceControlUpdateDropdown
                         testID="scm-publish-visibility-dropdown"
-                        title={t('files.sourceControlOperations.update.publish.visibilityLabel')}
+                        title={t('files.sourceControlOperations.update.publishRepository.visibilityLabel')}
                         items={visibilityItems}
                         selectedId={visibility}
                         disabled={disabled}
@@ -280,7 +281,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                     />
                     <SourceControlUpdateDropdown
                         testID="scm-publish-protocol-dropdown"
-                        title={t('files.sourceControlOperations.update.publish.protocolLabel')}
+                        title={t('files.sourceControlOperations.update.publishRepository.remoteKindLabel')}
                         items={remoteUrlKindItems}
                         selectedId={remoteUrlKind}
                         disabled={disabled}
@@ -289,7 +290,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                     {existingOriginRemote || showRemoteConflictRemediation ? (
                         <SourceControlUpdateDropdown
                             testID="scm-publish-existing-origin-dropdown"
-                            title={t('files.sourceControlOperations.update.publish.remoteConflict.label')}
+                            title={t('files.sourceControlOperations.update.publishRepository.originConflictLabel')}
                             items={remoteConflictItems}
                             selectedId={remoteConflictStrategy}
                             disabled={disabled}
@@ -299,7 +300,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                     <SourceControlUpdateSwitchRow
                         theme={props.theme}
                         testID="scm-publish-push-current-branch-switch"
-                        label={t('files.sourceControlOperations.update.publish.pushCurrentBranch')}
+                        label={t('files.sourceControlOperations.update.publishRepository.pushCurrentBranch')}
                         value={pushCurrentBranch}
                         disabled={disabled}
                         onValueChange={setPushCurrentBranch}
@@ -318,25 +319,25 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                             testID="scm-publish-remediation-commit-required"
                             style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}
                         >
-                            {t('files.sourceControlOperations.update.publish.commitRequired')}
+                            {t('files.sourceControlOperations.update.publishRepository.commitRequired')}
                         </Text>
                     ) : null}
                     {errorCode === 'UNSAFE_URL' ? (
                         <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}>
-                            {t('files.sourceControlOperations.update.publish.unsafeUrl')}
+                            {t('files.sourceControlOperations.update.publishRepository.unsafeUrl')}
                         </Text>
                     ) : null}
                     {showRemoteConflictRemediation || remediation.remoteConflict ? (
                         <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}>
-                            {t('files.sourceControlOperations.update.publish.remoteConflict.remediation')}
+                            {t('files.sourceControlOperations.update.publishRepository.originConflictRemediation')}
                         </Text>
                     ) : null}
                     <SourceControlUpdateButton
                         theme={props.theme}
                         testID="scm-publish-repository-submit"
-                        label={t('files.sourceControlOperations.update.publish.submit')}
+                        label={t('files.sourceControlOperations.update.publishRepository.publish')}
                         kind="primary"
-                        disabled={disabled || !repositoryName.trim()}
+                        disabled={disabled || publishBlockedByRemediation || !repositoryName.trim()}
                         onPress={submit}
                     />
                 </View>
@@ -344,7 +345,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                 <View style={{ gap: 8 }}>
                     <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                         {activeResolvedTargets?.success === false
-                            ? t('files.sourceControlOperations.update.publish.unavailable')
+                            ? t('files.sourceControlOperations.update.publishRepository.noTargets')
                             : t('common.loading')}
                     </Text>
                     <PublishRemediationAction
@@ -358,6 +359,26 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
     );
 }
 
+function getPublishRepositoryVisibilityLabel(visibility: ScmHostingRepositoryVisibility): string {
+    switch (visibility) {
+        case 'private':
+            return t('files.sourceControlOperations.update.publishRepository.private');
+        case 'public':
+            return t('files.sourceControlOperations.update.publishRepository.public');
+        case 'internal':
+            return t('files.sourceControlOperations.update.publishRepository.internal');
+    }
+}
+
+function getPublishRepositoryRemoteUrlKindLabel(kind: ScmHostingRepositoryRemoteUrlKind): string {
+    switch (kind) {
+        case 'https':
+            return t('files.sourceControlOperations.update.publishRepository.httpsRemote');
+        case 'ssh':
+            return t('files.sourceControlOperations.update.publishRepository.sshRemote');
+    }
+}
+
 function PublishAuthState(props: Readonly<{
     theme: SourceControlUpdateTheme;
     authState: 'connected-account-ready' | 'provider-cli-ready' | null;
@@ -367,8 +388,8 @@ function PublishAuthState(props: Readonly<{
         ? 'scm-publish-auth-provider-cli-ready'
         : 'scm-publish-auth-connected-account-ready';
     const label = props.authState === 'provider-cli-ready'
-        ? t('files.sourceControlOperations.update.publish.auth.providerCliReady')
-        : t('files.sourceControlOperations.update.publish.auth.connectedAccountReady');
+        ? t('files.sourceControlOperations.update.publishRepository.auth.providerCliReady')
+        : t('files.sourceControlOperations.update.publishRepository.auth.connectedAccountReady');
     return (
         <Text
             testID={testID}
@@ -377,124 +398,6 @@ function PublishAuthState(props: Readonly<{
             {label}
         </Text>
     );
-}
-
-function PublishRemediationAction(props: Readonly<{
-    theme: SourceControlUpdateTheme;
-    action: SourceControlPublishRemediationAction | null;
-    onRun: (action: SourceControlPublishRemediationAction) => void;
-}>) {
-    const action = props.action;
-    if (!action) return null;
-    return (
-        <SourceControlUpdateButton
-            theme={props.theme}
-            testID={getPublishRemediationActionTestId(action)}
-            label={getPublishRemediationActionLabel(action)}
-            kind="secondary"
-            disabled={action.disabled}
-            onPress={() => props.onRun(action)}
-        />
-    );
-}
-
-async function runPublishRemediationAction(input: Readonly<{
-    action: SourceControlPublishRemediationAction;
-    openUrl?: (url: string) => Promise<void>;
-    onConnectGitHub?: () => Promise<void> | void;
-    onInstallGh?: () => Promise<void> | void;
-    onUseManagedGh?: () => Promise<void> | void;
-    onAuthenticateGh?: () => Promise<void> | void;
-    setErrorCode: (value: string | null) => void;
-}>) {
-    if (input.action.kind === 'connect-github') {
-        await input.onConnectGitHub?.();
-        return;
-    }
-    if (input.action.kind === 'install-gh') {
-        await input.onInstallGh?.();
-        return;
-    }
-    if (input.action.kind === 'use-managed-gh') {
-        await input.onUseManagedGh?.();
-        return;
-    }
-    if (input.action.kind === 'authenticate-gh') {
-        await input.onAuthenticateGh?.();
-        return;
-    }
-    await openValidatedPublishFollowup(input.action.followup, input.openUrl, input.setErrorCode);
-}
-
-function resolveRemediationHandlerAvailability(
-    action: SourceControlPublishRemediationAction | null,
-    handlers: PublishRemediationHandlers,
-): SourceControlPublishRemediationAction | null {
-    if (!action) return null;
-    if (action.disabled) return action;
-    if (hasPublishRemediationHandler(action, handlers)) return action;
-    return { ...action, disabled: true };
-}
-
-function hasPublishRemediationHandler(
-    action: SourceControlPublishRemediationAction,
-    handlers: PublishRemediationHandlers,
-): boolean {
-    switch (action.kind) {
-        case 'connect-github':
-            return Boolean(handlers.onConnectGitHub);
-        case 'install-gh':
-            return Boolean(handlers.onInstallGh);
-        case 'use-managed-gh':
-            return Boolean(handlers.onUseManagedGh);
-        case 'authenticate-gh':
-            return Boolean(handlers.onAuthenticateGh);
-        case 'open-browser':
-            return true;
-    }
-}
-
-async function openValidatedPublishFollowup(
-    followup: Extract<ScmFollowupAction, { kind: 'openUrl' }>,
-    openUrl: ((url: string) => Promise<void>) | undefined,
-    setErrorCode: (value: string | null) => void,
-) {
-    const safe = validateScmFollowupOpenUrl(followup);
-    if (!safe.ok) {
-        setErrorCode('UNSAFE_URL');
-        return;
-    }
-    await (openUrl ?? openExternalUrl)(safe.url);
-}
-
-function getPublishRemediationActionTestId(action: SourceControlPublishRemediationAction): string {
-    switch (action.kind) {
-        case 'connect-github':
-            return 'scm-publish-remediation-connect-github';
-        case 'install-gh':
-            return 'scm-publish-remediation-install-gh';
-        case 'use-managed-gh':
-            return 'scm-publish-remediation-use-managed-gh';
-        case 'authenticate-gh':
-            return 'scm-publish-remediation-authenticate-gh';
-        case 'open-browser':
-            return 'scm-publish-remediation-open-browser';
-    }
-}
-
-function getPublishRemediationActionLabel(action: SourceControlPublishRemediationAction): string {
-    switch (action.kind) {
-        case 'connect-github':
-            return t('files.sourceControlOperations.update.publish.remediation.connectGitHub');
-        case 'install-gh':
-            return t('files.sourceControlOperations.update.publish.remediation.installGh');
-        case 'use-managed-gh':
-            return t('files.sourceControlOperations.update.publish.remediation.useManagedGh');
-        case 'authenticate-gh':
-            return t('files.sourceControlOperations.update.publish.remediation.authenticateGh');
-        case 'open-browser':
-            return t('files.sourceControlOperations.update.publish.remediation.openBrowser');
-    }
 }
 
 function readProvisioningRemediationKind(response: ScmHostingRepositoryPublishResponse): string | null {

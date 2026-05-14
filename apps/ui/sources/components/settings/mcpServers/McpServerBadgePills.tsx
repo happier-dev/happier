@@ -1,17 +1,31 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
+import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 
 export type McpServerBadgeTone = 'default' | 'accent' | 'success' | 'warning';
+
+function resolveMcpServerBadgeVariant(tone: McpServerBadgeTone | undefined): StatusPillVariant {
+    switch (tone) {
+        case 'success':
+            return 'success';
+        case 'warning':
+            return 'warning';
+        case 'accent':
+            return 'info';
+        case 'default':
+        case undefined:
+            return 'neutral';
+    }
+}
 
 export const McpServerBadgePills = React.memo(function McpServerBadgePills(props: Readonly<{
     badges: ReadonlyArray<{ key: string; label: string; tone?: McpServerBadgeTone }>;
     align?: 'start' | 'end';
     size?: 'default' | 'compact';
+    testID?: string;
 }>) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
 
     if (props.badges.length === 0) return null;
@@ -23,28 +37,13 @@ export const McpServerBadgePills = React.memo(function McpServerBadgePills(props
             props.size === 'compact' ? styles.containerCompact : null,
         ]}>
             {props.badges.map((badge) => (
-                <View
+                <StatusPill
                     key={badge.key}
-                    style={[
-                        styles.badge,
-                        props.size === 'compact' ? styles.badgeCompact : null,
-                        badge.tone === 'accent' ? styles.badgeAccent : null,
-                        badge.tone === 'success' ? styles.badgeSuccess : null,
-                        badge.tone === 'warning' ? styles.badgeWarning : null,
-                    ]}
-                >
-                    <Text
-                        style={[
-                            styles.badgeText,
-                            props.size === 'compact' ? styles.badgeTextCompact : null,
-                            badge.tone === 'accent' ? { color: theme.colors.accent.blue } : null,
-                            badge.tone === 'success' ? { color: theme.colors.state.success.foreground } : null,
-                            badge.tone === 'warning' ? { color: theme.colors.accent.purple ?? theme.colors.text.secondary } : null,
-                        ]}
-                    >
-                        {badge.label}
-                    </Text>
-                </View>
+                    testID={props.testID ? `${props.testID}:${badge.key}` : undefined}
+                    variant={resolveMcpServerBadgeVariant(badge.tone)}
+                    label={badge.label}
+                    style={props.size === 'compact' ? styles.badgeCompact : undefined}
+                />
             ))}
         </View>
     );
@@ -68,34 +67,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 4,
         maxWidth: 260,
     },
-    badge: {
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        borderRadius: 999,
-        backgroundColor: theme.colors.surface.inset,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-    },
     badgeCompact: {
         paddingHorizontal: 6,
         paddingVertical: 1,
-    },
-    badgeAccent: {
-        backgroundColor: theme.colors.surface.inset,
-    },
-    badgeSuccess: {
-        backgroundColor: theme.colors.surface.inset,
-    },
-    badgeWarning: {
-        backgroundColor: theme.colors.surface.inset,
-    },
-    badgeText: {
-        fontSize: 12,
-        lineHeight: 16,
-        color: theme.colors.text.secondary,
-    },
-    badgeTextCompact: {
-        fontSize: 11,
-        lineHeight: 14,
     },
 }));

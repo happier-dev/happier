@@ -5,7 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-let capturedSimpleOptionsPopoverProps: unknown = null;
+let capturedSelectionListPopoverProps: unknown = null;
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -47,20 +47,20 @@ vi.mock('@/components/ui/popover', () => ({
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
-vi.mock('@/components/sessions/agentInput/components/AgentInputSimpleOptionsPopover', () => ({
-    AgentInputSimpleOptionsPopover: (props: unknown) => {
-        capturedSimpleOptionsPopoverProps = props;
-        return React.createElement('AgentInputSimpleOptionsPopover', props as any);
+vi.mock('@/components/sessions/agentInput/components/AgentInputSelectionListPopover', () => ({
+    AgentInputSelectionListPopover: (props: unknown) => {
+        capturedSelectionListPopoverProps = props;
+        return React.createElement('AgentInputSelectionListPopover', props as any);
     },
 }));
 
-function asSimpleOptionsPopoverProps(value: unknown): any {
+function asSelectionListPopoverProps(value: unknown): any {
     return value as any;
 }
 
 describe('ExecutionRunDeliveryChip', () => {
     it('does not render when recipient is not an execution_run', async () => {
-        capturedSimpleOptionsPopoverProps = null;
+        capturedSelectionListPopoverProps = null;
         const { ExecutionRunDeliveryChip } = await import('./ExecutionRunDeliveryChip');
         const ctx = {
             chipStyle: () => ({ padding: 4 }),
@@ -79,11 +79,11 @@ describe('ExecutionRunDeliveryChip', () => {
                 />);
 
         expect(screen.tree.toJSON()).toBeNull();
-        expect(capturedSimpleOptionsPopoverProps).toBeNull();
+        expect(capturedSelectionListPopoverProps).toBeNull();
     });
 
     it('opens the shared simple-options popover and anchors it to the delivery chip ref', async () => {
-        capturedSimpleOptionsPopoverProps = null;
+        capturedSelectionListPopoverProps = null;
         const { ExecutionRunDeliveryChip } = await import('./ExecutionRunDeliveryChip');
         const externalAnchorRef = { current: { id: 'composer-anchor' } };
         const ctx = {
@@ -102,24 +102,75 @@ describe('ExecutionRunDeliveryChip', () => {
                     onDeliveryChange={() => {}}
                 />);
 
-        expect(asSimpleOptionsPopoverProps(capturedSimpleOptionsPopoverProps)?.open).toBe(false);
+        expect(asSelectionListPopoverProps(capturedSelectionListPopoverProps)?.open).toBe(false);
 
         await screen.pressByTestIdAsync('agent-input-delivery-chip');
 
-        const pickerProps = asSimpleOptionsPopoverProps(capturedSimpleOptionsPopoverProps);
+        const pickerProps = asSelectionListPopoverProps(capturedSelectionListPopoverProps);
         expect(pickerProps?.open).toBe(true);
-        expect(pickerProps?.title).toBe('runs.delivery.title');
+        expect(pickerProps?.rootStep?.title).toBe('runs.delivery.title');
         expect(pickerProps?.selectedOptionId).toBe('interrupt');
         expect(pickerProps?.anchorRef).not.toBe(externalAnchorRef);
-        expect((pickerProps?.options ?? []).map((option: { id: string }) => option.id)).toEqual([
+        expect(((pickerProps?.rootStep?.sections?.[0]?.options) ?? []).map((option: { id: string }) => option.id)).toEqual([
             'prompt',
             'steer_if_supported',
             'interrupt',
         ]);
     });
 
-    it('forwards all shared picker selection changes to onDeliveryChange', async () => {
-        capturedSimpleOptionsPopoverProps = null;
+    /**
+     * FR4-W1-CHIP: the wrapper `AgentInputSelectionListPopover` is the SINGLE
+     * close-after-select owner. The inline delivery chip's wrapper-level
+     * `onSelect` must NOT close the popover synchronously — closing
+     * synchronously on web lets the click event fall through to the underlying
+     * chip anchor. The chip relies on the wrapper to defer `onRequestClose`,
+     * which is wired to `setOpen(false)`.
+     */
+    it('wrapper-level onSelect does NOT close the popover synchronously (close happens only via onRequestClose)', async () => {
+        capturedSelectionListPopoverProps = null;
+        const { ExecutionRunDeliveryChip } = await import('./ExecutionRunDeliveryChip');
+        const ctx = {
+            chipStyle: () => ({ padding: 4 }),
+            iconColor: '#000',
+            showLabel: true,
+            textStyle: {},
+            countTextStyle: {},
+            popoverAnchorRef: { current: null },
+        } as const;
+
+        const screen = await renderScreen(<ExecutionRunDeliveryChip
+                    ctx={ctx}
+                    recipient={{ kind: 'execution_run', runId: 'run_1' }}
+                    delivery="steer_if_supported"
+                    onDeliveryChange={() => {}}
+                />);
+
+        // Open the popover via the trigger.
+        await screen.pressByTestIdAsync('agent-input-delivery-chip');
+        const openedProps = asSelectionListPopoverProps(capturedSelectionListPopoverProps);
+        expect(openedProps?.open).toBe(true);
+
+        const { act } = await import('react-test-renderer');
+        const wrapperOnSelect = openedProps.onSelect as (id: string) => void;
+        expect(typeof wrapperOnSelect).toBe('function');
+
+        act(() => {
+            wrapperOnSelect('prompt');
+        });
+
+        // Popover should still be open — the wrapper owns the close path.
+        expect(asSelectionListPopoverProps(capturedSelectionListPopoverProps)?.open).toBe(true);
+
+        // onRequestClose is the canonical close path.
+        act(() => {
+            (asSelectionListPopoverProps(capturedSelectionListPopoverProps).onRequestClose as () => void)();
+        });
+
+        expect(asSelectionListPopoverProps(capturedSelectionListPopoverProps)?.open).toBe(false);
+    });
+
+    it('forwards all shared picker selection changes to onDeliveryChange via per-option onSelect (RV-1 F1)', async () => {
+        capturedSelectionListPopoverProps = null;
         const { ExecutionRunDeliveryChip } = await import('./ExecutionRunDeliveryChip');
         const onDeliveryChange = vi.fn();
         const ctx = {
@@ -138,7 +189,14 @@ describe('ExecutionRunDeliveryChip', () => {
                     onDeliveryChange={onDeliveryChange}
                 />);
 
-        asSimpleOptionsPopoverProps(capturedSimpleOptionsPopoverProps)?.onSelect('prompt');
+        // Per-option onSelect (set inside `buildExecutionRunDeliveryRootStep`)
+        // carries the mutation. The popover-level onSelect is close-only.
+        const props = asSelectionListPopoverProps(capturedSelectionListPopoverProps);
+        const promptOption = props?.rootStep?.sections?.[0]?.options?.find(
+            (option: { id: string }) => option.id === 'prompt',
+        );
+        expect(typeof promptOption?.onSelect).toBe('function');
+        promptOption!.onSelect!();
 
         expect(onDeliveryChange).toHaveBeenCalledWith('prompt');
     });

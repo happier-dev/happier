@@ -1,6 +1,7 @@
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
 import { storage } from '@/sync/domains/state/storage';
 import {
+    resolveDisplayMachineTargetForSessionFromState,
     resolveDisplayMachineIdForSessionFromState,
     resolveDisplayPathForSessionFromState,
     resolveMachineTargetForSessionFromState,
@@ -21,6 +22,17 @@ export function readDisplayMachineIdForSession(input: Readonly<{
     metadata?: SessionTargetMetadataLike;
 }>): string {
     return resolveDisplayMachineIdForSessionFromState({
+        state: storage.getState() as SessionMachineTargetState,
+        sessionId: input.sessionId,
+        metadata: input.metadata,
+    });
+}
+
+export function readDisplayMachineTargetForSession(input: Readonly<{
+    sessionId?: string | null;
+    metadata?: SessionTargetMetadataLike;
+}>): { machineId: string; basePath: string } | null {
+    return resolveDisplayMachineTargetForSessionFromState({
         state: storage.getState() as SessionMachineTargetState,
         sessionId: input.sessionId,
         metadata: input.metadata,
@@ -71,8 +83,9 @@ export function canUseSessionRpc(sessionId: string): boolean {
 }
 
 export {
-  resolveDisplayMachineIdForSessionFromState,
-  resolveDisplayPathForSessionFromState,
-  resolveMachineTargetForSessionFromState,
+    resolveDisplayMachineTargetForSessionFromState,
+    resolveDisplayMachineIdForSessionFromState,
+    resolveDisplayPathForSessionFromState,
+    resolveMachineTargetForSessionFromState,
 };
 export type { SessionMachineTargetState };

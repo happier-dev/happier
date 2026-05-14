@@ -63,6 +63,17 @@ describe('ToolTimelineRowHeader', () => {
         return (opacityEntries[opacityEntries.length - 1] as { opacity: number }).opacity;
     }
 
+    function readStyleNumber(style: unknown, key: string): number | undefined {
+        const entries = Array.isArray(style) ? style : [style];
+        for (let i = entries.length - 1; i >= 0; i -= 1) {
+            const entry = entries[i];
+            if (typeof entry !== 'object' || entry === null) continue;
+            const value = (entry as Record<string, unknown>)[key];
+            if (typeof value === 'number') return value;
+        }
+        return undefined;
+    }
+
     afterEach(() => {
         standardCleanup();
         ioniconPropsState.length = 0;
@@ -112,6 +123,32 @@ describe('ToolTimelineRowHeader', () => {
         const openButton = screen.findByTestId('tool-timeline-row-open');
         expect(openButton).toBeTruthy();
         expect(openButton!.parent?.type).not.toBe('Pressable');
+    });
+
+    it('keeps the tool title fixed while the subtitle yields first in compact widths', async () => {
+        const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
+
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Turn Diff"
+                subtitle="Recap of the changes that occurred during this turn"
+                onPress={() => {}}
+                canOpen={false}
+                onOpen={null}
+            />,
+        );
+
+        const textNodes = screen.findAllByType('Text');
+        const titleNode = textNodes.find((node) => node.props.children === 'Turn Diff');
+        const subtitleNode = textNodes.find((node) => node.props.children === 'Recap of the changes that occurred during this turn');
+
+        expect(titleNode).toBeTruthy();
+        expect(subtitleNode).toBeTruthy();
+        expect(readStyleNumber(titleNode!.props.style, 'flexShrink')).toBe(0);
+        expect(readStyleNumber(subtitleNode!.props.style, 'flexShrink')).toBe(1);
+        expect(readStyleNumber(subtitleNode!.props.style, 'minWidth')).toBe(0);
     });
 
     it('stops propagation before invoking the open action button callback', async () => {

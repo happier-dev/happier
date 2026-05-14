@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, View, type ScrollViewProps } from 'react-native';
+import { Platform, View, type ScrollViewProps } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { useUnistyles } from 'react-native-unistyles';
 
@@ -18,6 +18,7 @@ import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
 import type { LazyDirectoryTreeNode } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type WorkspaceRepositoryTreeWebDropTarget = Readonly<{
     destinationDir: string;
@@ -93,7 +94,7 @@ function renderEntryIcon(node: WorkspaceRepositoryTreeNode, theme: AppTheme) {
     return <FileIcon fileName={node.name} size={16} />;
 }
 
-export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListProps): React.ReactElement {
+export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListProps): React.ReactElement {
     const { theme, expandedPaths, onExpandedPathsChange, onOpenFile } = props;
     const detailsMode = props.detailsMode === true;
 
@@ -217,7 +218,7 @@ export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListPr
                             </View>
                         ) : null}
                         {isDirectoryNode(node) && node.isLoadingChildren ? (
-                            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                         ) : null}
                         {menu}
                     </View>
@@ -330,4 +331,4 @@ export function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListPr
             }
         />
     );
-}
+});

@@ -78,6 +78,26 @@ describe('useSessionRunningExecutionRuns', () => {
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(3);
     });
 
+    it('keeps the same running run reference when polling returns unchanged runs', async () => {
+        sessionExecutionRunListSpy
+            .mockResolvedValueOnce({ runs: [{ runId: 'run_1', status: 'running' }] })
+            .mockResolvedValueOnce({ runs: [{ runId: 'run_1', status: 'running' }] });
+
+        const hook = await renderHook(
+            ({ sessionId, enabled }: Readonly<{ sessionId: string; enabled: boolean }>) =>
+                useSessionRunningExecutionRuns({ sessionId, enabled }),
+            {
+                initialProps: { sessionId: 's1', enabled: true },
+            },
+        );
+        const first = hook.getCurrent();
+
+        await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 5_000 });
+
+        expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent()).toBe(first);
+    });
+
     it('does not poll repeatedly when there are no running runs', async () => {
         sessionExecutionRunListSpy.mockResolvedValueOnce({ runs: [] });
 

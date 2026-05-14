@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentInputAutocomplete } from './AgentInputAutocomplete';
+import { AgentInputAutocomplete, type AgentInputAutocompleteItem } from './AgentInputAutocomplete';
 import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,9 +41,8 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
 }));
 
 async function renderAutocomplete(props: {
-    suggestions: React.ReactElement[];
+    items: readonly AgentInputAutocompleteItem[];
     onSelect: (index: number) => void;
-    itemHeight: number;
     selectedIndex?: number;
     maxHeight?: number;
 }) {
@@ -57,9 +56,8 @@ describe('AgentInputAutocomplete', () => {
 
     it('returns null when suggestions are empty', async () => {
         const screen = await renderAutocomplete({
-            suggestions: [],
+            items: [],
             onSelect: () => {},
-            itemHeight: 48,
         });
 
         expect(screen.tree.toJSON()).toBe(null);
@@ -67,30 +65,31 @@ describe('AgentInputAutocomplete', () => {
 
     it('passes maxHeight through to FloatingOverlay', async () => {
         const screen = await renderAutocomplete({
-            suggestions: [React.createElement('Suggestion', { key: 's1' })],
+            items: [{ id: 'cmd-help', label: '/help', minHeight: 48 }],
             onSelect: () => {},
-            itemHeight: 48,
             maxHeight: 123,
         });
 
         expect(screen.findByTestId('agent-input-autocomplete.overlay')?.props.maxHeight).toBe(123);
     });
 
-    it('calls onSelect with the pressed index', async () => {
+    it('renders suggestions through SelectionList and calls onSelect with the pressed index', async () => {
         const onSelect = vi.fn<(index: number) => void>();
         const screen = await renderAutocomplete({
-            suggestions: [
-                React.createElement('Suggestion', { key: 's1' }),
-                React.createElement('Suggestion', { key: 's2' }),
+            items: [
+                { id: 'cmd-help', label: '/help', subtitle: 'Show help', minHeight: 52 },
+                { id: 'cmd-goal', label: '/goal', subtitle: 'Set the session goal', minHeight: 52 },
             ],
             onSelect,
-            itemHeight: 48,
         });
 
-        expect(screen.findByTestId('agent-input-autocomplete.option:0')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-autocomplete.option:1')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-autocomplete')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-autocomplete:root:option:cmd-help')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-autocomplete:root:option:cmd-goal')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('/goal');
+        expect(screen.getTextContent()).toContain('Set the session goal');
 
-        await screen.pressByTestIdAsync('agent-input-autocomplete.option:1');
+        await screen.pressByTestIdAsync('agent-input-autocomplete:root:option:cmd-goal');
 
         expect(onSelect).toHaveBeenCalledTimes(1);
         expect(onSelect).toHaveBeenCalledWith(1);

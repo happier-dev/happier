@@ -100,7 +100,7 @@ describe('TranscriptList safe area', () => {
         transcriptListImplementationSetting = 'flash_v2';
     });
 
-    it('uses the chrome-safe area fallback (initialWindowMetrics) when safe-area provider returns zeros', async () => {
+    it('uses a compact transcript gutter instead of chrome-safe area inside the list header', async () => {
         const { TranscriptList } = await import('./TranscriptList');
         await renderScreen(
             <TranscriptList
@@ -111,6 +111,6 @@ describe('TranscriptList safe area', () => {
             />,
         );
 
-        expect(capturedHeaderSpacerHeight).toBe(40 + 22 + 32);
+        expect(capturedHeaderSpacerHeight).toBe(12);
     });
 });

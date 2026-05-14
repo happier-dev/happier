@@ -81,6 +81,25 @@ describe('MultiTextInput', () => {
         expect(flattenStyle(input.props.style).fontSize).toBe(20);
     });
 
+    it('derives the native return key type from submit behavior', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const submitTree = (await renderScreen(<MultiTextInput
+                    testID="composer-input-submit"
+                    value=""
+                    submitBehavior="submit"
+                    onChangeText={() => {}}
+                />)).tree;
+        const newlineTree = (await renderScreen(<MultiTextInput
+                    testID="composer-input-newline"
+                    value=""
+                    submitBehavior="newline"
+                    onChangeText={() => {}}
+                />)).tree;
+
+        expect(submitTree.findByType('TextInput' as any).props.returnKeyType).toBe('send');
+        expect(newlineTree.findByType('TextInput' as any).props.returnKeyType).toBe('default');
+    });
+
     it('forwards testID as data-testid on web textarea', async () => {
         const { MultiTextInput } = await import('./MultiTextInput.web');
         let tree!: renderer.ReactTestRenderer;
@@ -107,6 +126,85 @@ describe('MultiTextInput', () => {
         expect(input.props.style.fontSize).toBe('20px');
         expect(input.props.style.color).toBeDefined();
         expect(input.props.style.fontFamily).toBeDefined();
+    });
+
+    it('forwards native key event metadata used by composer shortcuts', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const onKeyPress = vi.fn(() => true);
+        const preventDefault = vi.fn();
+
+        const tree = (await renderScreen(<MultiTextInput
+            testID="composer-input"
+            value=""
+            onChangeText={() => {}}
+            onKeyPress={onKeyPress}
+        />)).tree;
+        const input = tree.findByType('TextInput' as any);
+
+        input.props.onKeyPress({
+            preventDefault,
+            nativeEvent: {
+                key: 'Enter',
+                code: 'Enter',
+                shiftKey: true,
+                altKey: true,
+                ctrlKey: true,
+                metaKey: false,
+                repeat: true,
+                isComposing: false,
+            },
+        });
+
+        expect(onKeyPress).toHaveBeenCalledWith({
+            key: 'Enter',
+            code: 'Enter',
+            shiftKey: true,
+            altKey: true,
+            ctrlKey: true,
+            metaKey: false,
+            repeat: true,
+            isComposing: false,
+        });
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+    });
+
+    it('forwards web key event metadata used by composer shortcuts', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onKeyPress = vi.fn(() => true);
+        const preventDefault = vi.fn();
+
+        const tree = (await renderScreen(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {
+            testID: 'composer-input',
+            value: '',
+            onChangeText: () => {},
+            onKeyPress,
+        }))).tree;
+        const input = tree.findByType('TextareaAutosize' as any);
+
+        input.props.onKeyDown({
+            key: 'Enter',
+            code: 'Enter',
+            shiftKey: false,
+            altKey: true,
+            ctrlKey: false,
+            metaKey: true,
+            repeat: true,
+            keyCode: 13,
+            nativeEvent: { isComposing: false },
+            preventDefault,
+        });
+
+        expect(onKeyPress).toHaveBeenCalledWith({
+            key: 'Enter',
+            code: 'Enter',
+            shiftKey: false,
+            altKey: true,
+            ctrlKey: false,
+            metaKey: true,
+            repeat: true,
+            isComposing: false,
+        });
+        expect(preventDefault).toHaveBeenCalledTimes(1);
     });
 
     it('prevents the default paste behavior when web files are pasted and forwards the files', async () => {

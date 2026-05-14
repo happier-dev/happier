@@ -37,10 +37,7 @@ import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDae
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
-import {
-    clearPendingMobileSurfaceTransitionForPathname,
-    resolvePendingMobileSurfaceTransitionStackOptions,
-} from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
+import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
 import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
 import { useEndpointConnectivity, useSyncError } from '@/sync/domains/state/storage';
@@ -55,11 +52,8 @@ const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ sco
 
 type StackScreenProps = React.ComponentProps<typeof Stack.Screen>;
 type StackScreenOptions = NonNullable<StackScreenProps['options']>;
-type StackNavigatorScreenOptionsInput = Readonly<{
-    route: Readonly<{
-        name?: string;
-    }>;
-}>;
+
+const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
 
 export default function RootLayout() {
     const auth = useAuth();
@@ -311,12 +305,6 @@ export default function RootLayout() {
         theme.colors.chrome.header.background,
         theme.colors.chrome.header.foreground,
     ]);
-    const rootStackScreenOptionsWithTransitions = React.useCallback((input: StackNavigatorScreenOptionsInput) => ({
-        ...rootStackScreenOptions,
-        ...resolvePendingMobileSurfaceTransitionStackOptions({
-            routeName: input.route.name,
-        }),
-    }), [rootStackScreenOptions]);
     const rootStackRouteOptions = React.useMemo(() => {
         const back = t('common.back');
         const cancel = t('common.cancel');
@@ -340,13 +328,21 @@ export default function RootLayout() {
             index: {
                 headerShown: false,
                 headerTitle: '',
+                ...MAIN_TAB_STACK_SCREEN_OPTIONS,
             },
-            inboxIndex: createInboxStackScreenOptions(t),
-            friendsIndex: createFriendsStackScreenOptions(t),
+            inboxIndex: {
+                ...createInboxStackScreenOptions(t),
+                ...MAIN_TAB_STACK_SCREEN_OPTIONS,
+            },
+            friendsIndex: {
+                ...createFriendsStackScreenOptions(t),
+                ...MAIN_TAB_STACK_SCREEN_OPTIONS,
+            },
             hiddenHeader,
             settings: {
                 // Nested navigator; per-settings-screen headers are configured in `settings/_layout.tsx`.
                 headerShown: false,
+                ...MAIN_TAB_STACK_SCREEN_OPTIONS,
             },
             desktopActivityOverlay: {
                 headerShown: false,
@@ -513,17 +509,13 @@ export default function RootLayout() {
         ),
     }), [preferredLanguage, theme.colors.chrome.header.foreground]);
 
-    React.useEffect(() => {
-        clearPendingMobileSurfaceTransitionForPathname(pathname);
-    }, [pathname]);
-
     // Avoid rendering protected screens for a frame during redirect.
     if (shouldRedirect || isApplyingWebServerOverride) {
         return null;
     }
 
     return (
-        <>
+        <SessionCockpitChromeRegistryProvider>
             {!isDesktopOverlayWindow && !isTerminalConnectRoute ? (
                 <>
                     <ActivityBadgeRuntime />
@@ -553,7 +545,7 @@ export default function RootLayout() {
                     <Text>{pathname}</Text>
                 </View>
             ) : null}
-            <Stack screenOptions={rootStackScreenOptionsWithTransitions}>
+            <Stack screenOptions={rootStackScreenOptions}>
                 <Stack.Screen
                     name="index"
                     options={rootStackRouteOptions.index}
@@ -780,6 +772,6 @@ export default function RootLayout() {
                 />
             </Stack>
             <MobileBottomChromeHost />
-        </>
+        </SessionCockpitChromeRegistryProvider>
     );
 }

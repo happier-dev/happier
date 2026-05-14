@@ -1,11 +1,5 @@
 import * as React from 'react';
-import {
-    Platform,
-    ScrollView,
-    type ScrollViewProps,
-    type StyleProp,
-    type ViewStyle,
-} from 'react-native';
+import { Platform, ScrollView, type ScrollViewProps, type StyleProp, type ViewStyle } from 'react-native';
 import { ScrollView as GestureHandlerScrollView } from 'react-native-gesture-handler';
 
 type HorizontalOverflowScrollViewProps = Readonly<{

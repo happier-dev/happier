@@ -1,8 +1,4 @@
-import {
-    createManagedEndpointSupervisor,
-    DEFAULT_MANAGED_CONNECTION_POLICY,
-    type ManagedEndpointSupervisor,
-} from '@happier-dev/connection-supervisor';
+import { createManagedEndpointSupervisor, DEFAULT_MANAGED_CONNECTION_POLICY, type ManagedEndpointSupervisor, } from '@happier-dev/connection-supervisor';
 import { AppState } from 'react-native';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';

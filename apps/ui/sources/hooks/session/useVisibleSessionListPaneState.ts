@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useVisibleSessionListSummaryState } from './useVisibleSessionListSummaryState';
-import { useVisibleSessionListViewState } from './useVisibleSessionListViewState';
+import { useVisibleSessionListViewState, type VisibleSessionListViewState } from './useVisibleSessionListViewState';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
@@ -12,6 +12,7 @@ export type VisibleSessionListPaneState = Readonly<{
     }>;
     visibleSessionListIndex: ReadonlyArray<SessionListIndexItem> | null;
     hasHiddenInactiveSessions: boolean;
+    folderFocus: VisibleSessionListViewState['folderFocus'];
     showLoading: boolean;
     showEmptyState: boolean;
 }>;
@@ -29,7 +30,7 @@ function countVisibleSessions(index: ReadonlyArray<SessionListIndexItem> | null)
 
 export function useVisibleSessionListPaneState(storageFilter: SessionListStorageFilter = 'all'): VisibleSessionListPaneState {
     const { summary } = useVisibleSessionListSummaryState(storageFilter);
-    const { visibleSessionListIndex, hasHiddenInactiveSessions } = useVisibleSessionListViewState(storageFilter);
+    const { visibleSessionListIndex, hasHiddenInactiveSessions, folderFocus } = useVisibleSessionListViewState(storageFilter);
     const visibleSessionCount = React.useMemo(
         () => countVisibleSessions(visibleSessionListIndex),
         [visibleSessionListIndex],
@@ -39,7 +40,8 @@ export function useVisibleSessionListPaneState(storageFilter: SessionListStorage
         summary,
         visibleSessionListIndex,
         hasHiddenInactiveSessions,
+        folderFocus,
         showLoading: !summary.sessionsReady,
         showEmptyState: summary.sessionsReady && visibleSessionCount === 0,
-    }), [hasHiddenInactiveSessions, summary, visibleSessionCount, visibleSessionListIndex]);
+    }), [folderFocus, hasHiddenInactiveSessions, summary, visibleSessionCount, visibleSessionListIndex]);
 }

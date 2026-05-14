@@ -22,6 +22,14 @@ const sessionListDirectorySpy = vi.fn<(_sessionId: string, _path: string) => Pro
         entries: [],
     }),
 );
+const flatListRenderPropsLog: Array<Readonly<{
+    contentContainerStyle: unknown;
+    extraData: unknown;
+    getItemLayout: unknown;
+    keyExtractor: unknown;
+    renderItem: unknown;
+    style: unknown;
+}>> = [];
 
 const theme = vi.hoisted(() => ({
     colors: {
@@ -63,7 +71,15 @@ installFilesContentCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             TurboModuleRegistry: { get: () => ({}) },
-            FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
+            FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, style, contentContainerStyle, getItemLayout, extraData }: any) => {
+                flatListRenderPropsLog.push({
+                    contentContainerStyle,
+                    extraData,
+                    getItemLayout,
+                    keyExtractor,
+                    renderItem,
+                    style,
+                });
                 const header = ListHeaderComponent
                     ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
                     : null;
@@ -190,6 +206,14 @@ function findDropTargetForTitle(screen: Awaited<ReturnType<typeof renderReposito
     )) ?? null;
 }
 
+function findLoadingIndicators(screen: Awaited<ReturnType<typeof renderRepositoryTreeList>>['screen']) {
+    return screen.findAll((node) => (
+        (node.type as any) === 'ActivityIndicator'
+        || (node.type as any) === 'ActivitySpinner'
+        || node.props?.accessibilityRole === 'progressbar'
+    ));
+}
+
 async function settleRepositoryTree() {
     await flushHookEffects({ cycles: 3 });
 }
@@ -246,6 +270,7 @@ describe('RepositoryTreeList', () => {
             success: true,
             entries: [],
         });
+        flatListRenderPropsLog.length = 0;
         clearCachedRepositoryDirectoryEntries({ sessionId: 'session-1' });
     });
 
@@ -480,7 +505,7 @@ describe('RepositoryTreeList', () => {
         await settleRepositoryTree();
 
         expect(findRepositoryRows(screen).map((row) => row.props.title)).toEqual(['src/', 'README.md']);
-        expect(screen.findAll((node) => (node.type as any) === 'ActivityIndicator').length).toBeGreaterThanOrEqual(1);
+        expect(findLoadingIndicators(screen).length).toBeGreaterThanOrEqual(1);
 
         await act(async () => {
             pending.resolve({
@@ -491,5 +516,55 @@ describe('RepositoryTreeList', () => {
         await settleRepositoryTree();
 
         expect(findRepositoryRows(screen).map((row) => row.props.title)).toEqual(['src/']);
+    });
+
+    it('keeps rendered tree props stable when an unrelated parent callback changes', async () => {
+        sessionListDirectorySpy.mockResolvedValue({
+            success: true,
+            entries: [{ name: 'README.md', type: 'file' }],
+        });
+
+        const { RepositoryTreeList } = await import('./RepositoryTreeList');
+
+        function Wrapper() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            const [version, setVersion] = React.useState(0);
+            const onRequestRefresh = React.useCallback(() => {
+                void version;
+            }, [version]);
+            return (
+                <>
+                    <RepositoryTreeList
+                        theme={theme}
+                        sessionId="session-1"
+                        expandedPaths={expandedPaths}
+                        onExpandedPathsChange={setExpandedPaths}
+                        onOpenFile={vi.fn()}
+                        onRequestRefresh={onRequestRefresh}
+                    />
+                    {React.createElement('Pressable' as any, {
+                        testID: 'rerender-parent',
+                        onPress: () => setVersion((value) => value + 1),
+                    })}
+                </>
+            );
+        }
+
+        const screen = await renderScreen(<Wrapper />);
+        await settleRepositoryTree();
+        const before = flatListRenderPropsLog.at(-1);
+
+        await act(async () => {
+            screen.pressByTestId('rerender-parent');
+        });
+        await settleRepositoryTree();
+        const after = flatListRenderPropsLog.at(-1);
+
+        expect(after?.renderItem).toBe(before?.renderItem);
+        expect(after?.keyExtractor).toBe(before?.keyExtractor);
+        expect(after?.style).toBe(before?.style);
+        expect(after?.contentContainerStyle).toBe(before?.contentContainerStyle);
+        expect(after?.getItemLayout).toBe(before?.getItemLayout);
+        expect(after?.extraData).toBe(before?.extraData);
     });
 });

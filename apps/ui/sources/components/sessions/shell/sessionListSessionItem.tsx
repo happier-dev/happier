@@ -6,6 +6,8 @@ import { useSessionListRenderableWithServerScope } from '@/sync/domains/state/st
 
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
 import { SessionListRow } from './sessionListRow';
+import type { SessionInlineDragEndContext } from './useSessionInlineDrag';
+import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
 
 type SessionListSessionItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'session' }>;
@@ -13,7 +15,15 @@ type SessionListSessionItemProps = Readonly<{
     rowHeight: number;
     canReorderSessions: boolean;
     onDragStart: (sessionKey: string) => void;
-    onDragEnd: (sessionKey: string, groupKey: string, positionDelta: number) => void;
+    onDragEnd: (sessionKey: string, groupKey: string, positionDelta: number, context?: SessionInlineDragEndContext) => void | Promise<void>;
+    onDragUpdate?: (event: Readonly<{
+        sessionKey: string;
+        groupKey: string;
+        positionDelta: number;
+        dataIndex: number;
+        absoluteX: number;
+        absoluteY: number;
+    }>) => void;
     onTogglePinnedSessionKey: ((sessionKey: string) => void) | null;
     onSetTagsSessionKey: ((sessionKey: string, newTags: string[]) => void) | null;
     onNativeContextMenuOpenChangeSessionKey: ((sessionKey: string, next: boolean) => void) | null;
@@ -28,6 +38,8 @@ type SessionListSessionItemProps = Readonly<{
     tagsEnabled: boolean;
     compact: boolean;
     compactMinimal: boolean;
+    folderMoveTargets: readonly SessionFolderMoveTarget[];
+    onMoveToSessionFolder: ((sessionId: string, serverId: string, folderId: string | null) => void | Promise<void>) | null;
 }>;
 
 export function SessionListSessionItem(props: SessionListSessionItemProps) {
@@ -42,7 +54,8 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
     }
 
     const sessionKey = rowViewModel.sessionKey;
-    const isNative = Platform.OS === 'ios' || Platform.OS === 'android';
+    const isIos = Platform.OS === 'ios';
+    const isNative = isIos || Platform.OS === 'android';
     const nativeContextMenuOpen = isNative && sessionKey != null && props.nativeContextMenuSessionKey === sessionKey;
 
     return (
@@ -53,6 +66,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             reorderEnabled={props.canReorderSessions}
             onDragStart={props.onDragStart}
             onDragEnd={props.onDragEnd}
+            onDragUpdate={props.onDragUpdate}
             onTogglePinnedSessionKey={sessionKey ? props.onTogglePinnedSessionKey : null}
             onSetTagsSessionKey={sessionKey ? props.onSetTagsSessionKey : null}
             onNativeContextMenuOpenChangeSessionKey={isNative && sessionKey ? props.onNativeContextMenuOpenChangeSessionKey : null}
@@ -78,12 +92,17 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             isLast={rowViewModel.isLast}
             isSingle={rowViewModel.isSingle}
             variant={props.item.variant}
+            folderDepth={props.item.folderDepth}
             secondaryLineMode={rowViewModel.secondaryLineMode}
             compact={props.compact}
             compactMinimal={props.compactMinimal}
+            folderMoveTargets={props.folderMoveTargets}
+            onMoveToSessionFolder={props.onMoveToSessionFolder && props.item.serverId
+                ? (folderId) => props.onMoveToSessionFolder?.(props.item.sessionId, props.item.serverId!, folderId)
+                : undefined}
             {...(isNative && sessionKey != null
                 ? {
-                    nativeInlineDragEnabled: props.canReorderSessions,
+                    nativeInlineDragEnabled: isIos && props.canReorderSessions,
                     nativeContextMenuOpen,
                 }
                 : null)}

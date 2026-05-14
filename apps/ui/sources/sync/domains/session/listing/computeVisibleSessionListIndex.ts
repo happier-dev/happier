@@ -335,14 +335,32 @@ function applyGroupOrdering(
 
 type VisibleSessionListHeaderState = {
     pendingSectionHeader: Extract<SessionListIndexItem, { type: 'header' }> | null;
-    pendingGroupHeader: Extract<SessionListIndexItem, { type: 'header' }> | null;
+    pendingGroupHeaders: Array<Extract<SessionListIndexItem, { type: 'header' }>>;
 };
 
 function createVisibleSessionListHeaderState(): VisibleSessionListHeaderState {
     return {
         pendingSectionHeader: null,
-        pendingGroupHeader: null,
+        pendingGroupHeaders: [],
     };
+}
+
+function pendingHeadersContainFolder(headers: ReadonlyArray<Extract<SessionListIndexItem, { type: 'header' }>>): boolean {
+    return headers.some((item) => item.headerKind === 'folder');
+}
+
+function flushPendingFolderHeaders(params: Readonly<{
+    out: SessionListIndexItem[];
+    headerState: VisibleSessionListHeaderState;
+}>): boolean {
+    if (!pendingHeadersContainFolder(params.headerState.pendingGroupHeaders)) return false;
+    if (params.headerState.pendingSectionHeader) {
+        params.out.push(params.headerState.pendingSectionHeader);
+    }
+    params.out.push(...params.headerState.pendingGroupHeaders);
+    params.headerState.pendingSectionHeader = null;
+    params.headerState.pendingGroupHeaders = [];
+    return true;
 }
 
 function pruneOrphanHeaders(items: ReadonlyArray<SessionListIndexItem>): SessionListIndexItem[] {
@@ -351,11 +369,12 @@ function pruneOrphanHeaders(items: ReadonlyArray<SessionListIndexItem>): Session
 
     for (const item of items) {
         if (item.type === 'header') {
+            flushPendingFolderHeaders({ out, headerState });
             if (item.headerKind === 'active' || item.headerKind === 'inactive') {
                 headerState.pendingSectionHeader = item;
-                headerState.pendingGroupHeader = null;
+                headerState.pendingGroupHeaders = [];
             } else {
-                headerState.pendingGroupHeader = item;
+                headerState.pendingGroupHeaders.push(item);
             }
             continue;
         }
@@ -364,15 +383,16 @@ function pruneOrphanHeaders(items: ReadonlyArray<SessionListIndexItem>): Session
                 out.push(headerState.pendingSectionHeader);
                 headerState.pendingSectionHeader = null;
             }
-            if (headerState.pendingGroupHeader) {
-                out.push(headerState.pendingGroupHeader);
-                headerState.pendingGroupHeader = null;
+            if (headerState.pendingGroupHeaders.length > 0) {
+                out.push(...headerState.pendingGroupHeaders);
+                headerState.pendingGroupHeaders = [];
             }
             out.push(item);
             continue;
         }
     }
 
+    flushPendingFolderHeaders({ out, headerState });
     return out;
 }
 
@@ -385,11 +405,12 @@ function filterHideInactiveSessions(
 
     for (const item of items) {
         if (item.type === 'header') {
+            flushPendingFolderHeaders({ out, headerState });
             if (item.headerKind === 'active' || item.headerKind === 'inactive') {
                 headerState.pendingSectionHeader = item;
-                headerState.pendingGroupHeader = null;
+                headerState.pendingGroupHeaders = [];
             } else {
-                headerState.pendingGroupHeader = item;
+                headerState.pendingGroupHeaders.push(item);
             }
             continue;
         }
@@ -405,14 +426,15 @@ function filterHideInactiveSessions(
                 }
                 headerState.pendingSectionHeader = null;
             }
-            if (headerState.pendingGroupHeader) {
-                out.push(headerState.pendingGroupHeader);
-                headerState.pendingGroupHeader = null;
+            if (headerState.pendingGroupHeaders.length > 0) {
+                out.push(...headerState.pendingGroupHeaders);
+                headerState.pendingGroupHeaders = [];
             }
             out.push(item);
         }
     }
 
+    flushPendingFolderHeaders({ out, headerState });
     return out;
 }
 

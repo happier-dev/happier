@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, ActivityIndicator, Linking } from 'react-native';
+import { View, Pressable, Linking } from 'react-native';
 import { useOAuthProviderConfigured } from '@/hooks/server/useOAuthProviderConfigured';
 import { type FriendsUsernameHint } from './resolveFriendsIdentityGate';
 import { t } from '@/text';
@@ -15,6 +15,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 function translateUsernameHint(hint: FriendsUsernameHint): string {
@@ -130,7 +131,7 @@ export function RequireFriendsIdentityForFriendsBase(props: {
                 }}
             >
                 {props.savingUsername ? (
-                    <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
+                    <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
                 ) : (
                     <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>
                         {t('common.save')}

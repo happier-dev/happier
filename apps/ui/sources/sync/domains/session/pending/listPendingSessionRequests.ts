@@ -292,6 +292,22 @@ function shouldUseProjectedPendingRequestCounts(session: Session, transcriptStat
     return session.updatedAt > newestTerminalTranscriptCreatedAt;
 }
 
+function hasProjectedPendingRequestCounts(session: Session): boolean {
+    return typeof session.pendingPermissionRequestCount === 'number'
+        || typeof session.pendingUserActionRequestCount === 'number';
+}
+
+function hasPendingAgentRequests(session: Session): boolean {
+    return Object.keys(session.agentState?.requests ?? {}).length > 0;
+}
+
+function readProjectedPendingRequestFlags(session: Session): PendingRequestFlags {
+    return {
+        hasPendingPermissionRequests: (session.pendingPermissionRequestCount ?? 0) > 0,
+        hasPendingUserActionRequests: (session.pendingUserActionRequestCount ?? 0) > 0,
+    };
+}
+
 export function listPendingSessionRequests(
     session: Session,
     messages?: ReadonlyArray<Message>,
@@ -379,12 +395,13 @@ export function derivePendingRequestFlagsFromSession(
         return EMPTY_PENDING_REQUEST_FLAGS;
     }
 
+    if (hasProjectedPendingRequestCounts(session) && !hasPendingAgentRequests(session)) {
+        return readProjectedPendingRequestFlags(session);
+    }
+
     const transcriptStates = getTranscriptRequestStates(session, messages);
     if (shouldUseProjectedPendingRequestCounts(session, transcriptStates)) {
-        return {
-            hasPendingPermissionRequests: (session.pendingPermissionRequestCount ?? 0) > 0,
-            hasPendingUserActionRequests: (session.pendingUserActionRequestCount ?? 0) > 0,
-        };
+        return readProjectedPendingRequestFlags(session);
     }
 
     const requests = listPendingSessionRequests(session, messages);

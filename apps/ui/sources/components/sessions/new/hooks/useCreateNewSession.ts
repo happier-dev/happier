@@ -33,7 +33,9 @@ import type { CodexBackendMode } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
 import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
+import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import {
     buildAutomationScheduleFromDraft,
     normalizeAutomationDescription,
@@ -54,6 +56,7 @@ import {
     followUpSpawnedSessionWithServerScope,
     readRecoverableFollowUpPayload,
 } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
+import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import {
     buildAutomationTemplateFromSessionAuthoringDraft,
     buildNewSessionAuthoringDraftFromResolvedInputs,
@@ -146,6 +149,7 @@ export function useCreateNewSession(params: Readonly<{
     backendTarget?: BackendTargetRefV2;
     spawnBackendTarget?: BackendTargetRefV2Input;
     transcriptStorage?: 'persisted' | 'direct';
+    executionRunsEnabled?: boolean;
     permissionMode: PermissionMode;
     modelMode: ModelMode;
     /**
@@ -520,57 +524,113 @@ export function useCreateNewSession(params: Readonly<{
                 let postSpawnFollowUpError: unknown = null;
                 let initialMessageText = '';
                 let recoverableCreatedSessionDraft = '';
+                let postSpawnSessionRouteSuffix = '';
+                let postSpawnReplacementHref: string | null = null;
 
-                if (opts?.afterCreated) {
-                    try {
-                        const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
-                        const shouldPrepareInitialMessage = shouldSendInitialMessage && current.sessionPrompt.trim();
-                        if (shouldPrepareInitialMessage) {
-                            const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
-                            const resolvedInitialMessage = resolveSessionComposerSend({
-                                input: current.sessionPrompt,
-                                executionRunsEnabled: false,
-                                promptInvocationsV1,
+                try {
+                    const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
+                    const shouldPrepareInitialMessage = shouldSendInitialMessage && current.sessionPrompt.trim();
+                    const resolvedInitialMessage = shouldPrepareInitialMessage
+                        ? resolveSessionComposerSend({
+                            input: current.sessionPrompt,
+                            executionRunsEnabled: current.executionRunsEnabled === true,
+                            promptInvocationsV1: storage.getState().settings.promptInvocationsV1,
+                        })
+                        : null;
+
+                    if (resolvedInitialMessage) {
+                        if (resolvedInitialMessage.kind === 'template') {
+                            initialMessageText = await expandPromptTemplateInvocation({
+                                targetArtifactId: resolvedInitialMessage.targetArtifactId,
+                                argsText: resolvedInitialMessage.rest,
                             });
-
-                            initialMessageText = current.sessionPrompt;
-                            if (resolvedInitialMessage.kind === 'template') {
-                                initialMessageText = await expandPromptTemplateInvocation({
-                                    targetArtifactId: resolvedInitialMessage.targetArtifactId,
-                                    argsText: resolvedInitialMessage.rest,
-                                });
-                            } else if (resolvedInitialMessage.kind === 'send') {
-                                initialMessageText = resolvedInitialMessage.text;
-                            } else if (resolvedInitialMessage.kind === 'noop') {
-                                initialMessageText = '';
-                            }
+                        } else if (resolvedInitialMessage.kind === 'send') {
+                            initialMessageText = resolvedInitialMessage.text;
+                        } else if (resolvedInitialMessage.kind === 'noop') {
+                            initialMessageText = '';
+                        } else {
+                            initialMessageText = '';
                         }
-
-                        await followUpSpawnedSessionWithServerScope({
-                            sessionId: result.sessionId,
-                            targetServerId: resolvedTargetServerId,
-                            initialMessageText,
-                            metaOverrides: (() => {
-                const agentCore = getAgentCore(canonicalAgentId);
-                                if (
-                                    agentCore.model.supportsSelection
-                                    && agentCore.model.nonAcpApplyScope === 'next_prompt'
-                                    && current.modelMode
-                                    && current.modelMode !== 'default'
-                                ) {
-                                    // Some providers only apply model overrides when processing a user prompt.
-                                    // Seed the initial message so the first turn uses the selected model.
-                                    return { model: current.modelMode };
-                                }
-
-                                return null;
-                            })(),
-                            profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
-                        });
-                    } catch (error) {
-                        postSpawnFollowUpError = error;
-                        recoverableCreatedSessionDraft = initialMessageText;
                     }
+
+                    const followUpTask = followUpSpawnedSessionWithServerScope({
+                        sessionId: result.sessionId,
+                        targetServerId: resolvedTargetServerId,
+                        initialMessageText,
+                        metaOverrides: (() => {
+                            const agentCore = getAgentCore(canonicalAgentId);
+                            if (
+                                agentCore.model.supportsSelection
+                                && agentCore.model.nonAcpApplyScope === 'next_prompt'
+                                && current.modelMode
+                                && current.modelMode !== 'default'
+                            ) {
+                                // Some providers only apply model overrides when processing a user prompt.
+                                // Seed the initial message so the first turn uses the selected model.
+                                return { model: current.modelMode };
+                            }
+
+                            return null;
+                        })(),
+                        profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
+                    });
+
+                    if (!opts?.afterCreated && resolvedInitialMessage?.kind !== 'action') {
+                        const sessionRoute = buildScopedSessionRouteHref({
+                            sessionId: result.sessionId,
+                            serverId: resolvedTargetServerId,
+                        });
+
+                        current.router.replace(sessionRoute, {
+                            dangerouslySingular() {
+                                return 'session';
+                            },
+                        });
+                    }
+
+                    await followUpTask;
+
+                    if (resolvedInitialMessage?.kind === 'action') {
+                        const actionExecutor = createDefaultActionExecutor({
+                            resolveServerIdForSessionId: (sessionId) => {
+                                if (sessionId === result.sessionId && resolvedTargetServerId) {
+                                    return resolvedTargetServerId;
+                                }
+                                return resolveServerIdForSessionIdFromLocalCache(sessionId);
+                            },
+                            openSession: (sessionId) => {
+                                if (sessionId === result.sessionId) {
+                                    postSpawnReplacementHref = buildScopedSessionRouteHref({
+                                        sessionId,
+                                        serverId: resolvedTargetServerId,
+                                    });
+                                }
+                            },
+                        });
+
+                        await executeSessionComposerResolution({
+                            resolved: resolvedInitialMessage,
+                            sessionId: result.sessionId,
+                            agentId: canonicalAgentId,
+                            backendTarget: current.backendTarget ?? null,
+                            permissionMode: current.permissionMode,
+                            actionExecutor,
+                            previousMessage: current.sessionPrompt,
+                            setMessage: () => {},
+                            clearDraft: () => {},
+                            trackMessageSent: () => {},
+                            navigateToRuns: () => {
+                                postSpawnSessionRouteSuffix = '/runs';
+                            },
+                            navigateToPetSettings: () => {
+                                postSpawnReplacementHref = '/settings/pets';
+                            },
+                            modalAlert: (title, message) => Modal.alert(title, message),
+                        });
+                    }
+                } catch (error) {
+                    postSpawnFollowUpError = error;
+                    recoverableCreatedSessionDraft = initialMessageText || current.sessionPrompt;
                 }
 
                 storage.getState().updateSessionPermissionMode(result.sessionId, current.permissionMode);
@@ -612,73 +672,7 @@ export function useCreateNewSession(params: Readonly<{
                     return Boolean(storage.getState().sessions[createdSessionId]);
                 };
 
-                if (!opts?.afterCreated) {
-                    let initialMessageText = '';
-                    try {
-                        const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
-
-                        if (shouldSendInitialMessage && current.sessionPrompt.trim()) {
-                            const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
-                            const resolvedInitialMessage = resolveSessionComposerSend({
-                                input: current.sessionPrompt,
-                                executionRunsEnabled: false,
-                                promptInvocationsV1,
-                            });
-
-                            initialMessageText = current.sessionPrompt;
-                            if (resolvedInitialMessage.kind === 'template') {
-                                initialMessageText = await expandPromptTemplateInvocation({
-                                    targetArtifactId: resolvedInitialMessage.targetArtifactId,
-                                    argsText: resolvedInitialMessage.rest,
-                                });
-                            } else if (resolvedInitialMessage.kind === 'send') {
-                                initialMessageText = resolvedInitialMessage.text;
-                            } else if (resolvedInitialMessage.kind === 'noop') {
-                                initialMessageText = '';
-                            }
-                        }
-
-                        const followUpTask = followUpSpawnedSessionWithServerScope({
-                            sessionId: result.sessionId,
-                            targetServerId: resolvedTargetServerId,
-                            initialMessageText,
-                            metaOverrides: (() => {
-                                const agentCore = getAgentCore(canonicalAgentId);
-                                if (
-                                    agentCore.model.supportsSelection
-                                    && agentCore.model.nonAcpApplyScope === 'next_prompt'
-                                    && current.modelMode
-                                    && current.modelMode !== 'default'
-                                ) {
-                                    // Some providers only apply model overrides when processing a user prompt.
-                                    // Seed the initial message so the first turn uses the selected model.
-                                    return { model: current.modelMode };
-                                }
-
-                                return null;
-                            })(),
-                            profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
-                        });
-
-                        const recoveryDataId = null;
-                        const sessionRoute = buildScopedSessionRouteHref({
-                            sessionId: result.sessionId,
-                            serverId: resolvedTargetServerId,
-                            query: recoveryDataId ? { recoveryDataId } : undefined,
-                        });
-
-                        current.router.replace(sessionRoute, {
-                            dangerouslySingular() {
-                                return 'session';
-                            },
-                        });
-
-                        await followUpTask;
-                    } catch (error) {
-                        postSpawnFollowUpError = error;
-                        recoverableCreatedSessionDraft = initialMessageText;
-                    }
-                } else if (!postSpawnFollowUpError && opts?.afterCreated) {
+                if (!postSpawnFollowUpError && opts?.afterCreated) {
                     try {
                         await opts.afterCreated({
                             sessionId: result.sessionId,
@@ -741,10 +735,11 @@ export function useCreateNewSession(params: Readonly<{
                 const sessionRoute = buildScopedSessionRouteHref({
                     sessionId: result.sessionId,
                     serverId: resolvedTargetServerId,
+                    suffix: postSpawnSessionRouteSuffix,
                     query: recoveryDataId ? { recoveryDataId } : undefined,
                 });
 
-                current.router.replace(sessionRoute, {
+                current.router.replace(postSpawnReplacementHref ?? sessionRoute, {
                     dangerouslySingular() {
                         return 'session';
                     },

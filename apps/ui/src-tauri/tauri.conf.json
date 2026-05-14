@@ -28,6 +28,7 @@
         "decorations": true,
         "hiddenTitle": true,
         "titleBarStyle": "Overlay",
+        "dragDropEnabled": false,
         "resizable": true,
         "fullscreen": false
       }

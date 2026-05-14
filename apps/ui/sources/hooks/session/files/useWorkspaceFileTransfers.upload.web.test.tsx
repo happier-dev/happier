@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
 import { installSessionFilesHookCommonModuleMocks } from './sessionFilesHookTestHelpers';
 
 const uploadDaemonWorkspaceFileFromReaderMock = vi.hoisted(() => vi.fn());
@@ -131,6 +131,35 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
 
         expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1);
         expect(uploadReaderCloseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the idle transfer API stable when the same workspace scope is passed again', async () => {
+        const { useWorkspaceFileTransfers } = await import('@/hooks/workspaces/transfers/useWorkspaceFileTransfers');
+
+        const hook = await renderHook(
+            (props: Parameters<typeof useWorkspaceFileTransfers>[0]) => useWorkspaceFileTransfers(props),
+            {
+                initialProps: {
+                    workspaceScope: {
+                        serverId: 'server-1',
+                        machineId: 'm1',
+                        rootPath: '/repo',
+                    },
+                },
+            },
+        );
+
+        const initialApi = hook.getCurrent();
+
+        await hook.rerender({
+            workspaceScope: {
+                serverId: 'server-1',
+                machineId: 'm1',
+                rootPath: '/repo',
+            },
+        });
+
+        expect(hook.getCurrent()).toBe(initialApi);
     });
 
     it('surfaces upload helper failures as errors instead of canceled states', async () => {

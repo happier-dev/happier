@@ -119,6 +119,42 @@ describe('MachineSelector (disable offline)', () => {
         expect((captured.lastItems as any[]).map((m) => m.id)).toEqual(['m-ok']);
     });
 
+    it('filters replaced machines out of all picker sections', async () => {
+        captured.reset();
+
+        const currentMachine: any = {
+            id: 'm-current',
+            active: true,
+            activeAt: Date.now(),
+            revokedAt: null,
+            metadata: { displayName: 'Current' },
+        };
+        const replacedMachine: any = {
+            id: 'm-replaced',
+            active: false,
+            activeAt: Date.now() - 1,
+            revokedAt: null,
+            replacedByMachineId: 'm-current',
+            replacedAt: Date.now(),
+            metadata: { displayName: 'Replaced' },
+        };
+
+        await renderScreen(React.createElement(MachineSelector as any, {
+                    machines: [replacedMachine, currentMachine],
+                    selectedMachine: null,
+                    recentMachines: [replacedMachine],
+                    favoriteMachines: [replacedMachine],
+                    onSelect: vi.fn(),
+                    showCliGlyphs: false,
+                    showRecent: true,
+                    showFavorites: true,
+                }));
+
+        expect((captured.lastItems as any[]).map((m) => m.id)).toEqual(['m-current']);
+        expect((captured.lastRecentItems as any[]).map((m) => m.id)).toEqual([]);
+        expect((captured.lastFavoriteItems as any[]).map((m) => m.id)).toEqual([]);
+    });
+
     it('omits recent and favorite machines from the all-section items to avoid duplicates', async () => {
         captured.reset();
 

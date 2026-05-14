@@ -6,9 +6,16 @@ import { renderScreen } from '@/dev/testkit';
 
 import { SessionListHeaderItem } from './sessionListHeaderItem';
 
+const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((_: any) => ({ gesture: undefined, animatedStyle: {} })));
+
 vi.mock('./sessionListChrome', () => ({
     ProjectGroupHeader: (props: any) => React.createElement('ProjectGroupHeader', props),
+    FolderGroupHeader: (props: any) => React.createElement('FolderGroupHeader', props),
     CollapsibleSectionHeader: (props: any) => React.createElement('CollapsibleSectionHeader', props),
+}));
+
+vi.mock('./useSessionInlineDrag', () => ({
+    useSessionInlineDrag: (params: any) => useSessionInlineDragSpy(params),
 }));
 
 describe('SessionListHeaderItem', () => {
@@ -54,6 +61,7 @@ describe('SessionListHeaderItem', () => {
                 hasMultipleMachines={true}
                 onOpenProject={onOpenProject}
                 onCreateSessionFromWorkspaceScope={onCreateSessionFromWorkspaceScope}
+                onAddFolderToWorkspace={vi.fn()}
                 onRenameWorkspace={onRenameWorkspace}
                 onResetWorkspaceName={onResetWorkspaceName}
                 onToggleCollapse={onToggleCollapse}
@@ -72,6 +80,7 @@ describe('SessionListHeaderItem', () => {
                     hasMultipleMachines={true}
                     onOpenProject={onOpenProject}
                     onCreateSessionFromWorkspaceScope={onCreateSessionFromWorkspaceScope}
+                    onAddFolderToWorkspace={vi.fn()}
                     onRenameWorkspace={onRenameWorkspace}
                     onResetWorkspaceName={onResetWorkspaceName}
                     onToggleCollapse={onToggleCollapse}
@@ -105,6 +114,7 @@ describe('SessionListHeaderItem', () => {
                 hasMultipleMachines={false}
                 onOpenProject={vi.fn()}
                 onCreateSessionFromWorkspaceScope={vi.fn()}
+                onAddFolderToWorkspace={vi.fn()}
                 onRenameWorkspace={vi.fn()}
                 onResetWorkspaceName={vi.fn()}
                 onToggleCollapse={onToggleCollapse}
@@ -122,6 +132,7 @@ describe('SessionListHeaderItem', () => {
                     hasMultipleMachines={false}
                     onOpenProject={vi.fn()}
                     onCreateSessionFromWorkspaceScope={vi.fn()}
+                    onAddFolderToWorkspace={vi.fn()}
                     onRenameWorkspace={vi.fn()}
                     onResetWorkspaceName={vi.fn()}
                     onToggleCollapse={onToggleCollapse}
@@ -140,6 +151,7 @@ describe('SessionListHeaderItem', () => {
                     hasMultipleMachines={false}
                     onOpenProject={vi.fn()}
                     onCreateSessionFromWorkspaceScope={vi.fn()}
+                    onAddFolderToWorkspace={vi.fn()}
                     onRenameWorkspace={vi.fn()}
                     onResetWorkspaceName={vi.fn()}
                     onToggleCollapse={onToggleCollapse}
@@ -148,5 +160,59 @@ describe('SessionListHeaderItem', () => {
         });
 
         expect(activeScreen.findByType('CollapsibleSectionHeader').props.showOrderingMenu).toBe(false);
+    });
+
+    it('wires folder headers into the shared inline drag hook', async () => {
+        const dropIndicatorIdx = { value: -1 } as any;
+        const dropIndicatorEdge = { value: 0 } as any;
+        const onFolderDragStart = vi.fn();
+        const onFolderDragEnd = vi.fn();
+        const onFolderDragUpdate = vi.fn();
+
+        await renderScreen(
+            <SessionListHeaderItem
+                item={{
+                    type: 'header',
+                    title: 'Planning',
+                    headerKind: 'folder',
+                    groupKey: 'folder:folder_planning',
+                    folderId: 'folder_planning',
+                    folderDepth: 0,
+                    serverId: 'server_a',
+                    workspace: { t: 'workspaceRef', serverId: 'server_a', workspaceRefId: 'workspace_a' },
+                } as any}
+                collapsedKeys={{}}
+                projectHeaderViewModelByGroupKey={new Map()}
+                hasMultipleMachines={false}
+                onOpenProject={vi.fn()}
+                onCreateSessionFromWorkspaceScope={vi.fn()}
+                onAddFolderToWorkspace={vi.fn()}
+                onRenameWorkspace={vi.fn()}
+                onResetWorkspaceName={vi.fn()}
+                onToggleCollapse={vi.fn()}
+                dataIndex={3}
+                totalItemCount={8}
+                dropIndicatorIdx={dropIndicatorIdx}
+                dropIndicatorEdge={dropIndicatorEdge}
+                onFolderDragStart={onFolderDragStart}
+                onFolderDragEnd={onFolderDragEnd}
+                onFolderDragUpdate={onFolderDragUpdate}
+                activeFolderDropTargetId="folder:target"
+            />,
+        );
+
+        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({
+            enabled: true,
+            sessionKey: 'folder:folder_planning',
+            groupKey: 'folder:folder_planning',
+            rowHeight: 28,
+            dataIndex: 3,
+            totalItemCount: 8,
+            dropIndicatorIdx,
+            dropIndicatorEdge,
+            onDragStart: onFolderDragStart,
+            onDragUpdate: onFolderDragUpdate,
+        }));
+        expect(onFolderDragEnd).not.toHaveBeenCalled();
     });
 });

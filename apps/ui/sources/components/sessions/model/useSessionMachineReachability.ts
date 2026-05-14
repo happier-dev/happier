@@ -1,34 +1,12 @@
-import * as React from 'react';
-
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
-import { useAllMachines, useAllSessions, useProjectForSession, useSession } from '@/sync/domains/state/storage';
+import { useMachine } from '@/sync/domains/state/storage';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 
 export function useSessionReachableMachineTarget(sessionId: string): { machineId: string; basePath: string } | null {
     const resolvedSessionId = normalizeSessionId(sessionId);
-    const session = useSession(resolvedSessionId);
-    const project = useProjectForSession(resolvedSessionId);
-    const allMachines = useAllMachines();
-    const allSessions = useAllSessions();
-    const sessionMachineId = resolveSessionMachineId(session?.metadata);
-
-    return React.useMemo(
-        () => readMachineTargetForSession(resolvedSessionId),
-        [
-            allMachines,
-            allSessions,
-            project?.key?.machineId,
-            project?.key?.rootPath,
-            session?.metadata?.homeDir,
-            session?.metadata?.host,
-            sessionMachineId,
-            session?.metadata?.path,
-            resolvedSessionId,
-        ],
-    );
+    return useSessionMachineTarget(resolvedSessionId);
 }
 
 export function useSessionMachineReachability(sessionId: string): Readonly<{
@@ -36,14 +14,10 @@ export function useSessionMachineReachability(sessionId: string): Readonly<{
     machineOnline: boolean;
     machineRpcTargetAvailable: boolean;
 }> {
-    const allMachines = useAllMachines();
     const machineTarget = useSessionReachableMachineTarget(sessionId);
     const resolvedMachineId = machineTarget?.machineId ?? null;
 
-    const resolvedMachine = React.useMemo(
-        () => (resolvedMachineId ? allMachines.find((machine) => machine.id === resolvedMachineId) ?? null : null),
-        [allMachines, resolvedMachineId],
-    );
+    const resolvedMachine = useMachine(resolvedMachineId ?? '');
 
     const machineOnline = resolvedMachine ? isMachineOnline(resolvedMachine) : false;
     const machineReachable = resolveSessionMachineReachability({

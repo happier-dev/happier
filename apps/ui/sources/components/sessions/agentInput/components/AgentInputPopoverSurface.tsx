@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View } from "react-native";
+import { View } from 'react-native';
 import {
   FloatingOverlay,
   type FloatingOverlayArrow,
@@ -50,6 +50,7 @@ export const AgentInputPopoverSurface = React.memo(
           edgeFades={edgeFades}
           edgeIndicators={edgeIndicators}
           arrow={arrow}
+          surfaceChrome="theme"
           initialVisibility={initialVisibility}
         >
           {children}

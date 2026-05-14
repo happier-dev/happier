@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { ActivityIndicator, Image, Platform, Pressable, View } from 'react-native';
+import { Image, Platform, Pressable, View } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { decodeBase64 } from '@/encryption/base64';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type FileStateProps = {
     theme: any;
@@ -28,7 +29,7 @@ export function FileLoadingState({ theme, filePath }: FileStateProps & { filePat
                 alignItems: 'center',
             }}
         >
-            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             <Text
                 style={{
                     marginTop: 16,

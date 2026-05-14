@@ -1,0 +1,1 @@
+export const TRANSCRIPT_TOP_GUTTER_PX = 12;

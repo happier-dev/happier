@@ -400,7 +400,7 @@ describe('AgentInput (enter to send on native)', () => {
         expect(mocks.onSend).not.toHaveBeenCalled();
     });
 
-    it('uses immediate-send bypass on hardware Cmd+Enter and Ctrl+Enter', async () => {
+    it('uses platform-correct immediate-send bypass for native hardware Mod+Enter', async () => {
         settingState.webEnterToSend = false;
         settingState.nativeEnterToSend = false;
 
@@ -431,6 +431,12 @@ describe('AgentInput (enter to send on native)', () => {
         await act(async () => {
             input.props.onKeyPress?.({
                 nativeEvent: { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: true },
+                preventDefault: vi.fn(),
+            });
+        });
+        await act(async () => {
+            input.props.onKeyPress?.({
+                nativeEvent: { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: true, platformOS: 'android' },
                 preventDefault: vi.fn(),
             });
         });

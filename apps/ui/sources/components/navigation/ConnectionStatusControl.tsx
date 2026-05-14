@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { t, type TranslationKeyNoParams } from '@/text';
 import { StatusDot } from '@/components/ui/status/StatusDot';
+import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { useSocketStatus, useSyncError, useLastSyncAt, useSettingMutable } from '@/sync/domains/state/storage';
@@ -37,6 +38,24 @@ const RELAY_SETTINGS_ROUTE = '/settings/server';
 const RELAY_DROPDOWN_TARGET_THRESHOLD = 2;
 const POPOVER_MAX_WIDTH = 420;
 const POPOVER_MIN_WIDTH = 220;
+
+type ConnectionStatusKey = 'connected' | 'connecting' | 'disconnected' | 'error' | 'action_required' | 'unknown';
+
+function resolveConnectionStatusPillVariant(status: ConnectionStatusKey): StatusPillVariant {
+    switch (status) {
+        case 'connected':
+            return 'success';
+        case 'connecting':
+            return 'info';
+        case 'action_required':
+            return 'warning';
+        case 'error':
+            return 'danger';
+        case 'disconnected':
+        case 'unknown':
+            return 'neutral';
+    }
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -137,9 +156,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 6,
     },
-    statusRowStatusText: {
-        fontSize: 12,
-        ...Typography.default('semiBold'),
+    popoverStatusPill: {
+        flexShrink: 0,
     },
     statusMeta: {
         paddingHorizontal: 16,
@@ -226,21 +244,21 @@ function formatTime(ts: number | null): string {
 
 function resolveStatusPresentation(
     theme: { colors: { status: Record<string, string> } },
-    status: 'connected' | 'connecting' | 'disconnected' | 'error' | 'action_required' | 'unknown',
-): { labelKey: TranslationKeyNoParams; color: string; dotColor: string } {
+    status: ConnectionStatusKey,
+): { labelKey: TranslationKeyNoParams; color: string; dotColor: string; pillVariant: StatusPillVariant } {
     switch (status) {
         case 'connected':
-            return { labelKey: 'status.connected', color: theme.colors.status.connected, dotColor: theme.colors.status.connected };
+            return { labelKey: 'status.connected', color: theme.colors.status.connected, dotColor: theme.colors.status.connected, pillVariant: resolveConnectionStatusPillVariant(status) };
         case 'connecting':
-            return { labelKey: 'status.connecting', color: theme.colors.status.connecting, dotColor: theme.colors.status.connecting };
+            return { labelKey: 'status.connecting', color: theme.colors.status.connecting, dotColor: theme.colors.status.connecting, pillVariant: resolveConnectionStatusPillVariant(status) };
         case 'action_required':
-            return { labelKey: 'status.actionRequired', color: theme.colors.status.actionRequired, dotColor: theme.colors.status.actionRequired };
+            return { labelKey: 'status.actionRequired', color: theme.colors.status.actionRequired, dotColor: theme.colors.status.actionRequired, pillVariant: resolveConnectionStatusPillVariant(status) };
         case 'error':
-            return { labelKey: 'status.error', color: theme.colors.status.error, dotColor: theme.colors.status.error };
+            return { labelKey: 'status.error', color: theme.colors.status.error, dotColor: theme.colors.status.error, pillVariant: resolveConnectionStatusPillVariant(status) };
         case 'disconnected':
-            return { labelKey: 'status.disconnected', color: theme.colors.status.disconnected, dotColor: theme.colors.status.disconnected };
+            return { labelKey: 'status.disconnected', color: theme.colors.status.disconnected, dotColor: theme.colors.status.disconnected, pillVariant: resolveConnectionStatusPillVariant(status) };
         default:
-            return { labelKey: 'status.unknown', color: theme.colors.status.default, dotColor: theme.colors.status.default };
+            return { labelKey: 'status.unknown', color: theme.colors.status.default, dotColor: theme.colors.status.default, pillVariant: resolveConnectionStatusPillVariant(status) };
     }
 }
 
@@ -304,6 +322,7 @@ const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRo
     statusLabel: string;
     statusColor: string;
     dotColor: string;
+    statusVariant: StatusPillVariant;
 }>) {
     const styles = stylesheet;
     return (
@@ -323,10 +342,11 @@ const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRo
             </View>
             <View style={{ flex: 1 }} />
             <View style={styles.statusRowRight}>
-                <StatusDot color={props.dotColor} size={6} isPulsing={false} />
-                <Text style={[styles.statusRowStatusText, { color: props.statusColor }]} numberOfLines={1}>
-                    {props.statusLabel}
-                </Text>
+                <StatusPill
+                    variant={props.statusVariant}
+                    label={props.statusLabel}
+                    style={styles.popoverStatusPill}
+                />
             </View>
         </View>
     );
@@ -722,6 +742,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                                 statusLabel={t(endpointPresentation.labelKey)}
                                                 statusColor={endpointPresentation.color}
                                                 dotColor={endpointPresentation.dotColor}
+                                                statusVariant={endpointPresentation.pillVariant}
                                             />
                                             <ConnectionPopoverStatusRow
                                                 testID="connection-popover-realtime"
@@ -731,6 +752,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                                 statusLabel={t(socketPresentation.labelKey)}
                                                 statusColor={socketPresentation.color}
                                                 dotColor={socketPresentation.dotColor}
+                                                statusVariant={socketPresentation.pillVariant}
                                             />
                                             <ConnectionPopoverStatusRow
                                                 testID="connection-popover-machines"
@@ -740,6 +762,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                                 statusLabel={t(connectionHealth.machineLabelKey)}
                                                 statusColor={machinesPresentation.color}
                                                 dotColor={machinesPresentation.dotColor}
+                                                statusVariant={machinesPresentation.pillVariant}
                                             />
                                         </View>
                                     );

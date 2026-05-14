@@ -14,7 +14,7 @@ import { looksLikeUnifiedDiff } from '@/scm/diff/looksLikeUnifiedDiff';
 import { extractUnifiedDiffForSingleFile } from '@/scm/diff/extractUnifiedDiffForSingleFile';
 
 import type { DiffViewerProps } from '../diffViewerTypes';
-import { ensureHappierPierreThemesRegistered } from './pierreThemeRegistry.web';
+import { ensureHappierPierreThemeRegistered, resolveHappierPierreThemeIds } from './pierreThemeRegistry.web';
 import { getPierreDiffWorkerPool } from './pierreWorkerPool.web';
 import { buildPierreDiffOptionsBase } from './buildPierreDiffOptionsBase.web';
 import { resolvePierreLanguageOverride } from './resolvePierreLanguageOverride.web';
@@ -26,6 +26,8 @@ import {
     REVIEW_COMMENT_LINE_AFFORDANCE_ICON_TEST_ID,
     REVIEW_COMMENT_LINE_AFFORDANCE_TEST_ID,
 } from '@/components/ui/code/reviewComments/ReviewCommentLineAffordance';
+
+const HAPPIER_PIERRE_LINE_CLICK_HANDLED_KEY = '__happierPierreLineClickHandled';
 
 const PIERRE_REVIEW_COMMENT_HOVER_SLOT_UNSAFE_CSS = `
 [data-column-number] {
@@ -237,6 +239,24 @@ function resolvePierreDiffLineFromPressEvent(event: unknown): (Pick<OnDiffLineCl
     };
 }
 
+function readNativeEventObject(event: unknown): Record<string, unknown> | null {
+    const nativeEvent = ((event as { nativeEvent?: unknown } | null | undefined)?.nativeEvent ?? event) as unknown;
+    if (!nativeEvent || typeof nativeEvent !== 'object') return null;
+    return nativeEvent as Record<string, unknown>;
+}
+
+function markPierreLineClickHandled(event: unknown) {
+    const nativeEvent = ((event as { nativeEvent?: unknown; event?: unknown } | null | undefined)?.nativeEvent
+        ?? (event as { event?: unknown } | null | undefined)?.event
+        ?? event) as unknown;
+    if (!nativeEvent || typeof nativeEvent !== 'object') return;
+    (nativeEvent as Record<string, unknown>)[HAPPIER_PIERRE_LINE_CLICK_HANDLED_KEY] = true;
+}
+
+function pierreLineClickWasHandled(event: unknown): boolean {
+    return readNativeEventObject(event)?.[HAPPIER_PIERRE_LINE_CLICK_HANDLED_KEY] === true;
+}
+
 function buildPatchFromOldNew(params: Readonly<{ fileName: string; oldText: string; newText: string; contextLines: number }>): string {
     return createTwoFilesPatch(
         params.fileName,
@@ -400,7 +420,8 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             ? diffPresentationStyleSetting
             : (settingsDefaults.filesDiffPresentationStyle === 'split' ? 'split' : 'unified');
 
-    ensureHappierPierreThemesRegistered();
+    ensureHappierPierreThemeRegistered({ isDark, colors: theme.colors });
+    const pierreThemeIds = resolveHappierPierreThemeIds({ isDark, colors: theme.colors });
 
     const patch = React.useMemo(() => {
         if (props.mode === 'unified') return props.unifiedDiff;
@@ -432,7 +453,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         return sanitizeUnifiedPatchForPierre(candidate);
     }, [patch, props.filePath, props.mode]);
 
-    const pool = getPierreDiffWorkerPool({ style: diffStyle });
+    const pool = getPierreDiffWorkerPool({ style: diffStyle, themeIds: pierreThemeIds });
 
     const parsedPatch = React.useMemo(() => {
         // Avoid calling Pierre's parser for known non-unified placeholders (binary diffs)
@@ -453,6 +474,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         || (props.selectedLineIds && props.selectedLineIds.size > 0)
         || props.scrollToLineId
         || props.highlightLineId
+        || (props.highlightLineIds && props.highlightLineIds.size > 0)
     );
 
     const codeLines: readonly CodeLine[] | null = React.useMemo(() => {
@@ -559,13 +581,14 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             showLineNumbers: props.showLineNumbers !== false,
             showPrefix: props.showPrefix !== false,
             tokenizeMaxLineLength,
+            themeIds: pierreThemeIds,
             intraLineDiff: {
                 enabled: intraLineDiffEnabled === true,
                 maxPatchLines: intraLineDiffMaxPatchLines,
                 maxLineLength: intraLineDiffMaxLineLength,
             },
         });
-    }, [diffStyle, intraLineDiffEnabled, intraLineDiffMaxLineLength, intraLineDiffMaxPatchLines, isDark, props.showLineNumbers, props.showPrefix, props.wrapLines, sanitizedPatch, tokenizeMaxLineLength]);
+    }, [diffStyle, intraLineDiffEnabled, intraLineDiffMaxLineLength, intraLineDiffMaxPatchLines, isDark, pierreThemeIds, props.showLineNumbers, props.showPrefix, props.wrapLines, sanitizedPatch, tokenizeMaxLineLength]);
 
     const selectedLineUnsafeCSS = React.useMemo(() => {
         if (!codeLines) return '';
@@ -603,24 +626,34 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
 
     const highlightLineUnsafeCSS = React.useMemo(() => {
         if (!codeLines) return '';
-        const highlightId = props.highlightLineId ?? null;
-        if (!highlightId) return '';
-        const target = codeLines.find((l) => l.id === highlightId) ?? null;
-        if (!target || target.renderIsHeaderLine) return '';
+        const highlightIds = new Set<string>();
+        if (props.highlightLineId) highlightIds.add(props.highlightLineId);
+        for (const id of props.highlightLineIds ?? []) {
+            highlightIds.add(id);
+        }
+        if (highlightIds.size === 0) return '';
 
-        const lineType = target.kind === 'remove'
-            ? 'change-deletion'
-            : target.kind === 'add'
-                ? 'change-addition'
-                : 'context';
-        const lineNumber = lineType === 'change-deletion' ? target.oldLine : target.newLine;
-        if (typeof lineNumber !== 'number' || lineNumber <= 0) return '';
+        const lineSelectors: string[] = [];
+        const numberSelectors: string[] = [];
+        for (const target of codeLines) {
+            if (!highlightIds.has(target.id)) continue;
+            if (target.renderIsHeaderLine) continue;
 
-        const lineSelector = `[data-line-type='${lineType}'][data-line='${lineNumber}']`;
-        const numberSelector = `[data-line-type='${lineType}'][data-column-number='${lineNumber}']`;
+            const lineType = target.kind === 'remove'
+                ? 'change-deletion'
+                : target.kind === 'add'
+                    ? 'change-addition'
+                    : 'context';
+            const lineNumber = lineType === 'change-deletion' ? target.oldLine : target.newLine;
+            if (typeof lineNumber !== 'number' || lineNumber <= 0) continue;
 
-        return `${lineSelector} {\n  box-shadow: inset 0 0 0 1px var(--diffs-selection-base);\n}\n${numberSelector} {\n  box-shadow: inset 0 0 0 1px var(--diffs-selection-base);\n}\n`;
-    }, [codeLines, props.highlightLineId]);
+            lineSelectors.push(`[data-line-type='${lineType}'][data-line='${lineNumber}']`);
+            numberSelectors.push(`[data-line-type='${lineType}'][data-column-number='${lineNumber}']`);
+        }
+        if (lineSelectors.length === 0 && numberSelectors.length === 0) return '';
+
+        return `${lineSelectors.join(',\n')} {\n  box-shadow: inset 0 0 0 1px var(--diffs-selection-base);\n}\n${numberSelectors.join(',\n')} {\n  box-shadow: inset 0 0 0 1px var(--diffs-selection-base);\n}\n`;
+    }, [codeLines, props.highlightLineId, props.highlightLineIds]);
 
     const reviewCommentHoverSlotUnsafeCSS = props.onPressAddComment
         ? PIERRE_REVIEW_COMMENT_HOVER_SLOT_UNSAFE_CSS
@@ -662,6 +695,18 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         return mapped;
     }, [mapPierreDiffLineToCodeLine, props.onPressAddComment]);
 
+    const pressLineForPierreDomClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+        if (!props.onPressLine) return;
+        if (pierreLineClickWasHandled(event)) return;
+        const eventTarget = resolvePierreDiffLineFromPressEvent(event);
+        if (!eventTarget) return;
+        const mapped = mapPierreDiffLineToCodeLine(eventTarget);
+        if (!mapped) return;
+        if (mapped.renderIsHeaderLine) return;
+        markPierreLineClickHandled(event);
+        props.onPressLine(mapped);
+    }, [mapPierreDiffLineToCodeLine, props.onPressLine]);
+
     const interactiveOptions = React.useMemo(() => {
         if (!needsCodeLines) return null;
 
@@ -671,6 +716,8 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             lineHoverHighlight: props.onPressAddComment ? 'line' : options.lineHoverHighlight,
             onLineClick: props.onPressLine
                 ? (ev: any) => {
+                    if (pierreLineClickWasHandled(ev)) return;
+                    markPierreLineClickHandled(ev);
                     const mapped = mapPierreDiffLineToCodeLine(ev);
                     if (!mapped) return;
                     props.onPressLine?.(mapped);
@@ -826,6 +873,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             ref={containerRef}
             data-testid="pierre-diff-viewer"
             className="happier-pierre-diff-wrapper"
+            onClickCapture={props.onPressLine ? pressLineForPierreDomClick : undefined}
             style={wrapperStyle}
         >
             <WorkerPoolContext.Provider value={pool ?? undefined}>

@@ -1199,7 +1199,7 @@ describe('ChatList (FlashList v2)', () => {
         const headerEl = flashListProps.ListHeaderComponent;
         const footerEl = flashListProps.ListFooterComponent;
 
-        // The header is responsible for top padding + optional older-loading affordance.
+        // The header owns the optional older-loading affordance, not surrounding chrome spacing.
         expect(typeof headerEl?.props?.isLoadingOlder).toBe('boolean');
         // The footer can be wrapped by the web hot-tail split, but it must still render ChatFooter.
         expect(footerEl).toBeTruthy();

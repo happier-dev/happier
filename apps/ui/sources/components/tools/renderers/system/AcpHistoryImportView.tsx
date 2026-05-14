@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
@@ -8,6 +8,7 @@ import { sessionAllow, sessionDeny } from '@/sync/ops';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 type HistoryPreviewItem = { role?: string; text?: string };
@@ -133,14 +134,14 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
             disabled={!isPending || loading !== null || !canApprovePermissions}
             onPress={onImport}
           >
-            {loading === 'import' ? <ActivityIndicator color={theme.colors.button.primary.tint} /> : <Text style={styles.primaryText}>{t('tools.acpHistoryImport.actions.import')}</Text>}
+            {loading === 'import' ? <ActivitySpinner color={theme.colors.button.primary.tint} /> : <Text style={styles.primaryText}>{t('tools.acpHistoryImport.actions.import')}</Text>}
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.button, styles.secondaryButton, !isPending && styles.disabled]}
             disabled={!isPending || loading !== null || !canApprovePermissions}
             onPress={onSkip}
           >
-            {loading === 'skip' ? <ActivityIndicator color={theme.colors.text.primary} /> : <Text style={styles.secondaryText}>{t('tools.acpHistoryImport.actions.skip')}</Text>}
+            {loading === 'skip' ? <ActivitySpinner color={theme.colors.text.primary} /> : <Text style={styles.secondaryText}>{t('tools.acpHistoryImport.actions.skip')}</Text>}
           </TouchableOpacity>
         </View>
       </View>

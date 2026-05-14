@@ -108,10 +108,11 @@ describe('useNewSessionAgentPickerControls', () => {
             id: option.id,
             disabled: option.disabled ?? false,
             muted: (option as any).muted ?? false,
+            deferRenderDetailContent: option.deferRenderDetailContent ?? false,
             subtitle: option.subtitle ?? null,
         }))).toEqual([
-            { id: claudeEntry.backendTargetKey, disabled: false, muted: false, subtitle: null },
-            { id: codexEntry.backendTargetKey, disabled: true, muted: true, subtitle: 'newSession.aiBackendNotCompatibleWithSelectedProfile' },
+            { id: claudeEntry.backendTargetKey, disabled: false, muted: false, deferRenderDetailContent: true, subtitle: null },
+            { id: codexEntry.backendTargetKey, disabled: true, muted: true, deferRenderDetailContent: true, subtitle: 'newSession.aiBackendNotCompatibleWithSelectedProfile' },
         ]);
     });
 
@@ -152,6 +153,8 @@ describe('useNewSessionAgentPickerControls', () => {
         ]);
         expect(hook.getCurrent().agentPickerOptions?.[0]?.label).toBe('profiles.groups.favorites');
         expect(hook.getCurrent().agentPickerOptions?.[0]?.closeOnSelectImmediate).toBe(false);
+        expect(hook.getCurrent().agentPickerOptions?.[0]?.deferRenderDetailContent).toBe(true);
+        expect(hook.getCurrent().agentPickerOptions?.[0]?.deferredDetailContentCacheKey).toBe('new-session-favorite-models:server-1:machine-1:/repo');
     });
 
     it('keeps a favorite model selection when the backend tab becomes focused before external model state catches up', async () => {
@@ -369,6 +372,7 @@ describe('useNewSessionAgentPickerControls', () => {
         const setModelMode = vi.fn();
         const setAcpSessionModeId = vi.fn();
         const setSessionConfigOptionOverrides = vi.fn();
+        const onRememberEngineSelection = vi.fn();
         const refreshProbe = { phase: 'idle' as const, onRefresh: vi.fn() };
         const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
         const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
@@ -394,6 +398,7 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedPath: '/repo',
             settings: {} as any,
             refreshProbe,
+            onRememberEngineSelection,
         }));
 
         const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === codexEntry.backendTargetKey);
@@ -429,6 +434,22 @@ describe('useNewSessionAgentPickerControls', () => {
                 },
             },
         }));
+        expect(onRememberEngineSelection).toHaveBeenCalledWith(codexEntry.backendTarget, {
+            modelId: 'gpt-5.4',
+            acpSessionModeId: 'plan',
+            sessionConfigOptionOverrides: expect.objectContaining({
+                overrides: {
+                    reasoning_effort: {
+                        updatedAt: expect.any(Number),
+                        value: 'high',
+                    },
+                    speed: {
+                        updatedAt: expect.any(Number),
+                        value: 'fast',
+                    },
+                },
+            }),
+        });
     });
 
     it('marks engine rail selections as immediate updates that keep the popover open', async () => {
@@ -490,6 +511,8 @@ describe('useNewSessionAgentPickerControls', () => {
         const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === codexEntry.backendTargetKey);
 
         expect(codexOption?.renderDetailContent).toBeTypeOf('function');
+        expect(codexOption?.deferRenderDetailContent).toBe(true);
+        expect(codexOption?.deferredDetailContentCacheKey).toBe(`new-session-engine:server-1:machine-1:${codexEntry.backendTargetKey}:/repo`);
         expect(codexOption?.onApply).toBeUndefined();
     });
 

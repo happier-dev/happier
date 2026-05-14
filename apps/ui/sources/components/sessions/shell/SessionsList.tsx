@@ -4,7 +4,8 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { sessionListStyles } from './sessionListStyles';
 import { SessionListVirtualizedContent } from './sessionListVirtualizedContent';
-import { useSessionListViewState } from './useSessionListViewState';
+import { useSessionListViewStateFromPaneState } from './useSessionListViewState';
+import { useVisibleSessionListPaneState, type VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 
 export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageFilter }>) {
     return <SessionsListView {...props} />;
@@ -12,10 +13,30 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
 
 export function SessionsListView(props: Readonly<{
     storageKind?: SessionListStorageFilter;
+    paneState?: VisibleSessionListPaneState;
+}>) {
+    const storageKind = props.storageKind ?? 'all';
+    if (props.paneState) {
+        return <SessionsListViewContent storageKind={storageKind} paneState={props.paneState} />;
+    }
+
+    return <SessionsListViewWithResolvedPaneState storageKind={storageKind} />;
+}
+
+function SessionsListViewWithResolvedPaneState(props: Readonly<{
+    storageKind: SessionListStorageFilter;
+}>) {
+    const paneState = useVisibleSessionListPaneState(props.storageKind);
+    return <SessionsListViewContent storageKind={props.storageKind} paneState={paneState} />;
+}
+
+function SessionsListViewContent(props: Readonly<{
+    storageKind: SessionListStorageFilter;
+    paneState: VisibleSessionListPaneState;
 }>) {
     const styles = sessionListStyles;
     const safeArea = useChromeSafeAreaInsets();
-    const viewState = useSessionListViewState(props.storageKind ?? 'all');
+    const viewState = useSessionListViewStateFromPaneState(props.storageKind, props.paneState);
 
     return (
         <View style={styles.container}>
@@ -33,6 +54,10 @@ export function SessionsListView(props: Readonly<{
                         if (typeof event?.stopPropagation === 'function') event.stopPropagation();
                     }}
                     onPressArchivedSessions={viewState.onPressArchivedSessions}
+                    folderFocus={viewState.folderFocus}
+                    folderFocusRootTitle={viewState.folderFocusRootTitle}
+                    onClearFolderFocus={viewState.onClearFolderFocus}
+                    onSelectFolderBreadcrumb={viewState.onSelectFolderBreadcrumb}
                 />
             </View>
         </View>

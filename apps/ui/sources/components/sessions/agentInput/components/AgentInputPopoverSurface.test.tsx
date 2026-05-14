@@ -55,6 +55,7 @@ describe('AgentInputPopoverSurface', () => {
         expect(capturedFloatingOverlayProps).toEqual(expect.objectContaining({
             maxHeight: 123,
             scrollEnabled: false,
+            surfaceChrome: 'theme',
         }));
     });
 });

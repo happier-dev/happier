@@ -1,12 +1,21 @@
 import * as React from 'react';
 
-import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
-import { useSessionListRowStateByServerId } from '@/sync/domains/state/storage';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useLocalSetting, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useSessionFolderAssignmentsBySessionKey, useSessionListRowStateByServerId } from '@/sync/domains/state/storage';
 import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
 import { areSessionListGroupOrderMapsEqual, normalizeSessionListGroupOrderV1ForIndexSource } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { filterSessionListIndexByStorageKind } from '@/sync/domains/session/listing/filterSessionListIndexByStorageKind';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import {
+    applySessionFolderTreeToSessionListIndex,
+    DEFAULT_SESSION_FOLDERS_V1,
+    normalizeSessionFolders,
+    type SessionFolderFocusScope,
+    type SessionFoldersV1,
+    type SessionListFocusedFolderV1,
+} from '@/sync/domains/session/folders';
 import { useVisibleSessionListSourceState } from './useVisibleSessionListSourceState';
 
 type SessionListGroupOrderV1 = Record<string, string[] | undefined>;
@@ -15,6 +24,7 @@ type PinnedSessionKeysV1 = ReadonlyArray<string>;
 export type VisibleSessionListViewState = Readonly<{
     visibleSessionListIndex: ReadonlyArray<SessionListIndexItem> | null;
     hasHiddenInactiveSessions: boolean;
+    folderFocus: SessionFolderFocusScope | null;
 }>;
 
 function countSessionItems(index: ReadonlyArray<SessionListIndexItem> | null): number {
@@ -53,11 +63,29 @@ function buildVisibleSessionListIndex(params: Readonly<{
     sessionListOrderingModeV1: 'custom' | 'created' | 'updated';
     normalizedGroupOrder: SessionListGroupOrderV1;
     sessionListGroupOrderV1: SessionListGroupOrderV1;
+    collapsedGroupKeysV1: Readonly<Record<string, boolean>>;
+    sessionFoldersFeatureEnabled: boolean;
     selection: ReturnType<typeof useVisibleSessionListSourceState>['selection'];
     storageFilter: SessionListStorageFilter;
+    folderFocusInput: SessionListFocusedFolderV1;
+    sessionFoldersV1: SessionFoldersV1;
+    sessionFolderViewModeV1: unknown;
+    sessionFolderAssignmentsBySessionKey: Readonly<Record<string, string | null>>;
 }>): ReadonlyArray<SessionListIndexItem> | null {
+    const folderTreeEnabled = params.storageFilter !== 'direct'
+        && params.sessionFoldersFeatureEnabled
+        && params.sessionFolderViewModeV1 === 'tree';
+    const folderAwareSource = folderTreeEnabled
+        ? applySessionFolderTreeToSessionListIndex({
+            source: params.source,
+            folders: params.sessionFoldersV1,
+            assignmentsBySessionKey: params.sessionFolderAssignmentsBySessionKey,
+            collapsedGroupKeys: params.collapsedGroupKeysV1,
+            focusedFolder: params.folderFocusInput,
+        }).items
+        : params.source;
     const visible = computeVisibleSessionListIndex({
-        source: params.source,
+        source: folderAwareSource,
         resolveSessionRow: (serverId, sessionId) => resolveSessionRowFromState(params.sessionRowStateByServerId, serverId, sessionId),
         hideInactiveSessions: params.hideInactiveSessions,
         pinnedSessionKeysV1: params.pinnedSessionKeysV1,
@@ -89,6 +117,16 @@ export function useVisibleSessionListViewState(storageFilter: SessionListStorage
         SessionListGroupOrderV1,
         (value: SessionListGroupOrderV1) => void,
     ];
+    const sessionFoldersRaw = useSetting('sessionFoldersV1') as SessionFoldersV1 | null | undefined;
+    const sessionFolderViewModeV1 = useSetting('sessionFolderViewModeV1');
+    const sessionFoldersFeatureEnabled = useFeatureEnabled('sessions.folders');
+    const collapsedGroupKeysV1 = (useSetting('collapsedGroupKeysV1') ?? {}) as Readonly<Record<string, boolean>>;
+    const folderFocusInput = useLocalSetting('sessionListFocusedFolderV1') as SessionListFocusedFolderV1;
+    const sessionFolderAssignmentsBySessionKey = useSessionFolderAssignmentsBySessionKey();
+    const sessionFoldersV1 = React.useMemo(
+        () => normalizeSessionFolders(sessionFoldersRaw ?? DEFAULT_SESSION_FOLDERS_V1),
+        [sessionFoldersRaw],
+    );
 
     const normalizedGroupOrder = React.useMemo(() => {
         if (!source) return sessionListGroupOrderV1;
@@ -119,10 +157,18 @@ export function useVisibleSessionListViewState(storageFilter: SessionListStorage
             sessionListOrderingModeV1,
             normalizedGroupOrder,
             sessionListGroupOrderV1,
+            collapsedGroupKeysV1,
+            sessionFoldersFeatureEnabled,
             selection,
             storageFilter,
+            folderFocusInput,
+            sessionFoldersV1,
+            sessionFolderViewModeV1,
+            sessionFolderAssignmentsBySessionKey,
         });
     }, [
+        folderFocusInput,
+        collapsedGroupKeysV1,
         hideInactiveSessions,
         selection.allowedServerIds,
         selection.enabled,
@@ -131,6 +177,10 @@ export function useVisibleSessionListViewState(storageFilter: SessionListStorage
         selection.presentation,
         sessionListGroupOrderV1,
         sessionRowStateByServerId,
+        sessionFolderAssignmentsBySessionKey,
+        sessionFoldersFeatureEnabled,
+        sessionFolderViewModeV1,
+        sessionFoldersV1,
         source,
         storageFilter,
         sessionListOrderingModeV1,
@@ -153,12 +203,20 @@ export function useVisibleSessionListViewState(storageFilter: SessionListStorage
             sessionListOrderingModeV1,
             normalizedGroupOrder,
             sessionListGroupOrderV1,
+            collapsedGroupKeysV1,
+            sessionFoldersFeatureEnabled,
             selection,
             storageFilter,
+            folderFocusInput,
+            sessionFoldersV1,
+            sessionFolderViewModeV1,
+            sessionFolderAssignmentsBySessionKey,
         });
 
         return countSessionItems(visibleWithoutInactiveFilter) > 0;
     }, [
+        folderFocusInput,
+        collapsedGroupKeysV1,
         hideInactiveSessions,
         normalizedGroupOrder,
         pinnedSessionKeysV1,
@@ -168,13 +226,37 @@ export function useVisibleSessionListViewState(storageFilter: SessionListStorage
         sessionListGroupOrderV1,
         sessionListOrderingModeV1,
         sessionRowStateByServerId,
+        sessionFolderAssignmentsBySessionKey,
+        sessionFoldersFeatureEnabled,
+        sessionFolderViewModeV1,
+        sessionFoldersV1,
         source,
         storageFilter,
         visibleSessionListIndex,
     ]);
 
+    const folderFocus = React.useMemo(() => {
+        if (storageFilter === 'direct' || !sessionFoldersFeatureEnabled || sessionFolderViewModeV1 !== 'tree' || !source) return null;
+        return applySessionFolderTreeToSessionListIndex({
+            source,
+            folders: sessionFoldersV1,
+            assignmentsBySessionKey: sessionFolderAssignmentsBySessionKey,
+            collapsedGroupKeys: {},
+            focusedFolder: folderFocusInput,
+        }).folderFocus;
+    }, [
+        folderFocusInput,
+        sessionFolderAssignmentsBySessionKey,
+        sessionFoldersFeatureEnabled,
+        sessionFolderViewModeV1,
+        sessionFoldersV1,
+        source,
+        storageFilter,
+    ]);
+
     return React.useMemo(() => ({
         visibleSessionListIndex,
         hasHiddenInactiveSessions,
-    }), [hasHiddenInactiveSessions, visibleSessionListIndex]);
+        folderFocus,
+    }), [folderFocus, hasHiddenInactiveSessions, visibleSessionListIndex]);
 }

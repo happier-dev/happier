@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderHook } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { useSplitCanvasKeyboard } from './useSplitCanvasKeyboard';
 import { createSplitCanvasState } from '../model/splitCanvasReducer';
@@ -50,6 +50,40 @@ describe('useSplitCanvasKeyboard', () => {
 
         expect(fakeWindow.addEventListener).toHaveBeenCalledTimes(1);
         expect(fakeWindow.removeEventListener).toHaveBeenCalledTimes(0);
+    });
+
+    it('uses provider scoped registration instead of attaching a competing raw global listener', async () => {
+        const dispatch = vi.fn();
+        const fakeWindow = {
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+        (globalThis as any).window = fakeWindow;
+
+        const state = createSplitCanvasState({
+            root: createLeaf('leaf-a'),
+            focusedLeafId: 'leaf-a',
+            maxLeaves: 4,
+        });
+
+        const { KeyboardShortcutProvider } = await import('@/keyboard');
+
+        function Harness() {
+            useSplitCanvasKeyboard({
+                enabled: true,
+                state,
+                dispatch,
+            });
+            return React.createElement('Harness');
+        }
+
+        await renderScreen(
+            <KeyboardShortcutProvider handlers={{}}>
+                <Harness />
+            </KeyboardShortcutProvider>,
+        );
+
+        expect(fakeWindow.addEventListener).toHaveBeenCalledTimes(1);
     });
 
     it('routes focus movement for the focused leaf', async () => {

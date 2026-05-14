@@ -1,14 +1,14 @@
 import * as React from 'react';
-import { ActivityIndicator, FlatList, Platform, View } from 'react-native';
+import { FlatList, Platform, View } from 'react-native';
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
-import { useHeaderHeight } from '@/utils/platform/responsive';
 import { MessageView } from '@/components/sessions/transcript/MessageView';
 import { ChatFooter } from '@/components/sessions/transcript/ChatFooter';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { useSetting } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
 
 type TranscriptInteraction = {
     canSendMessages: boolean;
@@ -23,16 +23,14 @@ export type TranscriptBottomNotice = {
 };
 
 const ListHeader = React.memo((props: { isLoading?: boolean }) => {
-    const headerHeight = useHeaderHeight();
-    const safeArea = useChromeSafeAreaInsets();
     return (
         <View>
             {props.isLoading ? (
                 <View style={{ paddingVertical: 12 }}>
-                    <ActivityIndicator size="small" />
+                    <ActivitySpinner size="small" />
                 </View>
             ) : null}
-            <View style={{ flexDirection: 'row', alignItems: 'center', height: headerHeight + safeArea.top + 32 }} />
+            <View style={{ height: TRANSCRIPT_TOP_GUTTER_PX }} />
         </View>
     );
 });

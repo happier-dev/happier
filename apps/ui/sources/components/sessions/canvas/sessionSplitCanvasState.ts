@@ -259,6 +259,72 @@ export function resolveSessionSplitCanvasRouteAnchorLeafId(
         ?? getFirstSplitCanvasLeafId(state.root);
 }
 
+export type SessionSplitCanvasKeyboardTargetSource =
+    | 'focused'
+    | 'lastInteracted'
+    | 'route'
+    | 'composer';
+
+export type SessionSplitCanvasKeyboardTarget = Readonly<{
+    leafId: string;
+    sessionId: string;
+    source: SessionSplitCanvasKeyboardTargetSource;
+}>;
+
+function isSessionSplitCanvasLeafVisible(
+    state: SessionSplitCanvasState,
+    leafId: string | null | undefined,
+): boolean {
+    const normalizedLeafId = String(leafId ?? '').trim();
+    if (!normalizedLeafId) return false;
+    return state.maximizedLeafId == null || state.maximizedLeafId === normalizedLeafId;
+}
+
+function resolveKeyboardTargetFromLeaf(
+    state: SessionSplitCanvasState,
+    leafId: string | null | undefined,
+    source: SessionSplitCanvasKeyboardTargetSource,
+): SessionSplitCanvasKeyboardTarget | null {
+    if (!isSessionSplitCanvasLeafVisible(state, leafId)) {
+        return null;
+    }
+    const leaf = findSessionLeafById(state, leafId);
+    if (!leaf) {
+        return null;
+    }
+    return {
+        leafId: leaf.id,
+        sessionId: leaf.payload.sessionId,
+        source,
+    };
+}
+
+export function resolveSessionSplitCanvasKeyboardTarget(
+    state: SessionSplitCanvasState,
+    options: Readonly<{
+        routeSessionId: string;
+        lastInteractedLeafId?: string | null;
+        composerOwningLeafId?: string | null;
+        targetKind: 'session' | 'composer';
+    }>,
+): SessionSplitCanvasKeyboardTarget | null {
+    if (options.targetKind === 'composer') {
+        return resolveKeyboardTargetFromLeaf(state, options.composerOwningLeafId, 'composer');
+    }
+
+    return resolveKeyboardTargetFromLeaf(state, state.focusedLeafId, 'focused')
+        ?? resolveKeyboardTargetFromLeaf(state, options.lastInteractedLeafId, 'lastInteracted')
+        ?? (
+            options.routeSessionId.trim()
+                ? resolveKeyboardTargetFromLeaf(
+                    state,
+                    resolveSessionSplitCanvasRouteAnchorLeafId(state, options.routeSessionId),
+                    'route',
+                )
+                : null
+        );
+}
+
 export function reduceSessionSplitCanvasState(
     state: SessionSplitCanvasState,
     action: SplitCanvasAction<SessionSplitCanvasLeafPayload>,

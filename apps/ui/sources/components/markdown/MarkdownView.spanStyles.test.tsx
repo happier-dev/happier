@@ -28,7 +28,7 @@ describe('MarkdownView (span styles)', () => {
             marginBottom: 0,
         };
 
-        const screen = await renderScreen(<MarkdownView markdown={markdown} textStyle={textStyle} />);
+        const screen = await renderScreen(<MarkdownView markdown={markdown} profile="transcript" textStyle={textStyle} />);
 
         const enrichedRun = screen.findByType('EnrichedMarkdownText');
         const markdownStyle = enrichedRun.props.markdownStyle;

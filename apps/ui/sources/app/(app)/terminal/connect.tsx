@@ -32,6 +32,7 @@ export default function TerminalConnectScreen() {
     }, [router]);
 
     const { processAuthUrl, isLoading } = useConnectTerminal({
+        allowLoopbackServerOverride: true,
         onSuccess: () => {
             router.replace('/');
         },
@@ -59,6 +60,7 @@ export default function TerminalConnectScreen() {
             const effectiveTarget = resolveEffectiveServerUrlOverride({
                 requestedServerUrl,
                 activeServerUrl,
+                allowLoopbackOverride: true,
             });
             const desiredServerUrl = effectiveTarget || activeServerUrl || getActiveServerUrl();
             if (desiredServerUrl) {
@@ -91,6 +93,7 @@ export default function TerminalConnectScreen() {
         const effectiveTarget = resolveEffectiveServerUrlOverride({
             requestedServerUrl: serverUrlFromHash,
             activeServerUrl,
+            allowLoopbackOverride: true,
         });
         const desiredServerUrl = effectiveTarget || activeServerUrl || getActiveServerUrl();
         setPendingTerminalConnect({

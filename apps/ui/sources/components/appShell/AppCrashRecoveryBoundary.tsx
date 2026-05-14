@@ -1,10 +1,15 @@
 import * as React from 'react';
-import { Image, Platform, Pressable, ScrollView, View } from 'react-native';
+import { Appearance, Image, Platform, Pressable, ScrollView, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { darkTheme, lightTheme } from '@/theme';
+import { loadThemeRuntimeLocalState } from '@/sync/domains/state/persistence';
+import {
+  resolveThemeRuntimeThemes,
+  resolveThemeRuntimeVisualTheme,
+} from '@/theme/profiles/themeProfileRuntime';
 import { Typography } from '@/constants/Typography';
 import { getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { getBugReportLogText } from '@/utils/system/bugReportLogBuffer';
@@ -30,13 +35,23 @@ export type AppBlockingScreenAction = Readonly<{
   variant: 'primary' | 'secondary';
 }>;
 
-function resolveFallbackTheme() {
+function readSystemThemeForCrashRecovery(): 'light' | 'dark' | null {
   try {
-    const Appearance = (require('react-native') as any).Appearance;
-    const scheme: unknown = Appearance?.getColorScheme?.();
-    return scheme === 'dark' ? darkTheme : lightTheme;
+    return Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
   } catch {
-    return lightTheme;
+    return null;
+  }
+}
+
+export function resolveCrashRecoveryFallbackTheme() {
+  try {
+    const { themePreference, themeProfiles } = loadThemeRuntimeLocalState();
+    const themes = resolveThemeRuntimeThemes(themeProfiles);
+    const visualTheme = resolveThemeRuntimeVisualTheme(themePreference, readSystemThemeForCrashRecovery());
+    return themes[visualTheme];
+  } catch {
+    const visualTheme = resolveThemeRuntimeVisualTheme('adaptive', readSystemThemeForCrashRecovery());
+    return visualTheme === 'dark' ? darkTheme : lightTheme;
   }
 }
 
@@ -77,7 +92,7 @@ export function AppBlockingScreen(props: Readonly<{
   details: string;
   actions: ReadonlyArray<AppBlockingScreenAction>;
 }>): React.ReactElement {
-  const theme = resolveFallbackTheme();
+  const theme = resolveCrashRecoveryFallbackTheme();
 
   const primary = props.actions.filter((a) => a.variant === 'primary');
   const secondary = props.actions.filter((a) => a.variant === 'secondary');

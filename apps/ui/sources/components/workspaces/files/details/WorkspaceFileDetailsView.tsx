@@ -14,7 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { buildFileLineSelectionFingerprint, canUseLineSelection } from '@/scm/scmLineSelection';
+import { buildFileLineSelectionFingerprint, canStartLineSelection, canUseLineSelection } from '@/scm/scmLineSelection';
 import { getFileLanguageFromPath } from '@/utils/code/fileLanguage';
 import { allowsLiveStaging, isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
 import { resolveDefaultDiffModeForFile } from '@/scm/diff/defaultMode';
@@ -48,7 +48,10 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useCodeLinesSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { resolveFileDetailsDisplayMode } from './workspaceFileDetails/resolveFileDetailsDisplayMode';
+import { resolveFileDetailsRenderableDiff } from './workspaceFileDetails/resolveFileDetailsRenderableDiff';
 import { useSessionImagePreview } from '@/components/sessions/files/content/imagePreview/useSessionImagePreview';
+import { buildWorkspaceFileReferenceAnchorKey } from '@/utils/workspaceFileReferences/resolveWorkspaceFileReference';
+import { extractSelectedDiffLineKeysFromPatch } from '@/scm/scmPatchSelection';
 
 export type WorkspaceFileDeepLinkAnchor = Readonly<{
     source: ReviewCommentSource;
@@ -112,10 +115,12 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     const deepLinkAnchor = props.deepLinkAnchor ?? null;
     const deepLinkKey = React.useMemo(() => {
         if (!deepLinkAnchor) return '';
-        const a = deepLinkAnchor.anchor;
-        if (a.kind === 'fileLine') return `file:fileLine:${a.startLine}`;
-        return `diff:diffLine:${a.startLine}:${a.side}:${a.oldLine ?? ''}:${a.newLine ?? ''}`;
-    }, [deepLinkAnchor]);
+        return buildWorkspaceFileReferenceAnchorKey({
+            filePath,
+            source: deepLinkAnchor.source,
+            anchor: deepLinkAnchor.anchor,
+        });
+    }, [deepLinkAnchor, filePath]);
 
     const scmCommitStrategy = useSetting('scmCommitStrategy');
     const scmDefaultDiffModeByBackend = useSetting('scmDefaultDiffModeByBackend');
@@ -156,6 +161,9 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     const [diffMode, setDiffMode] = React.useState<FileDiffMode>('pending');
     const [isLoading, setIsLoading] = React.useState(true);
     const [selectedLineKeys, setSelectedLineKeys] = React.useState<Set<string>>(new Set());
+    const [commitSelectionModeActive, setCommitSelectionModeActive] = React.useState(false);
+    const [rangeSelectionActive, setRangeSelectionActive] = React.useState(false);
+    const [reviewCommentModeActive, setReviewCommentModeActive] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const [fileWriteSupported, setFileWriteSupported] = React.useState(true);
     const [jumpToAnchor, setJumpToAnchor] = React.useState<ReviewCommentAnchor | null>(deepLinkAnchor?.anchor ?? null);
@@ -172,6 +180,16 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         && scmSnapshot?.capabilities?.writeCommitLineSelection === true;
     const isSelectedForCommit = commitSelectionPaths.includes(filePath)
         || commitSelectionPatches.some((p) => p.path === filePath);
+    const appliedSelectedLineKeys = React.useMemo(() => {
+        const keys = new Set<string>();
+        for (const patchSelection of commitSelectionPatches) {
+            if (patchSelection.path !== filePath) continue;
+            for (const key of extractSelectedDiffLineKeysFromPatch(patchSelection.patch)) {
+                keys.add(key);
+            }
+        }
+        return keys;
+    }, [commitSelectionPatches, filePath]);
     const lineSelectionFingerprint = React.useMemo(
         () => buildFileLineSelectionFingerprint(fileEntry),
         [fileEntry]
@@ -185,6 +203,18 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         diffMode,
         diffContent,
     });
+    const lineSelectionCanStart = canStartLineSelection({
+        scmWriteEnabled,
+        includeExcludeEnabled,
+        virtualLineSelectionEnabled,
+        hasConflicts,
+        isBinary: fileEntry?.stats.isBinary === true,
+        hasPendingDelta,
+        hasIncludedDelta,
+        diffContent,
+    });
+    const effectiveLineSelectionEnabled = lineSelectionEnabled && commitSelectionModeActive;
+    const displayedSelectedLineKeys = commitSelectionModeActive ? selectedLineKeys : appliedSelectedLineKeys;
 
     React.useEffect(() => {
         const resolved = resolveDefaultDiffModeForFile({
@@ -196,15 +226,43 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         setDiffMode(resolved);
     }, [hasIncludedDelta, hasPendingDelta, scmDefaultDiffModeByBackend, scmSnapshot]);
 
+    const selectionResetKey = React.useMemo(
+        () => [
+            diffMode,
+            diffContent ?? '',
+            lineSelectionFingerprint ?? '',
+        ].join('\n'),
+        [diffContent, diffMode, lineSelectionFingerprint],
+    );
+    const previousSelectionResetRef = React.useRef<{
+        key: string;
+        diffContent: string | null;
+    } | null>(null);
     React.useEffect(() => {
+        const previous = previousSelectionResetRef.current;
+        if (previous === null) {
+            previousSelectionResetRef.current = { key: selectionResetKey, diffContent };
+            return;
+        }
+        if (previous.key === selectionResetKey) return;
+        previousSelectionResetRef.current = { key: selectionResetKey, diffContent };
+        if (previous.diffContent === null && diffContent !== null) {
+            return;
+        }
         setSelectedLineKeys(new Set());
-    }, [diffMode, diffContent, lineSelectionFingerprint]);
+        setCommitSelectionModeActive(false);
+        setRangeSelectionActive(false);
+        setReviewCommentModeActive(false);
+    }, [diffContent, selectionResetKey]);
 
     React.useEffect(() => {
-        if (!lineSelectionEnabled) {
+        if (!lineSelectionCanStart) {
             setSelectedLineKeys(new Set());
+            setCommitSelectionModeActive(false);
+            setRangeSelectionActive(false);
+            setReviewCommentModeActive(false);
         }
-    }, [lineSelectionEnabled]);
+    }, [lineSelectionCanStart]);
 
     const hasLoadedOnceRef = React.useRef(false);
     const refreshAll = React.useCallback(async (options?: Readonly<{ background?: boolean }>) => {
@@ -273,16 +331,20 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     const markdownPreviewAvailable = fileContent?.isBinary !== true
         && (language === 'markdown' || language === 'mdx')
         && typeof fileContent?.content === 'string';
+    const hasRenderableDiff = React.useMemo(
+        () => resolveFileDetailsRenderableDiff({ diffContent }),
+        [diffContent],
+    );
 
     React.useEffect(() => {
         setDisplayMode(resolveFileDetailsDisplayMode({
             persistedEditing: persistedDraft?.isEditingFile === true,
             deepLinkSource: deepLinkAnchor?.source ?? null,
-            hasDiffContent: typeof diffContent === 'string' && diffContent.length > 0,
+            hasRenderableDiff,
             hasFileContent: Boolean(fileContent),
             markdownPreviewAvailable,
         }));
-    }, [deepLinkAnchor?.source, diffContent, fileContent, markdownPreviewAvailable, persistedDraft?.isEditingFile]);
+    }, [deepLinkAnchor?.source, fileContent, hasRenderableDiff, markdownPreviewAvailable, persistedDraft?.isEditingFile]);
 
     React.useEffect(() => {
         if (!deepLinkAnchor) {
@@ -308,7 +370,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         scmCommitStrategy,
         diffMode,
         diffContent,
-        lineSelectionEnabled,
+        lineSelectionEnabled: effectiveLineSelectionEnabled,
         includeExcludeEnabled,
         selectedLineKeys,
         refreshAll,
@@ -323,7 +385,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         scmCommitStrategy,
         diffMode,
         diffContent,
-        lineSelectionEnabled,
+        lineSelectionEnabled: effectiveLineSelectionEnabled,
         includeExcludeEnabled,
         selectedLineKeys,
         refreshAll,
@@ -331,9 +393,12 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     });
 
     const { isApplyingStage, handleStage, applySelectedLines } = sessionId ? sessionStageActions : workspaceStageActions;
+    const applySelectedLinesRef = React.useRef(applySelectedLines);
+    applySelectedLinesRef.current = applySelectedLines;
 
     const toggleSelectedLine = React.useCallback((key: string) => {
-        if (!lineSelectionEnabled) return;
+        if (!effectiveLineSelectionEnabled) return;
+        setRangeSelectionActive(false);
         setSelectedLineKeys((previous) => {
             const next = new Set(previous);
             if (next.has(key)) {
@@ -343,7 +408,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
             }
             return next;
         });
-    }, [lineSelectionEnabled]);
+    }, [effectiveLineSelectionEnabled]);
 
     const fileName = filePath.split('/').pop() || filePath;
     const filePathDir = filePath.split('/').slice(0, -1).join('/');
@@ -385,6 +450,11 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         persistDraft,
     });
 
+    const handleStartEditingFile = React.useCallback(() => {
+        props.onStartEditingFile?.();
+        startEditingFile();
+    }, [props.onStartEditingFile, startEditingFile]);
+
     const onStageFile = React.useCallback(() => {
         void handleStage(true);
     }, [handleStage]);
@@ -393,11 +463,43 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         void handleStage(false);
     }, [handleStage]);
 
-    const onApplySelectedLines = React.useCallback(() => {
-        void applySelectedLines();
-    }, [applySelectedLines]);
+    const onApplySelectedLines = React.useCallback(async () => {
+        setRangeSelectionActive(false);
+        const applied = await applySelectedLinesRef.current();
+        if (applied === true) {
+            setCommitSelectionModeActive(false);
+        }
+    }, []);
 
     const onClearSelection = React.useCallback(() => {
+        setSelectedLineKeys(new Set());
+        setCommitSelectionModeActive(false);
+        setRangeSelectionActive(false);
+    }, []);
+
+    const onStartLineSelection = React.useCallback(() => {
+        if (!lineSelectionCanStart) return;
+        setReviewCommentModeActive(false);
+        setDisplayMode('diff');
+        if (!lineSelectionEnabled) {
+            setDiffContent(null);
+            setDiffMode(hasPendingDelta ? 'pending' : 'included');
+        }
+        setSelectedLineKeys(new Set(appliedSelectedLineKeys));
+        setCommitSelectionModeActive(true);
+        setRangeSelectionActive(false);
+    }, [appliedSelectedLineKeys, hasPendingDelta, lineSelectionCanStart, lineSelectionEnabled]);
+
+    const onStartRangeSelection = React.useCallback(() => {
+        if (!lineSelectionEnabled || !commitSelectionModeActive) return;
+        setRangeSelectionActive(true);
+    }, [commitSelectionModeActive, lineSelectionEnabled]);
+
+    const onToggleReviewCommentMode = React.useCallback((active: boolean) => {
+        setReviewCommentModeActive(active);
+        if (!active) return;
+        setCommitSelectionModeActive(false);
+        setRangeSelectionActive(false);
         setSelectedLineKeys(new Set());
     }, []);
 
@@ -530,21 +632,27 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                     virtualSelectionEnabled={virtualSelectionEnabled && Boolean(scope)}
                     isSelectedForCommit={isSelectedForCommit}
                     lineSelectionEnabled={lineSelectionEnabled && Boolean(scope)}
-                    selectedLineCount={selectedLineKeys.size}
+                    lineSelectionCanStart={lineSelectionCanStart && Boolean(scope)}
+                    lineSelectionActive={commitSelectionModeActive}
+                    rangeSelectionActive={rangeSelectionActive}
+                    reviewCommentsEnabled={reviewCommentsEnabled}
+                    commentModeActive={reviewCommentModeActive}
+                    selectedLineCount={commitSelectionModeActive ? selectedLineKeys.size : 0}
+                    appliedLineSelectionCount={appliedSelectedLineKeys.size}
                     isApplyingStage={isApplyingStage}
                     inFlightScmOperation={inFlightScmOperation}
                     onStageFile={onStageFile}
                     onUnstageFile={onUnstageFile}
                     onApplySelectedLines={onApplySelectedLines}
                     onClearSelection={onClearSelection}
+                    onStartLineSelection={onStartLineSelection}
+                    onStartRangeSelection={onStartRangeSelection}
+                    onToggleCommentMode={onToggleReviewCommentMode}
                     fileEditorEnabled={editorSurfaceEnabled && !editorTooLarge && !editorChunkTooLarge && !isBinaryFile}
                     isEditingFile={isEditingFile}
                     fileEditorDirty={editorDirty}
                     fileEditorBusy={isSavingEdits}
-                    onStartEditingFile={() => {
-                        props.onStartEditingFile?.();
-                        startEditingFile();
-                    }}
+                    onStartEditingFile={handleStartEditingFile}
                     onCancelEditingFile={cancelEditingFile}
                     onSaveEditingFile={saveFileEdits}
                 />
@@ -616,13 +724,15 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                         fileContent={fileContent?.isBinary ? null : (fileContent?.content ?? null)}
                         language={language}
                         syntaxHighlighting={syntaxHighlighting}
-                        selectedLineKeys={selectedLineKeys}
-                        lineSelectionEnabled={lineSelectionEnabled && Boolean(scope)}
+                        selectedLineKeys={displayedSelectedLineKeys}
+                        lineSelectionEnabled={effectiveLineSelectionEnabled && Boolean(scope)}
                         onToggleLine={toggleSelectedLine}
+                        rangeSelectionActive={rangeSelectionActive}
                         wrapLines={wrapLinesInDiffs}
                         showLineNumbers={showLineNumbers}
                         showPrefix={showLineNumbers}
                         reviewCommentsEnabled={reviewCommentsEnabled}
+                        reviewCommentModeActive={reviewCommentModeActive}
                         reviewCommentDrafts={reviewCommentDrafts}
                         onUpsertReviewCommentDraft={reviewDraftHandlers.onUpsertReviewCommentDraft}
                         onDeleteReviewCommentDraft={reviewDraftHandlers.onDeleteReviewCommentDraft}

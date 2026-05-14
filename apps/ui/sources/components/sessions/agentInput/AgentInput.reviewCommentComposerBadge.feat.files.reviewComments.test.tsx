@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
@@ -104,7 +105,16 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+    getStorage: () => {
+        const store = (selector: any) => selector({ sessionMessages: {} });
+        store.getState = () => ({
+            localSettings: {
+                uiContentWidthMode: 'wide',
+            },
+            sessionMessages: {},
+        });
+        return store;
+    },
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -145,6 +155,11 @@ describe('AgentInput review comment composer badge', () => {
             createdAt: 1,
         } satisfies ReviewCommentDraft;
         const reviewCommentsChip = createReviewCommentsActionChip({
+            reviewScope: {
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                rootPath: '/repo',
+            } satisfies WorkspaceScopeBase,
             reviewCommentDrafts: [draft],
             onSetDraftIncluded: setDraftIncludedSpy,
             onClearDrafts: clearDraftsSpy,
@@ -177,6 +192,11 @@ describe('AgentInput review comment composer badge', () => {
         expect(modalShowSpy).toHaveBeenCalledTimes(1);
         const modalConfig = modalShowSpy.mock.calls[0]?.[0] as any;
         expect(modalConfig?.component?.name).toBe('ReviewCommentsDraftsModal');
+        expect(modalConfig?.props?.reviewScope).toEqual({
+            serverId: 'server-1',
+            machineId: 'machine-1',
+            rootPath: '/repo',
+        });
         expect(modalConfig?.chrome?.kind).toBe('card');
     });
 

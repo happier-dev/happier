@@ -25,7 +25,11 @@ export const HappierTextDiffViewer = React.memo<TextDiffViewerProps>((props) => 
             <CodeLinesView
                 lines={lines}
                 selectedLineIds={props.selectedLineIds}
+                interactionMode={props.interactionMode}
+                rangeSelectionActive={props.rangeSelectionActive}
                 onPressLine={props.onPressLine}
+                onPressLineRange={props.onPressLineRange}
+                pressLineWhenNotSelectable={props.pressLineWhenNotSelectable}
                 onPressAddComment={props.onPressAddComment}
                 isCommentActive={props.isCommentActive}
                 renderAfterLine={props.renderAfterLine}
@@ -37,6 +41,7 @@ export const HappierTextDiffViewer = React.memo<TextDiffViewerProps>((props) => 
                 showPrefix={props.showPrefix}
                 scrollToLineId={props.scrollToLineId}
                 highlightLineId={props.highlightLineId}
+                highlightLineIds={props.highlightLineIds}
                 syntaxHighlighting={syntaxHighlighting}
             />
         </View>

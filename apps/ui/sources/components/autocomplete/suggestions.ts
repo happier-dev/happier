@@ -1,4 +1,7 @@
-import { CommandSuggestion, FileMentionSuggestion } from '@/components/sessions/agentInput/components/AgentInputSuggestionView';
+import {
+    COMMAND_SUGGESTION_ROW_HEIGHT,
+    FileMentionSuggestion,
+} from '@/components/sessions/agentInput/components/AgentInputSuggestionView';
 import * as React from 'react';
 import { searchFiles, FileItem } from '@/sync/domains/input/suggestionFile';
 import { searchCommands, CommandItem } from '@/sync/domains/input/suggestionCommands';
@@ -6,7 +9,9 @@ import { searchCommands, CommandItem } from '@/sync/domains/input/suggestionComm
 export async function getCommandSuggestions(sessionId: string, query: string): Promise<{
     key: string;
     text: string;
-    component: React.ComponentType;
+    label: string;
+    description?: string;
+    rowHeight?: number;
 }[]> {
     // Remove the "/" prefix for searching
     const searchTerm = query.slice(1);
@@ -19,10 +24,9 @@ export async function getCommandSuggestions(sessionId: string, query: string): P
         return commands.map((cmd: CommandItem) => ({
             key: `cmd-${cmd.command}`,
             text: `/${cmd.command}`,
-            component: () => React.createElement(CommandSuggestion, {
-                command: cmd.command,
-                description: cmd.description,
-            }),
+            label: `/${cmd.command}`,
+            description: cmd.description,
+            rowHeight: COMMAND_SUGGESTION_ROW_HEIGHT,
         }));
     } catch {
         return [];
@@ -33,6 +37,7 @@ export async function getFileMentionSuggestions(sessionId: string, query: string
     key: string;
     text: string;
     component: React.ComponentType;
+    rowHeight?: number;
 }[]> {
     // Remove the "@" prefix for searching
     const searchTerm = query.slice(1);
@@ -59,7 +64,10 @@ export async function getFileMentionSuggestions(sessionId: string, query: string
 export async function getSuggestions(sessionId: string, query: string): Promise<{
     key: string;
     text: string;
-    component: React.ComponentType;
+    label?: string;
+    description?: string;
+    component?: React.ComponentType;
+    rowHeight?: number;
 }[]> {
     if (!query || query.length === 0) {
         return [];

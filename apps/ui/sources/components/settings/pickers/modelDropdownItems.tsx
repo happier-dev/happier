@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 
@@ -7,6 +7,7 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { getModelOptionsForAgentType, type ModelOption } from '@/sync/domains/models/modelOptions';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export const REFRESH_MODELS_DROPDOWN_ITEM_ID = '__refresh_models__';
 
@@ -46,7 +47,7 @@ export function getModelDropdownMenuItems(params: {
         })
         : (
             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator color={params.iconColor} />
+                <ActivitySpinner color={params.iconColor} />
             </View>
         );
 

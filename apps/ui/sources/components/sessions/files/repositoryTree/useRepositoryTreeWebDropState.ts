@@ -8,9 +8,13 @@ export function useRepositoryTreeWebDropState(params: Readonly<{
     enabled: boolean;
     expandedPaths: readonly string[];
 }>) {
+    const handleExpandedPathsChange = React.useCallback((paths: string[]) => {
+        storage.getState().setSessionRepositoryTreeExpandedPaths(params.sessionId, paths);
+    }, [params.sessionId]);
+
     return useWorkspaceRepositoryTreeWebDropState({
         enabled: params.enabled,
         expandedPaths: params.expandedPaths,
-        onExpandedPathsChange: (paths) => storage.getState().setSessionRepositoryTreeExpandedPaths(params.sessionId, paths),
+        onExpandedPathsChange: handleExpandedPathsChange,
     });
 }

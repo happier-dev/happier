@@ -60,9 +60,11 @@ export const CHANGE_CHECKPOINT_COVERAGE = {
 export type PlannedChangeActions = {
     changes: ApiChangeEntry[];
     sessionIdsToCatchUp: string[];
+    sessionFolderAssignmentSessionIds: string[];
     unsupportedChanges: UnsupportedChangeMarker[];
     invalidate: {
         sessions: boolean;
+        sessionFolderAssignments: boolean;
         machines: boolean;
         artifacts: boolean;
         settings: boolean;
@@ -90,6 +92,14 @@ function hasPendingHint(change: ApiChangeEntry): boolean {
     return (
         isRecord(hint)
         && (typeof hint.pendingVersion === 'number' || typeof hint.pendingCount === 'number')
+    );
+}
+
+function hasSessionFolderAssignmentHint(change: ApiChangeEntry): boolean {
+    const hint = change.hint;
+    return isRecord(hint) && (
+        hint.sessionFolderAssignment === true
+        || hint.sessionFolderAssignments === true
     );
 }
 
@@ -125,6 +135,18 @@ export function classifyChangeForCheckpoint(
     const coverage = CHANGE_CHECKPOINT_COVERAGE[kind];
 
     if (kind === 'session' || kind === 'share') {
+        if (kind === 'session' && hasSessionFolderAssignmentHint(change)) {
+            return {
+                kind,
+                cursor,
+                entityId,
+                decision: 'critical',
+                plannerOwner: 'sessions',
+                snapshotDomain: 'session-folder-assignments',
+                materializationProof: 'session-folder-assignment-refresh',
+            };
+        }
+
         if (hasPendingHint(change)) {
             return {
                 kind,
@@ -163,8 +185,10 @@ export function classifyChangeForCheckpoint(
 
 export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedChangeActions {
     const sessionIds = new Set<string>();
+    const sessionFolderAssignmentSessionIds = new Set<string>();
     const unsupportedChanges: UnsupportedChangeMarker[] = [];
     let invalidateSessions = false;
+    let invalidateSessionFolderAssignments = false;
     let invalidateMachines = false;
     let invalidateArtifacts = false;
     let invalidateSettings = false;
@@ -189,6 +213,13 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
         }
 
         if (kind === 'session' || kind === 'share') {
+            if (kind === 'session' && hasSessionFolderAssignmentHint(change)) {
+                if (typeof change.entityId === 'string' && change.entityId.length > 0) {
+                    sessionFolderAssignmentSessionIds.add(change.entityId);
+                }
+                invalidateSessionFolderAssignments = true;
+                continue;
+            }
             invalidateSessions = true;
             if (typeof change.entityId === 'string' && change.entityId.length > 0) {
                 sessionIds.add(change.entityId);
@@ -197,6 +228,13 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
         }
 
         if (kind === 'account') {
+            if (
+                change.entityId === 'session-folder-assignments'
+                || hasSessionFolderAssignmentHint(change)
+            ) {
+                invalidateSessionFolderAssignments = true;
+                continue;
+            }
             invalidateSettings = true;
             invalidateProfile = true;
             continue;
@@ -265,9 +303,11 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
     return {
         changes: [...changes],
         sessionIdsToCatchUp: Array.from(sessionIds).sort(),
+        sessionFolderAssignmentSessionIds: Array.from(sessionFolderAssignmentSessionIds).sort(),
         unsupportedChanges,
         invalidate: {
             sessions: invalidateSessions,
+            sessionFolderAssignments: invalidateSessionFolderAssignments,
             machines: invalidateMachines,
             artifacts: invalidateArtifacts,
             settings: invalidateSettings,

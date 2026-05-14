@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionSplitCanvasScreen } from '@/components/sessions/canvas/SessionSplitCanvasScreen';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
@@ -18,6 +18,7 @@ import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useEndpointConnectivity, useLocalSetting, useSyncError } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export default function SessionRouteIndex() {
     const params = useLocalSearchParams<{
@@ -108,7 +109,7 @@ export default function SessionRouteIndex() {
     if (!sessionHydrated && !sessionCached && !authRecoveryActive) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator size="small" />
+                <ActivitySpinner size="small" />
             </View>
         );
     }

@@ -56,6 +56,7 @@ describe('session header menu item translation caching', () => {
         const english = resolveProjectGroupHeaderMenuItems({
             menuEnabled: true,
             canOpenProject: true,
+            canAddFolder: false,
             hasCustomLabel: true,
             actionIconColor: '#000',
         });
@@ -65,6 +66,7 @@ describe('session header menu item translation caching', () => {
         const spanish = resolveProjectGroupHeaderMenuItems({
             menuEnabled: true,
             canOpenProject: true,
+            canAddFolder: false,
             hasCustomLabel: true,
             actionIconColor: '#000',
         });

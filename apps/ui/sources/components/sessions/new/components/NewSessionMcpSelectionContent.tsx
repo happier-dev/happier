@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -26,10 +26,12 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemListStatic } from '@/components/ui/lists/ItemList';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
 import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type PreviewSuccess = Extract<DaemonMcpServersPreviewResponse, { ok: true }>;
 
@@ -77,10 +79,10 @@ function GroupActionButton(props: GroupActionButtonProps) {
             ]}
         >
             {isLoading ? (
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
             ) : (
                 normalizeNodeForView(
-                    <Ionicons name={props.icon} size={18} color={theme.colors.text.secondary} />,
+                    <Ionicons name={props.icon} size={18} color={theme.colors.text.tertiary} />,
                 )
             )}
         </Pressable>
@@ -132,6 +134,30 @@ function resolveManagedAvailabilityLabel(availability: 'active' | 'available' | 
     if (availability === 'active') return t('settings.mcpServersStatusActive');
     if (availability === 'available') return t('settings.mcpServersStatusAvailable');
     return t('settings.mcpServersStatusUnavailable');
+}
+
+function resolveMcpAvailabilityVariant(args: Readonly<{
+    availability: 'active' | 'available' | 'unavailable' | 'readOnly';
+    enabled?: boolean | null;
+}>): StatusPillVariant {
+    if (args.enabled === false || args.availability === 'unavailable') return 'neutral';
+    if (args.availability === 'active') return 'success';
+    return 'info';
+}
+
+function McpStatusAccessory(props: Readonly<{
+    testID: string;
+    label: string;
+    variant: StatusPillVariant;
+}>): React.ReactElement {
+    return (
+        <StatusPill
+            testID={props.testID}
+            variant={props.variant}
+            label={props.label}
+            hideDot={true}
+        />
+    );
 }
 
 export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionContentProps) {
@@ -217,7 +243,6 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                 testID={`new-session.mcp.row.${server.id}`}
                 title={server.title ?? server.name}
                 subtitle={subtitle}
-                detail={resolveManagedAvailabilityLabel(item.availability)}
                 selected={false}
                 disabled={!item.selectable}
                 showChevron={false}
@@ -239,7 +264,13 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                             defaultSelected: item.defaultSelected,
                         }))}
                     />
-                ) : null}
+                ) : (
+                    <McpStatusAccessory
+                        testID={`new-session.mcp.row.${server.id}.status`}
+                        label={resolveManagedAvailabilityLabel(item.availability)}
+                        variant={resolveMcpAvailabilityVariant({ availability: item.availability })}
+                    />
+                )}
             />
         );
     }, [managedResolution?.itemsByName, props.onSelectionChange, props.selection]);
@@ -363,7 +394,16 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                                                 resolveAuthBadgeLabel(entry.authMode),
                                             ].filter(Boolean).join(' · ')}
                                             selected={false}
-                                            detail={resolveDetectedAvailabilityLabel(entry)}
+                                            rightElement={(
+                                                <McpStatusAccessory
+                                                    testID={`new-session.mcp.detected.${entry.name}.status`}
+                                                    label={resolveDetectedAvailabilityLabel(entry)}
+                                                    variant={resolveMcpAvailabilityVariant({
+                                                        availability: entry.availability,
+                                                        enabled: entry.enabled,
+                                                    })}
+                                                />
+                                            )}
                                             showChevron={false}
                                         />
                                     ))
@@ -422,14 +462,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 0,
     },
     groupActionButton: {
-        width: 30,
-        height: 30,
-        borderRadius: 10,
+        width: 28,
+        height: 28,
+        borderRadius: 8,
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
     },
     groupActionButtonPressed: {
         opacity: 0.82,

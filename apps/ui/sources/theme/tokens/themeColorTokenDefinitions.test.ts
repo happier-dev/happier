@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
 import { darkTheme, lightTheme } from '@/theme';
+import * as themeColorTokenDefinitionsModule from './themeColorTokenDefinitions';
 import {
     EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS,
     getEditableThemeColorTokenDefinition,
     resolveThemeColorTokenBaseValue,
 } from './themeColorTokenDefinitions';
+
+type ThemeColorTokenClassification = Readonly<{
+    path: readonly string[];
+    status: 'internal' | 'derived' | 'deprecated';
+    reason: string;
+}>;
+
+const tokenDefinitionsModule = themeColorTokenDefinitionsModule as typeof themeColorTokenDefinitionsModule & Readonly<{
+    THEME_COLOR_TOKEN_CLASSIFICATIONS?: readonly ThemeColorTokenClassification[];
+}>;
 
 const requiredTokenIds = [
     'background.canvas',
@@ -99,8 +110,12 @@ const requiredTokenIds = [
     'diff.removed.background',
     'diff.removed.foreground',
     'diff.hunk.background',
+    'diff.hunk.foreground',
+    'diff.context.foreground',
     'diff.inlineAdded.background',
+    'diff.inlineAdded.foreground',
     'diff.inlineRemoved.background',
+    'diff.inlineRemoved.foreground',
     'permission.default',
     'permission.acceptEdits',
     'permission.bypass',
@@ -178,6 +193,29 @@ describe('editable theme color token definitions', () => {
         expect(getEditableThemeColorTokenDefinition('fab.gradient')).toBeUndefined();
     });
 
+    it('classifies every base theme string color leaf as public editable, internal, derived, or deprecated', () => {
+        const editablePaths = new Set(
+            EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS.map((definition) => definition.path.join('.')),
+        );
+        const classifiedPaths = new Set(
+            (tokenDefinitionsModule.THEME_COLOR_TOKEN_CLASSIFICATIONS ?? []).map((classification) => {
+                expect(classification.reason).toBeTruthy();
+                expect(['internal', 'derived', 'deprecated']).toContain(classification.status);
+                return classification.path.join('.');
+            }),
+        );
+        const stringLeafPaths = new Set([
+            ...collectStringLeafPaths(lightTheme.colors),
+            ...collectStringLeafPaths(darkTheme.colors),
+        ]);
+
+        const unclassifiedPaths = [...stringLeafPaths]
+            .filter((leafPath) => !editablePaths.has(leafPath) && !classifiedPaths.has(leafPath))
+            .sort();
+
+        expect(unclassifiedPaths).toEqual([]);
+    });
+
     it('exposes surface highlight as an editable color token with transparent base defaults', () => {
         const definition = getEditableThemeColorTokenDefinition('effect.surfaceHighlight');
 
@@ -201,3 +239,12 @@ describe('editable theme color token definitions', () => {
         ]);
     });
 });
+
+function collectStringLeafPaths(value: unknown, path: readonly string[] = []): string[] {
+    if (typeof value === 'string') return [path.join('.')];
+    if (value === null || value === undefined || typeof value !== 'object') return [];
+    if (Array.isArray(value)) {
+        return value.flatMap((entry, index) => collectStringLeafPaths(entry, [...path, String(index)]));
+    }
+    return Object.entries(value).flatMap(([key, entry]) => collectStringLeafPaths(entry, [...path, key]));
+}

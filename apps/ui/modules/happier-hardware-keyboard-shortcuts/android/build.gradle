@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.happier.hardwarekeyboardshortcuts'
+version = '0.0.0'
+
+android {
+  namespace "dev.happier.hardwarekeyboardshortcuts"
+  defaultConfig {
+    versionCode 1
+    versionName version
+  }
+}

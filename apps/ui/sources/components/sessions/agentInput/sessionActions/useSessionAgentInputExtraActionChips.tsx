@@ -54,6 +54,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
         if (params.reviewCommentsEnabled) {
             const reviewCommentsChip = createReviewCommentsActionChip({
                 sessionId: params.sessionId,
+                reviewScope: params.reviewScope,
                 reviewCommentDrafts: params.reviewCommentDrafts,
                 onSetDraftIncluded: (draftId, included) => {
                     if (reviewWorkspaceCacheKey) {

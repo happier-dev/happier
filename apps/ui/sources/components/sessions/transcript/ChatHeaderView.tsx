@@ -30,7 +30,7 @@ interface ChatHeaderViewProps {
     includeTopInset?: boolean;
 }
 
-export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
+export const ChatHeaderView = React.memo(function ChatHeaderView({
     title,
     subtitle,
     subtitleEllipsizeMode = 'tail',
@@ -43,7 +43,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     flavor,
     constrainWidth = true,
     includeTopInset = true,
-}) => {
+}: ChatHeaderViewProps): React.ReactElement {
     const { theme } = useUnistyles();
     const navigation = useNavigation();
     const insets = useChromeSafeAreaInsets();
@@ -173,7 +173,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
             </View>
         </View>
     );
-};
+});
 
 const styles = StyleSheet.create(() => ({
     container: {

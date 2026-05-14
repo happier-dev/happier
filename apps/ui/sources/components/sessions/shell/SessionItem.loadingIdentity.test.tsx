@@ -25,6 +25,8 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
+        pillLabel: () => ({ fontSize: 10, lineHeight: 12 }),
+        tabular: () => ({ fontVariant: ['tabular-nums'] }),
     },
 }));
 
@@ -106,6 +108,7 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionSubtitle: () => '',
     getSessionAvatarId: () => 'avatar',
     getSessionStatus: () => ({
+        state: 'disconnected',
         isConnected: false,
         statusText: '',
         statusColor: 'status-color',
@@ -113,6 +116,7 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
         isPulsing: false,
     }),
     useSessionStatus: () => ({
+        state: 'disconnected',
         isConnected: false,
         statusText: '',
         shouldShowStatus: false,
@@ -153,6 +157,20 @@ function createMetadataUnavailableSession(id: string): SessionListRenderableSess
     };
 }
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}
+
+function getRawStyle(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string): unknown {
+    const node = screen.findByTestId(testID);
+    if (!node) throw new Error(`expected ${testID} to exist`);
+    return node.props.style;
+}
+
 describe('SessionItem loading identity', () => {
     beforeEach(() => {
         useProfileSpy.mockClear();
@@ -184,6 +202,55 @@ describe('SessionItem loading identity', () => {
         expect(screen.findByTestId('session-list-title-loading-sess_loading')).toBeTruthy();
         expect(screen.findByTestId('session-list-subtitle-loading-sess_loading')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('status.unknown');
+    });
+
+    it('keeps compact identity placeholders in one static style entry before animated opacity', async () => {
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createMetadataPendingSession('sess_compact_loading')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+            />,
+        );
+
+        const avatarStyle = getRawStyle(screen, 'session-list-avatar-loading-sess_compact_loading');
+        expect(Array.isArray(avatarStyle)).toBe(true);
+        expect((avatarStyle as readonly unknown[])[0]).toMatchObject({
+            width: 30,
+            height: 30,
+            borderRadius: 999,
+            backgroundColor: expect.any(String),
+        });
+        expect(flattenStyle((avatarStyle as readonly unknown[])[1])).toHaveProperty('opacity');
+
+        const titleStyle = getRawStyle(screen, 'session-list-title-loading-sess_compact_loading');
+        expect(Array.isArray(titleStyle)).toBe(true);
+        expect((titleStyle as readonly unknown[])[0]).toMatchObject({
+            width: '60%',
+            height: 13,
+            borderRadius: 7,
+            backgroundColor: expect.any(String),
+        });
+        expect(flattenStyle((titleStyle as readonly unknown[])[1])).toHaveProperty('opacity');
+
+        const subtitleStyle = getRawStyle(screen, 'session-list-subtitle-loading-sess_compact_loading');
+        expect(Array.isArray(subtitleStyle)).toBe(true);
+        expect((subtitleStyle as readonly unknown[])[0]).toMatchObject({
+            width: '42%',
+            height: 9,
+            borderRadius: 999,
+            backgroundColor: expect.any(String),
+            marginTop: 2,
+        });
+        expect(flattenStyle((subtitleStyle as readonly unknown[])[1])).toHaveProperty('opacity');
     });
 
     it('renders settled unknown identity instead of placeholders when metadata is unavailable', async () => {

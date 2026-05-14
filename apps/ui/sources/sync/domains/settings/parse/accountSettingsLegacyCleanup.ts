@@ -24,6 +24,7 @@ export const DROPPED_ACCOUNT_SETTINGS_KEYS = new Set<string>([
     'expZen',
     'expInboxFriends',
     'experimentalFeatureToggles',
+    'sessionMruOrderV1',
 ]);
 
 export function isDroppedLegacyServerSelectionKey(key: string): boolean {

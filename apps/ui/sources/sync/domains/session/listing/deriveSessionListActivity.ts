@@ -56,6 +56,7 @@ export function deriveSessionListAttentionState(input: Readonly<{
     }) === 'failed') return 'failed';
     if (input.sessionState === 'permission_required') return 'permission_required';
     if (input.sessionState === 'action_required') return 'action_required';
+    if (input.sessionState === 'resuming') return 'thinking';
     if (input.sessionState === 'thinking') return 'thinking';
     if (input.pendingCount > 0) return 'pending';
     if (input.hasUnreadMessages) return 'unread';
@@ -63,7 +64,7 @@ export function deriveSessionListAttentionState(input: Readonly<{
 }
 
 export function resolveSessionListSecondaryLineMode(params: Readonly<{
-    groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared' | null;
+    groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared' | 'folder' | null;
 }>): SessionListSecondaryLineMode {
     if (params.groupKind === 'date') {
         return 'path';

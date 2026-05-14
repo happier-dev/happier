@@ -12,6 +12,7 @@ type AccountSettingsPersistenceModule = Readonly<{
     saveAccountSettings: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     loadPendingAccountSettings: (scope: AccountSettingsScope) => Partial<Settings>;
     savePendingAccountSettings: (scope: AccountSettingsScope, settings: Partial<Settings>) => void;
+    prepareAccountSettingsScopeForActivation: (scope: AccountSettingsScope) => void;
 }>;
 
 const store = vi.hoisted(() => new Map<string, string>());
@@ -124,5 +125,43 @@ describe('accountSettingsPersistence', () => {
         }
 
         expect(mod.loadAccountSettings(scopeA)).toEqual({ settings: {}, version: null });
+    });
+
+    it('ignores obsolete local keyboard shortcut settings during account scope activation', async () => {
+        const mod = await loadAccountSettingsPersistenceModule();
+        expect(mod, 'account settings persistence module should exist').not.toBeNull();
+        if (!mod) return;
+
+        store.set('local-settings', JSON.stringify({
+            commandPaletteEnabled: true,
+            keyboardShortcutsV2Enabled: true,
+            keyboardSingleKeyShortcutsEnabled: true,
+            keyboardShortcutDisabledCommandIdsV1: ['session.new', '', 123],
+            keyboardShortcutOverridesV1: {
+                'session.new': [{ binding: 'Alt+N', conflictScope: 'global', nativeConsumable: false }],
+                'bad.command': [{ binding: '' }],
+            },
+            sessionMruOrderV1: ['server-a:session-2'],
+        }));
+        mod.saveAccountSettings(scopeA, settingsDefaults, 11);
+        for (const key of store.keys()) {
+            if (key.includes('account-settings')) {
+                store.set(key, JSON.stringify({
+                    settings: { analyticsOptOut: true, commandPaletteEnabled: false },
+                    version: 11,
+                }));
+            }
+        }
+
+        mod.prepareAccountSettingsScopeForActivation(scopeA);
+
+        expect(mod.loadAccountSettings(scopeA)).toMatchObject({
+            version: 11,
+            settings: expect.objectContaining({
+                commandPaletteEnabled: false,
+                analyticsOptOut: true,
+            }),
+        });
+        expect(mod.loadPendingAccountSettings(scopeA)).toEqual({});
     });
 });

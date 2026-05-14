@@ -31,6 +31,16 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
+const theme = {
+    colors: {
+        border: { default: '#444' },
+        button: { primary: { tint: '#fff' } },
+        state: { success: { foreground: '#0a0' } },
+        surface: { base: '#111', inset: '#222' },
+        text: { primary: '#fff', secondary: '#aaa', link: '#8ab4ff' },
+    },
+};
+
 describe('ScmCommitComposerCard', () => {
     it('renders a generate button when wired and applies the suggestion', async () => {
         const onDraftMessageChange = vi.fn();
@@ -39,7 +49,7 @@ describe('ScmCommitComposerCard', () => {
 
         const screen = (await renderScreen(
             <ScmCommitComposerCard
-                theme={{ colors: { divider: '#444', surface: '#111', surfaceHigh: '#222', text: '#fff', textSecondary: '#aaa', success: '#0a0' } }}
+                theme={theme}
                 commitActionLabel="Commit"
                 draftMessage=""
                 onDraftMessageChange={onDraftMessageChange}
@@ -81,7 +91,7 @@ describe('ScmCommitComposerCard', () => {
 
         const screen = (await renderScreen(
             <ScmCommitComposerCard
-                theme={{ colors: { divider: '#444', surface: '#111', surfaceHigh: '#222', text: '#fff', textSecondary: '#aaa', success: '#0a0' } }}
+                theme={theme}
                 commitActionLabel="Commit"
                 draftMessage=""
                 onDraftMessageChange={onDraftMessageChange}
@@ -105,7 +115,7 @@ describe('ScmCommitComposerCard', () => {
 
         const screen = (await renderScreen(
             <ScmCommitComposerCard
-                theme={{ colors: { divider: '#444', surface: '#111', surfaceHigh: '#222', text: '#fff', textSecondary: '#aaa', success: '#0a0', button: { primary: { tint: '#fff' } } } }}
+                theme={theme}
                 commitActionLabel="Commit"
                 draftMessage="fix: refresh"
                 onDraftMessageChange={() => {}}
@@ -127,7 +137,7 @@ describe('ScmCommitComposerCard', () => {
 
         const screen = (await renderScreen(
             <ScmCommitComposerCard
-                theme={{ colors: { divider: '#444', surface: '#111', surfaceHigh: '#222', text: '#fff', textSecondary: '#aaa', success: '#0a0' } }}
+                theme={theme}
                 commitActionLabel="Commit"
                 draftMessage="feat: add remote"
                 onDraftMessageChange={() => {}}
@@ -157,7 +167,7 @@ describe('ScmCommitComposerCard', () => {
 
         const screen = (await renderScreen(
             <ScmCommitComposerCard
-                theme={{ colors: { divider: '#444', surface: '#111', surfaceHigh: '#222', text: '#fff', textSecondary: '#aaa', success: '#0a0' } }}
+                theme={theme}
                 commitActionLabel="Commit"
                 draftMessage=""
                 onDraftMessageChange={() => {}}
@@ -182,7 +192,7 @@ describe('ScmCommitComposerCard', () => {
 
         const screen = (await renderScreen(
             <ScmCommitComposerCard
-                theme={{ colors: { divider: '#444', surface: '#111', surfaceHigh: '#222', text: '#fff', textSecondary: '#aaa', success: '#0a0' } }}
+                theme={theme}
                 commitActionLabel="Commit"
                 draftMessage=""
                 onDraftMessageChange={() => {}}
@@ -198,6 +208,7 @@ describe('ScmCommitComposerCard', () => {
             />
         )).tree;
 
+        expect(screen.findByProps({ testID: 'scm-commit-selection-summary' })).toBeTruthy();
         const allButton = screen.findByProps({ accessibilityLabel: 'common.all' });
         expect(allButton).toBeTruthy();
         const clearButton = screen.findByProps({ accessibilityLabel: 'files.fileActions.clearSelection' });

@@ -60,6 +60,15 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
       ...settingsDefaults,
       lastUsedAgent: 'claude',
     };
+    state.machines = {
+      m2: {
+        id: 'm2',
+        active: true,
+        activeAt: Date.now(),
+        spawnReadinessStatus: 'ready',
+        metadata: null,
+      },
+    };
     modalShow.mockReset();
     machineSpawnNewSession.mockReset();
     refreshSessions.mockClear();

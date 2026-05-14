@@ -1,12 +1,5 @@
 import * as React from 'react';
-import {
-    Platform,
-    Text as RNText,
-    TextInput as RNTextInput,
-    type TextInputProps as RNTextInputProps,
-    type TextProps as RNTextProps,
-    type TextStyle,
-} from 'react-native';
+import { Platform, Text as RNText, TextInput as RNTextInput, type TextInputProps as RNTextInputProps, type TextProps as RNTextProps, type TextStyle } from 'react-native';
 
 import { Typography } from '@/constants/Typography';
 import { useLocalSetting } from '@/sync/store/hooks';

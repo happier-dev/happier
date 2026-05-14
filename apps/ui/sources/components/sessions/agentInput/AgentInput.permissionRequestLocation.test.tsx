@@ -9,6 +9,9 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 let lastPermissionPromptCardProps: any = null;
 let messagesVersion = 0;
+let transcriptIdsReadCount = 0;
+let messagesByIdReadCount = 0;
+let reducerStateReadCount = 0;
 let reducerStateRef: any = {
     messageIds: new Map<string, string>(),
 };
@@ -173,16 +176,31 @@ installAgentInputCommonModuleMocks({
                 sessionPermissionModeApplyTiming: 'immediate',
                 permissionPromptSurface: 'composer',
             }),
-            useSessionTranscriptIds: () => ({ ids: committedMessageIdsOldestFirstRef as any, isLoaded: true }),
-            useSessionMessagesById: () => messagesByIdRef,
+            useSessionTranscriptIds: () => {
+                transcriptIdsReadCount += 1;
+                return { ids: committedMessageIdsOldestFirstRef as any, isLoaded: true };
+            },
+            useSessionMessagesById: () => {
+                messagesByIdReadCount += 1;
+                return messagesByIdRef;
+            },
             useSessionMessagesVersion: (_sid: string, enabled?: boolean) => (enabled === false ? 0 : messagesVersion),
-            useSessionMessagesReducerState: () => reducerStateRef,
+            useSessionMessagesReducerState: () => {
+                reducerStateReadCount += 1;
+                return reducerStateRef;
+            },
         });
     },
 });
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+    getStorage: () => (selector: any) => selector({
+        localSettings: {
+            uiBackdropBlurEnabled: false,
+        },
+        localSettingsDefaults: {},
+        sessionMessages: {},
+    }),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -266,6 +284,33 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
 }));
 
 describe('AgentInput (permission tool location)', () => {
+    it('does not subscribe to transcript data when no composer permission cards are visible', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        transcriptIdsReadCount = 0;
+        messagesByIdReadCount = 0;
+        reducerStateReadCount = 0;
+
+        const { tree } = await renderScreen(<AgentInput
+            value=""
+            placeholder="x"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            sessionId={sessionId}
+            metadata={null as any}
+            autocompletePrefixes={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        expect(transcriptIdsReadCount).toBe(0);
+        expect(messagesByIdReadCount).toBe(0);
+        expect(reducerStateReadCount).toBe(0);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
     it('updates the PermissionPromptCard location when tool-call permission id appears (even if messagesById is mutated in-place)', async () => {
         const { AgentInput } = await import('./AgentInput');
 

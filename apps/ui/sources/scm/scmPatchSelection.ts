@@ -30,6 +30,42 @@ export function buildSelectedDiffLineKey(side: 'additions' | 'deletions', lineNu
     return `${side}:${Math.floor(lineNumber)}` as SelectedDiffLineKey;
 }
 
+export function extractSelectedDiffLineKeysFromPatch(unifiedDiff: string): Set<string> {
+    const selectedLineKeys = new Set<string>();
+    if (!unifiedDiff) return selectedLineKeys;
+
+    const lines = unifiedDiff.split('\n');
+    let oldCursor = 0;
+    let newCursor = 0;
+    for (const line of lines) {
+        const header = parseHunkHeader(line);
+        if (header) {
+            oldCursor = header.oldStart;
+            newCursor = header.newStart;
+            continue;
+        }
+
+        if (line.startsWith(' ') && !line.startsWith('---') && !line.startsWith('+++')) {
+            oldCursor += 1;
+            newCursor += 1;
+            continue;
+        }
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+            const key = buildSelectedDiffLineKey('additions', newCursor);
+            if (key) selectedLineKeys.add(key);
+            newCursor += 1;
+            continue;
+        }
+        if (line.startsWith('-') && !line.startsWith('---')) {
+            const key = buildSelectedDiffLineKey('deletions', oldCursor);
+            if (key) selectedLineKeys.add(key);
+            oldCursor += 1;
+        }
+    }
+
+    return selectedLineKeys;
+}
+
 function parseHunkHeader(line: string): {
     oldStart: number;
     newStart: number;

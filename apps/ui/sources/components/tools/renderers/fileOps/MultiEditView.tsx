@@ -11,13 +11,15 @@ import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 
 
-export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId }) => {
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
     
     let edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> = [];
+    let filePath: string | null = null;
     
     const parsed = knownTools.MultiEdit.input.safeParse(tool.input);
     if (parsed.success && Array.isArray(parsed.data.edits)) {
+        filePath = typeof parsed.data.file_path === 'string' ? parsed.data.file_path : null;
         edits = parsed.data.edits
             .filter((e): e is { old_string: string; new_string: string; replace_all?: boolean } =>
                 typeof (e as any)?.old_string === 'string' &&
@@ -70,6 +72,8 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
                                 </View>
                             ) : null}
                             <ToolDiffView
+                                sessionId={sessionId}
+                                filePath={filePath}
                                 oldText={oldString}
                                 newText={newString}
                                 showLineNumbers={showLineNumbers}

@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
-import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
+import { View } from 'react-native';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -18,11 +18,10 @@ import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForR
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { SessionFullscreenPaneSafeAreaView } from '@/components/sessions/panes/SessionFullscreenPaneSafeAreaView';
-import { prepareMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export default function FilesScreenRoute() {
     const router = useRouter();
-    const pathname = usePathname();
     const navigation = useNavigation();
     const isFocused = useIsFocused();
     const params = useLocalSearchParams<{ id: string; serverId?: string }>();
@@ -66,14 +65,6 @@ export default function FilesScreenRoute() {
             buildActiveDetailsRouteParams(detailsSelection.tabs, key),
             'browse',
         );
-        prepareMobileSurfaceTransition({
-            currentPathname: pathname,
-            targetHref: routeScope.buildHref(sessionId, {
-                suffix: '/details',
-                query: targetQuery,
-            }),
-            operation: 'push',
-        });
         router.push({
             pathname: '/session/[id]/details',
             params: routeScope.withParams({
@@ -81,7 +72,7 @@ export default function FilesScreenRoute() {
                 ...targetQuery,
             }),
         } as any);
-    }, [detailsSelection.tabs, pathname, routeScope, router, sessionId]);
+    }, [detailsSelection.tabs, routeScope, router, sessionId]);
 
     useFullscreenDetailsRouteAutoRedirect({
         resetKey: sessionId,
@@ -130,7 +121,7 @@ export default function FilesScreenRoute() {
                 )
             ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator />
+                    <ActivitySpinner />
                 </View>
             )}
         </SessionFullscreenPaneSafeAreaView>

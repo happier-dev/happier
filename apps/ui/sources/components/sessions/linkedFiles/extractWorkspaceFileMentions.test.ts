@@ -14,6 +14,11 @@ describe('extractWorkspaceFileMentions', () => {
         expect(extractWorkspaceFileMentions('@happier/review.comments then @src/api.ts')).toEqual(['src/api.ts']);
     });
 
+    it('ignores scoped npm package references in command text', () => {
+        expect(extractWorkspaceFileMentions('Run `yarn workspace @happier-dev/app typecheck`')).toEqual([]);
+        expect(extractWorkspaceFileMentions('Install @scope/package before editing @src/api.ts')).toEqual(['src/api.ts']);
+    });
+
     it('ignores non-path mentions', () => {
         expect(extractWorkspaceFileMentions('Thanks @bob for the help')).toEqual([]);
     });

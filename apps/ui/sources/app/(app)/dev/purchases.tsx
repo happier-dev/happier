@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput } from 'react-native';
 import { Stack } from 'expo-router';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -9,6 +9,7 @@ import { sync } from '@/sync/sync';
 import { Typography } from '@/constants/Typography';
 import { Ionicons } from '@expo/vector-icons';
 import { Modal } from '@/modal';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export default function PurchasesDevScreen() {
     // Get purchases directly from storage
@@ -162,7 +163,7 @@ export default function PurchasesDevScreen() {
                         <Item
                             title={isPurchasing ? "Purchasing..." : "Purchase"}
                             icon={isPurchasing ?
-                                <ActivityIndicator size="small" color="#007AFF" /> :
+                                <ActivitySpinner size="small" color="#007AFF" /> :
                                 <Ionicons name="card-outline" size={29} color="#007AFF" />
                             }
                             onPress={handlePurchase}
@@ -182,7 +183,7 @@ export default function PurchasesDevScreen() {
                     <Item
                         title={loadingOfferings ? "Loading Offerings..." : "Log Offerings"}
                         icon={loadingOfferings ?
-                            <ActivityIndicator size="small" color="#007AFF" /> :
+                            <ActivitySpinner size="small" color="#007AFF" /> :
                             <Ionicons name="document-text-outline" size={29} color="#007AFF" />
                         }
                         onPress={fetchOfferings}

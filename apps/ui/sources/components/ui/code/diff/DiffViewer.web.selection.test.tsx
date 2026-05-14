@@ -89,7 +89,7 @@ describe('DiffViewer (web renderer selection)', () => {
         expect(screen.findByTestId('happier-unified-diff-viewer')).toBeTruthy();
     });
 
-    it('keeps Pierre renderer even when DiffViewer needs interactivity props', async () => {
+    it('keeps Pierre renderer for click-only interactivity', async () => {
         const { DiffViewer } = await import('./DiffViewer.web');
 
         const screen = await renderScreen(
@@ -103,5 +103,22 @@ describe('DiffViewer (web renderer selection)', () => {
 
         expect(screen.findByTestId('pierre-diff-viewer')).toBeTruthy();
         expect(screen.findByTestId('happier-unified-diff-viewer')).toBeNull();
+    });
+
+    it('uses the Happier renderer when range interaction is required', async () => {
+        const { DiffViewer } = await import('./DiffViewer.web');
+
+        const screen = await renderScreen(
+            <DiffViewer
+                mode="unified"
+                unifiedDiff={'diff --git a/a.ts b/a.ts'}
+                filePath="a.ts"
+                interactionMode="commitSelection"
+                onPressLineRange={() => {}}
+            />,
+        );
+
+        expect(screen.findByTestId('pierre-diff-viewer')).toBeNull();
+        expect(screen.findByTestId('happier-unified-diff-viewer')).toBeTruthy();
     });
 });

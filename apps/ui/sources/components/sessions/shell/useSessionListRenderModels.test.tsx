@@ -22,6 +22,7 @@ describe('useSessionListRenderModels', () => {
             },
             visibleSessionListIndex: [],
             hasHiddenInactiveSessions: false,
+            folderFocus: null,
             showLoading: false,
             showEmptyState: true,
         };
@@ -74,6 +75,7 @@ describe('useSessionListRenderModels', () => {
                 },
             ] satisfies ReadonlyArray<SessionListIndexItem>,
             hasHiddenInactiveSessions: false,
+            folderFocus: null,
             showLoading: false,
             showEmptyState: false,
         } as VisibleSessionListPaneState;
@@ -152,6 +154,7 @@ describe('useSessionListRenderModels', () => {
                 },
             ] satisfies ReadonlyArray<SessionListIndexItem>,
             hasHiddenInactiveSessions: false,
+            folderFocus: null,
             showLoading: false,
             showEmptyState: false,
         } as VisibleSessionListPaneState;

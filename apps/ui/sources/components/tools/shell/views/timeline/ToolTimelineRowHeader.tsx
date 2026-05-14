@@ -216,16 +216,23 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         fontSize: 13,
         color: theme.colors.text.secondary,
         ...Typography.default('regular'),
+        minWidth: 0,
+        flexShrink: 1,
     },
     statusInline: {
         fontSize: 13,
         opacity: 0.4,
         ...Typography.default('regular'),
+        minWidth: 0,
+        flexShrink: 1,
     },
     actions: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
+        minWidth: 0,
+        flexShrink: 1,
+        justifyContent: 'flex-end',
     },
     openSlot: {
         width: 26,

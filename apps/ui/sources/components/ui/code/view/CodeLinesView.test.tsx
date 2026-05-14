@@ -172,6 +172,58 @@ describe('CodeLinesView', () => {
         expect(highlighted[0]!.props.line.id).toBe('2');
     });
 
+    it('marks every row in highlightLineIds as highlighted while preserving highlightLineId', async () => {
+        const { CodeLinesView } = await import('./CodeLinesView');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<CodeLinesView
+                    virtualized={false}
+                    highlightLineId="2"
+                    highlightLineIds={new Set(['2', '3'])}
+                    lines={[
+                        {
+                            id: '1',
+                            sourceIndex: 0,
+                            kind: 'context',
+                            oldLine: 1,
+                            newLine: 1,
+                            renderPrefixText: '',
+                            renderCodeText: 'const x = 1;',
+                            renderIsHeaderLine: false,
+                            selectable: false,
+                        },
+                        {
+                            id: '2',
+                            sourceIndex: 1,
+                            kind: 'context',
+                            oldLine: 2,
+                            newLine: 2,
+                            renderPrefixText: '',
+                            renderCodeText: 'const y = 2;',
+                            renderIsHeaderLine: false,
+                            selectable: false,
+                        },
+                        {
+                            id: '3',
+                            sourceIndex: 2,
+                            kind: 'context',
+                            oldLine: 3,
+                            newLine: 3,
+                            renderPrefixText: '',
+                            renderCodeText: 'const z = 3;',
+                            renderIsHeaderLine: false,
+                            selectable: false,
+                        },
+                    ]}
+                />)).tree;
+
+        const rows = findAllByType(tree, 'CodeLineRow');
+        const highlightedLineIds = rows
+            .filter((r) => r.props.highlighted === true)
+            .map((r) => r.props.line.id);
+        expect(highlightedLineIds).toEqual(['2', '3']);
+    });
+
     it('does not downgrade advanced syntax highlighting mode', async () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
@@ -202,6 +254,155 @@ describe('CodeLinesView', () => {
         const rows = findAllByType(tree, 'CodeLineRow');
         expect(rows).toHaveLength(1);
         expect(rows[0]!.props.syntaxHighlighting.mode).toBe('advanced');
+    });
+
+    it('extends a range with Shift-click in an explicit interaction mode', async () => {
+        const { CodeLinesView } = await import('./CodeLinesView');
+
+        const onPressLine = vi.fn();
+        const onPressLineRange = vi.fn();
+        const lines = [
+            {
+                id: 'f:1',
+                sourceIndex: 0,
+                kind: 'file' as const,
+                oldLine: null,
+                newLine: 1,
+                renderPrefixText: '',
+                renderCodeText: 'one',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+            {
+                id: 'f:2',
+                sourceIndex: 1,
+                kind: 'file' as const,
+                oldLine: null,
+                newLine: 2,
+                renderPrefixText: '',
+                renderCodeText: 'two',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+            {
+                id: 'f:3',
+                sourceIndex: 2,
+                kind: 'file' as const,
+                oldLine: null,
+                newLine: 3,
+                renderPrefixText: '',
+                renderCodeText: 'three',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+        ];
+
+        const screen = await renderScreen(<CodeLinesView
+            virtualized={false}
+            interactionMode="comment"
+            lines={lines}
+            onPressLine={onPressLine}
+            onPressLineRange={onPressLineRange}
+        />);
+
+        const rows = findAllByType(screen.tree, 'CodeLineRow');
+        rows[0]!.props.onPressLine(lines[0]);
+        rows[2]!.props.onPressLine(lines[2], { nativeEvent: { shiftKey: true } });
+
+        expect(onPressLine).toHaveBeenCalledTimes(1);
+        expect(onPressLineRange).toHaveBeenCalledTimes(1);
+        expect(onPressLineRange.mock.calls[0]?.[0].map((line: any) => line.id)).toEqual(['f:1', 'f:2', 'f:3']);
+    });
+
+    it('does not start drag range selection in read mode', async () => {
+        const { CodeLinesView } = await import('./CodeLinesView');
+
+        const onPressLineRange = vi.fn();
+        const lines = [
+            {
+                id: 'f:1',
+                sourceIndex: 0,
+                kind: 'file' as const,
+                oldLine: null,
+                newLine: 1,
+                renderPrefixText: '',
+                renderCodeText: 'one',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+            {
+                id: 'f:2',
+                sourceIndex: 1,
+                kind: 'file' as const,
+                oldLine: null,
+                newLine: 2,
+                renderPrefixText: '',
+                renderCodeText: 'two',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+        ];
+
+        const screen = await renderScreen(<CodeLinesView
+            virtualized={false}
+            interactionMode="read"
+            lines={lines}
+            onPressLineRange={onPressLineRange}
+        />);
+
+        const rows = findAllByType(screen.tree, 'CodeLineRow');
+        expect(rows[0]!.props.onPressInLine).toBeUndefined();
+        expect(rows[1]!.props.onHoverLine).toBeUndefined();
+        expect(rows[1]!.props.onPressOutLine).toBeUndefined();
+        expect(onPressLineRange).not.toHaveBeenCalled();
+    });
+
+    it('uses explicit native range selection taps when range selection is active', async () => {
+        const { CodeLinesView } = await import('./CodeLinesView');
+
+        const onPressLine = vi.fn();
+        const onPressLineRange = vi.fn();
+        const lines = [
+            {
+                id: 'f:1',
+                sourceIndex: 0,
+                kind: 'file' as const,
+                oldLine: null,
+                newLine: 1,
+                renderPrefixText: '',
+                renderCodeText: 'one',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+            {
+                id: 'f:2',
+                sourceIndex: 1,
+                kind: 'file' as const,
+                oldLine: null,
+                newLine: 2,
+                renderPrefixText: '',
+                renderCodeText: 'two',
+                renderIsHeaderLine: false,
+                selectable: true,
+            },
+        ];
+
+        const screen = await renderScreen(<CodeLinesView
+            virtualized={false}
+            interactionMode="comment"
+            rangeSelectionActive
+            lines={lines}
+            onPressLine={onPressLine}
+            onPressLineRange={onPressLineRange}
+        />);
+
+        const rows = findAllByType(screen.tree, 'CodeLineRow');
+        rows[0]!.props.onPressLine(lines[0]);
+        rows[1]!.props.onPressLine(lines[1]);
+
+        expect(onPressLine).not.toHaveBeenCalled();
+        expect(onPressLineRange).toHaveBeenCalledTimes(1);
+        expect(onPressLineRange.mock.calls[0]?.[0].map((line: any) => line.id)).toEqual(['f:1', 'f:2']);
     });
 
     it('sets initialScrollIndex when scrollToLineId is provided', async () => {

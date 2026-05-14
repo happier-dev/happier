@@ -106,7 +106,7 @@ function extractErrorMessage(result: unknown): string | null {
     );
 }
 
-export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLevel }) => {
+export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLevel, sessionId }) => {
     const { theme } = useUnistyles();
     const { input } = tool;
     const errorMessage = tool.state === 'error' ? extractErrorMessage(tool.result) : null;
@@ -148,6 +148,7 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
                                         {basename}
                                     </Text>
                                     <ToolDiffView
+                                        sessionId={sessionId}
                                         filePath={change.filePath}
                                         oldText={change.oldText}
                                         newText={change.newText}

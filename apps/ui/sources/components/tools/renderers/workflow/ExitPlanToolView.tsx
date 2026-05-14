@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
@@ -11,6 +11,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -363,7 +364,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                         activeOpacity={0.7}
                                     >
                                         {isSendingChangeRequest ? (
-                                            <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
+                                            <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
                                         ) : (
                                             <Text style={styles.approveButtonText}>
                                                 {t('tools.exitPlanMode.requestChangesSend')}
@@ -385,7 +386,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                     activeOpacity={0.7}
                                 >
                                     {isRejecting ? (
-                                        <ActivityIndicator size="small" color={theme.colors.text.primary} />
+                                        <ActivitySpinner size="small" color={theme.colors.text.primary} />
                                     ) : (
                                         <>
                                             <Ionicons name="close" size={18} color={theme.colors.text.primary} />
@@ -420,7 +421,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                       activeOpacity={0.7}
                                   >
                                       {isApproving ? (
-                                          <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
+                                          <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
                                     ) : (
                                         <>
                                             <Ionicons name="checkmark" size={18} color={theme.colors.button.primary.tint} />

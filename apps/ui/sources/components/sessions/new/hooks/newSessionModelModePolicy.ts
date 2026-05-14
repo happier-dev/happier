@@ -22,6 +22,7 @@ export function resolveInitialNewSessionModelMode(params: Readonly<{
     const draft = normalizeModelId(params.draftModelMode);
     if (draft) {
         if (params.modelConfig.supportsFreeform === true) return draft;
+        if (params.modelConfig.dynamicProbe === 'auto') return draft;
         const allowed = new Set<string>(['default', ...(params.modelConfig.allowedModes ?? [])]);
         if (allowed.has(draft)) return draft;
     }
@@ -52,7 +53,9 @@ export function coerceNewSessionModelMode(params: Readonly<{
     if (preflight && Array.isArray(preflight.availableModels) && preflight.availableModels.length > 0) {
         if (preflight.supportsFreeform === true) return mode;
         const allowed = new Set<string>(['default', ...preflight.availableModels.map((m) => normalizeModelId(m.id)).filter(Boolean)]);
-        return allowed.has(mode) ? mode : (normalizeModelId(params.modelConfig.defaultMode) || 'default');
+        if (allowed.has(mode)) return mode;
+        if (params.modelConfig.dynamicProbe === 'auto') return mode;
+        return normalizeModelId(params.modelConfig.defaultMode) || 'default';
     }
 
     if (params.modelConfig.supportsFreeform === true) return mode;

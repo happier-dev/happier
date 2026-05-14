@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 
@@ -20,6 +20,7 @@ import { Typography } from '@/constants/Typography';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -204,7 +205,7 @@ export const AddPhoneSettingsView = React.memo(function AddPhoneSettingsView() {
                             <View style={styles.qrBlock}>
                                 <View testID="add-phone-qr" style={{ width: 260, height: 260, alignItems: 'center', justifyContent: 'center' }}>
                                 {starting ? (
-                                    <ActivityIndicator size="small" color={theme.colors.text.primary} />
+                                    <ActivitySpinner size="small" color={theme.colors.text.primary} />
                                 ) : deepLink ? (
                                     <QRCode
                                         data={deepLink}

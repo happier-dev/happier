@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ScrollView, ActivityIndicator } from 'react-native';
+import { View, ScrollView } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -18,6 +18,7 @@ import { layout } from '@/components/ui/layout/layout';
 import { ApprovalSessionContextCard } from './ApprovalSessionContextCard';
 import { ActionApprovalFieldsCard } from './ActionApprovalFieldsCard';
 import { ApprovalPreviewCard } from './ApprovalPreviewCard';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -102,7 +103,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
   const router = useRouter();
   const { theme } = useUnistyles();
   const artifact = useArtifact(props.artifactId);
-  const [isLoading, setIsLoading] = React.useState(!artifact?.body);
+  const [isLoading, setIsLoading] = React.useState(artifact?.body == null);
   const [error, setError] = React.useState<string | null>(null);
   const [isDeciding, setIsDeciding] = React.useState(false);
 
@@ -114,7 +115,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
   );
 
   React.useEffect(() => {
-    if (artifact?.body !== undefined) return;
+    if (artifact?.body != null) return;
 
     let cancelled = false;
 
@@ -213,7 +214,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
     return (
       <View style={styles.container}>
         <View style={styles.loading}>
-          <ActivityIndicator size="large" color={theme.colors.text.secondary} />
+          <ActivitySpinner size="large" color={theme.colors.text.secondary} />
         </View>
       </View>
     );

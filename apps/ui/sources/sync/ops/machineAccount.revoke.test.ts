@@ -8,7 +8,11 @@ vi.mock('@/sync/http/client', () => ({
     serverFetch: (...args: any[]) => mockServerFetch(...args),
 }));
 
-import { machineRevokeFromAccount } from './machineAccount';
+import {
+    machineClearReplacementFromAccount,
+    machineReplaceInAccount,
+    machineRevokeFromAccount,
+} from './machineAccount';
 
 function makeResponse(opts: Readonly<{ ok: boolean; status?: number; json?: unknown; text?: string }>) {
     return {
@@ -46,3 +50,55 @@ describe('machineRevokeFromAccount', () => {
     });
 });
 
+describe('machineReplaceInAccount', () => {
+    beforeEach(() => {
+        mockServerFetch.mockReset();
+    });
+
+    it('posts an explicit replacement machine id to the replacement endpoint as json', async () => {
+        mockServerFetch.mockResolvedValue(makeResponse({ ok: true }));
+
+        await expect(machineReplaceInAccount({
+            oldMachineId: 'm-old',
+            replacementMachineId: 'm-new',
+            confirmActiveOldMachine: true,
+        })).resolves.toEqual({ ok: true });
+        expect(mockServerFetch).toHaveBeenCalledWith(
+            '/v1/machines/m-old/replacement',
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({
+                    'Content-Type': 'application/json',
+                }),
+                body: JSON.stringify({
+                    replacementMachineId: 'm-new',
+                    confirmActiveOldMachine: true,
+                }),
+            }),
+        );
+    });
+
+    it('requires both machine ids before posting a replacement', async () => {
+        await expect(machineReplaceInAccount({
+            oldMachineId: 'm-old',
+            replacementMachineId: ' ',
+        })).resolves.toEqual({ ok: false, status: 400, error: 'replacement_machine_id_required' });
+        expect(mockServerFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('machineClearReplacementFromAccount', () => {
+    beforeEach(() => {
+        mockServerFetch.mockReset();
+    });
+
+    it('deletes the replacement relation for a machine', async () => {
+        mockServerFetch.mockResolvedValue(makeResponse({ ok: true }));
+
+        await expect(machineClearReplacementFromAccount('m-old')).resolves.toEqual({ ok: true });
+        expect(mockServerFetch).toHaveBeenCalledWith(
+            '/v1/machines/m-old/replacement',
+            expect.objectContaining({ method: 'DELETE' }),
+        );
+    });
+});

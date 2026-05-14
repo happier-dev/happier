@@ -1,5 +1,18 @@
+import { requireOptionalNativeModule } from 'expo-modules-core';
+import { Platform } from 'react-native';
+
 import type { NativePickedFile } from './nativePickFiles';
 import { isBrowserFile, sanitizePickedName } from './pickedFileNormalization';
+
+type ImagePickerNativeModule = Readonly<{
+    launchImageLibraryAsync?: unknown;
+}>;
+
+function isImagePickerNativeModuleAvailable(): boolean {
+    if (Platform.OS === 'web') return true;
+    const nativeModule = requireOptionalNativeModule<ImagePickerNativeModule>('ExponentImagePicker');
+    return typeof nativeModule?.launchImageLibraryAsync === 'function';
+}
 
 function sanitizePickedNameFromAsset(asset: unknown): string {
     const anyAsset = asset as any;
@@ -8,6 +21,8 @@ function sanitizePickedNameFromAsset(asset: unknown): string {
 
 export async function nativePickImages(params?: Readonly<{ multiple?: boolean }>): Promise<NativePickedFile[]> {
     const multiple = params?.multiple !== false;
+    if (!isImagePickerNativeModuleAvailable()) return [];
+
     const ImagePicker: any = await import('expo-image-picker');
     const requestMediaLibraryPermissionsAsync: any =
         ImagePicker.requestMediaLibraryPermissionsAsync

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Octicons } from '@expo/vector-icons';
 
@@ -45,8 +45,22 @@ import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTa
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { workspaceCreateDirectory, workspaceWriteFile } from '@/sync/ops/workspaceFileSystem';
 import { SourceControlUnavailableState } from '@/components/workspaces/scm/states';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const Ionicons = SafeIonicons;
+
+const repositoryTreeBrowserStyles = StyleSheet.create({
+    root: {
+        flex: 1,
+    },
+    dropZone: {
+        flex: 1,
+    },
+    content: {
+        flex: 1,
+        position: 'relative',
+    },
+});
 
 export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     sessionId: string;
@@ -202,32 +216,57 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     const canDownload = React.useCallback((_transferSizeBytes?: number | null) => {
         return transferAvailability.available;
     }, [transferAvailability.available]);
+    const handleExpandedPathsChange = React.useCallback((paths: string[]) => {
+        storage.getState().setSessionRepositoryTreeExpandedPaths(props.sessionId, paths);
+    }, [props.sessionId]);
+    const handleRequestDownload = React.useCallback((params: Readonly<{ path: string; asZip: boolean }>) => {
+        return transfers.startDownload(params);
+    }, [transfers.startDownload]);
     const rowActions = useRepositoryTreeRowActions({
         sessionId: props.sessionId,
         writeActionsEnabled: allowCreateActions,
         expandedPaths,
-        onExpandedPathsChange: (paths) => storage.getState().setSessionRepositoryTreeExpandedPaths(props.sessionId, paths),
+        onExpandedPathsChange: handleExpandedPathsChange,
         onRequestRefresh: refresh,
-        onRequestDownload: (params) => transfers.startDownload(params),
+        onRequestDownload: handleRequestDownload,
     });
+
+    const renderRowActions = React.useCallback((node: Parameters<NonNullable<React.ComponentProps<typeof WorkspaceRepositoryTreeList>['renderRowActions']>>[0]) => {
+        if (node.type !== 'file' && node.type !== 'directory') return null;
+        const nodeKind: 'file' | 'directory' = node.type === 'file' ? 'file' : 'directory';
+        const transferSizeBytes = node.type === 'file' && typeof node.sizeBytes === 'number'
+            ? node.sizeBytes
+            : null;
+        return (
+            <RepositoryTreeRowActionsMenu
+                path={node.path}
+                kind={nodeKind}
+                disableWriteActions={!allowCreateActions}
+                downloadActionsEnabled={canDownload(transferSizeBytes)}
+                onSelect={(itemId) => rowActions.onSelectRowMenuItem({ path: node.path, type: nodeKind }, itemId)}
+            />
+        );
+    }, [allowCreateActions, canDownload, rowActions]);
+
+    const handleFilesDropped = React.useCallback(async (event: any) => {
+        const dataTransfer = event?.dataTransfer;
+        if (!dataTransfer) return;
+        const dropped = await readWebDroppedEntries(dataTransfer as any);
+        const entries: WorkspaceUploadEntry[] = dropped.map((entry) => ({
+            kind: 'web',
+            file: entry.file,
+            relativePath: entry.relativePath,
+        }));
+        const res = await transfers.startUploads({ entries, destinationDir: webDropState.dropDestinationDir });
+        if (!res.ok) {
+            Modal.alert(t('common.error'), res.error);
+        }
+    }, [transfers.startUploads, webDropState.dropDestinationDir]);
 
     const dropZoneHandlers = useWebFileDropZone({
         enabled: allowCreateActions && Platform.OS === 'web',
         onFileDragActiveChange: webDropState.onFileDragActiveChange,
-        onFilesDropped: async (event: any) => {
-            const dataTransfer = event?.dataTransfer;
-            if (!dataTransfer) return;
-            const dropped = await readWebDroppedEntries(dataTransfer as any);
-            const entries: WorkspaceUploadEntry[] = dropped.map((entry) => ({
-                kind: 'web',
-                file: entry.file,
-                relativePath: entry.relativePath,
-            }));
-            const res = await transfers.startUploads({ entries, destinationDir: webDropState.dropDestinationDir });
-            if (!res.ok) {
-                Modal.alert(t('common.error'), res.error);
-            }
-        },
+        onFilesDropped: handleFilesDropped,
     });
 
     const dropZoneHandlersWithRoot = React.useMemo(() => ({
@@ -244,7 +283,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             }
             dropZoneHandlers.onDragOver(event);
         },
-    }), [dropZoneHandlers, webDropState]);
+    }), [dropZoneHandlers, webDropState.setRootDropTarget]);
 
     const collapseAll = React.useCallback(() => {
         storage.getState().setSessionRepositoryTreeExpandedPaths(props.sessionId, []);
@@ -344,7 +383,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         if (!res.ok) {
             Modal.alert(t('common.error'), res.error);
         }
-    }, [transfers]);
+    }, [transfers.startUploads]);
 
     const startNativeUploads = React.useCallback(async () => {
         const picked = await nativePickFiles({ multiple: true });
@@ -362,7 +401,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         if (!res.ok) {
             Modal.alert(t('common.error'), res.error);
         }
-    }, [transfers, uploadDestinationDir]);
+    }, [transfers.startUploads, uploadDestinationDir]);
 
     const selectUploadDestination = React.useCallback(async () => {
         const nextDestination = await promptRepositoryUploadDestination(uploadDestinationDir);
@@ -481,7 +520,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                 priority: 10,
                 order: 6,
                 icon: treeRootLoading ? (
-                    <ActivityIndicator testID="repository-tree-refresh-loading" size="small" color={theme.colors.text.secondary} />
+                    <ActivitySpinner testID="repository-tree-refresh-loading" size="small" color={theme.colors.text.secondary} />
                 ) : (
                     <Octicons name="sync" size={16} color={theme.colors.text.secondary} />
                 ),
@@ -612,8 +651,147 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         );
     }, [onSelectUploadMenuItem, uploadMenuConfig.matchTriggerWidth, uploadMenuItems, uploadMenuOpen]);
 
+    const repositoryTreeTheme = React.useMemo(() => theme, [
+        theme.colors.state.danger.foreground,
+        theme.colors.state.neutral.foreground,
+        theme.colors.state.success.foreground,
+        theme.colors.surface.base,
+        theme.colors.surface.pressed,
+        theme.colors.text.link,
+        theme.colors.text.secondary,
+    ]);
+
+    const handleShowAllRepositoryFiles = React.useCallback(() => {
+        setShowChangedOnly(false);
+    }, []);
+
+    const handleSearchFilePress = React.useCallback((file: FileItem) => {
+        props.onOpenFile(file.fullPath);
+    }, [props.onOpenFile]);
+
+    const handleSearchFilePressPinned = React.useCallback((file: FileItem) => {
+        (props.onOpenFilePinned ?? props.onOpenFile)(file.fullPath);
+    }, [props.onOpenFile, props.onOpenFilePinned]);
+
+    const dropZoneContent = React.useMemo(() => (
+        <>
+            <View style={repositoryTreeBrowserStyles.content}>
+                {showChangedOnly ? (
+                    <RepositoryTreeChangedFilesPane
+                        sessionId={props.sessionId}
+                        scmSnapshot={scmSnapshot}
+                        searchQuery={searchQuery}
+                        onSearchQueryChange={setSearchQuery}
+                        onShowAllRepositoryFiles={handleShowAllRepositoryFiles}
+                        onOpenFile={props.onOpenFile}
+                        onOpenFilePinned={props.onOpenFilePinned}
+                    />
+                ) : shouldShowSearchResults ? (
+                    <SearchResultsList
+                        theme={repositoryTreeTheme}
+                        isSearching={isSearching}
+                        searchQuery={searchQuery}
+                        searchResults={searchResults}
+                        onFilePress={handleSearchFilePress}
+                        onFilePressPinned={handleSearchFilePressPinned}
+                        onLayout={scrollFades.onViewportLayout}
+                        onContentSizeChange={scrollFades.onContentSizeChange}
+                        onScroll={scrollFades.onScroll}
+                        scrollEventThrottle={16}
+                    />
+                ) : workspaceCacheKey && workspaceMachineId && workspaceRootPath ? (
+                    <WorkspaceRepositoryTreeList
+                        theme={repositoryTreeTheme}
+                        workspaceCacheKey={workspaceCacheKey}
+                        machineId={workspaceMachineId}
+                        rootPath={workspaceRootPath}
+                        serverId={workspaceServerId}
+                        reloadToken={treeReloadNonce}
+                        detailsMode={detailsMode}
+                        onWebDropTargetChange={webDropState.onDropTargetChange}
+                        webDropHoverPath={webDropState.dropHoverPath}
+                        expandedPaths={expandedPaths}
+                        onExpandedPathsChange={handleExpandedPathsChange}
+                        onOpenFile={props.onOpenFile}
+                        onOpenFilePinned={props.onOpenFilePinned}
+                        scmSnapshot={scmSnapshot}
+                        showInlineLoadingHeader={false}
+                        onRootLoadingChange={setTreeRootLoading}
+                        onLayout={scrollFades.onViewportLayout}
+                        onContentSizeChange={scrollFades.onContentSizeChange}
+                        onScroll={scrollFades.onScroll}
+                        scrollEventThrottle={16}
+                        renderRowActions={renderRowActions}
+                    />
+                ) : (
+                    <View style={repositoryTreeBrowserStyles.root}>
+                        <SourceControlUnavailableState onRetry={refresh} />
+                    </View>
+                )}
+                <RepositoryTreeDropOverlay
+                    visible={webDropState.fileDragActive}
+                    destinationLabel={webDropState.dropDestinationDir || t('files.projectRoot')}
+                />
+                <ScrollEdgeFades
+                    color={repositoryTreeTheme.colors.surface.base}
+                    size={18}
+                    edges={scrollFades.visibility}
+                />
+                <ScrollEdgeIndicators
+                    edges={scrollFades.visibility}
+                    color={repositoryTreeTheme.colors.text.secondary}
+                    size={14}
+                    opacity={0.35}
+                />
+            </View>
+            <RepositoryTreeTransferStatusBar
+                uploadState={transfers.uploadState}
+                downloadState={transfers.downloadState}
+                onCancelUploads={transfers.cancelUploads}
+                onCancelDownload={transfers.cancelDownload}
+            />
+        </>
+    ), [
+        detailsMode,
+        expandedPaths,
+        handleExpandedPathsChange,
+        handleSearchFilePress,
+        handleSearchFilePressPinned,
+        handleShowAllRepositoryFiles,
+        isSearching,
+        props.onOpenFile,
+        props.onOpenFilePinned,
+        props.sessionId,
+        refresh,
+        renderRowActions,
+        repositoryTreeTheme,
+        scmSnapshot,
+        scrollFades.onContentSizeChange,
+        scrollFades.onScroll,
+        scrollFades.onViewportLayout,
+        scrollFades.visibility,
+        searchQuery,
+        searchResults,
+        setSearchQuery,
+        shouldShowSearchResults,
+        showChangedOnly,
+        transfers.cancelDownload,
+        transfers.cancelUploads,
+        transfers.downloadState,
+        transfers.uploadState,
+        treeReloadNonce,
+        webDropState.dropDestinationDir,
+        webDropState.dropHoverPath,
+        webDropState.fileDragActive,
+        webDropState.onDropTargetChange,
+        workspaceCacheKey,
+        workspaceMachineId,
+        workspaceRootPath,
+        workspaceServerId,
+    ]);
+
     return (
-        <View style={{ flex: 1 }}>
+        <View style={repositoryTreeBrowserStyles.root}>
             {showSearchBar ? (
                 <FilesystemBrowserToolbarChrome
                     testID="repository-tree-toolbar"
@@ -659,97 +837,8 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                     })}
                 </>
             ) : null}
-            <WebDropTargetView testID="repository-tree-drop-zone" style={{ flex: 1 }} {...dropZoneHandlersWithRoot}>
-                <View style={{ flex: 1, position: 'relative' }}>
-                    {showChangedOnly ? (
-                        <RepositoryTreeChangedFilesPane
-                            sessionId={props.sessionId}
-                            scmSnapshot={scmSnapshot}
-                            searchQuery={searchQuery}
-                            onSearchQueryChange={setSearchQuery}
-                            onShowAllRepositoryFiles={() => setShowChangedOnly(false)}
-                            onOpenFile={props.onOpenFile}
-                            onOpenFilePinned={props.onOpenFilePinned}
-                        />
-                    ) : shouldShowSearchResults ? (
-                        <SearchResultsList
-                            theme={theme}
-                            isSearching={isSearching}
-                            searchQuery={searchQuery}
-                            searchResults={searchResults}
-                            onFilePress={(file) => props.onOpenFile(file.fullPath)}
-                            onFilePressPinned={(file) => (props.onOpenFilePinned ?? props.onOpenFile)(file.fullPath)}
-                            onLayout={scrollFades.onViewportLayout}
-                            onContentSizeChange={scrollFades.onContentSizeChange}
-                            onScroll={scrollFades.onScroll}
-                            scrollEventThrottle={16}
-                        />
-                    ) : workspaceCacheKey && workspaceMachineId && workspaceRootPath ? (
-                        <WorkspaceRepositoryTreeList
-                            theme={theme}
-                            workspaceCacheKey={workspaceCacheKey}
-                            machineId={workspaceMachineId}
-                            rootPath={workspaceRootPath}
-                            serverId={workspaceServerId}
-                            reloadToken={treeReloadNonce}
-                            detailsMode={detailsMode}
-                            onWebDropTargetChange={webDropState.onDropTargetChange}
-                            webDropHoverPath={webDropState.dropHoverPath}
-                            expandedPaths={expandedPaths}
-                            onExpandedPathsChange={(paths) => storage.getState().setSessionRepositoryTreeExpandedPaths(props.sessionId, paths)}
-                            onOpenFile={props.onOpenFile}
-                            onOpenFilePinned={props.onOpenFilePinned}
-                            scmSnapshot={scmSnapshot}
-                            showInlineLoadingHeader={false}
-                            onRootLoadingChange={setTreeRootLoading}
-                            onLayout={scrollFades.onViewportLayout}
-                            onContentSizeChange={scrollFades.onContentSizeChange}
-                            onScroll={scrollFades.onScroll}
-                            scrollEventThrottle={16}
-	                            renderRowActions={(node) => {
-	                                if (node.type !== 'file' && node.type !== 'directory') return null;
-	                                const nodeKind: 'file' | 'directory' = node.type === 'file' ? 'file' : 'directory';
-	                                const transferSizeBytes = node.type === 'file' && typeof node.sizeBytes === 'number'
-	                                    ? node.sizeBytes
-	                                    : null;
-	                                return (
-	                                    <RepositoryTreeRowActionsMenu
-	                                        path={node.path}
-	                                        kind={nodeKind}
-	                                        disableWriteActions={!allowCreateActions}
-	                                        downloadActionsEnabled={canDownload(transferSizeBytes)}
-	                                        onSelect={(itemId) => rowActions.onSelectRowMenuItem({ path: node.path, type: nodeKind }, itemId)}
-	                                    />
-	                                );
-	                            }}
-	                        />
-                    ) : (
-                        <View style={{ flex: 1 }}>
-                            <SourceControlUnavailableState onRetry={refresh} />
-                        </View>
-                    )}
-                    <RepositoryTreeDropOverlay
-                        visible={webDropState.fileDragActive}
-                        destinationLabel={webDropState.dropDestinationDir || t('files.projectRoot')}
-                    />
-                    <ScrollEdgeFades
-                        color={theme.colors.surface.base}
-                        size={18}
-                        edges={scrollFades.visibility}
-                    />
-                    <ScrollEdgeIndicators
-                        edges={scrollFades.visibility}
-                        color={theme.colors.text.secondary}
-                        size={14}
-                        opacity={0.35}
-                    />
-                </View>
-                <RepositoryTreeTransferStatusBar
-                    uploadState={transfers.uploadState}
-                    downloadState={transfers.downloadState}
-                    onCancelUploads={transfers.cancelUploads}
-                    onCancelDownload={transfers.cancelDownload}
-                />
+            <WebDropTargetView testID="repository-tree-drop-zone" style={repositoryTreeBrowserStyles.dropZone} {...dropZoneHandlersWithRoot}>
+                {dropZoneContent}
             </WebDropTargetView>
         </View>
     );

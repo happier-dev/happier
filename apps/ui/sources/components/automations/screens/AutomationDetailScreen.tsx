@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -19,6 +19,7 @@ import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -206,7 +207,7 @@ export function AutomationDetailScreen() {
         return (
             <ItemList>
                 <View style={styles.loading}>
-                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 </View>
             </ItemList>
         );
@@ -252,7 +253,7 @@ export function AutomationDetailScreen() {
                         subtitleLines={0}
                         onPress={() => void handleRunNow()}
                         rightElement={runNowState === 'running'
-                            ? <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                            ? <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                             : runNowState === 'queued'
                                 ? <Text style={{ color: theme.colors.text.secondary, fontSize: 13, fontWeight: '600' }}>{t('automations.detail.runNowQueuedBadge')}</Text>
                                 : undefined}

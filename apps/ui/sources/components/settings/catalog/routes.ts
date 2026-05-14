@@ -8,6 +8,7 @@ export const SETTINGS_ROUTES = {
     machinesThisComputer: '/settings/machines/this-computer',
     remoteHosts: '/settings/remote-hosts',
     appearance: '/settings/appearance',
+    keyboard: '/settings/keyboard',
     language: '/settings/language',
     features: '/settings/features',
     pets: '/settings/pets',

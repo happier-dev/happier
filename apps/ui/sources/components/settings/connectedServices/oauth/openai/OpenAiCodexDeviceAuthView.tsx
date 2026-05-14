@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Linking, Pressable, View } from 'react-native';
+import { Linking, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import tweetnacl from 'tweetnacl';
@@ -32,6 +32,7 @@ import {
 import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthProxyBundle';
 import { resolveConnectedServiceOauthErrorMessage } from '../resolveConnectedServiceOauthErrorMessage';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -302,7 +303,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
           ) : (
             <>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                {polling ? <ActivityIndicator size="small" color={theme.colors.text.secondary} /> : null}
+                {polling ? <ActivitySpinner size="small" color={theme.colors.text.secondary} /> : null}
                 <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.deviceAuth.waiting')}</Text>
               </View>
               {error ? (

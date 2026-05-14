@@ -132,8 +132,8 @@ vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
     MachineSelector: () => null,
 }));
 
-vi.mock('@/components/sessions/new/components/PathSelector', () => ({
-    PathSelector: () => null,
+vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({
+    PathSelectionList: () => null,
 }));
 
 function buildProps() {

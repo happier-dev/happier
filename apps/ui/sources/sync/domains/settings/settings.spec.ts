@@ -128,6 +128,15 @@ describe('settings', () => {
             });
         });
 
+        it('includes session folder settings by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).sessionFoldersV1).toEqual({
+                v: 1,
+                folders: [],
+            });
+            expect((settings as any).sessionFolderViewModeV1).toBe('off');
+        });
+
         it('includes promptRegistrySourcesV1 by default', () => {
             const settings = settingsParse({});
             expect((settings as any).promptRegistrySourcesV1).toEqual({
@@ -235,6 +244,27 @@ describe('settings', () => {
             expect((parsed as any).featureToggles).toEqual({});
         });
 
+        it('parses account-synced keyboard shortcut settings without accepting malformed entries', () => {
+            const parsed = settingsParse({
+                commandPaletteEnabled: false,
+                keyboardShortcutsV2Enabled: true,
+                keyboardSingleKeyShortcutsEnabled: true,
+                keyboardShortcutDisabledCommandIdsV1: ['commandPalette.open', '', 123],
+                keyboardShortcutOverridesV1: {
+                    'commandPalette.open': [{ binding: 'Mod+K', conflictScope: 'global', nativeConsumable: false }],
+                    'bad.command': [{ binding: '' }, { nope: true }],
+                },
+            } as any);
+
+            expect(parsed.commandPaletteEnabled).toBe(false);
+            expect(parsed.keyboardShortcutsV2Enabled).toBe(true);
+            expect(parsed.keyboardSingleKeyShortcutsEnabled).toBe(true);
+            expect(parsed.keyboardShortcutDisabledCommandIdsV1).toEqual(['commandPalette.open']);
+            expect(parsed.keyboardShortcutOverridesV1).toEqual({
+                'commandPalette.open': [{ binding: 'Mod+K', conflictScope: 'global', nativeConsumable: false }],
+            });
+        });
+
         it('drops legacy exp* keys on parse (hard cutover)', () => {
             const parsed = settingsParse({
                 experiments: true,
@@ -256,6 +286,16 @@ describe('settings', () => {
             expect((parsed as any).expAutomations).toBeUndefined();
             expect((parsed as any).expZen).toBeUndefined();
             expect((parsed as any).expInboxFriends).toBeUndefined();
+        });
+
+        it('drops accidentally account-scoped session MRU order while preserving other unknown account settings', () => {
+            const parsed = settingsParse({
+                sessionMruOrderV1: ['server-a:session-a'],
+                unknownAccountSetting: 'preserved',
+            } as any);
+
+            expect((parsed as any).sessionMruOrderV1).toBeUndefined();
+            expect((parsed as any).unknownAccountSetting).toBe('preserved');
         });
 
         it('preserves explicit featureToggles when present', () => {
@@ -812,6 +852,55 @@ describe('settings', () => {
         it('defaults permission prompt surface settings', () => {
             const parsed = settingsParse({});
             expect((parsed as any).permissionPromptSurface).toBe('composer');
+        });
+
+        it('parses remembered engine selections and drops invalid entries', () => {
+            const parsed = settingsParse({
+                rememberLastEngineSelectionsV1: true,
+                lastEngineSelectionsByScopeV1: {
+                    'server-1:backend:codex': {
+                        v: 1,
+                        modelId: 'gpt-5.4',
+                        acpSessionModeId: 'plan',
+                        sessionConfigOptionOverrides: {
+                            v: 1,
+                            updatedAt: 123,
+                            overrides: {
+                                reasoning_effort: {
+                                    updatedAt: 123,
+                                    value: 'high',
+                                },
+                            },
+                        },
+                        updatedAt: 123,
+                    },
+                    'server-1:backend:broken': {
+                        v: 1,
+                        modelId: '',
+                        updatedAt: 123,
+                    },
+                },
+            } as any);
+
+            expect((parsed as any).rememberLastEngineSelectionsV1).toBe(true);
+            expect((parsed as any).lastEngineSelectionsByScopeV1).toEqual({
+                'server-1:backend:codex': {
+                    v: 1,
+                    modelId: 'gpt-5.4',
+                    acpSessionModeId: 'plan',
+                    sessionConfigOptionOverrides: {
+                        v: 1,
+                        updatedAt: 123,
+                        overrides: {
+                            reasoning_effort: {
+                                updatedAt: 123,
+                                value: 'high',
+                            },
+                        },
+                    },
+                    updatedAt: 123,
+                },
+            });
         });
     });
 

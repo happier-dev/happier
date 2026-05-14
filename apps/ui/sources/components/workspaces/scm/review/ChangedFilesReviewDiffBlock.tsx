@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Image, Platform, View, useWindowDimensions } from 'react-native';
+import { Image, Platform, View, useWindowDimensions } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 
 import { Text } from '@/components/ui/text/Text';
@@ -19,6 +19,7 @@ import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/rev
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { ChangedFilesReviewDiffStateSource } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffStore';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type ReviewDiffState = Readonly<{
     status: 'idle' | 'loading' | 'loaded' | 'error';
@@ -118,7 +119,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
                         loadingContainerStyle,
                     ]}
                 >
-                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 </View>
             </View>
         );
@@ -137,7 +138,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
             if (imagePreview.status === 'loading') {
                 return (
                     <View testID={blockTestId} style={[{ paddingHorizontal: 16, paddingVertical: 12 }, noOverflowAnchor]}>
-                        <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                     </View>
                 );
             }

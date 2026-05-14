@@ -2,14 +2,22 @@ import { Appearance } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
 
-import { darkTheme, lightTheme } from './theme';
-import { loadThemePreference } from './sync/domains/state/persistence';
+import { loadThemeRuntimeLocalState } from './sync/domains/state/persistence';
+import {
+    resolveEffectiveThemeRuntimeBackground,
+    resolveThemeRuntimeStartupThemes,
+    resolveThemeRuntimeVisualTheme,
+} from './theme/profiles/themeProfileRuntime';
 import { fireAndForget } from './utils/system/fireAndForget';
 
-const appThemes = {
-    light: lightTheme,
-    dark: darkTheme
-};
+const themeRuntimeLocalState = loadThemeRuntimeLocalState();
+const themePreference = themeRuntimeLocalState.themePreference;
+const startupThemes = resolveThemeRuntimeStartupThemes({
+    themeProfiles: themeRuntimeLocalState.themeProfiles,
+    themePreference,
+    systemTheme: Appearance.getColorScheme(),
+});
+const appThemes = startupThemes.themes;
 
 const breakpoints = {
     xs: 0, // <-- make sure to register one breakpoint with value 0
@@ -27,17 +35,12 @@ declare module 'react-native-unistyles' {
     export interface UnistylesBreakpoints extends AppBreakpoints { }
 }
 
-const themePreference = loadThemePreference();
-
 const normalizeColorScheme = (colorScheme: ReturnType<typeof Appearance.getColorScheme>): 'light' | 'dark' => {
     return colorScheme === 'dark' ? 'dark' : 'light';
 };
 
 const getInitialTheme = (): 'light' | 'dark' => {
-    if (themePreference === 'adaptive') {
-        return normalizeColorScheme(Appearance.getColorScheme());
-    }
-    return themePreference;
+    return resolveThemeRuntimeVisualTheme(themePreference, normalizeColorScheme(Appearance.getColorScheme()));
 };
 
 const settings = {
@@ -59,10 +62,12 @@ function isDesktopActivityOverlayWindow(): boolean {
     return window.location.pathname.replace(/\/+$/u, '') === '/desktop/activity-overlay';
 }
 
-const applyRootBackgroundColor = (themeName: 'light' | 'dark') => {
-    const color = themeName === 'dark'
-        ? appThemes.dark.colors.background.canvas
-        : appThemes.light.colors.background.canvas;
+const applyRootBackgroundColor = (systemTheme: 'light' | 'dark') => {
+    const color = resolveEffectiveThemeRuntimeBackground({
+        themes: appThemes,
+        themePreference,
+        systemTheme,
+    });
     UnistylesRuntime.setRootViewBackgroundColor(color);
     fireAndForget(SystemUI.setBackgroundColorAsync(color), { tag: 'unistyles.setRootBackgroundColor' });
 };
@@ -73,7 +78,7 @@ const setRootBackgroundColor = () => {
         return;
     }
 
-    applyRootBackgroundColor(getInitialTheme());
+    applyRootBackgroundColor(normalizeColorScheme(Appearance.getColorScheme()));
 };
 
 setRootBackgroundColor();

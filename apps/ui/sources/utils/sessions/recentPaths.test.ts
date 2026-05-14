@@ -67,21 +67,35 @@ describe('getRecentPathsForMachine', () => {
         };
     });
 
-    it('includes session paths that rebound to the requested machine through the canonical reachable target', async () => {
+    it('does not include same-host session paths that have no explicit replacement', async () => {
         const { getRecentPathsForMachine } = await import('./recentPaths');
 
         const session = createSession({
             id: 'session-1',
-            machineId: 'machine-stale',
+            machineId: 'machine-other',
             path: '/Users/test/workspace/rebound',
             updatedAt: 25,
         });
 
         storageState = {
             ...storageState,
+            machines: {
+                'machine-target': {
+                    id: 'machine-target',
+                    active: true,
+                    activeAt: 100,
+                    metadata: { host: 'host.local' },
+                },
+                'machine-other': {
+                    id: 'machine-other',
+                    active: false,
+                    activeAt: 1,
+                    metadata: { host: 'host.local' },
+                },
+            },
             sessions: {
                 'session-1': {
-                    active: true,
+                    active: false,
                     updatedAt: 25,
                     metadata: session.metadata,
                 },
@@ -90,7 +104,7 @@ describe('getRecentPathsForMachine', () => {
                 sessionId === 'session-1'
                     ? {
                         key: {
-                            machineId: 'machine-target',
+                            machineId: 'machine-other',
                             rootPath: '/Users/test/workspace/rebound',
                         },
                     }
@@ -101,24 +115,42 @@ describe('getRecentPathsForMachine', () => {
             machineId: 'machine-target',
             recentMachinePaths: [],
             sessions: [session],
-        })).toEqual(['/Users/test/workspace/rebound']);
+        })).toEqual([]);
     });
 
-    it('uses the canonical reachable base path when the stored session path is stale after handoff', async () => {
+    it('includes paths from explicitly replaced old machines for the current machine', async () => {
         const { getRecentPathsForMachine } = await import('./recentPaths');
 
         const session = createSession({
             id: 'session-1',
-            machineId: 'machine-stale',
+            machineId: 'machine-old',
             path: '/Users/test/workspace/stale',
             updatedAt: 25,
         });
 
         storageState = {
             ...storageState,
+            machines: {
+                'machine-old': {
+                    id: 'machine-old',
+                    active: false,
+                    activeAt: 1,
+                    replacedByMachineId: 'machine-target',
+                    replacedAt: 100,
+                    replacementReason: 'manual_repair',
+                    replacementSource: 'manual',
+                    metadata: { host: 'target.local' },
+                },
+                'machine-target': {
+                    id: 'machine-target',
+                    active: true,
+                    activeAt: 10,
+                    metadata: { host: 'target.local' },
+                },
+            },
             sessions: {
                 'session-1': {
-                    active: true,
+                    active: false,
                     updatedAt: 25,
                     metadata: session.metadata,
                 },
@@ -141,18 +173,64 @@ describe('getRecentPathsForMachine', () => {
         })).toEqual(['/Volumes/target/workspace/rebound']);
     });
 
-    it('uses the reachable target base path instead of stale session metadata paths after handoff', async () => {
+    it('canonicalizes local recent path entries through explicit machine replacement', async () => {
+        const { getRecentPathsForMachine } = await import('./recentPaths');
+
+        storageState = {
+            ...storageState,
+            machines: {
+                'machine-old': {
+                    id: 'machine-old',
+                    active: false,
+                    activeAt: 1,
+                    replacedByMachineId: 'machine-target',
+                    replacedAt: 100,
+                    replacementReason: 'manual_repair',
+                    replacementSource: 'manual',
+                    metadata: { host: 'target.local' },
+                },
+                'machine-target': {
+                    id: 'machine-target',
+                    active: true,
+                    activeAt: 10,
+                    metadata: { host: 'target.local' },
+                },
+            },
+        };
+
+        expect(getRecentPathsForMachine({
+            machineId: 'machine-target',
+            recentMachinePaths: [{ machineId: 'machine-old', path: '/Users/test/workspace/local' }],
+            sessions: [],
+        })).toEqual(['/Users/test/workspace/local']);
+    });
+
+    it('keeps recent paths stable when same-host activeAt values flip', async () => {
         const { getRecentPathsForMachine } = await import('./recentPaths');
 
         const session = createSession({
             id: 'session-1',
-            machineId: 'machine-stale',
-            path: '/Users/test/workspace/stale-path',
+            machineId: 'machine-b',
+            path: '/Users/test/workspace/other',
             updatedAt: 25,
         });
 
         storageState = {
             ...storageState,
+            machines: {
+                'machine-target': {
+                    id: 'machine-target',
+                    active: true,
+                    activeAt: 100,
+                    metadata: { host: 'host.local' },
+                },
+                'machine-b': {
+                    id: 'machine-b',
+                    active: true,
+                    activeAt: 200,
+                    metadata: { host: 'host.local' },
+                },
+            },
             sessions: {
                 'session-1': {
                     active: true,
@@ -164,17 +242,44 @@ describe('getRecentPathsForMachine', () => {
                 sessionId === 'session-1'
                     ? {
                         key: {
-                            machineId: 'machine-target',
-                            rootPath: '/Users/test/workspace/live-path',
+                            machineId: 'machine-b',
+                            rootPath: '/Users/test/workspace/other',
                         },
                     }
                     : null,
         };
 
-        expect(getRecentPathsForMachine({
+        const first = getRecentPathsForMachine({
             machineId: 'machine-target',
-            recentMachinePaths: [],
+            recentMachinePaths: [{ machineId: 'machine-target', path: '/Users/test/workspace/current' }],
             sessions: [session],
-        })).toEqual(['/Users/test/workspace/live-path']);
+        });
+
+        storageState = {
+            ...storageState,
+            machines: {
+                'machine-target': {
+                    id: 'machine-target',
+                    active: true,
+                    activeAt: 300,
+                    metadata: { host: 'host.local' },
+                },
+                'machine-b': {
+                    id: 'machine-b',
+                    active: true,
+                    activeAt: 100,
+                    metadata: { host: 'host.local' },
+                },
+            },
+        };
+
+        const second = getRecentPathsForMachine({
+            machineId: 'machine-target',
+            recentMachinePaths: [{ machineId: 'machine-target', path: '/Users/test/workspace/current' }],
+            sessions: [session],
+        });
+
+        expect(first).toEqual(['/Users/test/workspace/current']);
+        expect(second).toEqual(first);
     });
 });

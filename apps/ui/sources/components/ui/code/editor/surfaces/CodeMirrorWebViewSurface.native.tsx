@@ -43,12 +43,19 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     const pendingInitRef = React.useRef<null | { doc: string }>(null);
     const lastDocRef = React.useRef(props.value);
     const pendingDocRequestRef = React.useRef(new Map<string, { resolve: () => void; timeoutId: any }>());
+    const latestValueRef = React.useRef(props.value);
+    const latestLanguageRef = React.useRef(props.language);
+    const latestReadOnlyRef = React.useRef(false);
 
     const wrapLines = props.wrapLines ?? true;
     const showLineNumbers = props.showLineNumbers ?? true;
     const readOnly = props.readOnly ?? false;
     const changeDebounceMs = typeof props.changeDebounceMs === 'number' ? props.changeDebounceMs : 250;
     const maxChunkBytes = typeof props.bridgeMaxChunkBytes === 'number' ? props.bridgeMaxChunkBytes : 64_000;
+
+    latestValueRef.current = props.value;
+    latestLanguageRef.current = props.language;
+    latestReadOnlyRef.current = readOnly;
 
     const html = React.useMemo(
         () =>
@@ -109,7 +116,7 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
 
     const sendInit = React.useCallback(() => {
         if (!readyRef.current) return;
-        const doc = pendingInitRef.current?.doc ?? props.value;
+        const doc = pendingInitRef.current?.doc ?? latestValueRef.current;
         pendingInitRef.current = null;
         lastDocRef.current = doc;
         postEnvelope({
@@ -117,11 +124,11 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
             type: 'init',
             payload: {
                 doc,
-                language: resolveCodeMirrorWebViewLanguageSpec(props.language),
-                readOnly,
+                language: resolveCodeMirrorWebViewLanguageSpec(latestLanguageRef.current),
+                readOnly: latestReadOnlyRef.current,
             },
         });
-    }, [postEnvelope, props.language, props.value, readOnly]);
+    }, [postEnvelope]);
 
     React.useEffect(() => {
         if (lastDocRef.current === props.value) return;

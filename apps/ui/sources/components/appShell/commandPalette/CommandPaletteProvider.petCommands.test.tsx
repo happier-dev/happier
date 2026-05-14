@@ -3,18 +3,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { PetCommandControls } from './buildCommandPaletteCommands';
+import type { KeyboardShortcutHandlers } from '@/keyboard';
 
 const applySettingsMock = vi.hoisted(() => vi.fn());
 const applyLocalSettingsMock = vi.hoisted(() => vi.fn());
 const resetDesktopActivityOverlayPositionMock = vi.hoisted(() => vi.fn(async () => {}));
 const captured = vi.hoisted(() => ({
     petControls: null as PetCommandControls | null,
+    shortcutLabelHandlers: null as KeyboardShortcutHandlers | null,
 }));
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
     useSegments: () => [],
 }));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ Platform: { OS: 'web' } });
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ logout: vi.fn(async () => {}) }),
@@ -23,7 +30,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 vi.mock('@/sync/domains/state/storage', () => ({
     storage: (selector: (state: unknown) => unknown) => selector({
         sessions: {},
-        localSettings: { commandPaletteEnabled: true },
+        settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] },
     }),
 }));
 
@@ -56,16 +63,28 @@ vi.mock('@/components/settings/pets/petSettingsCommandEvents', () => ({
     requestCodexPetRefresh: vi.fn(),
 }));
 
-vi.mock('@/hooks/ui/useGlobalKeyboard', () => ({
-    useGlobalKeyboard: () => {},
-}));
-
 vi.mock('@/modal', () => ({
     Modal: {
         alertAsync: vi.fn(async () => {}),
         show: vi.fn(),
     },
 }));
+
+vi.mock('@/keyboard', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/keyboard')>();
+    return {
+        ...actual,
+        KeyboardShortcutProvider: ({ children }: React.PropsWithChildren) => React.createElement('KeyboardShortcutProvider', null, children),
+        buildKeyboardShortcutLabels: (
+            platform: Parameters<typeof actual.buildKeyboardShortcutLabels>[0],
+            surface: Parameters<typeof actual.buildKeyboardShortcutLabels>[1],
+            options: NonNullable<Parameters<typeof actual.buildKeyboardShortcutLabels>[2]>,
+        ) => {
+            captured.shortcutLabelHandlers = options.handlers ?? null;
+            return actual.buildKeyboardShortcutLabels(platform, surface, options);
+        },
+    };
+});
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: () => ({
@@ -94,6 +113,7 @@ describe('CommandPaletteProvider pet commands', () => {
         applyLocalSettingsMock.mockClear();
         resetDesktopActivityOverlayPositionMock.mockClear();
         captured.petControls = null;
+        captured.shortcutLabelHandlers = null;
     });
 
     afterEach(() => {
@@ -119,5 +139,14 @@ describe('CommandPaletteProvider pet commands', () => {
             desktopPetOverlayEnabledOverride: 'disabled',
             desktopOverlayEnabled: false,
         });
+    });
+
+    it('computes command-palette row shortcut labels from active command handlers', async () => {
+        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
+
+        await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
+
+        expect(captured.shortcutLabelHandlers?.['session.new']).toEqual(expect.any(Function));
+        expect(captured.shortcutLabelHandlers?.['settings.open']).toEqual(expect.any(Function));
     });
 });

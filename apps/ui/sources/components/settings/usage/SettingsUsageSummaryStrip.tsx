@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View, useWindowDimensions } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { layout } from '@/components/ui/layout/layout';
@@ -13,6 +13,7 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import { UsageActivitySquareMatrix, UsageProgressMeter } from './UsageMiniVisuals';
 import { formatUsageCurrency } from './formatUsageCurrency';
 import { buildUsageSettingsRouteTarget } from './usageRouteParams';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type SettingsUsageSummaryStripProps = Readonly<{
     summary: UsageAnalyticsSummaryViewModel | null;
@@ -112,7 +113,7 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
             <View testID="settings-usage-summary-strip" style={styles.stripBody}>
                 {isLoading && summary == null ? (
                     <View style={styles.emptyState}>
-                        <ActivityIndicator size="small" color={theme.colors.accent.blue} />
+                        <ActivitySpinner size="small" color={theme.colors.accent.blue} />
                         <Text style={styles.emptyText}>{t('common.loading')}</Text>
                     </View>
                 ) : errorMessage ? (

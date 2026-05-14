@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, FlatList, Pressable, View } from 'react-native';
+import { FlatList, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -7,10 +7,12 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
-export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.ReactElement {
+export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(props: FilesystemBrowserListProps): React.ReactElement {
     const { theme } = useUnistyles();
     const showRootLoadingHeader = props.rootLoading && props.showInlineLoadingHeader !== false;
+    const keyExtractor = React.useCallback((node: FilesystemBrowserListProps['nodes'][number]) => `${node.type}:${node.path}`, []);
     const listHeaderComponent = React.useMemo(() => (
         showRootLoadingHeader ? (
             <View
@@ -22,7 +24,7 @@ export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.
                     gap: 10,
                 }}
             >
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
                     {props.loadingLabel}
                 </Text>
@@ -70,9 +72,10 @@ export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.
         <FlatList
             ref={props.listRef}
             data={props.nodes}
-            keyExtractor={(node) => `${node.type}:${node.path}`}
+            keyExtractor={keyExtractor}
             style={props.style}
             contentContainerStyle={props.contentContainerStyle}
+            extraData={props.extraData}
             ListHeaderComponent={listHeaderComponent}
             renderItem={renderItem}
             initialNumToRender={props.initialNumToRender}
@@ -87,4 +90,4 @@ export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.
             getItemLayout={props.getItemLayout}
         />
     );
-}
+});

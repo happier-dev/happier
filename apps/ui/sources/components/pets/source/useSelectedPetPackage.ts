@@ -10,11 +10,13 @@ import {
     type SelectedPetPackageSource,
 } from '@/components/pets/source/resolveSelectedPetPackage';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
-import { storage, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import { storage, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 
 export function useSelectedPetPackage(): ResolveSelectedPetPackageResult {
-    const settings = useSettings();
-    const localSettings = useLocalSettings();
+    const petsEnabled = useSetting('petsEnabled');
+    const petsSelectedPetRef = useSetting('petsSelectedPetRef');
+    const petsEnabledOverride = useLocalSetting('petsEnabledOverride');
+    const petsSelectedPetOverride = useLocalSetting('petsSelectedPetOverride');
     const accountPetsById = storage((state) => state.accountPetsById);
     const localPetSourcesBySourceKey = storage((state) => state.localPetSourcesBySourceKey);
     const companionDecision = useFeatureDecision('pets.companion');
@@ -54,12 +56,12 @@ export function useSelectedPetPackage(): ResolveSelectedPetPackageResult {
             companionDecision,
             syncDecision,
             accountSettings: {
-                petsEnabled: settings.petsEnabled,
-                petsSelectedPetRef: settings.petsSelectedPetRef,
+                petsEnabled,
+                petsSelectedPetRef,
             },
             localSettings: {
-                petsEnabledOverride: localSettings.petsEnabledOverride,
-                petsSelectedPetOverride: localSettings.petsSelectedPetOverride,
+                petsEnabledOverride,
+                petsSelectedPetOverride,
             },
             sources: {
                 accountPetsById: accountPetSources,
@@ -73,10 +75,10 @@ export function useSelectedPetPackage(): ResolveSelectedPetPackageResult {
         accountPetsById,
         companionDecision,
         localPetSourcesBySourceKey,
-        localSettings.petsEnabledOverride,
-        localSettings.petsSelectedPetOverride,
-        settings.petsEnabled,
-        settings.petsSelectedPetRef,
+        petsEnabled,
+        petsEnabledOverride,
+        petsSelectedPetOverride,
+        petsSelectedPetRef,
         syncDecision,
     ]);
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 
@@ -99,6 +99,8 @@ describe('machineScm', () => {
         const removeResponse = await machineScmWorktreeRemove('machine-1', {
             cwd: '/repo',
             worktreePath: '/repo/.dev/worktree/feature-auth',
+            confirmed: true,
+            authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
         });
         const pruneResponse = await machineScmWorktreePrune('machine-1', {
             cwd: '/repo',
@@ -128,6 +130,8 @@ describe('machineScm', () => {
                 payload: {
                     cwd: '/repo',
                     worktreePath: '/repo/.dev/worktree/feature-auth',
+                    confirmed: true,
+                    authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
                 },
                 timeoutMs: undefined,
             },

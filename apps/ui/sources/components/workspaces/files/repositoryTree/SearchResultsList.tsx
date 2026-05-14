@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, FlatList, Platform, View, type ScrollViewProps } from 'react-native';
+import { FlatList, Platform, View, type ScrollViewProps } from 'react-native';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
@@ -10,6 +10,7 @@ import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import { t } from '@/text';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type SearchResultsListProps = {
     theme: any;
@@ -55,7 +56,7 @@ export const SearchResultsList = React.memo(({
                     paddingTop: 40,
                 }}
             >
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 <Text
                     style={{
                         fontSize: 16,

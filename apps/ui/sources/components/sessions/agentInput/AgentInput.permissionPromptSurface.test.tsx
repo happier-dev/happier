@@ -81,12 +81,24 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
 vi.mock('@/components/tools/shell/permissions/PermissionPromptCard', () => ({
     PermissionPromptCard: (props: any) => React.createElement('PermissionPromptCard', props),
 }));
+vi.mock('@/components/tools/shell/approvals/ApprovalPromptCard', () => ({
+    ApprovalPromptCard: (props: any) => React.createElement('ApprovalPromptCard', props),
+}));
 vi.mock('@/components/tools/shell/userActions/UserActionPromptCard', () => ({
     UserActionPromptCard: (props: any) => React.createElement('UserActionPromptCard', props),
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+    getStorage: () => {
+        const state = {
+            sessionMessages: {},
+            localSettings: { uiBackdropBlurEnabled: false, uiContentWidthMode: 'standard' },
+        };
+        return Object.assign(
+            (selector: any) => selector(state),
+            { getState: () => state },
+        );
+    },
 }));
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
@@ -327,7 +339,49 @@ describe('AgentInput (permission prompt surface)', () => {
         act(() => tree.unmount());
     });
 
-    it('does not show user action cards when surface is composer', async () => {
+    it('shows approval cards when surface is composer', async () => {
+        permissionPromptSurfaceSetting.value = 'composer';
+        const { AgentInput } = await import('./AgentInput');
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<AgentInput
+                    placeholder="x"
+                    value=""
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    sessionId="s1"
+                    approvalRequests={[{
+                        artifact: {
+                            id: 'approval-1',
+                            header: { v: 1, kind: 'approval_request.v1', title: 'Approve', approvalStatus: 'open', sessionId: 's1' },
+                            title: 'Approve',
+                            headerVersion: 1,
+                            seq: 1,
+                            createdAt: 1,
+                            updatedAt: 1,
+                            isDecrypted: true,
+                        },
+                        approval: {
+                            v: 1,
+                            status: 'open',
+                            createdAtMs: 1,
+                            updatedAtMs: 1,
+                            createdBy: { surface: 'session_agent', sessionId: 's1' },
+                            requestedSurface: 'session_agent',
+                            actionId: 'session.list',
+                            actionArgs: {},
+                            summary: 'List sessions',
+                        },
+                    }]}
+                    connectionStatus={null as any}
+                />)).tree;
+
+        expect(tree.findAllByType('ApprovalPromptCard' as any)).toHaveLength(1);
+        act(() => tree.unmount());
+    });
+
+    it('shows explicit user action cards when surface is composer', async () => {
         permissionPromptSurfaceSetting.value = 'composer';
         const { AgentInput } = await import('./AgentInput');
         let tree!: renderer.ReactTestRenderer;
@@ -343,7 +397,7 @@ describe('AgentInput (permission prompt surface)', () => {
                     connectionStatus={null as any}
                 />)).tree;
 
-        expect(tree.findAllByType('UserActionPromptCard' as any)).toHaveLength(0);
+        expect(tree.findAllByType('UserActionPromptCard' as any)).toHaveLength(1);
         act(() => tree.unmount());
     });
 

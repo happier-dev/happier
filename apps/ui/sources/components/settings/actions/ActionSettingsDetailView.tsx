@@ -32,6 +32,7 @@ import {
     type ActionSettingsTargetEntry,
 } from './buildActionSettingsEntries';
 import { normalizeActionsSettings } from './normalizeActionsSettings';
+import { useActionSettingsNarrowLayout } from './useActionSettingsNarrowLayout';
 
 const categoryOrder: readonly ActionSettingsTargetCategory[] = ['app', 'voice', 'integrations'];
 
@@ -122,6 +123,7 @@ type ActionSettingsDetailContentProps = Readonly<{
 export const ActionSettingsDetailContent = React.memo(function ActionSettingsDetailContent(props: ActionSettingsDetailContentProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const compactLayout = useActionSettingsNarrowLayout();
     const [searchQuery, setSearchQuery] = React.useState('');
     const [rawSettings, setRawSettings] = useSettingMutable('actionsSettingsV1');
     const settings = React.useMemo(() => normalizeActionsSettings(rawSettings), [rawSettings]);
@@ -260,6 +262,16 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                 targetId: target.id,
                                 available,
                             });
+                            const shouldStackModeControl = compactLayout && controlState.kind === 'approval';
+                            const targetModeControl = (
+                                <ActionSettingsTargetModeControl
+                                    testIDPrefix={targetTestIDPrefix}
+                                    controlState={controlState}
+                                    disabled={!entry.enabled || !available}
+                                    layout={shouldStackModeControl ? 'stacked' : 'inline'}
+                                    onChange={(value) => handleTargetControlChange(target, value)}
+                                />
+                            );
 
                             return (
                                 <Item
@@ -271,14 +283,8 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                     mode={available ? 'interactive' : 'info'}
                                     disabled={!entry.enabled || !available}
                                     showChevron={false}
-                                    rightElement={(
-                                        <ActionSettingsTargetModeControl
-                                            testIDPrefix={targetTestIDPrefix}
-                                            controlState={controlState}
-                                            disabled={!entry.enabled || !available}
-                                            onChange={(value) => handleTargetControlChange(target, value)}
-                                        />
-                                    )}
+                                    subtitleAccessory={shouldStackModeControl ? targetModeControl : null}
+                                    rightElement={shouldStackModeControl ? null : targetModeControl}
                                 />
                             );
                         })}

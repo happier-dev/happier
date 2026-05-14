@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
+import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from '@/theme/profiles/themeProfileConstants';
 import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './registry/local/localSettingDefinitions.activitySurfaces';
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
+    it('defaults focused session folder state to null', () => {
+        expect(localSettingsParse(null).sessionListFocusedFolderV1).toBeNull();
+    });
+
     it('does not accept the dead shortcut_only desktop overlay expanded behavior in the rollout schema', () => {
         expect(
             ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS.desktopOverlayExpandedBehavior.schema.safeParse('shortcut_only').success,
@@ -127,6 +132,155 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse(null)).toEqual(localSettingsDefaults);
         expect(localSettingsParse(undefined)).toEqual(localSettingsDefaults);
         expect(localSettingsParse('nope')).toEqual(localSettingsDefaults);
+    });
+
+    it('defaults theme profiles to an empty local-only state', () => {
+        expect(localSettingsParse(null)).toMatchObject({
+            themeProfiles: {
+                profiles: [],
+                activeProfileId: null,
+            },
+        });
+    });
+
+    it('drops malformed theme profile state while preserving other local settings', () => {
+        expect(localSettingsParse({
+            themePreference: 'dark',
+            themeProfiles: 'not a profile collection',
+        })).toMatchObject({
+            themePreference: 'dark',
+            themeProfiles: {
+                profiles: [],
+                activeProfileId: null,
+            },
+        });
+    });
+
+    it('drops malformed theme profiles from the local profile collection', () => {
+        const parsed = localSettingsParse({
+            themeProfiles: {
+                activeProfileId: 'valid-profile',
+                profiles: [
+                    { id: 'invalid-profile' },
+                    {
+                        schemaVersion: 1,
+                        id: 'valid-profile',
+                        name: 'Valid profile',
+                        createdAt: '2026-05-11T00:00:00.000Z',
+                        updatedAt: '2026-05-11T00:00:00.000Z',
+                        base: { light: 'light', dark: 'dark' },
+                        overrides: {
+                            light: { 'background.canvas': '#fafafa' },
+                            dark: {},
+                        },
+                    },
+                ],
+            },
+        });
+
+        expect(parsed.themeProfiles.profiles).toHaveLength(1);
+        expect(parsed.themeProfiles.profiles[0]?.id).toBe('valid-profile');
+        expect(parsed.themeProfiles.activeProfileId).toBe('valid-profile');
+    });
+
+    it('accepts built-in theme preset ids as active without storing them in custom profiles', () => {
+        const parsed = localSettingsParse({
+            themeProfiles: {
+                activeProfileId: 'premiumDark',
+                profiles: [],
+            },
+        });
+
+        expect(parsed.themeProfiles).toEqual({
+            activeProfileId: 'premiumDark',
+            profiles: [],
+        });
+    });
+
+    it('drops persisted theme profiles with control-character names', () => {
+        expect(localSettingsParse({
+            themeProfiles: {
+                activeProfileId: 'invalid-profile',
+                profiles: [
+                    {
+                        schemaVersion: 1,
+                        id: 'invalid-profile',
+                        name: 'Bad\u0000Profile',
+                        createdAt: '2026-05-11T00:00:00.000Z',
+                        updatedAt: '2026-05-11T00:00:00.000Z',
+                        base: { light: 'light', dark: 'dark' },
+                        overrides: {
+                            light: { 'background.canvas': '#fafafa' },
+                            dark: {},
+                        },
+                    },
+                ],
+            },
+        })).toMatchObject({
+            themeProfiles: {
+                profiles: [],
+                activeProfileId: null,
+            },
+        });
+    });
+
+    it('drops persisted theme profiles with route-unsafe ids', () => {
+        expect(localSettingsParse({
+            themeProfiles: {
+                activeProfileId: '../bad/profile?x=1',
+                profiles: [
+                    {
+                        schemaVersion: 1,
+                        id: '../bad/profile?x=1',
+                        name: 'Unsafe route profile',
+                        createdAt: '2026-05-11T00:00:00.000Z',
+                        updatedAt: '2026-05-11T00:00:00.000Z',
+                        base: { light: 'light', dark: 'dark' },
+                        overrides: {
+                            light: { 'background.canvas': '#fafafa' },
+                            dark: {},
+                        },
+                    },
+                ],
+            },
+        })).toMatchObject({
+            themeProfiles: {
+                profiles: [],
+                activeProfileId: null,
+            },
+        });
+    });
+
+    it('drops persisted theme profiles with too many overrides in one mode', () => {
+        expect(localSettingsParse({
+            themeProfiles: {
+                activeProfileId: 'oversized-profile',
+                profiles: [
+                    {
+                        schemaVersion: 1,
+                        id: 'oversized-profile',
+                        name: 'Oversized profile',
+                        createdAt: '2026-05-11T00:00:00.000Z',
+                        updatedAt: '2026-05-11T00:00:00.000Z',
+                        base: { light: 'light', dark: 'dark' },
+                        overrides: {
+                            light: Object.fromEntries(
+                                Array.from(
+                                    { length: THEME_PROFILE_MAX_OVERRIDES_PER_MODE + 1 },
+                                    (_, index) => [`unknown.${index}`, '#ffffff'],
+                                ),
+                            ),
+                            dark: {},
+                        },
+                    },
+                ],
+            },
+        })).toMatchObject({
+            themeProfiles: {
+                profiles: [],
+                activeProfileId: null,
+            },
+        });
     });
 
     it('migrates legacy settings sidebar width defaults to the new fixed default', () => {
@@ -274,6 +428,50 @@ describe('localSettingsParse', () => {
         expect(parsed.desktopOverlayShowSessionCount).toBe(false);
         expect(parsed.desktopOverlayShowPreviewText).toBe(true);
         expect(parsed.desktopOverlayCompactStyle).toBe('panel');
+    });
+
+    it('strips obsolete local keyboard shortcut settings instead of preserving pre-release compatibility state', () => {
+        const parsed = localSettingsParse({
+            commandPaletteEnabled: true,
+            keyboardShortcutsV2Enabled: true,
+            keyboardSingleKeyShortcutsEnabled: true,
+            keyboardShortcutDisabledCommandIdsV1: ['commandPalette.open', '', 123],
+            keyboardShortcutOverridesV1: {
+                'commandPalette.open': [{ binding: 'Mod+K', conflictScope: 'global', nativeConsumable: false }],
+                'bad.command': [{ binding: '' }, { nope: true }],
+            },
+        });
+
+        expect(parsed).not.toHaveProperty('commandPaletteEnabled');
+        expect(parsed).not.toHaveProperty('keyboardShortcutsV2Enabled');
+        expect(parsed).not.toHaveProperty('keyboardSingleKeyShortcutsEnabled');
+        expect(parsed).not.toHaveProperty('keyboardShortcutDisabledCommandIdsV1');
+        expect(parsed).not.toHaveProperty('keyboardShortcutOverridesV1');
+        expect(localSettingsDefaults).not.toHaveProperty('commandPaletteEnabled');
+        expect(localSettingsDefaults).not.toHaveProperty('keyboardShortcutsV2Enabled');
+        expect(localSettingsDefaults).not.toHaveProperty('keyboardSingleKeyShortcutsEnabled');
+        expect(localSettingsDefaults).not.toHaveProperty('keyboardShortcutDisabledCommandIdsV1');
+        expect(localSettingsDefaults).not.toHaveProperty('keyboardShortcutOverridesV1');
+    });
+
+    it('strips malformed obsolete local keyboard shortcut collections while preserving supported local settings', () => {
+        const parsed = localSettingsParse({
+            themePreference: 'dark',
+            keyboardShortcutDisabledCommandIdsV1: 'not a command list',
+            keyboardShortcutOverridesV1: 'not an override map',
+        });
+
+        expect(parsed.themePreference).toBe('dark');
+        expect(parsed).not.toHaveProperty('keyboardShortcutDisabledCommandIdsV1');
+        expect(parsed).not.toHaveProperty('keyboardShortcutOverridesV1');
+    });
+
+    it('parses session MRU order as a local string list without accepting malformed entries', () => {
+        const parsed = localSettingsParse({
+            sessionMruOrderV1: ['server-a:sess-2', '', 123, ' server-a:sess-1 '],
+        });
+
+        expect(parsed.sessionMruOrderV1).toEqual(['server-a:sess-2', 'server-a:sess-1']);
     });
 
     it('accepts explicit attention device overrides and preserves a disabled quiet-hours override', () => {

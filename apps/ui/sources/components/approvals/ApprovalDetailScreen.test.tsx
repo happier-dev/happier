@@ -329,6 +329,19 @@ describe('ApprovalDetailScreen', () => {
         expect(screen).toBeTruthy();
     });
 
+    it('fetches the artifact body when only a header-only artifact with a null body is cached', async () => {
+        currentArtifact = {
+            ...createApprovalArtifact(),
+            body: null,
+        };
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+
+        expect(fetchArtifactWithBodySpy).toHaveBeenCalledWith('artifact-1');
+        expect(screen).toBeTruthy();
+    });
+
     it('shows an error state when loading a missing approval artifact fails', async () => {
         currentArtifact = null;
         fetchArtifactWithBodySpy.mockResolvedValueOnce(null);

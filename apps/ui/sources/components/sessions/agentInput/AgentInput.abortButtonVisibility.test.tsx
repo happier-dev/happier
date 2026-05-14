@@ -1,10 +1,16 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const autocompleteMockState = vi.hoisted(() => ({
+    suggestions: [] as Array<{ key: string; text: string; component: React.ElementType }>,
+    selected: 0,
+}));
 
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
@@ -81,7 +87,10 @@ installAgentInputCommonModuleMocks({
 });
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {}, localSettings: { uiFontScale: 1 } }),
+    getStorage: () => Object.assign(
+        (selector: any) => selector({ sessionMessages: {}, localSettings: { uiFontScale: 1, uiContentWidthMode: 'wide' } }),
+        { getState: () => ({ localSettings: { uiFontScale: 1, uiContentWidthMode: 'wide' } }) },
+    ),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -138,7 +147,7 @@ vi.mock('@/components/autocomplete/useActiveWord', () => ({
 }));
 
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
-    useActiveSuggestions: () => [[], 0, () => {}, () => {}],
+    useActiveSuggestions: () => [autocompleteMockState.suggestions, autocompleteMockState.selected, () => {}, () => {}],
 }));
 
 vi.mock('@/components/autocomplete/applySuggestion', () => ({
@@ -196,7 +205,19 @@ vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
 
 const agentInputModulePromise = import('./AgentInput');
 
+function findMultiTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const nodes = screen.findAll((node) => (node.type as any) === 'MultiTextInput');
+    expect(nodes.length).toBe(1);
+    return nodes[0]!;
+}
+
 describe('AgentInput (abort button visibility)', () => {
+    afterEach(() => {
+        autocompleteMockState.suggestions = [];
+        autocompleteMockState.selected = 0;
+        vi.useRealTimers();
+    });
+
     it('does not render the stop button when showAbortButton is false (even if onAbort exists)', async () => {
         const { AgentInput } = await agentInputModulePromise;
         const screen = await renderScreen(<AgentInput
@@ -227,5 +248,149 @@ describe('AgentInput (abort button visibility)', () => {
                 />);
 
         expect(screen.findByTestId('agent-input-abort')).toBeTruthy();
+    });
+
+    it('does not abort from plain Escape', async () => {
+        const { AgentInput } = await agentInputModulePromise;
+        const onAbort = vi.fn();
+        const screen = await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onAbort={onAbort}
+                    showAbortButton={true}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+        const input = findMultiTextInput(screen);
+
+        let handled: any = null;
+        await act(async () => {
+            handled = input.props.onKeyPress?.({ key: 'Escape', shiftKey: false });
+        });
+
+        expect(handled).toBe(false);
+        expect(onAbort).not.toHaveBeenCalled();
+    });
+
+    it('selects visible autocomplete suggestion before plain Enter can send', async () => {
+        autocompleteMockState.suggestions = [{
+            key: 'path',
+            text: '@/components',
+            component: () => null,
+        }];
+        const { AgentInput } = await agentInputModulePromise;
+        const onSend = vi.fn();
+        const screen = await renderScreen(<AgentInput
+                    value="@comp"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={onSend}
+                    showAbortButton={false}
+                    autocompletePrefixes={['@']}
+                    autocompleteSuggestions={async () => []}
+                />);
+        const input = findMultiTextInput(screen);
+
+        let handled: any = null;
+        await act(async () => {
+            handled = input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+        });
+
+        expect(handled).toBe(true);
+        expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it('confirms abort with Shift+Escape when autocomplete suggestions are visible', async () => {
+        autocompleteMockState.suggestions = [{
+            key: 'path',
+            text: '@/components',
+            component: () => null,
+        }];
+        const { AgentInput } = await agentInputModulePromise;
+        const onAbort = vi.fn();
+        const screen = await renderScreen(<AgentInput
+                    value="@comp"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onAbort={onAbort}
+                    showAbortButton={true}
+                    autocompletePrefixes={['@']}
+                    autocompleteSuggestions={async () => []}
+                />);
+        const input = findMultiTextInput(screen);
+
+        await act(async () => {
+            expect(input.props.onKeyPress?.({ key: 'Escape', shiftKey: true })).toBe(true);
+        });
+        expect(onAbort).not.toHaveBeenCalled();
+
+        await act(async () => {
+            expect(input.props.onKeyPress?.({ key: 'Escape', shiftKey: true })).toBe(true);
+        });
+
+        expect(onAbort).toHaveBeenCalledTimes(1);
+    });
+
+    it('requires a second Shift+Escape within the confirmation window before aborting', async () => {
+        const { AgentInput } = await agentInputModulePromise;
+        const onAbort = vi.fn();
+        const screen = await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onAbort={onAbort}
+                    showAbortButton={true}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+        const input = findMultiTextInput(screen);
+
+        await act(async () => {
+            expect(input.props.onKeyPress?.({ key: 'Escape', shiftKey: true })).toBe(true);
+        });
+        expect(onAbort).not.toHaveBeenCalled();
+
+        await act(async () => {
+            expect(input.props.onKeyPress?.({ key: 'Escape', shiftKey: true })).toBe(true);
+        });
+
+        expect(onAbort).toHaveBeenCalledTimes(1);
+    });
+
+    it('expires the Shift+Escape abort confirmation window', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const { AgentInput } = await agentInputModulePromise;
+        const onAbort = vi.fn();
+        const screen = await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onAbort={onAbort}
+                    showAbortButton={true}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+        const input = findMultiTextInput(screen);
+
+        await act(async () => {
+            expect(input.props.onKeyPress?.({ key: 'Escape', shiftKey: true })).toBe(true);
+        });
+        vi.setSystemTime(2_501);
+        await act(async () => {
+            expect(input.props.onKeyPress?.({ key: 'Escape', shiftKey: true })).toBe(true);
+        });
+        expect(onAbort).not.toHaveBeenCalled();
+
+        await act(async () => {
+            expect(input.props.onKeyPress?.({ key: 'Escape', shiftKey: true })).toBe(true);
+        });
+
+        expect(onAbort).toHaveBeenCalledTimes(1);
     });
 });

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, FlatList, Pressable, ActivityIndicator } from 'react-native';
+import { View, FlatList, Pressable } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { useArtifacts } from '@/sync/domains/state/storage';
 import { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -12,6 +12,7 @@ import { layout } from '@/components/ui/layout/layout';
 import { sync } from '@/sync/sync';
 import { FAB } from '@/components/ui/buttons/FAB';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 // Date formatting
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -223,7 +224,7 @@ export default function ArtifactsScreen() {
         if (isLoading) {
             return (
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" />
+                    <ActivitySpinner size="large" />
                     <Text style={[styles.emptyDescription, { marginTop: 16 }]}>
                         {t('artifacts.loading')}
                     </Text>

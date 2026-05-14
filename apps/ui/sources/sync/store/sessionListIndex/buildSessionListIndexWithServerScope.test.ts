@@ -254,7 +254,7 @@ describe('applyReachableTargetsToSessionListRenderables', () => {
         expect(getProjectForSession.mock.calls).toEqual([['visible']]);
     });
 
-    it('reuses visible-session project lookups when peer fallback is needed for another row', () => {
+    it('does not rewrite stale rows through peer fallback rows', () => {
         const getProjectForSession = vi.fn((sessionId: string) => ({
             key: {
                 machineId: sessionId === 'stale' ? null : 'm-a',
@@ -365,11 +365,11 @@ describe('applyReachableTargetsToSessionListRenderables', () => {
             getProjectForSession,
         });
 
-        expect(result).not.toBe(sessions);
-        expect(getProjectForSession.mock.calls).toEqual([['direct'], ['stale'], ['peer']]);
+        expect(result).toBe(sessions);
+        expect(getProjectForSession.mock.calls).toEqual([['direct'], ['stale']]);
     });
 
-    it('skips unrelated peer project lookups when explicit peer metadata path cannot match unresolved rows', () => {
+    it('leaves stale unresolved rows unchanged without peer project lookups', () => {
         const getProjectForSession = vi.fn((sessionId: string) => ({
             key: {
                 machineId: sessionId === 'stale' ? null : 'm-a',
@@ -452,7 +452,7 @@ describe('applyReachableTargetsToSessionListRenderables', () => {
             getProjectForSession,
         });
 
-        expect(result).not.toBe(sessions);
+        expect(result).toBe(sessions);
         expect(getProjectForSession.mock.calls).toEqual([['stale']]);
     });
 

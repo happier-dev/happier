@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { useWorkspaceFileTransfers } from '@/hooks/workspaces/transfers/useWorkspaceFileTransfers';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function normalizeWorkspaceScope(scope: WorkspaceScopeBase | null): WorkspaceScopeBase | null {
     if (!scope) return null;
@@ -66,7 +67,7 @@ export const WorkspaceFileDownloadButton = React.memo((props: Readonly<{
             })}
         >
             {busy ? (
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             ) : (
                 <Ionicons name="download-outline" size={14} color={theme.colors.text.secondary} />
             )}

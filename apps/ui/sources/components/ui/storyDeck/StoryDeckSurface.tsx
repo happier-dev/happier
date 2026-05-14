@@ -1,13 +1,5 @@
 import * as React from 'react';
-import {
-    ScrollView,
-    PanResponder,
-    View,
-    useWindowDimensions,
-    type LayoutChangeEvent,
-    type NativeScrollEvent,
-    type NativeSyntheticEvent,
-} from 'react-native';
+import { ScrollView, PanResponder, View, useWindowDimensions, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Image as ExpoImage } from 'expo-image';

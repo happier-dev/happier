@@ -7,10 +7,15 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-import { computeLineContentHash, findLineIndexByContentHash } from '@/utils/text/lineContentHash';
+import {
+    computeLineContentHash,
+    findLineIndexByContentHash,
+    type LineContentHash,
+} from '@/utils/text/lineContentHash';
 
 import {
     buildReviewCommentDraftFromCodeLine,
+    buildReviewCommentDraftFromCodeLineRange,
     formatReviewCommentCodeLineContent,
 } from './buildReviewCommentDraftFromCodeLine';
 import { ReviewCommentInlineComposer } from './ReviewCommentInlineComposer';
@@ -19,7 +24,18 @@ function anchorKeyForDraft(draft: ReviewCommentDraft): string {
     if (draft.anchor.kind === 'fileLine') {
         return `file:${draft.filePath}:L${draft.anchor.startLine}`;
     }
-    return `diff:${draft.filePath}:${draft.anchor.side}:${draft.anchor.startLine}:${draft.anchor.oldLine ?? 'n'}:${draft.anchor.newLine ?? 'n'}`;
+    if (draft.anchor.kind === 'diffLine') {
+        return `diff:${draft.filePath}:${draft.anchor.side}:${draft.anchor.startLine}:${draft.anchor.oldLine ?? 'n'}:${draft.anchor.newLine ?? 'n'}`;
+    }
+    if (draft.anchor.kind === 'line') {
+        return `normalized:${draft.filePath}:${draft.source}:${draft.anchor.side ?? 'file'}:${draft.anchor.line}`;
+    }
+    return `normalized:${draft.filePath}:${draft.source}:${draft.anchor.side ?? 'file'}:${draft.anchor.endLine}`;
+}
+
+function lineHashForDraftAnchor(draft: ReviewCommentDraft): LineContentHash | null {
+    if (draft.anchor.kind === 'range') return draft.anchor.endLineHash ?? null;
+    return draft.anchor.lineHash ?? null;
 }
 
 function anchorKeyForLine(params: { filePath: string; source: ReviewCommentSource; line: CodeLine }): string {
@@ -52,6 +68,13 @@ function buildDraftsByResolvedLineId(params: Readonly<{
             source: params.source,
             line,
         }), line.id);
+        const normalizedLine = params.source === 'file'
+            ? (typeof line.newLine === 'number' && line.newLine > 0 ? line.newLine : line.sourceIndex + 1)
+            : line.kind === 'remove'
+                ? (typeof line.oldLine === 'number' && line.oldLine > 0 ? line.oldLine : line.sourceIndex + 1)
+                : (typeof line.newLine === 'number' && line.newLine > 0 ? line.newLine : line.sourceIndex + 1);
+        const normalizedSide = params.source === 'file' ? 'file' : line.kind === 'remove' ? 'before' : 'after';
+        lineIdByAnchorKey.set(`normalized:${params.filePath}:${params.source}:${normalizedSide}:${normalizedLine}`, line.id);
         lineById.set(line.id, line);
     }
 
@@ -63,21 +86,23 @@ function buildDraftsByResolvedLineId(params: Readonly<{
         const exactLineId = lineIdByAnchorKey.get(anchorKeyForDraft(draft)) ?? null;
         if (exactLineId) {
             const exactLine = lineById.get(exactLineId);
-            const exactLineMatchesHash = !draft.anchor.lineHash || (
+            const lineHash = lineHashForDraftAnchor(draft);
+            const exactLineMatchesHash = !lineHash || (
                 exactLine
                 && computeLineContentHash(formatReviewCommentCodeLineContent({
                     source: params.source,
                     line: exactLine,
-                })) === draft.anchor.lineHash
+                })) === lineHash
             );
             if (exactLineMatchesHash) {
                 lineId = exactLineId;
             }
         }
-        if (!lineId && draft.anchor.lineHash) {
+        const lineHash = lineHashForDraftAnchor(draft);
+        if (!lineId && lineHash) {
             const index = findLineIndexByContentHash({
                 lines: params.lines,
-                lineHash: draft.anchor.lineHash,
+                lineHash,
                 isCandidate: (line) => isLineCandidateForDraft({
                     source: params.source,
                     draft,
@@ -112,6 +137,7 @@ export function useCodeLinesReviewComments(params: {
     onError?: (message: string) => void;
 }): {
     onPressAddComment: (line: CodeLine) => void;
+    onPressAddCommentRange: (rangeLines: readonly CodeLine[]) => void;
     renderAfterLine: (line: CodeLine) => React.ReactNode;
     isCommentActive: (line: CodeLine) => boolean;
 } | null {
@@ -128,6 +154,7 @@ export function useCodeLinesReviewComments(params: {
     const onError = params.onError;
 
     const [activeCommentLineId, setActiveCommentLineId] = React.useState<string | null>(null);
+    const [activeCommentRangeLines, setActiveCommentRangeLines] = React.useState<readonly CodeLine[] | null>(null);
     const [activeEditingDraftId, setActiveEditingDraftId] = React.useState<string | null>(null);
     const [commentBody, setCommentBody] = React.useState('');
 
@@ -141,8 +168,9 @@ export function useCodeLinesReviewComments(params: {
     const isCommentActive = React.useCallback((line: CodeLine): boolean => {
         if (!enabled) return false;
         if (line.renderIsHeaderLine) return false;
+        if (activeCommentRangeLines?.some((rangeLine) => rangeLine.id === line.id) === true) return true;
         return activeCommentLineId === line.id;
-    }, [activeCommentLineId, enabled]);
+    }, [activeCommentLineId, activeCommentRangeLines, enabled]);
 
     const onPressAddComment = React.useCallback((line: CodeLine) => {
         if (!enabled) return;
@@ -150,6 +178,20 @@ export function useCodeLinesReviewComments(params: {
 
         const existingDraft = (draftsByLineId.get(line.id) ?? [])[0] ?? null;
         setActiveCommentLineId((prev) => (prev === line.id ? null : line.id));
+        setActiveCommentRangeLines(null);
+        setActiveEditingDraftId(existingDraft?.id ?? null);
+        setCommentBody(existingDraft?.body ?? '');
+    }, [draftsByLineId, enabled]);
+
+    const onPressAddCommentRange = React.useCallback((rangeLines: readonly CodeLine[]) => {
+        if (!enabled) return;
+        const filtered = rangeLines.filter((line) => !line.renderIsHeaderLine);
+        const endLine = filtered[filtered.length - 1];
+        if (!endLine) return;
+
+        const existingDraft = (draftsByLineId.get(endLine.id) ?? [])[0] ?? null;
+        setActiveCommentLineId(endLine.id);
+        setActiveCommentRangeLines(filtered);
         setActiveEditingDraftId(existingDraft?.id ?? null);
         setCommentBody(existingDraft?.body ?? '');
     }, [draftsByLineId, enabled]);
@@ -158,6 +200,7 @@ export function useCodeLinesReviewComments(params: {
         if (!enabled) return;
         if (line.renderIsHeaderLine) return;
         setActiveCommentLineId(line.id);
+        setActiveCommentRangeLines(null);
         setActiveEditingDraftId(draft.id);
         setCommentBody(draft.body);
     }, [enabled]);
@@ -239,12 +282,14 @@ export function useCodeLinesReviewComments(params: {
                         onChange={setCommentBody}
                         onCancel={() => {
                             setActiveCommentLineId(null);
+                            setActiveCommentRangeLines(null);
                             setActiveEditingDraftId(null);
                             setCommentBody('');
                         }}
                         onDelete={existing ? () => {
                             onDeleteDraft?.(existing.id);
                             setActiveCommentLineId(null);
+                            setActiveCommentRangeLines(null);
                             setActiveEditingDraftId(null);
                             setCommentBody('');
                         } : undefined}
@@ -255,17 +300,28 @@ export function useCodeLinesReviewComments(params: {
                                 return;
                             }
 
-                            const draft = buildReviewCommentDraftFromCodeLine({
-                                filePath,
-                                source,
-                                lines,
-                                targetLine: line,
-                                body,
-                                contextRadius,
-                                existing: existing ? { id: existing.id, createdAt: existing.createdAt } : null,
-                            });
+                            const draft = activeCommentRangeLines && activeCommentRangeLines.length > 1
+                                ? buildReviewCommentDraftFromCodeLineRange({
+                                    filePath,
+                                    source,
+                                    lines,
+                                    rangeLines: activeCommentRangeLines,
+                                    body,
+                                    contextRadius,
+                                    existing: existing ? { id: existing.id, createdAt: existing.createdAt } : null,
+                                })
+                                : buildReviewCommentDraftFromCodeLine({
+                                    filePath,
+                                    source,
+                                    lines,
+                                    targetLine: line,
+                                    body,
+                                    contextRadius,
+                                    existing: existing ? { id: existing.id, createdAt: existing.createdAt } : null,
+                                });
                             onUpsertDraft?.(draft);
                             setActiveCommentLineId(null);
+                            setActiveCommentRangeLines(null);
                             setActiveEditingDraftId(null);
                             setCommentBody('');
                         }}
@@ -275,6 +331,7 @@ export function useCodeLinesReviewComments(params: {
         );
     }, [
         activeCommentLineId,
+        activeCommentRangeLines,
         activeEditingDraftId,
         commentBody,
         contextRadius,
@@ -296,5 +353,5 @@ export function useCodeLinesReviewComments(params: {
     ]);
 
     if (!enabled) return null;
-    return { onPressAddComment, renderAfterLine, isCommentActive };
+    return { onPressAddComment, onPressAddCommentRange, renderAfterLine, isCommentActive };
 }

@@ -1,4 +1,4 @@
-import { ActivityIndicator } from 'react-native';
+
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -8,6 +8,7 @@ import { useMachineCapabilityInvokeWithAlerts } from '@/hooks/machine/useMachine
 import { Modal } from '@/modal';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { t } from '@/text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type ProviderCliInstallItemProps = Readonly<{
     machineId: string | null;
@@ -42,7 +43,7 @@ export function ProviderCliInstallItem(props: ProviderCliInstallItemProps) {
             icon={<Ionicons name="download-outline" size={29} color={theme.colors.text.secondary} />}
             showChevron={false}
             disabled={isInstalling || !props.machineId || !autoInstallAvailable || installabilityKind === 'checking'}
-            rightElement={isInstalling ? <ActivityIndicator size="small" color={theme.colors.text.secondary} /> : undefined}
+            rightElement={isInstalling ? <ActivitySpinner size="small" color={theme.colors.text.secondary} /> : undefined}
             onPress={async () => {
                 if (!props.machineId) {
                     Modal.alert(t('common.error'), t('settingsProviders.cliInstaller.noMachineSelected'));

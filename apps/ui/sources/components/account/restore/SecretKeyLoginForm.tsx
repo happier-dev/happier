@@ -79,7 +79,7 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
             props.onSuccess();
             return;
         }
-        router.replace('/');
+        router.dismissTo('/');
     }, [props.onSuccess, router]);
 
     const handleLogin = React.useCallback(async () => {

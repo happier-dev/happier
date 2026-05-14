@@ -52,7 +52,9 @@ installMessageViewCommonModuleMocks({
         return createUnistylesMock({
             theme: {
                 colors: {
-                    text: '#f4f4f4',
+                    text: {
+                        primary: '#f4f4f4',
+                    },
                 },
             },
         });
@@ -247,7 +249,7 @@ describe('MessageView (streaming smoothing)', () => {
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(captured.markdownProps.at(-1)).toMatchObject({
-            markdown: 'Hello world!',
+            markdown: 'Hello wor',
             streamingMode: 'streaming',
             streamingAnimated: true,
             streamingRevealPreset: 'subtle',
@@ -264,6 +266,7 @@ describe('MessageView (streaming smoothing)', () => {
         expect(captured.markdownProps).toHaveLength(1);
         expect(captured.markdownProps[0]?.markdown).toBe('Hello world!');
         expect(captured.markdownProps[0]?.streamingMode).toBeUndefined();
+        expect(captured.markdownProps[0]?.staticRenderPlaceholderEnabled).toBe(false);
         expect(captured.extractMentionsCalls).toBeGreaterThan(0);
     });
 
@@ -296,6 +299,88 @@ describe('MessageView (streaming smoothing)', () => {
             streamingMode: 'streaming',
         });
         expect(captured.extractMentionsCalls).toBe(0);
+    });
+
+    it('throttles active streaming Markdown updates without switching to the plain fallback', async () => {
+        const { MessageView } = await import('./MessageView');
+        const streamingMeta = {
+            happierStreamSegmentV1: {
+                v: 1,
+                segmentKind: 'assistant',
+                segmentLocalId: 'assistant-segment-1',
+                segmentState: 'streaming',
+                startedAtMs: 1_000,
+                updatedAtMs: 1_000,
+            },
+        } satisfies AgentTextMessage['meta'];
+
+        const screen = await renderScreen(
+            <MessageView
+                message={createAgentMessage({ localId: 'assistant-segment-1', text: 'Hello', meta: streamingMeta })}
+                metadata={null}
+                sessionId="s1"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+            />,
+        );
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        captured.markdownProps.length = 0;
+
+        await act(async () => {
+            await screen.update(
+                <MessageView
+                    message={createAgentMessage({ localId: 'assistant-segment-1', text: 'Hello wor', meta: streamingMeta })}
+                    metadata={null}
+                    sessionId="s1"
+                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                />,
+            );
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        await act(async () => {
+            vi.advanceTimersByTime(0);
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(captured.markdownProps.at(-1)).toMatchObject({
+            markdown: 'Hello wor',
+            streamingMode: 'streaming',
+        });
+        expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
+        captured.markdownProps.length = 0;
+
+        await act(async () => {
+            await screen.update(
+                <MessageView
+                    message={createAgentMessage({ localId: 'assistant-segment-1', text: 'Hello world!', meta: streamingMeta })}
+                    metadata={null}
+                    sessionId="s1"
+                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                />,
+            );
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        await act(async () => {
+            vi.advanceTimersByTime(0);
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(captured.markdownProps.at(-1)).toMatchObject({
+            markdown: 'Hello wor',
+            streamingMode: 'streaming',
+        });
+        expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
+
+        await act(async () => {
+            vi.advanceTimersByTime(200);
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(captured.markdownProps.at(-1)).toMatchObject({
+            markdown: 'Hello world!',
+            streamingMode: 'streaming',
+        });
+        expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
     });
 
     it('marks active web assistant streaming content as a polite log live region', async () => {

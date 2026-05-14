@@ -80,7 +80,11 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
             <CodeLinesView
                 lines={folded.lines}
                 selectedLineIds={props.selectedLineIds}
+                interactionMode={props.interactionMode}
+                rangeSelectionActive={props.rangeSelectionActive}
                 onPressLine={props.onPressLine}
+                onPressLineRange={props.onPressLineRange}
+                pressLineWhenNotSelectable={props.pressLineWhenNotSelectable}
                 onPressAddComment={props.onPressAddComment}
                 isCommentActive={props.isCommentActive}
                 renderAfterLine={canFold ? renderAfterLine : props.renderAfterLine}
@@ -92,6 +96,7 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
                 showPrefix={props.showPrefix}
                 scrollToLineId={props.scrollToLineId}
                 highlightLineId={props.highlightLineId}
+                highlightLineIds={props.highlightLineIds}
                 syntaxHighlighting={syntaxHighlighting}
             />
         </View>

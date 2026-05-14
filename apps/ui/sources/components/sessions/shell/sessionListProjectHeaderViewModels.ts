@@ -1,5 +1,6 @@
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { resolveWorkspaceDisplayPresentation } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
+import type { WorkspacePathDisplayModeV1 } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { LruMap } from '@/utils/cache/lruMap';
@@ -38,6 +39,7 @@ function buildSessionListProjectHeaderViewModelStateCacheKey(input: Readonly<{
     listItems: ReadonlyArray<SessionListIndexItem>;
     workspaceLabels: Readonly<Record<string, string> | null | undefined>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
+    workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
 }>): string {
     const parts: string[] = ['session-list-project-header-view-model-state'];
 
@@ -75,6 +77,8 @@ function buildSessionListProjectHeaderViewModelStateCacheKey(input: Readonly<{
         ].join('|'));
     }
 
+    appendCachePart(parts, `workspacePathDisplayMode:${input.workspacePathDisplayModeV1 ?? 'name'}`);
+
     return parts.join('::');
 }
 
@@ -82,6 +86,7 @@ export function buildSessionListProjectHeaderViewModels(input: Readonly<{
     listItems: ReadonlyArray<SessionListIndexItem>;
     workspaceLabels: Readonly<Record<string, string> | null | undefined>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
+    workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
 }>): SessionListProjectHeaderViewModelState {
     const cacheKey = buildSessionListProjectHeaderViewModelStateCacheKey(input);
     const cachedState = SESSION_LIST_PROJECT_HEADER_VIEW_MODEL_STATE_CACHE.get(cacheKey);
@@ -119,6 +124,7 @@ export function buildSessionListProjectHeaderViewModels(input: Readonly<{
             scope: scopeHint,
             workspaceRefs: input.workspaceRefs,
             fallbackPathLabel: item.title,
+            fallbackPathDisplayMode: input.workspacePathDisplayModeV1,
             legacyLabel: legacyCustomLabel,
         });
 

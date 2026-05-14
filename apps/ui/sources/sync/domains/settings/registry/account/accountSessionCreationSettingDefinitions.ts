@@ -12,6 +12,10 @@ import {
     serializeTranscriptStorageModeByTargetKeyAnalytics,
     type SessionTranscriptStorageMode,
 } from '@/sync/domains/session/transcriptStorageDefaults';
+import {
+    RememberedEngineSelectionsByScopeV1Schema,
+    type RememberedEngineSelectionsByScopeV1,
+} from '@/sync/domains/session/authoring/rememberedEngineSelections';
 
 const SessionTranscriptStorageModeSchema = z.enum(SESSION_TRANSCRIPT_STORAGE_MODES);
 
@@ -133,6 +137,37 @@ export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinit
             valueKind: 'boolean',
             privacy: 'safe',
             identityScope: 'person',
+        },
+    },
+    rememberLastEngineSelectionsV1: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Remember the last selected model, mode, and engine options per server and backend target',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'boolean',
+            privacy: 'safe',
+            identityScope: 'person',
+        },
+    },
+    lastEngineSelectionsByScopeV1: {
+        schema: RememberedEngineSelectionsByScopeV1Schema,
+        default: {} as RememberedEngineSelectionsByScopeV1,
+        description: 'Last selected model, mode, and engine options keyed by server and backend target',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'safe',
+            identityScope: 'person',
+            serializeCurrentProperties: (value: unknown) => ({
+                count: value && typeof value === 'object' && !Array.isArray(value)
+                    ? Object.keys(value).length
+                    : 0,
+            }),
         },
     },
     newSessionWizardSectionPresentationV1: {

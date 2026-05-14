@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Color from "color";
@@ -34,6 +34,35 @@ export function AgentInputChipPickerOptionSelector(
   const { theme } = useUnistyles();
   const styles = stylesheet;
   const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
+  const transientStyles = React.useMemo(() => ({
+    optionRowCompact: {
+      minHeight: 44,
+      paddingVertical: 6,
+    },
+    optionRowFocused: {
+      backgroundColor: theme.colors.surface.base,
+      ...shadowLevelStyle(theme.colors.shadowLevels[1]),
+    },
+    optionRowHovered: {
+      backgroundColor: (() => {
+        try {
+          return Color(theme.colors.surface.base).alpha(0.8).rgb().string();
+        } catch {
+          return theme.colors.surface.pressed;
+        }
+      })(),
+    },
+    optionRowPressed: {
+      opacity: 0.82,
+    },
+    optionRowDisabled: {
+      opacity: 0.45,
+    },
+  }), [
+    theme.colors.shadowLevels,
+    theme.colors.surface.base,
+    theme.colors.surface.pressed,
+  ]);
 
   if (props.variant === "stacked") {
     return (
@@ -68,6 +97,7 @@ export function AgentInputChipPickerOptionSelector(
                   props.onFocusOption(option.id);
                 }}
                 checkColor={selectedIndicatorColor}
+                transientStyles={transientStyles}
               />
             ))}
           </View>
@@ -83,7 +113,25 @@ type AgentInputChipPickerOptionButtonProps = Readonly<{
   selected: boolean;
   compact: boolean;
   checkColor: string;
+  transientStyles: AgentInputChipPickerOptionSelectorTransientStyles;
   onPress: () => void;
+}>;
+
+type AgentInputChipPickerOptionSelectorTransientStyles = Readonly<{
+  optionRowCompact: Readonly<{
+    minHeight: number;
+    paddingVertical: number;
+  }>;
+  optionRowFocused: Readonly<Record<string, unknown>>;
+  optionRowHovered: Readonly<{
+    backgroundColor: string;
+  }>;
+  optionRowPressed: Readonly<{
+    opacity: number;
+  }>;
+  optionRowDisabled: Readonly<{
+    opacity: number;
+  }>;
 }>;
 
 function AgentInputChipPickerOptionButton(
@@ -109,17 +157,17 @@ function AgentInputChipPickerOptionButton(
         const hovered = (state as WebHoverablePressableState).hovered === true;
         return [
           styles.optionRow,
-          props.compact ? styles.optionRowCompact : null,
+          props.compact ? props.transientStyles.optionRowCompact : null,
           Platform.OS === "web"
             && hovered
             && !props.focused
             && !props.option.disabled
             && !props.option.muted
-            ? styles.optionRowHovered
+            ? props.transientStyles.optionRowHovered
             : null,
-          props.focused ? styles.optionRowFocused : null,
-          pressed ? styles.optionRowPressed : null,
-          (props.option.disabled || props.option.muted) ? styles.optionRowDisabled : null,
+          props.focused ? props.transientStyles.optionRowFocused : null,
+          pressed ? props.transientStyles.optionRowPressed : null,
+          (props.option.disabled || props.option.muted) ? props.transientStyles.optionRowDisabled : null,
         ];
       }}
     >
@@ -179,29 +227,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: 8,
     backgroundColor: "transparent",
-  },
-  optionRowCompact: {
-    minHeight: 44,
-    paddingVertical: 6,
-  },
-  optionRowFocused: {
-    backgroundColor: theme.colors.surface.base,
-    ...shadowLevelStyle(theme.colors.shadowLevels[1]),
-  },
-	  optionRowHovered: {
-	    backgroundColor: (() => {
-	      try {
-	        return Color(theme.colors.surface.base).alpha(0.8).rgb().string();
-	      } catch {
-	        return theme.colors.surface.pressed;
-	      }
-	    })(),
-	  },
-  optionRowPressed: {
-    opacity: 0.82,
-  },
-  optionRowDisabled: {
-    opacity: 0.45,
   },
   optionLeft: {
     flex: 1,

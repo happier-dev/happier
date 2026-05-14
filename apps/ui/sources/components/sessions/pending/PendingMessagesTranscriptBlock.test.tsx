@@ -169,6 +169,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     beforeEach(() => {
         vi.resetModules();
         sendPendingMessageNow.mockReset();
+        sendPendingMessageNow.mockResolvedValue({ type: 'committed' });
         deletePendingMessage.mockReset();
         discardPendingMessage.mockReset();
         sessionAbort.mockReset();
@@ -208,7 +209,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         modalConfirm.mockResolvedValueOnce(true);
         sessionAbort.mockResolvedValueOnce(undefined);
-        sendPendingMessageNow.mockResolvedValueOnce(undefined);
+        sendPendingMessageNow.mockResolvedValueOnce({ type: 'committed' });
         deletePendingMessage.mockResolvedValueOnce(undefined);
 
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -333,7 +334,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         };
 
         modalConfirm.mockResolvedValueOnce(true);
-        sendPendingMessageNow.mockResolvedValueOnce(undefined);
+        sendPendingMessageNow.mockResolvedValueOnce({ type: 'committed' });
         deletePendingMessage.mockResolvedValueOnce(undefined);
 
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -354,6 +355,35 @@ describe('PendingMessagesTranscriptBlock', () => {
 	        expect(sendPendingMessageNow).toHaveBeenCalledWith('s1', expect.objectContaining({ localId: 'p1' }));
 	        expect(deletePendingMessage).toHaveBeenCalledTimes(1);
 	    });
+
+    it('shows a non-steerable notice and interrupt action when active-turn steer is unavailable', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        sessionValue = {
+            thinking: true,
+            presence: 'online',
+            agentStateVersion: 1,
+            agentState: {
+                controlledByUser: false,
+                capabilities: {
+                    inFlightSteer: true,
+                    inFlightSteerSupported: true,
+                    inFlightSteerAvailable: false,
+                },
+            },
+        };
+
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
+
+        expect(screen.findByTestId('pendingMessages.nonSteerableNotice')).toBeTruthy();
+        await hoverPendingMessageRow(screen, 'p1');
+
+        expect(screen.findByTestId('pendingMessages.steerNow:p1')).toBeFalsy();
+        expect(screen.findByTestId('pendingMessages.sendNow:p1')).toBeTruthy();
+    });
 
 	    it('does not offer steer-now or send-now for pending rows that failed to decrypt', async () => {
 	        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
@@ -419,6 +449,27 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         expect(deletePendingMessage).toHaveBeenCalledTimes(0);
         expect(modalAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the pending row when send-now is queued for retry', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        modalConfirm.mockResolvedValueOnce(true);
+        sessionAbort.mockResolvedValueOnce(undefined);
+        sendPendingMessageNow.mockResolvedValueOnce({ type: 'retry_scheduled' });
+
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        await hoverPendingMessageRow(screen, 'p1');
+        await screen.pressByTestIdAsync('pendingMessages.sendNow:p1');
+
+        expect(sendPendingMessageNow).toHaveBeenCalledTimes(1);
+        expect(deletePendingMessage).toHaveBeenCalledTimes(0);
+        expect(discardPendingMessage).toHaveBeenCalledTimes(0);
+        expect(modalAlert).toHaveBeenCalledTimes(0);
     });
 
     it('uses an 80px default max-height for the pending queue block', async () => {

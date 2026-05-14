@@ -8,12 +8,7 @@ import * as Notifications from 'expo-notifications';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import {
-    PUSH_NOTIFICATION_BUNDLED_SOUND_FILES,
-    PUSH_NOTIFICATION_ACTION_IDS,
-    PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
-    PUSH_NOTIFICATION_CATEGORY_IDS,
-    resolveAndroidNotificationSoundName,
-} from '@happier-dev/protocol';
+    PUSH_NOTIFICATION_BUNDLED_SOUND_FILES, PUSH_NOTIFICATION_ACTION_IDS, PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS, resolveAndroidNotificationSoundName, } from '@happier-dev/protocol';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
@@ -446,9 +441,6 @@ SplashScreen.setOptions({
     duration: 300,
 })
 SplashScreen.preventAutoHideAsync();
-
-// Set window background color - now handled by Unistyles
-// SystemUI.setBackgroundColorAsync('white');
 
 // NEVER ENABLE REMOTE LOGGING IN PRODUCTION
 // This is for local debugging with AI only

@@ -34,7 +34,14 @@ normalizeActivitySurfaceLocalSettings(localSettingsDefaultsRecord);
 export const localSettingsDefaults: LocalSettings = localSettingsDefaultsRecord;
 Object.freeze(localSettingsDefaults);
 
-const deprecatedLocalSettingKeys = ['editorFocusModeEnabled'] as const;
+const deprecatedLocalSettingKeys = [
+    'editorFocusModeEnabled',
+    'commandPaletteEnabled',
+    'keyboardShortcutsV2Enabled',
+    'keyboardSingleKeyShortcutsEnabled',
+    'keyboardShortcutDisabledCommandIdsV1',
+    'keyboardShortcutOverridesV1',
+] as const;
 
 function stripDeprecatedLocalSettingsKeys(settings: Readonly<Record<string, unknown>>): Record<string, unknown> {
     const next: Record<string, unknown> = { ...settings };

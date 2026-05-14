@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -19,6 +19,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { tracking } from '@/track';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type OcticonName = keyof typeof Octicons.glyphMap;
 
@@ -237,7 +238,7 @@ export const WorkspaceScmCommitSelectionToggleButton = React.memo((props: Worksp
             }}
         >
             {busy ? (
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             ) : (
                 <Octicons name={iconName} size={14} color={iconColor} />
             )}

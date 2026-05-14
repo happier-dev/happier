@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS } from '@/components/workspaces/files/repositoryTree/repositoryTreeDragAndDropConfig';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
 import { installRepositoryTreeCommonModuleMocks } from '@/components/workspaces/files/repositoryTree/repositoryTreeTestHelpers';
 
 
@@ -65,5 +65,21 @@ describe('useRepositoryTreeWebDropState', () => {
 
         expect(REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS).toBe(1_200);
         expect(setExpandedPathsSpy).toHaveBeenCalledWith('session-1', ['src']);
+    });
+
+    it('keeps the drop-state API stable across unchanged parent rerenders', async () => {
+        const { useRepositoryTreeWebDropState } = await import('./useRepositoryTreeWebDropState');
+
+        const hook = await renderHook(() => useRepositoryTreeWebDropState({
+            sessionId: 'session-1',
+            enabled: true,
+            expandedPaths: [],
+        }));
+
+        const initialApi = hook.getCurrent();
+
+        await hook.rerender();
+
+        expect(hook.getCurrent()).toBe(initialApi);
     });
 });

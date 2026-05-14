@@ -37,6 +37,11 @@ vi.mock('react-native', async () => {
     );
 });
 
+const resumeSessionMock = vi.hoisted(() => vi.fn(async () => ({ type: 'success' as const })));
+vi.mock('@/sync/ops', () => ({
+    resumeSession: (...args: unknown[]) => resumeSessionMock(...args),
+}));
+
 vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -199,6 +204,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         storage.setState(initialStorageState, true);
         kvStore.clear();
         appStateAddListener.mockClear();
+        resumeSessionMock.mockClear();
     });
 
     afterEach(() => {
@@ -1213,15 +1219,81 @@ describe('sync.sendMessage optimistic thinking', () => {
             send: vi.fn(),
         });
 
-        await sync.sendPendingMessageNow(sessionId, {
+        const result = await sync.sendPendingMessageNow(sessionId, {
             localId: 'p-retry',
             createdAt: 111,
             rawRecord,
             text: 'hello',
         });
 
+        expect(result).toEqual({ type: 'retry_scheduled' });
         expect((sync as any).pendingMessageCommitRetryTimers.has(`${sessionId}:p-retry`)).toBe(true);
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+    });
+
+    it('sendPendingMessageNow wakes inactive sessions from the committed pending row cursor', async () => {
+        const sessionId = 's_pending_send_now_inactive_wake';
+        storage.getState().applySessions([{
+            ...createSession({
+                sessionId,
+                metadata: {
+                    machineId: 'm1',
+                    path: '/repo',
+                    flavor: 'codex',
+                } as any,
+            }),
+            active: false,
+            presence: 'online',
+        }]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const rawRecord = {
+            role: 'user',
+            content: { type: 'text', text: 'wake from pending' },
+            meta: {},
+        } as const;
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p-wake',
+            localId: 'p-wake',
+            createdAt: 111,
+            updatedAt: 111,
+            text: 'wake from pending',
+            rawRecord,
+        });
+
+        const emitWithAck = vi.fn(async () => ({
+            ok: true,
+            id: 'm-wake',
+            seq: 42,
+            localId: null,
+            didWrite: true,
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        await sync.sendPendingMessageNow(sessionId, {
+            localId: 'p-wake',
+            createdAt: 111,
+            rawRecord,
+            text: 'wake from pending',
+        });
+
+        expect(resumeSessionMock).toHaveBeenCalledTimes(1);
+        expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId,
+            machineId: 'm1',
+            directory: '/repo',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            initialTranscriptAfterSeq: 41,
+        }));
     });
 
     it('commits pending retry messages for plaintext sessions without requiring session encryption', async () => {

@@ -97,6 +97,21 @@ describe('buildResumeHappySessionRpcParams', () => {
         });
     });
 
+    test('includes initial transcript catch-up cursor when provided', () => {
+        expect(buildResumeHappySessionRpcParams({
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            initialTranscriptAfterSeq: 36,
+        } as any)).toEqual({
+            type: 'resume-session',
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            initialTranscriptAfterSeq: 36,
+        });
+    });
+
     test('includes connectedServices when provided', () => {
         const connectedServices = {
             v: 1,

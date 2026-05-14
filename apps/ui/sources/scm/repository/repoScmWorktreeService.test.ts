@@ -1,12 +1,38 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol';
 
 import { installRepositoryScmCommonModuleMocks } from './repositoryScmTestHelpers';
 import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 const machineScmWorktreeCreateMock = vi.hoisted(() => vi.fn());
 const machineScmWorktreePruneMock = vi.hoisted(() => vi.fn());
 const machineScmWorktreeRemoveMock = vi.hoisted(() => vi.fn());
 const storageGetStateMock = vi.hoisted(() => vi.fn(() => ({})));
+
+function makeWorktreeSnapshot(
+    repo: ScmWorkingSnapshot['repo'],
+    branch: Partial<ScmWorkingSnapshot['branch']> = {},
+): ScmWorkingSnapshot {
+    return {
+        repo,
+        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false, ...branch },
+        totals: {
+            includedFiles: 0,
+            pendingFiles: 0,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 0,
+            pendingRemoved: 0,
+        },
+        fetchedAt: 0,
+        projectKey: 'project',
+        hasConflicts: false,
+        entries: [],
+        stashCount: 0,
+    };
+}
 
 vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmWorktreeCreate: (...args: unknown[]) => machineScmWorktreeCreateMock(...args),
@@ -58,6 +84,88 @@ describe('repoScmWorktreeService', () => {
             selectedBaseRef: 'feature/auth',
             currentBranch: 'main',
             currentPath: '/repo/packages/app',
+        });
+
+        expect(result).toEqual({
+            path: '/repo/.worktrees/feature-auth',
+            branch: 'feature/auth',
+            isCurrent: false,
+        });
+    });
+
+    it('does not reuse the current worktree when the current path is home-relative', async () => {
+        const { findReusableRepoWorktreeForBranch } = await import('./repoScmWorktreeService');
+
+        const result = findReusableRepoWorktreeForBranch({
+            snapshot: makeWorktreeSnapshot(
+                {
+                    isRepo: true,
+                    rootPath: '/Users/alice/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [
+                        { path: '/Users/alice/repo', branch: 'main', isCurrent: true, isMain: true },
+                    ],
+                },
+            ),
+            selectedBaseRef: null,
+            currentBranch: 'main',
+            currentPath: '~/repo/packages/app',
+            machineHomeDir: '/Users/alice',
+        });
+
+        expect(result).toBeNull();
+    });
+
+    it('reuses a local worktree when the selected base ref is a remote-tracking branch', async () => {
+        const { findReusableRepoWorktreeForBranch } = await import('./repoScmWorktreeService');
+
+        const result = findReusableRepoWorktreeForBranch({
+            snapshot: makeWorktreeSnapshot(
+                {
+                    isRepo: true,
+                    rootPath: '/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    remotes: [{ name: 'origin' }],
+                    worktrees: [
+                        { path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+                        { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+                    ],
+                },
+            ),
+            selectedBaseRef: 'origin/feature/auth',
+            currentBranch: 'main',
+            currentPath: '/repo',
+        });
+
+        expect(result).toEqual({
+            path: '/repo/.worktrees/feature-auth',
+            branch: 'feature/auth',
+            isCurrent: false,
+        });
+    });
+
+    it('prefers the longest remote-name prefix when matching remote-tracking branches', async () => {
+        const { findReusableRepoWorktreeForBranch } = await import('./repoScmWorktreeService');
+
+        const result = findReusableRepoWorktreeForBranch({
+            snapshot: makeWorktreeSnapshot(
+                {
+                    isRepo: true,
+                    rootPath: '/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    remotes: [{ name: 'origin' }, { name: 'origin/fork' }],
+                    worktrees: [
+                        { path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+                        { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+                    ],
+                },
+            ),
+            selectedBaseRef: 'origin/fork/feature/auth',
+            currentBranch: 'main',
+            currentPath: '/repo',
         });
 
         expect(result).toEqual({
@@ -178,6 +286,8 @@ describe('repoScmWorktreeService', () => {
             {
                 cwd: '/repo',
                 worktreePath: '/repo/.worktrees/feature-auth',
+                confirmed: true,
+                authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
             },
         );
         expect(machineScmWorktreePruneMock).toHaveBeenCalledWith(

@@ -6,12 +6,13 @@ import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
-import { AgentInputSimpleOptionsPopover } from '@/components/sessions/agentInput/components/AgentInputSimpleOptionsPopover';
+import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
+import type { SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { StyleSheet } from 'react-native-unistyles';
+import { buildRecipientRootStep } from '../definitions/createRecipientActionChip';
 import {
-    buildRecipientPopoverOptions,
     resolveRecipientFromOptionId,
     resolveRecipientLabel,
     resolveRecipientPopoverSelectedOptionId,
@@ -40,10 +41,23 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
     const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const styles = stylesheet;
     const selectedLabel = resolveRecipientLabel(props.targets, props.recipient);
-    const popoverOptions = React.useMemo(() => buildRecipientPopoverOptions(props.targets), [props.targets]);
     const selectedOptionId = React.useMemo(
         () => resolveRecipientPopoverSelectedOptionId(props.targets, props.recipient),
         [props.targets, props.recipient],
+    );
+    // Reuse the shared root-step builder from the chip-definition factory so
+    // the inline chip and the collapsed action-menu route declare the same
+    // option set (id, label, subtitle, per-option onSelect). Per-option
+    // `onSelect` carries the recipient mutation; the popover-level `onSelect`
+    // below only closes the popover.
+    const rootStep = React.useMemo<SelectionListStep>(
+        () => buildRecipientRootStep({
+            targets: props.targets,
+            onSelect: (selectedId) => {
+                props.onRecipientChange(resolveRecipientFromOptionId(props.targets, selectedId));
+            },
+        }),
+        [props.targets, props.onRecipientChange],
     );
 
     if (props.targets.length === 0) return null;
@@ -52,6 +66,7 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
         <>
             <View ref={anchorRef} collapsable={false} style={styles.anchor}>
                 <Pressable
+                    testID="agent-input-recipient-chip"
                     onPress={() => setOpen((v) => !v)}
                     style={({ pressed }) => props.ctx.chipStyle(Boolean(pressed))}
                     accessibilityRole="button"
@@ -68,15 +83,20 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
                 </Pressable>
             </View>
 
-            <AgentInputSimpleOptionsPopover
+            <AgentInputSelectionListPopover
                 open={open}
                 anchorRef={props.ctx.popoverAnchorRef ?? anchorRef}
-                title={t('session.participants.sendToTitle')}
-                options={popoverOptions}
+                rootStep={rootStep}
                 selectedOptionId={selectedOptionId}
-                onSelect={(selectedId) => {
-                    props.onRecipientChange(resolveRecipientFromOptionId(props.targets, selectedId));
-                    setOpen(false);
+                onSelect={() => {
+                    // FR4-W1-CHIP: documented no-op. Per-row
+                    // `SelectionListOption.onSelect` inside `rootStep`
+                    // dispatched the recipient mutation. The wrapper
+                    // `AgentInputSelectionListPopover` owns the close path and
+                    // defers `onRequestClose` on web internally — calling
+                    // `setOpen(false)` here would close the popover
+                    // synchronously and allow the click to fall through to
+                    // the chip anchor (re-opening it).
                 }}
                 onRequestClose={() => setOpen(false)}
                 maxHeightCap={360}

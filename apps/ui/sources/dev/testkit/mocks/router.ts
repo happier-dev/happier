@@ -38,6 +38,8 @@ export function createExpoRouterMock(options: ExpoRouterMockOptions = {}) {
             push: ReturnType<typeof vi.fn<RouterMethod<[unknown], unknown>>>;
             back: ReturnType<typeof vi.fn<RouterMethod<[], unknown>>>;
             replace: ReturnType<typeof vi.fn<RouterMethod<[unknown], unknown>>>;
+            dismissTo: ReturnType<typeof vi.fn<RouterMethod<[unknown], unknown>>>;
+            dismissAll: ReturnType<typeof vi.fn<RouterMethod<[], unknown>>>;
             setParams: ReturnType<typeof vi.fn<RouterMethod<[ExpoRouterParams], unknown>>>;
         },
         module: {

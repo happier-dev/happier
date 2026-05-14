@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
-import { View, ActivityIndicator } from 'react-native';
+import { View } from 'react-native';
 import type { ViewStyle } from 'react-native';
 import { useMessage, useResolvedSessionMessageRouteId, useSession, useSessionTranscriptIds } from "@/sync/domains/state/storage";
 import { sync } from '@/sync/sync';
@@ -18,6 +18,7 @@ import {
     createSessionMessageDetailsStyles,
     SessionMessageDetailsView,
 } from '@/components/sessions/transcript/details/SessionMessageDetailsView';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type SessionMessageRouteTheme = Readonly<{
     colors: Readonly<{
@@ -192,7 +193,7 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
     if (!session || !messagesLoaded) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }
@@ -202,7 +203,7 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
     if (!message) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }

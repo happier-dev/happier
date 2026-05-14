@@ -8,7 +8,7 @@ import {
     type AgentId,
 } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { useSession } from '@/sync/domains/state/storage';
+import { useSessionMetadata } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { CockpitTabBar, type CockpitTabBarTabDefinition } from './CockpitTabBar';
@@ -27,12 +27,12 @@ type SessionCockpitTabDefinition = Readonly<{
 }>;
 
 export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps) => {
-    const session = useSession(props.sessionId);
+    const sessionMetadata = useSessionMetadata(props.sessionId);
     const agentId: AgentId = React.useMemo(() => (
-        resolveAgentIdFromSessionMetadata(session?.metadata ?? null)
-        ?? resolveAgentIdFromFlavor(session?.metadata?.flavor)
+        resolveAgentIdFromSessionMetadata(sessionMetadata)
+        ?? resolveAgentIdFromFlavor(sessionMetadata?.flavor)
         ?? DEFAULT_AGENT_ID
-    ), [session?.metadata]);
+    ), [sessionMetadata]);
 
     const tabs: readonly SessionCockpitTabDefinition[] = [
         {

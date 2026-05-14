@@ -113,6 +113,25 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         });
     }, [pane]);
 
+    const paneRef = React.useRef(pane);
+    React.useEffect(() => {
+        paneRef.current = pane;
+    }, [pane]);
+    const startEditingFileHandlersRef = React.useRef(new Map<string, () => void>());
+    const getStartEditingFileHandler = React.useCallback((tabKey: string, isPreview: boolean): () => void => {
+        const cacheKey = `${tabKey}:${isPreview ? 'preview' : 'pinned'}`;
+        const cached = startEditingFileHandlersRef.current.get(cacheKey);
+        if (cached) return cached;
+
+        const handler = () => {
+            if (isPreview) {
+                paneRef.current.pinDetailsTab(tabKey);
+            }
+        };
+        startEditingFileHandlersRef.current.set(cacheKey, handler);
+        return handler;
+    }, []);
+
     const renderTabContent = React.useCallback((tab: any) => {
         const resource = asResource(tab.resource);
         if (resource?.kind === 'file') {
@@ -125,11 +144,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                         deepLinkAnchor={anchor}
                         presentation="panel"
                         scopeId={props.scopeId}
-                        onStartEditingFile={() => {
-                            if (tab.isPreview) {
-                                pane.pinDetailsTab(tab.key);
-                            }
-                        }}
+                        onStartEditingFile={getStartEditingFileHandler(tab.key, tab.isPreview)}
                     />
                 );
             }
@@ -226,7 +241,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                 </Text>
             </View>
         );
-    }, [openFileTab, pane, props.scopeId, props.sessionId, requestClose, sessionScreenTestIdsEnabled, theme.colors.text.secondary]);
+    }, [getStartEditingFileHandler, openFileTab, pane, props.scopeId, props.sessionId, requestClose, sessionScreenTestIdsEnabled, theme.colors.text.secondary]);
 
     const iconButtonStyle = {
         width: 34,

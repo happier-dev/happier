@@ -16,6 +16,7 @@ installTranscriptCommonModuleMocks({
                 select: (v: any) => v.ios ?? v.native ?? v.default,
             },
             View: (props: any) => React.createElement('View', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
         });
     },
 });
@@ -30,6 +31,7 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 vi.mock('react-native-keyboard-controller', () => ({
+    KeyboardAvoidingView: (props: any) => React.createElement('KeyboardAvoidingView', props, props.children),
     useKeyboardHandler: () => undefined,
     useReanimatedKeyboardAnimation: () => ({
         height: { value: 0 },
@@ -62,9 +64,11 @@ describe('AgentContentView safe area', () => {
             />,
         )).tree as renderer.ReactTestRenderer;
 
-        const scroll = tree.findByType('AnimatedScrollView' as any);
-        const styleArray = Array.isArray(scroll.props.style) ? scroll.props.style : [scroll.props.style];
-        const baseStyle = styleArray[0] ?? {};
-        expect(baseStyle.top).toBe(22 + 40);
+        const scroll = tree.findByType('ScrollView' as any);
+        expect(scroll.props.contentContainerStyle).toEqual(
+            expect.objectContaining({
+                paddingTop: 22 + 40,
+            }),
+        );
     });
 });

@@ -99,8 +99,8 @@ vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
     MachineSelector: () => null,
 }));
 
-vi.mock('@/components/sessions/new/components/PathSelector', () => ({
-    PathSelector: () => null,
+vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({
+    PathSelectionList: () => null,
 }));
 
 vi.mock('@/components/sessions/new/components/WizardSectionHeaderRow', () => ({
@@ -196,11 +196,13 @@ function buildWizard() {
                 theme: {
                     colors: {
                         divider: '#ddd',
+                        background: { canvas: '#fff' },
                         shadow: { color: '#000' },
                         groupped: { background: '#fff' },
                         text: '#000',
                         textSecondary: '#666',
                         input: { background: '#fff' },
+                        border: { default: '#ddd' },
                         button: { secondary: { tint: '#000' } },
                         warning: '#d97706',
                         box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
@@ -292,7 +294,7 @@ describe('new-session native keyboard avoiding', () => {
         const keyboardAvoidingView = screen.tree.root.findByType('KeyboardAvoidingView' as any);
         expect(keyboardAvoidingView.props.automaticOffset).toBe(true);
         expect(keyboardAvoidingView.props.behavior).toBe('translate-with-padding');
-        expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(16);
+        expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(0);
     });
 
     it('uses the native keyboard-shift host for the simple panel on Android', async () => {
@@ -311,7 +313,7 @@ describe('new-session native keyboard avoiding', () => {
         const keyboardAvoidingView = screen.tree.root.findByType('KeyboardAvoidingView' as any);
         expect(keyboardAvoidingView.props.automaticOffset).toBe(true);
         expect(keyboardAvoidingView.props.behavior).toBe('translate-with-padding');
-        expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(16);
+        expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(0);
     });
 
     it('uses the native keyboard-shift host for the wizard on Android', async () => {

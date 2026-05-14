@@ -296,15 +296,18 @@ describe('SessionAutomationCreateScreen', () => {
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Create automation')).toBeUndefined();
     });
 
-    it('uses the automation enabled toggle semantics on the automation-only create screen', async () => {
+    it('moves automation settings into the shared AgentInput automation chip', async () => {
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
         const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Enable automation')).toBeUndefined();
-        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Enabled')).toBeTruthy();
-        expect(screen.findAllByType('Switch')).toHaveLength(1);
+        expect(screen.findAllByType('AutomationSettingsForm')).toHaveLength(0);
+        expect(screen.findAllByType('Switch')).toHaveLength(0);
+
+        const automationChip = latestAgentInputProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
+        expect(automationChip).toBeTruthy();
+        expect(automationChip?.collapsedContentPopover?.renderContent).toBeTypeOf('function');
     });
 
     it('can create an existing-session automation in a paused state', async () => {
@@ -313,7 +316,10 @@ describe('SessionAutomationCreateScreen', () => {
         const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        const toggle = screen.findByType('Switch');
+        const automationChip = latestAgentInputProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
+        const popoverContent = automationChip?.collapsedContentPopover?.renderContent?.();
+        const popoverScreen = await renderScreen(popoverContent);
+        const toggle = popoverScreen.findByType('Switch');
         await act(async () => {
             invokeTestInstanceHandler(toggle, 'onValueChange', false);
         });
@@ -369,7 +375,10 @@ describe('SessionAutomationCreateScreen', () => {
 
         await setComposerText('Do the thing');
 
-        const name = screen.findByProps({ autoCapitalize: 'words' });
+        const automationChip = latestAgentInputProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
+        const popoverContent = automationChip?.collapsedContentPopover?.renderContent?.();
+        const popoverScreen = await renderScreen(popoverContent);
+        const name = popoverScreen.findByProps({ testID: 'automation-sentence-name-input' });
         await act(async () => {
             name.props.onChangeText('My automation');
         });

@@ -565,11 +565,8 @@ describe('useConnectTerminal approval outcome messaging', () => {
 
         expect(result).toBe(true);
         expect(modalAlertSpy).toHaveBeenCalledWith('common.success', 'modals.terminalConnectedSuccessfully', [
-            expect.objectContaining({ text: 'common.ok', onPress: expect.any(Function) }),
+            expect.objectContaining({ text: 'common.ok' }),
         ]);
-
-        const buttons = (modalAlertSpy.mock.calls[0]?.[2] as Array<{ onPress?: () => void }> | undefined) ?? [];
-        buttons[0]?.onPress?.();
         expect(onSuccessSpy).toHaveBeenCalledTimes(1);
     });
 

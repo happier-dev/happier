@@ -350,6 +350,42 @@ describe('DropdownMenu', () => {
         });
     });
 
+    it('opts dropdown overlays into themed surface chrome', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+        }));
+
+        const floatingOverlay = screen.findByType('FloatingOverlay' as any);
+        expect(floatingOverlay?.props?.surfaceChrome).toBe('theme');
+    });
+
+    it('wires menu result rows to the overlay scroll container for keyboard auto-scroll', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+        }));
+
+        const floatingOverlay = screen.findByType('FloatingOverlay' as any);
+        expect(floatingOverlay?.props?.scrollViewRef).toBeTruthy();
+        expect(typeof floatingOverlay?.props?.onScrollViewLayout).toBe('function');
+        expect(typeof floatingOverlay?.props?.onScrollViewContentSizeChange).toBe('function');
+        expect(typeof floatingOverlay?.props?.onScrollViewScroll).toBe('function');
+
+        const selectableResults = screen.findByType('SelectableMenuResults' as any);
+        expect(typeof selectableResults?.props?.registerItemLayout).toBe('function');
+    });
+
     it('uses popoverAnchorRef when provided', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 

@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type SessionCanvasLeafProps = Readonly<{
     sessionId: string;
@@ -64,7 +65,7 @@ export function SessionCanvasLeaf(props: SessionCanvasLeafProps) {
                         justifyContent: 'center',
                     }}
                 >
-                    <ActivityIndicator />
+                    <ActivitySpinner />
                 </View>
             )}
         </View>

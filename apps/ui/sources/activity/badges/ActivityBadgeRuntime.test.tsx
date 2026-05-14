@@ -494,6 +494,49 @@ describe('ActivityBadgeRuntime', () => {
         });
     });
 
+    it('does not reapply native badge channels when activity source identity changes without badge state changes', async () => {
+        activityAttentionSourceValue = createActivityAttentionSource([
+            {
+                id: 'session-1',
+                seq: 4,
+                lastViewedSessionSeq: 1,
+                updatedAt: 10,
+                metadata: null,
+            },
+        ]);
+
+        const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityBadgeRuntime />)).tree;
+
+        expect(applyExpoNativeBadgeState).toHaveBeenCalledTimes(1);
+        expect(applyExpoNativeBadgeState).toHaveBeenLastCalledWith({
+            count: 1,
+            showNonNumericDot: false,
+        });
+
+        activityAttentionSourceValue = createActivityAttentionSource([
+            {
+                id: 'session-1',
+                seq: 4,
+                lastViewedSessionSeq: 1,
+                updatedAt: 11,
+                metadata: null,
+            },
+        ]);
+
+        await act(async () => {
+            tree?.update(<ActivityBadgeRuntime />);
+        });
+
+        expect(applyExpoNativeBadgeState).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
     it('prefers hydrated session unread state over stale renderable state from the activity source', async () => {
         sessionsValue = [];
         activityAttentionSourceValue = {

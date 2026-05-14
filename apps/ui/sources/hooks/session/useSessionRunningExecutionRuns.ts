@@ -28,6 +28,18 @@ export function resolveRunningExecutionRunsFromListResult(
     });
 }
 
+function areRunningExecutionRunsEqual(
+    a: readonly ExecutionRunPublicState[],
+    b: readonly ExecutionRunPublicState[],
+): boolean {
+    if (a === b) return true;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+        if (JSON.stringify(a[i] ?? null) !== JSON.stringify(b[i] ?? null)) return false;
+    }
+    return true;
+}
+
 export function useSessionRunningExecutionRuns(params: Readonly<{
     sessionId: string;
     enabled: boolean;
@@ -94,7 +106,9 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
             if (nextRunning.length > 0) {
                 hadRunningRunRef.current = true;
                 pendingEmptyConfirmRef.current = false;
-                setRunningRuns(nextRunning);
+                setRunningRuns((current) => (
+                    areRunningExecutionRunsEqual(current, nextRunning) ? current : nextRunning
+                ));
                 scheduleNext(SESSION_RUNNING_EXECUTION_RUNS_POLL_INTERVAL_MS);
                 return;
             }

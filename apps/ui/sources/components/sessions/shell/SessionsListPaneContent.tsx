@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -13,6 +13,7 @@ import { SessionsListEmptyState } from '@/components/sessions/shell/SessionsList
 import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
 import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import { resolveSessionsListEmptyStateKind } from './resolveSessionsListEmptyStateKind';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type SessionsListPaneContentProps = Readonly<{
     storageKind: 'persisted' | 'direct';
@@ -56,7 +57,7 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
         return (
             <View style={styles.loadingContainerWrapper}>
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 </View>
             </View>
         );
@@ -102,5 +103,5 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
         );
     }
 
-    return <SessionsListView storageKind={props.storageKind} />;
+    return <SessionsListView storageKind={props.storageKind} paneState={sessionListPaneState} />;
 });

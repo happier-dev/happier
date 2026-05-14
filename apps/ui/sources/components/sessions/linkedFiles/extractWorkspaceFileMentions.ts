@@ -2,9 +2,18 @@ import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativ
 
 const TRAILING_PUNCTUATION = /[.,)\]}]+$/;
 
+function isLikelyScopedPackageReference(raw: string): boolean {
+    const parts = raw.split('/');
+    if (parts.length !== 2) return false;
+    if (raw.includes('.')) return false;
+
+    return parts.every((part) => /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(part));
+}
+
 function isLikelyWorkspacePath(raw: string): boolean {
     if (!raw) return false;
     if (raw.startsWith('happier/')) return false; // reserved structured message prefix (e.g. @happier/...)
+    if (isLikelyScopedPackageReference(raw)) return false;
     // Avoid accidental user mentions like "@bob".
     if (!raw.includes('/') && !raw.includes('.')) return false;
     if (!isSafeWorkspaceRelativePath(raw)) return false;

@@ -64,6 +64,7 @@ export type TranslationKeyNoParams = {
 }[TranslationKey];
 
 let preferredLanguageOverride: SupportedLanguage | null = null;
+let cachedDeviceLanguage: SupportedLanguage | null = null;
 
 function isTranslationFunction(value: unknown): value is TranslationFunction {
     return typeof value === 'function';
@@ -90,10 +91,15 @@ function normalizeDeviceLanguageCode(languageCode: string | null | undefined, la
 }
 
 function resolveLanguageFromDeviceLocales(): SupportedLanguage {
+    if (cachedDeviceLanguage) return cachedDeviceLanguage;
     for (const locale of getDeviceLocales()) {
         const resolved = normalizeDeviceLanguageCode(locale.languageCode ?? null, locale.languageScriptCode ?? null);
-        if (resolved) return resolved;
+        if (resolved) {
+            cachedDeviceLanguage = resolved;
+            return resolved;
+        }
     }
+    cachedDeviceLanguage = DEFAULT_LANGUAGE;
     return DEFAULT_LANGUAGE;
 }
 

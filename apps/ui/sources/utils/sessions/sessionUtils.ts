@@ -13,14 +13,14 @@ import {
 import {
     readDisplayMachineIdForSession,
     readDisplayPathForSession,
-    readMachineTargetForSession,
 } from '@/sync/ops/sessionMachineTarget';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { t } from '@/text';
 import { formatPathRelativeToHome } from './formatPathRelativeToHome';
+import { useUnistyles } from 'react-native-unistyles';
 export { formatPathRelativeToHome } from './formatPathRelativeToHome';
 
-export type SessionState = 'disconnected' | 'thinking' | 'waiting' | 'permission_required' | 'action_required';
+export type SessionState = 'disconnected' | 'resuming' | 'thinking' | 'waiting' | 'permission_required' | 'action_required';
 
 export interface SessionStatus {
     state: SessionState;
@@ -37,6 +37,27 @@ export const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = 15_000;
 export type PendingPermissionRequest = SessionPendingRequest;
 
 type SessionStatusSource = Session | SessionListRenderableSession;
+type SessionStatusColors = Readonly<{
+    connected: string;
+    connecting: string;
+    actionRequired: string;
+    disconnected: string;
+    error: string;
+    default: string;
+}>;
+type UseSessionStatusOptions = Readonly<{
+    subscribeToSession?: boolean;
+    subscribeToTranscript?: boolean;
+}>;
+
+const DEFAULT_SESSION_STATUS_COLORS: SessionStatusColors = {
+    connected: '#34C759',
+    connecting: '#007AFF',
+    actionRequired: '#FF9500',
+    disconnected: '#999999',
+    error: '#FF3B30',
+    default: '#8E8E93',
+};
 
 export function listPendingTranscriptRequests(
     session: Session,
@@ -96,14 +117,26 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         return vibingMessages[idx % vibingMessages.length].toLowerCase() + '…';
     })();
 
+    if (!isSessionActive && isOptimisticThinking) {
+        return {
+            state: 'resuming',
+            isConnected: true,
+            statusText: t('session.resuming'),
+            shouldShowStatus: true,
+            statusColor: DEFAULT_SESSION_STATUS_COLORS.connecting,
+            statusDotColor: DEFAULT_SESSION_STATUS_COLORS.connecting,
+            isPulsing: true
+        };
+    }
+
     if (!isOnline) {
         return {
             state: 'disconnected',
             isConnected: false,
             statusText: t('status.lastSeen', { time: formatLastSeen(session.activeAt, false) }),
             shouldShowStatus: true,
-            statusColor: '#999',
-            statusDotColor: '#999'
+            statusColor: DEFAULT_SESSION_STATUS_COLORS.disconnected,
+            statusDotColor: DEFAULT_SESSION_STATUS_COLORS.disconnected,
         };
     }
 
@@ -115,8 +148,8 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
             isConnected: true,
             statusText: t('status.actionRequired'),
             shouldShowStatus: true,
-            statusColor: '#FF9500',
-            statusDotColor: '#FF9500',
+            statusColor: DEFAULT_SESSION_STATUS_COLORS.actionRequired,
+            statusDotColor: DEFAULT_SESSION_STATUS_COLORS.actionRequired,
             isPulsing: true
         };
     }
@@ -127,8 +160,8 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
             isConnected: true,
             statusText: t('status.permissionRequired'),
             shouldShowStatus: true,
-            statusColor: '#FF9500',
-            statusDotColor: '#FF9500',
+            statusColor: DEFAULT_SESSION_STATUS_COLORS.actionRequired,
+            statusDotColor: DEFAULT_SESSION_STATUS_COLORS.actionRequired,
             isPulsing: true
         };
     }
@@ -139,8 +172,8 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
             isConnected: true,
             statusText: vibingMessage,
             shouldShowStatus: true,
-            statusColor: '#007AFF',
-            statusDotColor: '#007AFF',
+            statusColor: DEFAULT_SESSION_STATUS_COLORS.connecting,
+            statusDotColor: DEFAULT_SESSION_STATUS_COLORS.connecting,
             isPulsing: true
         };
     }
@@ -150,18 +183,21 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         isConnected: true,
         statusText: t('status.online'),
         shouldShowStatus: false,
-        statusColor: '#34C759',
-        statusDotColor: '#34C759'
+        statusColor: DEFAULT_SESSION_STATUS_COLORS.connected,
+        statusDotColor: DEFAULT_SESSION_STATUS_COLORS.connected,
     };
 }
 
 /**
  * Hook wrapper around `getSessionStatus` that keeps vibing text stable while the session is thinking.
  */
-export function useSessionStatus(session: SessionStatusSource): SessionStatus {
+export function useSessionStatus(session: SessionStatusSource, options: UseSessionStatusOptions = {}): SessionStatus {
+    const { theme } = useUnistyles();
     const sessionId = typeof session.id === 'string' ? session.id : '';
-    const rawSession = useSession(sessionId);
-    const transcriptVersion = useSessionMessagesVersion(sessionId, sessionId.length > 0);
+    const shouldSubscribeToSession = options.subscribeToSession !== false && sessionId.length > 0;
+    const rawSession = useSession(shouldSubscribeToSession ? sessionId : '');
+    const shouldSubscribeToTranscript = options.subscribeToTranscript !== false && sessionId.length > 0;
+    const transcriptVersion = useSessionMessagesVersion(sessionId, shouldSubscribeToTranscript);
     void transcriptVersion;
 
     const resolvedSession = rawSession ?? session;
@@ -180,7 +216,28 @@ export function useSessionStatus(session: SessionStatusSource): SessionStatus {
         return Math.floor(Math.random() * vibingMessages.length);
     }, [isOnline, hasPermissions, hasUserActions, isThinking]);
 
-    return getSessionStatus(resolvedSession, now, vibingIndex);
+    const status = getSessionStatus(resolvedSession, now, vibingIndex);
+    const statusColors = theme.colors.status as SessionStatusColors;
+    return {
+        ...status,
+        statusColor: resolveStatusColor(status.state, statusColors),
+        statusDotColor: resolveStatusColor(status.state, statusColors),
+    };
+}
+
+function resolveStatusColor(state: SessionState, statusColors: SessionStatusColors): string {
+    switch (state) {
+        case 'resuming':
+        case 'thinking':
+            return statusColors.connecting;
+        case 'disconnected':
+            return statusColors.disconnected;
+        case 'action_required':
+        case 'permission_required':
+            return statusColors.actionRequired;
+        case 'waiting':
+            return statusColors.connected;
+    }
 }
 
 /**
@@ -218,7 +275,10 @@ export function getSessionAvatarId(session: SessionStatusSource): string {
         sessionId: session.id,
         metadata: session.metadata ?? null,
     });
-    const reachablePath = readMachineTargetForSession(session.id)?.basePath ?? session.metadata?.path ?? null;
+    const reachablePath = readDisplayPathForSession({
+        sessionId: session.id,
+        metadata: session.metadata ?? null,
+    }) || session.metadata?.path || null;
 
     if (reachableMachineId && reachablePath) {
         // Combine machine ID and path for a unique, deterministic avatar
@@ -232,8 +292,10 @@ export function getSessionAvatarId(session: SessionStatusSource): string {
  * Returns the session path for the subtitle.
  */
 export function getSessionSubtitle(session: SessionStatusSource): string {
-    const reachableTarget = readMachineTargetForSession(session.id);
-    const path = reachableTarget?.basePath ?? session.metadata?.path ?? null;
+    const path = readDisplayPathForSession({
+        sessionId: session.id,
+        metadata: session.metadata ?? null,
+    }) || session.metadata?.path || null;
     if (path) {
         return formatPathRelativeToHome(path, session.metadata?.homeDir ?? undefined);
     }

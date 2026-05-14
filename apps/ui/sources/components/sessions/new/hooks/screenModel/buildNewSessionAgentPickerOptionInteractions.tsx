@@ -24,9 +24,24 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
 
 export function buildNewSessionAgentPickerOptionInteractions(
     params: BuildNewSessionAgentPickerOptionInteractionsParams,
-): Pick<AgentInputChipPickerOption, 'closeOnSelectImmediate' | 'onSelectImmediate' | 'renderDetailContent'> {
+): Pick<
+    AgentInputChipPickerOption,
+    | 'closeOnSelectImmediate'
+    | 'onSelectImmediate'
+    | 'renderDetailContent'
+    | 'deferRenderDetailContent'
+    | 'deferredDetailContentCacheKey'
+> {
     return {
         closeOnSelectImmediate: false,
+        deferRenderDetailContent: true,
+        deferredDetailContentCacheKey: [
+            'new-session-engine',
+            params.capabilityServerId,
+            params.selectedMachineId ?? '',
+            params.entry.backendTargetKey,
+            params.selectedPath ?? '',
+        ].join(':'),
         onSelectImmediate: () => {
             if (params.disabled) return;
             const nextSelection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);

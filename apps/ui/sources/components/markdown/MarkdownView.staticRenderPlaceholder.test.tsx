@@ -152,4 +152,20 @@ describe('MarkdownView (static render placeholder)', () => {
 
         expect(screen.findByTestId('markdown-static-render-placeholder')).toBe(null);
     });
+
+    it('does not show a native static placeholder when the caller disables it', async () => {
+        animatedCapture.platformOS = 'android';
+        const { MarkdownView } = await import('./MarkdownView');
+
+        const screen = await renderScreen(
+            <MarkdownView markdown="Hello **world**" profile="transcript" staticRenderPlaceholderEnabled={false} />,
+        );
+
+        await act(async () => {
+            vi.advanceTimersByTime(1_000);
+        });
+
+        expect(screen.findByTestId('markdown-static-render-placeholder')).toBe(null);
+        expect(animatedCapture.loopStartCount).toBe(0);
+    });
 });

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
-import { useSessionMessages } from '@/sync/domains/state/storage';
+import { useSessionMessages, useSessionSubagentSourceMessages } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 
 afterEach(() => {
@@ -11,6 +11,78 @@ afterEach(() => {
 });
 
 describe('useSessionMessages', () => {
+    it('does not subscribe to message updates when disabled', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
+                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-1', 'm-2'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return useSessionMessages('s-1', { enabled: false });
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const initialRenderCount = renderCount;
+
+            expect(hook.getCurrent().isLoaded).toBe(false);
+            expect(hook.getCurrent().messages).toHaveLength(0);
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const session = state.sessionMessages['s-1'];
+                    if (!session) return state;
+                    const nextMessagesById = {
+                        ...session.messagesById,
+                        'm-2': {
+                            ...session.messagesById['m-2'],
+                            text: 'streamed update',
+                        },
+                    };
+                    return {
+                        ...state,
+                        sessionMessages: {
+                            ...state.sessionMessages,
+                            's-1': {
+                                ...session,
+                                messagesById: nextMessagesById,
+                                messagesMap: nextMessagesById,
+                                messagesVersion: session.messagesVersion + 1,
+                            },
+                        },
+                    };
+                });
+            });
+
+            expect(hook.getCurrent().messages).toHaveLength(0);
+            expect(renderCount).toBe(initialRenderCount);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('returns a referentially stable messages array when store state is unchanged', async () => {
         const previousState = storage.getState();
         try {
@@ -102,12 +174,12 @@ describe('useSessionMessages', () => {
         }
     });
 
-    it('returns an empty array when ids are empty and the transcript is marked loaded', async () => {
+    it('derives committed messages from the populated message map when ids are empty but the transcript is incorrectly marked loaded', async () => {
         const previousState = storage.getState();
         try {
             const messagesById = {
-                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
-                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
+                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi', seq: 1 } as any,
+                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false, seq: 2 } as any,
             };
 
             storage.setState((state) => ({
@@ -115,56 +187,7 @@ describe('useSessionMessages', () => {
                 sessionMessages: {
                     ...state.sessionMessages,
                     's-1': {
-                        messageIdsOldestFirst: ['m-1', 'm-2'],
-                        messagesById,
-                        messagesMap: messagesById,
-                        reducerState: {} as any,
-                        latestThinkingMessageId: null,
-                        latestThinkingMessageActivityAtMs: null,
-                        messagesVersion: 1,
-                        isLoaded: true,
-                    },
-                },
-            }));
-
-            const hook = await renderHook(() => useSessionMessages('s-1'), {
-                flushOptions: { cycles: 1, turns: 4 },
-            });
-
-            const first = hook.getCurrent().messages;
-            expect(first).toHaveLength(2);
-
-            await act(async () => {
-                storage.getState().resetSessionMessages('s-1');
-                storage.getState().applyMessagesLoaded('s-1');
-            });
-
-            const afterBadLoaded = (await hook.rerender()).messages;
-            expect(hook.getCurrent().isLoaded).toBe(true);
-            expect(afterBadLoaded).toEqual([]);
-
-            await hook.unmount();
-        } finally {
-            await act(async () => {
-                storage.setState(previousState);
-            });
-        }
-    });
-
-    it('returns an empty array when ids are empty even if the transcript version is non-zero', async () => {
-        const previousState = storage.getState();
-        try {
-            const messagesById = {
-                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
-                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
-            };
-
-            storage.setState((state) => ({
-                ...state,
-                sessionMessages: {
-                    ...state.sessionMessages,
-                    's-1': {
-                        messageIdsOldestFirst: ['m-1', 'm-2'],
+                        messageIdsOldestFirst: [],
                         messagesById,
                         messagesMap: messagesById,
                         reducerState: {} as any,
@@ -180,27 +203,43 @@ describe('useSessionMessages', () => {
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
-            const first = hook.getCurrent().messages;
-            expect(first).toHaveLength(2);
+            expect(hook.getCurrent().isLoaded).toBe(true);
+            expect(hook.getCurrent().messages.map((message) => message.id)).toEqual(['m-1', 'm-2']);
 
+            await hook.unmount();
+        } finally {
             await act(async () => {
-                storage.setState((state) => ({
-                    ...state,
-                    sessionMessages: {
-                        ...state.sessionMessages,
-                        's-1': {
-                            ...(state.sessionMessages['s-1'] as any),
-                            messageIdsOldestFirst: [],
-                            messagesVersion: 2,
-                            isLoaded: true,
-                        },
+                storage.setState(previousState);
+            });
+        }
+    });
+
+    it('returns an empty array when ids and the committed message map are empty even if the transcript version is non-zero', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: [],
+                        messagesById: {},
+                        messagesMap: {},
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 2,
+                        isLoaded: true,
                     },
-                }));
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionMessages('s-1'), {
+                flushOptions: { cycles: 1, turns: 4 },
             });
 
-            const afterEmptyIds = (await hook.rerender()).messages;
             expect(hook.getCurrent().isLoaded).toBe(true);
-            expect(afterEmptyIds).toEqual([]);
+            expect(hook.getCurrent().messages).toEqual([]);
 
             await hook.unmount();
         } finally {
@@ -301,6 +340,100 @@ describe('useSessionMessages', () => {
 
             expect(hook.getCurrent().messages).toHaveLength(2);
             expect(hook.getCurrent().isLoaded).toBe(true);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+});
+
+describe('useSessionSubagentSourceMessages', () => {
+    it('does not re-render when ordinary agent text streams', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-1': {
+                    id: 'm-1',
+                    kind: 'tool-call',
+                    localId: null,
+                    createdAt: 1,
+                    tool: {
+                        id: 'tool-1',
+                        name: 'SubAgentRun',
+                        state: 'running',
+                        input: { runId: 'run_12345678' },
+                        result: null,
+                    },
+                    children: [],
+                } as any,
+                'm-2': {
+                    id: 'm-2',
+                    kind: 'agent-text',
+                    localId: null,
+                    createdAt: 2,
+                    text: 'Streaming markdown',
+                    children: [],
+                } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-1', 'm-2'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return useSessionSubagentSourceMessages('s-1');
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const initialRenderCount = renderCount;
+            const initialMessages = hook.getCurrent();
+
+            expect(initialMessages.map((message) => message.id)).toEqual(['m-1']);
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const session = state.sessionMessages['s-1'];
+                    if (!session) return state;
+                    const nextMessagesById = {
+                        ...session.messagesById,
+                        'm-2': {
+                            ...session.messagesById['m-2'],
+                            text: 'Streaming markdown with more tokens',
+                        },
+                    };
+                    return {
+                        ...state,
+                        sessionMessages: {
+                            ...state.sessionMessages,
+                            's-1': {
+                                ...session,
+                                messagesById: nextMessagesById,
+                                messagesMap: nextMessagesById,
+                                messagesVersion: session.messagesVersion + 1,
+                            },
+                        },
+                    };
+                });
+            });
+
+            expect(hook.getCurrent()).toBe(initialMessages);
+            expect(renderCount).toBe(initialRenderCount);
 
             await hook.unmount();
         } finally {

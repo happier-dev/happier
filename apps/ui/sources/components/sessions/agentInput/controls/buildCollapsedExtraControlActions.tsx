@@ -2,7 +2,10 @@ import * as React from 'react';
 
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 
-import type { AgentInputExtraActionChip } from '../agentInputContracts';
+import {
+    hasAgentInputCollapsedOptionsPopoverContent,
+    type AgentInputExtraActionChip,
+} from '../agentInputContracts';
 import type { AgentInputControlId } from './agentInputControlTypes';
 
 export function buildCollapsedExtraControlActions(params: Readonly<{
@@ -25,7 +28,10 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
                 dismiss: params.dismiss,
                 blurInput: params.blurInput,
             });
-        } else if (chip.collapsedOptionsPopover && chip.collapsedOptionsPopover.options.length > 0) {
+        } else if (
+            chip.collapsedOptionsPopover
+            && hasAgentInputCollapsedOptionsPopoverContent(chip.collapsedOptionsPopover)
+        ) {
             actions = {
                 id: chip.controlId,
                 label: chip.collapsedOptionsPopover.label ?? chip.collapsedOptionsPopover.title,

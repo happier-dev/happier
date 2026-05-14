@@ -1,6 +1,6 @@
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -31,6 +31,7 @@ import {
     buildExecutionRunPublicStateFromTranscriptState,
     findTranscriptExecutionRunState,
 } from '@/sync/domains/session/subagents/executionRuns/deriveExecutionRunSubagents';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 type LoadState =
     | { status: 'loading' }
@@ -203,7 +204,7 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
         ? { flex: 1, paddingHorizontal: 16, paddingVertical: 16, gap: 12 as const }
         : { flex: 1 };
     const content = state.status === 'loading' ? (
-        <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
     ) : state.status === 'error' ? (
         <Text style={{ color: theme.colors.text.secondary }}>{state.error}</Text>
     ) : (

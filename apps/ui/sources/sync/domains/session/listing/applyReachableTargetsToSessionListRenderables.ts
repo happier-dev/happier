@@ -3,17 +3,11 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import {
     buildMachineResolutionContextFromRecord,
     normalizeSessionPathForComparison,
-    resolveSessionMachineRpcTarget,
     type MachineResolutionContext,
 } from '@/sync/domains/session/resolveSessionReachableMachineId';
+import { resolveSessionDisplayTarget } from '@/sync/domains/machines/identity/resolveSessionMachineTargets';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
-
-import {
-    buildComparableBasePathPeerSessions,
-    listComparableBasePathPeerSessions,
-    type ReachableTargetPeerSession,
-} from './buildComparableBasePathPeerSessions';
 
 type ProjectLookupResult = {
     key?: {
@@ -29,7 +23,7 @@ type ReachableSessionProjectionParams = Readonly<{
     getProjectForSession?: (sessionId: string) => ProjectLookupResult;
 }>;
 
-type SessionMachineRpcTarget = Readonly<{
+type SessionMachineDisplayTarget = Readonly<{
     machineId: string;
     basePath: string;
 }> | null;
@@ -45,17 +39,8 @@ type NormalizedSessionProjectionInput = Readonly<{
     comparableBasePath: string | null;
 }>;
 
-type NormalizedSessionPeerProjection = Readonly<Pick<
-    NormalizedSessionProjectionInput,
-    'sessionMachineId' | 'sessionHostHint' | 'projectMachineId'
-> & Readonly<{
-    comparableProjectPath: string | null;
-    comparableBasePath: string | null;
-}>>;
-
 type NormalizedSessionProjectionArtifacts = Readonly<{
     input: NormalizedSessionProjectionInput;
-    peer: NormalizedSessionPeerProjection;
 }>;
 
 type NormalizedSessionRecordMetadata = Readonly<{
@@ -69,12 +54,6 @@ type NormalizedSessionRecordMetadata = Readonly<{
 type NormalizedTargetMachineMetadata = Readonly<{
     homeDir: string | null;
     host: string | null;
-}>;
-
-type ReachableTargetFallbackEntry = Readonly<{
-    sessionId: string;
-    normalizedProjectionInput: NormalizedSessionProjectionInput;
-    directTarget: SessionMachineRpcTarget;
 }>;
 
 function buildNormalizedSessionRecordMetadata(sessionRecord: Session): NormalizedSessionRecordMetadata {
@@ -163,13 +142,6 @@ function buildNormalizedSessionProjectionArtifacts(input: Readonly<{
     } satisfies NormalizedSessionProjectionInput;
     return {
         input: inputProjection,
-        peer: {
-            sessionMachineId: inputProjection.sessionMachineId,
-            sessionHostHint: inputProjection.sessionHostHint,
-            projectMachineId: inputProjection.projectMachineId,
-            comparableProjectPath: inputProjection.comparableProjectPath,
-            comparableBasePath: inputProjection.comparableBasePath,
-        },
     };
 }
 
@@ -216,8 +188,6 @@ export function applyReachableTargetsToSessionListRenderables(
         });
 
     let directProjectedOverrides: Map<string, SessionListRenderableSession> | null = null;
-    let peerFallbackEntries: ReachableTargetFallbackEntry[] | null = null;
-    let unresolvedComparableBasePaths: Set<string> | null = null;
     let machineResolutionContext: MachineResolutionContext | undefined;
 
     for (const sessionId in params.sessions) {
@@ -237,42 +207,16 @@ export function applyReachableTargetsToSessionListRenderables(
                 return params.sessions;
             }
         }
-        const directTarget = resolveSessionMachineRpcTarget({
-            sessionId,
+        const directTarget: SessionMachineDisplayTarget = resolveSessionDisplayTarget({
+            sessionActive: sessionRecord.active === true,
             sessionMachineId: normalizedProjectionInput.sessionMachineId,
-            sessionHostHint: normalizedProjectionInput.sessionHostHint,
             sessionPath: normalizedProjectionInput.sessionPath,
-            sessionHomeDir: normalizedProjectionInput.sessionHomeDir,
-            comparableBasePath: normalizedProjectionInput.comparableBasePath,
             projectMachineId: normalizedProjectionInput.projectMachineId,
             projectPath: normalizedProjectionInput.projectPath,
-            machineResolutionContext,
+            machines: Object.values(machineRecords),
         });
 
         if (!directTarget || !machineRecords[directTarget.machineId]) {
-            if (directTarget && !normalizedProjectionInput.comparableBasePath) {
-                const projectedSession = projectSessionRenderableMetadata({
-                    session,
-                    targetMachineId: directTarget.machineId,
-                    targetBasePath: directTarget.basePath,
-                    targetMachineMetadata: readCachedNormalizedTargetMachineMetadata(directTarget.machineId),
-                });
-                if (projectedSession !== session) {
-                    (directProjectedOverrides ??= new Map()).set(sessionId, projectedSession);
-                }
-                continue;
-            }
-            if (!directTarget && !normalizedProjectionInput.comparableBasePath) {
-                continue;
-            }
-            (peerFallbackEntries ??= []).push({
-                sessionId,
-                normalizedProjectionInput,
-                directTarget,
-            });
-            if (normalizedProjectionInput.comparableBasePath) {
-                (unresolvedComparableBasePaths ??= new Set()).add(normalizedProjectionInput.comparableBasePath);
-            }
             continue;
         }
 
@@ -287,127 +231,13 @@ export function applyReachableTargetsToSessionListRenderables(
         }
     }
 
-    if (!peerFallbackEntries || peerFallbackEntries.length === 0) {
-        if (!directProjectedOverrides || directProjectedOverrides.size === 0) {
-            return params.sessions;
-        }
-        const nextSessions = { ...params.sessions };
-        for (const [sessionId, session] of directProjectedOverrides) {
-            nextSessions[sessionId] = session;
-        }
-        return nextSessions;
+    if (!directProjectedOverrides || directProjectedOverrides.size === 0) {
+        return params.sessions;
     }
 
-    const unresolvedComparableBasePathsSet = unresolvedComparableBasePaths!;
-    const peerSessionsByComparableBasePath = unresolvedComparableBasePathsSet.size > 0
-        ? buildComparableBasePathPeerSessions({
-            sessionRecords,
-            unresolvedComparableBasePaths: unresolvedComparableBasePathsSet,
-            resolveComparableBasePathAndPeerSession: (sessionId, sessionRecord) => {
-                if (!sessionRecord.metadata) {
-                    return null;
-                }
-
-                const normalizedSessionMetadata = readNormalizedSessionMetadata(sessionId, sessionRecord);
-                const comparableSessionPath = normalizedSessionMetadata.comparableSessionPath;
-                if (comparableSessionPath) {
-                    if (!unresolvedComparableBasePathsSet.has(comparableSessionPath)) {
-                        return null;
-                    }
-
-                    const normalizedProjectionArtifacts = readNormalizedProjectionArtifacts(sessionId, sessionRecord);
-                    const normalizedPeerProjection = normalizedProjectionArtifacts.peer;
-                    return {
-                        comparableBasePath: comparableSessionPath,
-                        peerSession: {
-                            id: sessionRecord.id,
-                            active: sessionRecord.active,
-                            updatedAt: sessionRecord.updatedAt,
-                            machineId: normalizedPeerProjection.sessionMachineId,
-                            hostHint: normalizedPeerProjection.sessionHostHint,
-                            projectMachineId: normalizedPeerProjection.projectMachineId,
-                        },
-                    };
-                }
-
-                const normalizedProjectionArtifacts = readNormalizedProjectionArtifacts(sessionId, sessionRecord);
-                const normalizedPeerProjection = normalizedProjectionArtifacts.peer;
-                const comparableProjectPath = normalizedPeerProjection.comparableProjectPath;
-                if (!comparableProjectPath || !unresolvedComparableBasePathsSet.has(comparableProjectPath)) {
-                    return null;
-                }
-
-                return {
-                    comparableBasePath: comparableProjectPath,
-                    peerSession: {
-                        id: sessionRecord.id,
-                        active: sessionRecord.active,
-                        updatedAt: sessionRecord.updatedAt,
-                        machineId: normalizedPeerProjection.sessionMachineId,
-                        hostHint: normalizedPeerProjection.sessionHostHint,
-                        projectMachineId: normalizedPeerProjection.projectMachineId,
-                    },
-                };
-            },
-        })
-        : new Map<string, ReachableTargetPeerSession[]>();
-
-    let nextSessions = params.sessions;
-    if (directProjectedOverrides && directProjectedOverrides.size > 0) {
-        nextSessions = { ...params.sessions };
-        for (const [sessionId, session] of directProjectedOverrides) {
-            nextSessions[sessionId] = session;
-        }
+    const nextSessions = { ...params.sessions };
+    for (const [sessionId, session] of directProjectedOverrides) {
+        nextSessions[sessionId] = session;
     }
-    let nextSessionsChanged = (directProjectedOverrides?.size ?? 0) > 0;
-    const resolvedMachineResolutionContext = machineResolutionContext;
-    if (!resolvedMachineResolutionContext) {
-        return nextSessions;
-    }
-    for (const peerFallbackEntry of peerFallbackEntries) {
-        const { sessionId, normalizedProjectionInput, directTarget } = peerFallbackEntry;
-        const session = params.sessions[sessionId];
-        const peerSessions = listComparableBasePathPeerSessions(
-            peerSessionsByComparableBasePath,
-            normalizedProjectionInput.comparableBasePath,
-        );
-        const target = (!normalizedProjectionInput.comparableBasePath || peerSessions.length === 0)
-            ? directTarget
-            : resolveSessionMachineRpcTarget({
-                sessionId,
-                sessionMachineId: normalizedProjectionInput.sessionMachineId,
-                sessionHostHint: normalizedProjectionInput.sessionHostHint,
-                sessionPath: normalizedProjectionInput.sessionPath,
-                sessionHomeDir: normalizedProjectionInput.sessionHomeDir,
-                comparableBasePath: normalizedProjectionInput.comparableBasePath,
-                projectMachineId: normalizedProjectionInput.projectMachineId,
-                projectPath: normalizedProjectionInput.projectPath,
-                machineResolutionContext: resolvedMachineResolutionContext,
-                peerSessions,
-                peerSessionsSorted: true,
-                peerSessionsComparablePathFiltered: true,
-            });
-
-        if (!target) {
-            continue;
-        }
-
-        const projectedSession = projectSessionRenderableMetadata({
-            session,
-            targetMachineId: target.machineId,
-            targetBasePath: target.basePath,
-            targetMachineMetadata: readCachedNormalizedTargetMachineMetadata(target.machineId),
-        });
-        if (projectedSession === session) {
-            continue;
-        }
-
-        if (!nextSessionsChanged) {
-            nextSessions = { ...params.sessions };
-            nextSessionsChanged = true;
-        }
-        nextSessions[sessionId] = projectedSession;
-    }
-
-    return nextSessionsChanged ? nextSessions : params.sessions;
+    return nextSessions;
 }

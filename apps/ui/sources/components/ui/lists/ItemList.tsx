@@ -1,12 +1,5 @@
 import * as React from 'react';
-import { 
-    ScrollView, 
-    View, 
-    StyleProp, 
-    ViewStyle,
-    Platform,
-    ScrollViewProps
-} from 'react-native';
+import { ScrollView, View, StyleProp, ViewStyle, Platform, ScrollViewProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';

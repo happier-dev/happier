@@ -2,7 +2,11 @@ import type { BundledLanguage, BundledTheme, HighlighterGeneric, TokensResult } 
 import { createHighlighter } from 'shiki';
 
 import { resolveShikiLanguageId } from '@/components/ui/code/highlighting/resolveShikiLanguageId';
-import { getHappierTextMateThemeRegistration, HAPPIER_TEXTMATE_THEME_IDS } from '@/components/ui/code/highlighting/shiki/happierTextMateTheme';
+import {
+    clearHappierTextMateThemeRegistrationCacheForKey,
+    getHappierTextMateThemeRegistration,
+    resolveHappierTextMateThemeId,
+} from '@/components/ui/code/highlighting/shiki/happierTextMateTheme';
 
 export type ShikiInlineToken = Readonly<{ text: string; color: string }>;
 
@@ -17,36 +21,100 @@ type CachedHighlighter = Readonly<{
 
 const highlighterCache = new Map<string, { highlighter: ShikiHighlighter; loadedLanguageIds: Set<string> }>();
 const highlighterInflight = new Map<string, Promise<CachedHighlighter>>();
+const highlighterCacheGeneration = new Map<string, number>();
+const SHIKI_HIGHLIGHTER_CACHE_CAP = 8;
 
-export function resolveHappierShikiThemeId(params: Readonly<{ isDark: boolean }>): string {
-    return params.isDark ? HAPPIER_TEXTMATE_THEME_IDS.dark : HAPPIER_TEXTMATE_THEME_IDS.light;
+export function resolveHappierShikiThemeId(params: Readonly<{ isDark: boolean; colors?: Record<string, unknown> | null }>): string {
+    return resolveHappierTextMateThemeId(params);
 }
 
-async function getShikiHighlighterForTheme(params: Readonly<{ themeId: string; isDark: boolean }>): Promise<CachedHighlighter> {
-    const cached = highlighterCache.get(params.themeId);
-    if (cached) {
-        return { highlighter: cached.highlighter, loadedLanguageIds: cached.loadedLanguageIds };
-    }
+function buildShikiHighlighterCacheKey(params: Readonly<{ themeId: string; languageId: string }>): string {
+    return `${params.themeId}::${params.languageId}`;
+}
 
-    const inflight = highlighterInflight.get(params.themeId);
+function disposeHighlighter(highlighter: ShikiHighlighter): void {
+    const dispose = (highlighter as { dispose?: unknown }).dispose;
+    if (typeof dispose === 'function') dispose.call(highlighter);
+}
+
+function touchHighlighterCacheEntry(key: string): { highlighter: ShikiHighlighter; loadedLanguageIds: Set<string> } | null {
+    const cached = highlighterCache.get(key);
+    if (!cached) return null;
+    highlighterCache.delete(key);
+    highlighterCache.set(key, cached);
+    return cached;
+}
+
+function setHighlighterCacheEntry(key: string, entry: { highlighter: ShikiHighlighter; loadedLanguageIds: Set<string> }): void {
+    if (highlighterCache.has(key)) highlighterCache.delete(key);
+    highlighterCache.set(key, entry);
+    while (highlighterCache.size > SHIKI_HIGHLIGHTER_CACHE_CAP) {
+        const oldest = highlighterCache.keys().next().value as string | undefined;
+        if (!oldest) break;
+        const evicted = highlighterCache.get(oldest);
+        highlighterCache.delete(oldest);
+        if (evicted) disposeHighlighter(evicted.highlighter);
+    }
+}
+
+function getHighlighterCacheGeneration(key: string): number {
+    return highlighterCacheGeneration.get(key) ?? 0;
+}
+
+function bumpHighlighterCacheGeneration(key: string): void {
+    highlighterCacheGeneration.set(key, getHighlighterCacheGeneration(key) + 1);
+}
+
+export function clearShikiCacheForKey(oldKey: string): void {
+    const affectedKeys = new Set<string>();
+    for (const key of Array.from(highlighterCache.keys())) {
+        if (!key.startsWith(`${oldKey}::`)) continue;
+        affectedKeys.add(key);
+        const entry = highlighterCache.get(key);
+        highlighterCache.delete(key);
+        if (entry) disposeHighlighter(entry.highlighter);
+    }
+    for (const key of Array.from(highlighterInflight.keys())) {
+        if (!key.startsWith(`${oldKey}::`)) continue;
+        affectedKeys.add(key);
+        highlighterInflight.delete(key);
+    }
+    for (const key of affectedKeys) {
+        bumpHighlighterCacheGeneration(key);
+    }
+    clearHappierTextMateThemeRegistrationCacheForKey(oldKey);
+}
+
+async function getShikiHighlighterForTheme(params: Readonly<{ themeId: string; isDark: boolean; colors?: Record<string, unknown> | null; languageId: string }>): Promise<CachedHighlighter> {
+    const cacheKey = buildShikiHighlighterCacheKey({ themeId: params.themeId, languageId: params.languageId });
+    const cached = touchHighlighterCacheEntry(cacheKey);
+    if (cached) return { highlighter: cached.highlighter, loadedLanguageIds: cached.loadedLanguageIds };
+
+    const inflight = highlighterInflight.get(cacheKey);
     if (inflight) return await inflight;
 
+    const cacheGeneration = getHighlighterCacheGeneration(cacheKey);
     const promise: Promise<CachedHighlighter> = (async () => {
-        const theme = getHappierTextMateThemeRegistration({ isDark: params.isDark });
+        const theme = getHappierTextMateThemeRegistration({ isDark: params.isDark, colors: params.colors });
+        const langs = Array.from(new Set(['text', params.languageId])) as unknown as BundledLanguage[];
         const highlighter = await createHighlighter({
             themes: [theme as any],
-            langs: ['text' as unknown as BundledLanguage],
+            langs,
         });
 
-        const entry = { highlighter: highlighter as any, loadedLanguageIds: new Set<string>(['text']) };
-        highlighterCache.set(params.themeId, entry);
+        const entry = { highlighter: highlighter as any, loadedLanguageIds: new Set<string>(langs as unknown as string[]) };
+        if (getHighlighterCacheGeneration(cacheKey) === cacheGeneration) {
+            setHighlighterCacheEntry(cacheKey, entry);
+        }
         return { highlighter: entry.highlighter, loadedLanguageIds: entry.loadedLanguageIds };
     })().finally(() => {
         // Always clear inflight to allow retries after failures.
-        highlighterInflight.delete(params.themeId);
+        if (highlighterInflight.get(cacheKey) === promise) {
+            highlighterInflight.delete(cacheKey);
+        }
     });
 
-    highlighterInflight.set(params.themeId, promise);
+    highlighterInflight.set(cacheKey, promise);
     return await promise;
 }
 
@@ -63,12 +131,13 @@ export async function shikiTokenizeLines(params: Readonly<{
     isDark: boolean;
     language: string;
     lines: readonly string[];
+    colors?: Record<string, unknown> | null;
 }>): Promise<Readonly<{ tokensByLine: readonly (readonly ShikiInlineToken[])[]; fg: string }>> {
-    const themeId = resolveHappierShikiThemeId({ isDark: params.isDark });
-    const { highlighter } = await getShikiHighlighterForTheme({ themeId, isDark: params.isDark });
-
     const languageId = resolveShikiLanguageId(params.language) as unknown as string;
-    const cachedEntry = highlighterCache.get(themeId);
+    const themeId = resolveHappierShikiThemeId({ isDark: params.isDark, colors: params.colors });
+    const { highlighter } = await getShikiHighlighterForTheme({ themeId, isDark: params.isDark, colors: params.colors, languageId });
+
+    const cachedEntry = highlighterCache.get(buildShikiHighlighterCacheKey({ themeId, languageId }));
     if (cachedEntry) {
         await ensureLanguageLoaded({ highlighter: cachedEntry.highlighter, loadedLanguageIds: cachedEntry.loadedLanguageIds, languageId });
     }

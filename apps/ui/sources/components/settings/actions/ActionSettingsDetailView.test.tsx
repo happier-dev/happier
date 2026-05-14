@@ -15,6 +15,7 @@ const capture = vi.hoisted(() => ({
     segmentedTabBars: [] as Array<Record<string, unknown>>,
     stackOptions: null as Record<string, unknown> | null,
     switches: [] as Array<Record<string, unknown>>,
+    windowWidth: 800,
     setRawSettings: vi.fn(),
     reset() {
         this.items = [];
@@ -25,6 +26,7 @@ const capture = vi.hoisted(() => ({
         this.segmentedTabBars = [];
         this.stackOptions = null;
         this.switches = [];
+        this.windowWidth = 800;
         this.setRawSettings.mockReset();
     },
 }));
@@ -34,6 +36,17 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            useWindowDimensions: () => ({
+                width: capture.windowWidth,
+                height: 844,
+                scale: 2,
+                fontScale: 1,
+            }),
+        });
+    },
     router: async () => {
         const { createExpoRouterMock, createStackOptionsCapture } = await import('@/dev/testkit/mocks/router');
         const stackOptionsCapture = createStackOptionsCapture();
@@ -95,7 +108,7 @@ vi.mock('@/components/ui/lists/Item', () => ({
         }
         return React.createElement('ItemMock', {
             testID: props.testID,
-        }, props.rightElement as React.ReactNode);
+        }, props.subtitleAccessory as React.ReactNode, props.rightElement as React.ReactNode);
     },
 }));
 
@@ -191,6 +204,24 @@ describe('ActionSettingsDetailView', () => {
                 },
             },
         });
+    });
+
+    it('moves approval mode controls into the target text column on narrow mobile widths', async () => {
+        capture.windowWidth = 390;
+        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
+
+        await renderScreen(<ActionSettingsDetailContent actionId="review.start" />);
+
+        const cliTarget = capture.items.find((item) =>
+            item.testID === 'settings-actions:action:review.start:target:cli',
+        );
+        expect(cliTarget).toBeTruthy();
+        expect(cliTarget?.rightElement).toBeFalsy();
+        expect(cliTarget?.subtitleAccessory).toBeTruthy();
+        expect(capture.segmentedTabBars.some((bar) =>
+            bar.testIDPrefix === 'settings-actions:action:review.start:target:cli:mode'
+            && bar.activeTabId === 'allowed',
+        )).toBe(true);
     });
 
     it('uses the action name as the route header title', async () => {

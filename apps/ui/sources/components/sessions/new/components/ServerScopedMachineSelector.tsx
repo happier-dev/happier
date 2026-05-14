@@ -33,6 +33,8 @@ const emptyTextStyle = {
 
 export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorProps) {
     const { theme } = useUnistyles();
+    const optionTestIdPrefix = props.testIdPrefix ? `${props.testIdPrefix}-option` : undefined;
+    const readinessTestIdPrefix = props.testIdPrefix ? `${props.testIdPrefix}-readiness` : undefined;
 
     return (
         <>
@@ -69,12 +71,13 @@ export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorPr
                                 return (
                                     <Item
                                         key={`${group.serverId}::${machine.id}`}
-                                        testID={props.testIdPrefix ? `${props.testIdPrefix}:${machine.id}` : undefined}
+                                        testID={optionTestIdPrefix ? `${optionTestIdPrefix}:${machine.id}` : undefined}
                                         title={machine.metadata?.displayName || machine.metadata?.host || machine.id}
                                         subtitle={machine.metadata?.host || machine.id}
                                         icon={<Ionicons name="desktop-outline" size={20} color={theme.colors.text.secondary} />}
                                         selected={isSelected}
                                         detail={online ? t('status.online') : t('status.offline')}
+                                        detailTestID={readinessTestIdPrefix ? `${readinessTestIdPrefix}:${machine.id}` : undefined}
                                         disabled={!online}
                                         onPress={() => {
                                             if (!online) return;

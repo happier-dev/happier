@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, AppState, Linking, Platform, Pressable, useWindowDimensions, View } from 'react-native';
+import { AppState, Linking, Platform, Pressable, useWindowDimensions, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -9,6 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -178,7 +179,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     if (!permission) {
         return (
             <View style={styles.permissionsCard}>
-                <ActivityIndicator size="small" color={theme.colors.text.primary} />
+                <ActivitySpinner size="small" color={theme.colors.text.primary} />
                 <Text style={styles.permissionsBody}>{t('common.loading')}</Text>
             </View>
         );

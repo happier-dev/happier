@@ -45,6 +45,7 @@ export async function applyPlannedChangeActions(params: {
         feed?: () => Promise<void>;
         automations?: () => Promise<void>;
         sessions?: () => Promise<void>;
+        sessionFolderAssignments?: (sessionIds: string[]) => Promise<void>;
         todos?: () => Promise<void>;
         pets?: () => Promise<void>;
     };
@@ -67,6 +68,7 @@ export async function applyPlannedChangeActions(params: {
     const failedPendingSessionIds = new Set<string>();
 
     let sessionsInvalidationFailed = false;
+    let sessionFolderAssignmentsInvalidationFailed = false;
     let petsInvalidationFailed = false;
     let sessionsInvalidationDone: Promise<boolean> | null = null;
     let resolveSessionsInvalidationDone: ((succeeded: boolean) => void) | null = null;
@@ -107,6 +109,19 @@ export async function applyPlannedChangeActions(params: {
             } catch {
                 sessionsInvalidationFailed = true;
                 resolveSessionsInvalidationDone?.(false);
+            }
+        });
+    }
+    if (planned.invalidate.sessionFolderAssignments) {
+        tasks.push(async () => {
+            try {
+                if (!params.invalidate.sessionFolderAssignments) {
+                    sessionFolderAssignmentsInvalidationFailed = true;
+                    return;
+                }
+                await params.invalidate.sessionFolderAssignments(planned.sessionFolderAssignmentSessionIds);
+            } catch {
+                sessionFolderAssignmentsInvalidationFailed = true;
             }
         });
     }
@@ -233,6 +248,22 @@ export async function applyPlannedChangeActions(params: {
                 processedChanges,
                 blockedChanges: planned.changes.length - processedChanges,
             };
+        }
+
+        if (classification.materializationProof === 'session-folder-assignment-refresh') {
+            if (sessionFolderAssignmentsInvalidationFailed) {
+                return {
+                    status: 'partial',
+                    safeAdvanceCursor,
+                    blockedCursor: classification.cursor,
+                    blockedReason: 'partial-materialization',
+                    processedChanges,
+                    blockedChanges: planned.changes.length - processedChanges,
+                };
+            }
+            safeAdvanceCursor = classification.cursor;
+            processedChanges += 1;
+            continue;
         }
 
         if (classification.materializationProof === 'pending-queue-convergence') {

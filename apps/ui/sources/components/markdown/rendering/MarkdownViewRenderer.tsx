@@ -3,6 +3,7 @@ import type { StyleProp, TextStyle } from 'react-native';
 import { Platform, View } from 'react-native';
 
 import type { Option } from '../MarkdownBlockView';
+import type { MarkdownSourceRange, MarkdownSourceRangeAction } from '../MarkdownView';
 import type { MarkdownStreamingMode } from '../streaming/useStreamingMarkdownBlocks';
 import { usePreparedStreamingMarkdown } from '../streaming/usePreparedStreamingMarkdown';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
@@ -23,6 +24,10 @@ type MarkdownViewRendererProps = Readonly<{
     streamingMode: MarkdownStreamingMode;
     streamingAnimated: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    staticRenderPlaceholderEnabled?: boolean;
+    onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
+    renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
+    highlightSourceRange?: MarkdownSourceRange | null;
 }>;
 
 export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps) => {
@@ -37,7 +42,11 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
     }), [preparedMarkdown, props.streamingMode]);
     const streamingReveal = props.streamingMode === 'streaming' && props.streamingAnimated === true;
     const staticRenderPlaceholder = useDelayedStaticMarkdownRenderPlaceholder({
-        enabled: Platform.OS !== 'web' && props.streamingMode === 'static' && props.markdown.trim().length > 0,
+        enabled:
+            props.staticRenderPlaceholderEnabled !== false &&
+            Platform.OS !== 'web' &&
+            props.streamingMode === 'static' &&
+            props.markdown.trim().length > 0,
         contentKey: props.markdown,
     });
 
@@ -59,6 +68,9 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
                         profile={props.profile}
                         streamingReveal={streamingReveal}
                         streamingRevealPreset={props.streamingRevealPreset}
+                        onPressSourceRange={props.onPressSourceRange}
+                        renderAfterSourceRange={props.renderAfterSourceRange}
+                        highlightSourceRange={props.highlightSourceRange}
                     />
                 ))}
             </View>

@@ -9,6 +9,11 @@ import { selectVoiceTranscriptEntriesForConversationSession } from '@/voice/tran
 import { useStoreSnapshot } from './useStoreSnapshot';
 
 const EMPTY_ENTRIES: ReadonlyArray<Readonly<{ id: string; createdAt: number; kind: 'user' | 'assistant' | 'note'; text: string }>> = [];
+const EMPTY_SESSIONS: Record<string, unknown> = {};
+
+function selectPersistedSessions(state: any): Record<string, unknown> {
+    return state?.sessions ?? EMPTY_SESSIONS;
+}
 
 export function useVoiceSurfaceConversationState(params: Readonly<{
     providerId: string;
@@ -18,8 +23,7 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
     sessionMessages: Record<string, unknown>;
 }>) {
     const bindingSnapshot = useStoreSnapshot(voiceSessionBindingStore);
-    const storageSnapshot = useStoreSnapshot(storage as any);
-    const persistedSessions = (storageSnapshot as any).sessions ?? {};
+    const persistedSessions = useStoreSnapshot(storage as any, selectPersistedSessions);
     const controlSessionCandidates = React.useMemo(
         () =>
             [

@@ -101,14 +101,18 @@ vi.mock('@/components/ui/filesystemBrowser/FilesystemBrowserRow', () => ({
 describe('WorkspaceRepositoryTreeList', () => {
     const theme = {
         colors: {
-            textLink: '#09f',
-            textSecondary: '#aaa',
-            surfacePressed: '#222',
-            surface: '#111',
-            divider: '#333',
-            warning: '#f80',
-            success: '#0f0',
-            textDestructive: '#f00',
+            text: {
+                link: '#09f',
+                secondary: '#aaa',
+            },
+            surface: {
+                pressed: '#222',
+            },
+            state: {
+                neutral: { foreground: '#333' },
+                success: { foreground: '#0f0' },
+                danger: { foreground: '#f00' },
+            },
         },
     } as any;
 

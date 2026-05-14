@@ -31,6 +31,15 @@
     }
 }
 
+@keyframes happierActivitySpinnerSpin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* Webkit Scrollbars (Chrome, Safari, Edge) */
 ::-webkit-scrollbar {
     width: 12px;

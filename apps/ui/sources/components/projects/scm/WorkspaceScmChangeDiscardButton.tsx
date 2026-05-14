@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -11,6 +11,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { applyWorkspaceFileDiscardAction } from './applyWorkspaceFileDiscardAction';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export type WorkspaceScmChangeDiscardButtonProps = Readonly<{
     scope: WorkspaceScopeBase;
@@ -73,7 +74,7 @@ export const WorkspaceScmChangeDiscardButton = React.memo((props: WorkspaceScmCh
             }}
         >
             {busy ? (
-                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             ) : (
                 <Octicons name="history" size={14} color={theme.colors.text.secondary} />
             )}

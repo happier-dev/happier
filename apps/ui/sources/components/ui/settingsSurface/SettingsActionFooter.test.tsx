@@ -46,4 +46,15 @@ describe('SettingsActionFooter', () => {
         expect(screen.findByTestId('settings-action-footer-buttons')).toBeTruthy();
         expect(screen.findByTestId('settings-action-footer-item-group')).toBeNull();
     });
+
+    it('does not render an empty secondary action when no secondary label is provided', async () => {
+        const { SettingsActionFooter } = await import('./SettingsActionFooter');
+
+        const screen = await renderScreen(React.createElement(SettingsActionFooter, {
+            primaryLabel: 'Save',
+            onPrimaryPress: vi.fn(),
+        }));
+
+        expect(screen.findByTestId('settings-action-footer-buttons')?.props.secondaryLabel).toBeUndefined();
+    });
 });

@@ -1,8 +1,16 @@
-import type { ScmWorkingSnapshot as ProtocolScmWorkingSnapshot } from '@happier-dev/protocol';
+import type {
+    ScmStatusSnapshotResponse,
+    ScmWorkingSnapshot as ProtocolScmWorkingSnapshot,
+    ScmWorktreeEnrichmentEntry,
+    ScmWorktreesEnrichmentRequest,
+    ScmWorktreesEnrichmentResponse,
+} from '@happier-dev/protocol';
+import { SCM_WORKTREES_ENRICHMENT_MAX_PATHS } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { ScmCapabilities, ScmStatus, ScmWorkingSnapshot as UiScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { sessionScmStatusSnapshot } from '@/sync/ops';
-import { machineScmStatusSnapshot } from '@/sync/ops/scm/machineScm';
+import { machineScmStatusSnapshot, runMachineScmRpc } from '@/sync/ops/scm/machineScm';
 import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';
 import { resolveRepoScmMachinePathRequest } from '@/scm/repository/resolveRepoScmMachinePathRequest';
 import { resolveRepoScmSessionRequest } from '@/scm/repository/resolveRepoScmSessionRequest';
@@ -14,11 +22,40 @@ import {
 } from '@/scm/core/snapshotMappers';
 import { resolveCanonicalScmProjectKey } from '@/scm/core/resolveCanonicalScmProjectKey';
 
+const DEFAULT_MAX_REPO_ENRICHMENT_CACHE_ENTRIES = 32;
+const DEFAULT_MAX_PER_REPO_ENRICHMENT_ENTRIES = 64;
+
+function chunkWorktreePathsForEnrichment(
+    worktreePaths: ReadonlyArray<string>,
+): ReadonlyArray<ReadonlyArray<string>> {
+    if (worktreePaths.length === 0) return [[]];
+    const chunks: string[][] = [];
+    for (let index = 0; index < worktreePaths.length; index += SCM_WORKTREES_ENRICHMENT_MAX_PATHS) {
+        chunks.push(worktreePaths.slice(index, index + SCM_WORKTREES_ENRICHMENT_MAX_PATHS));
+    }
+    return chunks;
+}
+
 function isProtocolScmSnapshot(
     snapshot: UiScmWorkingSnapshot | ProtocolScmWorkingSnapshot
 ): snapshot is ProtocolScmWorkingSnapshot {
     const repo = (snapshot as ProtocolScmWorkingSnapshot).repo as ProtocolScmWorkingSnapshot['repo'] | undefined;
     return Boolean(repo && typeof repo === 'object' && 'isRepo' in repo);
+}
+
+function isScmStatusSnapshotResponse(response: unknown): response is ScmStatusSnapshotResponse {
+    return Boolean(
+        response
+        && typeof response === 'object'
+        && typeof (response as { success?: unknown }).success === 'boolean',
+    );
+}
+
+function readSuccessfulSnapshot(response: unknown): ProtocolScmWorkingSnapshot | undefined {
+    if (!isScmStatusSnapshotResponse(response) || response.success !== true) {
+        return undefined;
+    }
+    return response.snapshot;
 }
 
 export function normalizeWorkingSnapshotForUi(
@@ -39,6 +76,8 @@ export function normalizeWorkingSnapshotForUi(
                 remotes: snapshot.repo.remotes ?? [],
             },
             capabilities,
+            hostingProvider: snapshot.hostingProvider ?? null,
+            pullRequestStatus: snapshot.pullRequestStatus ?? null,
         };
     }
 
@@ -57,6 +96,8 @@ function createEmptyScmSnapshot(input: {
         capabilities: EMPTY_SCM_CAPABILITIES,
         branch: { head: null, upstream: null, ahead: 0, behind: 0, detached: false },
         stashCount: 0,
+        hostingProvider: null,
+        pullRequestStatus: null,
         hasConflicts: false,
         entries: [],
         totals: {
@@ -72,17 +113,13 @@ function createEmptyScmSnapshot(input: {
 }
 
 function normalizeScmSnapshotResponseOrThrow(input: {
-    response: Awaited<ReturnType<typeof sessionScmStatusSnapshot>>;
+    response: unknown;
     projectKey: string;
     fetchedAt: number;
     emptyRootPath?: string | null;
 }): UiScmWorkingSnapshot {
     const { response, projectKey, fetchedAt, emptyRootPath } = input;
-    if (
-        !response
-        || typeof response !== 'object'
-        || typeof (response as { success?: unknown }).success !== 'boolean'
-    ) {
+    if (!isScmStatusSnapshotResponse(response)) {
         throw new Error('Invalid source-control status snapshot response');
     }
     if (!response.success) {
@@ -137,17 +174,80 @@ export function snapshotToScmStatus(snapshot: UiScmWorkingSnapshot): ScmStatus {
     };
 }
 
+export function mergeWorktreesEnrichmentIntoSnapshot(
+    snapshot: UiScmWorkingSnapshot,
+    enrichment: ReadonlyArray<ScmWorktreeEnrichmentEntry>,
+): UiScmWorkingSnapshot {
+    if (enrichment.length === 0) return snapshot;
+    if (!snapshot.repo.worktrees || snapshot.repo.worktrees.length === 0) return snapshot;
+
+    const enrichmentByPath = new Map<string, ScmWorktreeEnrichmentEntry>();
+    for (const entry of enrichment) {
+        enrichmentByPath.set(entry.path, entry);
+    }
+
+    let didChange = false;
+    const nextWorktrees = snapshot.repo.worktrees.map((worktree) => {
+        const enrichmentEntry = enrichmentByPath.get(worktree.path);
+        if (!enrichmentEntry) return worktree;
+        const merged = { ...worktree };
+        if (enrichmentEntry.changeCount !== undefined) {
+            merged.changeCount = enrichmentEntry.changeCount;
+            didChange = didChange || worktree.changeCount !== enrichmentEntry.changeCount;
+        }
+        if (enrichmentEntry.lastActivityAt !== undefined) {
+            merged.lastActivityAt = enrichmentEntry.lastActivityAt;
+            didChange = didChange || worktree.lastActivityAt !== enrichmentEntry.lastActivityAt;
+        }
+        return merged;
+    });
+
+    if (!didChange) return snapshot;
+
+    return {
+        ...snapshot,
+        repo: {
+            ...snapshot.repo,
+            worktrees: nextWorktrees,
+        },
+    };
+}
+
 export class ScmRepositoryService {
     private repoSnapshotRequests = new Map<string, Promise<UiScmWorkingSnapshot | null>>();
     private repoSnapshotCache = new Map<string, UiScmWorkingSnapshot | null>();
     private repoSnapshotAliases: LruMap<string, string>;
+    private worktreesEnrichmentCache: LruMap<string, LruMap<string, ScmWorktreeEnrichmentEntry>>;
+    private worktreesEnrichmentCacheKeys = new Set<string>();
+    private worktreesEnrichmentEntryKeys = new Map<string, Set<string>>();
+    private readonly maxPerRepoEnrichmentEntries: number;
+    private worktreesEnrichmentRequests = new Map<string, Promise<ScmWorktreeEnrichmentEntry[] | null>>();
 
     constructor(options?: Readonly<{
         maxAliasEntries?: number;
+        maxRepoEnrichmentCacheEntries?: number;
+        maxPerRepoEnrichmentEntries?: number;
     }>) {
         this.repoSnapshotAliases = new LruMap<string, string>({
             maxEntries: this.normalizeMaxAliasEntries(options?.maxAliasEntries),
         });
+        this.worktreesEnrichmentCache = new LruMap<string, LruMap<string, ScmWorktreeEnrichmentEntry>>({
+            maxEntries: this.normalizePositiveCount(
+                options?.maxRepoEnrichmentCacheEntries,
+                DEFAULT_MAX_REPO_ENRICHMENT_CACHE_ENTRIES,
+            ),
+        });
+        this.maxPerRepoEnrichmentEntries = this.normalizePositiveCount(
+            options?.maxPerRepoEnrichmentEntries,
+            DEFAULT_MAX_PER_REPO_ENRICHMENT_ENTRIES,
+        );
+    }
+
+    private normalizePositiveCount(value: unknown, fallback: number): number {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return Math.max(1, Math.floor(value));
+        }
+        return fallback;
     }
 
     private normalizeMaxAliasEntries(value: unknown): number {
@@ -226,6 +326,9 @@ export class ScmRepositoryService {
     private async fetchSnapshotForRepoIdentity(
         repoIdentityKey: string,
         loader: () => Promise<UiScmWorkingSnapshot | null>,
+        options?: Readonly<{
+            canonicalIdentityKeyOverride?: (snapshot: UiScmWorkingSnapshot | null) => string;
+        }>,
     ): Promise<UiScmWorkingSnapshot | null> {
         const existingRequest = this.repoSnapshotRequests.get(repoIdentityKey);
         if (existingRequest) {
@@ -234,7 +337,9 @@ export class ScmRepositoryService {
 
         const requestPromise = (async () => {
             const snapshot = await loader();
-            const canonicalIdentityKey = snapshot?.projectKey ? snapshot.projectKey : repoIdentityKey;
+            const canonicalIdentityKey = options?.canonicalIdentityKeyOverride
+                ? options.canonicalIdentityKeyOverride(snapshot)
+                : (snapshot?.projectKey ? snapshot.projectKey : repoIdentityKey);
 
             this.repoSnapshotCache.set(canonicalIdentityKey, snapshot);
             if (canonicalIdentityKey !== repoIdentityKey) {
@@ -270,12 +375,7 @@ export class ScmRepositoryService {
             const projectKey = resolveCanonicalScmProjectKey({
                 fallbackProjectKey: request.repoIdentityKey,
                 machineId: request.machineId,
-                snapshot:
-                    response
-                    && typeof response === 'object'
-                    && (response as any).success === true
-                        ? (response as any).snapshot
-                        : null,
+                snapshot: readSuccessfulSnapshot(response) ?? null,
             });
             return normalizeScmSnapshotResponseOrThrow({
                 response,
@@ -289,25 +389,24 @@ export class ScmRepositoryService {
     async fetchSnapshotForMachinePath(input: Readonly<{
         machineId: string;
         path: string;
+        includeWorktreeStatus?: boolean;
     }>): Promise<UiScmWorkingSnapshot | null> {
         const request = resolveRepoScmMachinePathRequest(input);
         if (!request) {
             return null;
         }
-        return await this.fetchSnapshotForRepoIdentity(request.repoIdentityKey, async () => {
+        const includeWorktreeStatus = input.includeWorktreeStatus === true;
+        const cacheNamespaceKey = this.applyStatusCacheNamespace(request.repoIdentityKey, includeWorktreeStatus);
+        return await this.fetchSnapshotForRepoIdentity(cacheNamespaceKey, async () => {
             const fetchedAt = Date.now();
             const response = await machineScmStatusSnapshot(request.machineId, {
                 cwd: request.resolvedPath,
+                ...(includeWorktreeStatus ? { includeWorktreeStatus: true } : {}),
             });
             const projectKey = resolveCanonicalScmProjectKey({
                 fallbackProjectKey: request.repoIdentityKey,
                 machineId: request.machineId,
-                snapshot:
-                    response
-                    && typeof response === 'object'
-                    && (response as any).success === true
-                        ? (response as any).snapshot
-                        : null,
+                snapshot: readSuccessfulSnapshot(response) ?? null,
             });
             return normalizeScmSnapshotResponseOrThrow({
                 response,
@@ -315,15 +414,37 @@ export class ScmRepositoryService {
                 fetchedAt,
                 emptyRootPath: request.resolvedPath,
             });
+        }, {
+            canonicalIdentityKeyOverride: includeWorktreeStatus
+                ? (snapshot) => this.applyStatusCacheNamespace(snapshot?.projectKey ?? request.repoIdentityKey, true)
+                : undefined,
         });
     }
 
     readCachedSnapshotForMachinePath(input: Readonly<{
         machineId: string;
         path: string;
+        includeWorktreeStatus?: boolean;
     }>): UiScmWorkingSnapshot | null {
         const request = resolveRepoScmMachinePathRequest(input);
         if (!request) {
+            return null;
+        }
+
+        const includeWorktreeStatus = input.includeWorktreeStatus === true;
+        if (includeWorktreeStatus) {
+            const enrichedKey = this.applyStatusCacheNamespace(request.repoIdentityKey, true);
+            const direct = this.repoSnapshotCache.get(enrichedKey);
+            if (direct) return direct;
+            const aliasedLightweightKey =
+                this.resolveCachedRepoIdentityKeyForMachinePath({
+                    machineId: request.machineId,
+                    resolvedPath: request.resolvedPath,
+                    repoIdentityKey: request.repoIdentityKey,
+                });
+            if (aliasedLightweightKey) {
+                return this.repoSnapshotCache.get(this.applyStatusCacheNamespace(aliasedLightweightKey, true)) ?? null;
+            }
             return null;
         }
 
@@ -336,6 +457,211 @@ export class ScmRepositoryService {
             ?? request.repoIdentityKey;
 
         return this.repoSnapshotCache.get(resolvedCacheKey) ?? null;
+    }
+
+    private static readonly STATUS_ENRICHED_SUFFIX = '::status=enriched';
+
+    private applyStatusCacheNamespace(identityKey: string, includeWorktreeStatus: boolean): string {
+        if (!includeWorktreeStatus) return identityKey;
+        if (identityKey.endsWith(ScmRepositoryService.STATUS_ENRICHED_SUFFIX)) {
+            return identityKey;
+        }
+        return `${identityKey}${ScmRepositoryService.STATUS_ENRICHED_SUFFIX}`;
+    }
+
+    private static readonly WORKTREES_ENRICHMENT_SUFFIX = '::worktrees-enrichment';
+    private static readonly WORKTREE_ENRICHMENT_REQUEST_KEY_SEPARATOR = '\0';
+
+    private applyWorktreesEnrichmentNamespace(identityKey: string): string {
+        if (identityKey.endsWith(ScmRepositoryService.WORKTREES_ENRICHMENT_SUFFIX)) {
+            return identityKey;
+        }
+        return `${identityKey}${ScmRepositoryService.WORKTREES_ENRICHMENT_SUFFIX}`;
+    }
+
+    private stripStatusCacheNamespace(identityKey: string): string {
+        if (!identityKey.endsWith(ScmRepositoryService.STATUS_ENRICHED_SUFFIX)) {
+            return identityKey;
+        }
+        return identityKey.slice(0, -ScmRepositoryService.STATUS_ENRICHED_SUFFIX.length);
+    }
+
+    private stripWorktreesEnrichmentNamespace(identityKey: string): string {
+        if (!identityKey.endsWith(ScmRepositoryService.WORKTREES_ENRICHMENT_SUFFIX)) {
+            return identityKey;
+        }
+        return identityKey.slice(0, -ScmRepositoryService.WORKTREES_ENRICHMENT_SUFFIX.length);
+    }
+
+    private resolveWorktreesEnrichmentCacheKey(input: Readonly<{
+        machineId: string;
+        resolvedPath: string;
+        repoIdentityKey: string;
+    }>): string {
+        const snapshotIdentityKey =
+            this.resolveCachedRepoIdentityKeyForMachinePath(input)
+            ?? input.repoIdentityKey;
+        return this.applyWorktreesEnrichmentNamespace(
+            this.stripStatusCacheNamespace(snapshotIdentityKey),
+        );
+    }
+
+    private resolveCachedWorktreesEnrichmentKeyForMachinePath(input: Readonly<{
+        machineId: string;
+        resolvedPath: string;
+        repoIdentityKey: string;
+    }>): string | null {
+        const directKey = this.applyWorktreesEnrichmentNamespace(input.repoIdentityKey);
+        if (this.worktreesEnrichmentCache.has(directKey)) {
+            return directKey;
+        }
+
+        const normalizedResolvedPath = normalizeFileSystemPath(input.resolvedPath);
+        if (!normalizedResolvedPath) {
+            return null;
+        }
+
+        const machinePrefix = `${input.machineId}:`;
+        let bestMatchKey: string | null = null;
+        let bestMatchRootLen = -1;
+        for (const candidateKey of Array.from(this.worktreesEnrichmentCacheKeys)) {
+            if (!this.worktreesEnrichmentCache.has(candidateKey)) {
+                this.worktreesEnrichmentCacheKeys.delete(candidateKey);
+                continue;
+            }
+            const bareIdentityKey = this.stripWorktreesEnrichmentNamespace(candidateKey);
+            if (!bareIdentityKey.startsWith(machinePrefix)) {
+                continue;
+            }
+            const normalizedRootPath = normalizeFileSystemPath(bareIdentityKey.slice(machinePrefix.length));
+            if (!normalizedRootPath) {
+                continue;
+            }
+            const isMatch =
+                normalizedResolvedPath === normalizedRootPath
+                || normalizedResolvedPath.startsWith(`${normalizedRootPath}/`);
+            if (isMatch && normalizedRootPath.length > bestMatchRootLen) {
+                bestMatchRootLen = normalizedRootPath.length;
+                bestMatchKey = candidateKey;
+            }
+        }
+
+        return bestMatchKey;
+    }
+
+    private buildWorktreesEnrichmentRequestKey(
+        repoIdentityKey: string,
+        worktreePaths: ReadonlyArray<string>,
+    ): string {
+        const sorted = [...worktreePaths].sort();
+        const sep = ScmRepositoryService.WORKTREE_ENRICHMENT_REQUEST_KEY_SEPARATOR;
+        return `${repoIdentityKey}${sep}${sorted.join(sep)}`;
+    }
+
+    async fetchWorktreesEnrichment(input: Readonly<{
+        machineId: string;
+        path: string;
+        worktreePaths: ReadonlyArray<string>;
+    }>): Promise<ScmWorktreeEnrichmentEntry[] | null> {
+        const request = resolveRepoScmMachinePathRequest({
+            machineId: input.machineId,
+            path: input.path,
+        });
+        if (!request) return null;
+
+        const cacheKey = this.resolveWorktreesEnrichmentCacheKey(request);
+        const inFlightKey = this.buildWorktreesEnrichmentRequestKey(cacheKey, input.worktreePaths);
+        const existing = this.worktreesEnrichmentRequests.get(inFlightKey);
+        if (existing) return await existing;
+
+        const requestPromise = (async () => {
+            try {
+                const entries: ScmWorktreeEnrichmentEntry[] = [];
+                for (const worktreePaths of chunkWorktreePathsForEnrichment(input.worktreePaths)) {
+                    const response = await runMachineScmRpc<
+                        ScmWorktreesEnrichmentResponse,
+                        ScmWorktreesEnrichmentRequest
+                    >(
+                        request.machineId,
+                        RPC_METHODS.SCM_WORKTREES_ENRICHMENT,
+                        {
+                            cwd: request.resolvedPath,
+                            worktreePaths: [...worktreePaths],
+                        },
+                    );
+                    if (!response || response.success !== true || !response.worktrees) {
+                        return null;
+                    }
+                    entries.push(...response.worktrees.map((entry) => ({ ...entry })));
+                }
+
+                let perRepoMap = this.worktreesEnrichmentCache.get(cacheKey);
+                if (!perRepoMap) {
+                    perRepoMap = new LruMap<string, ScmWorktreeEnrichmentEntry>({
+                        maxEntries: this.maxPerRepoEnrichmentEntries,
+                    });
+                }
+                for (const entry of entries) {
+                    perRepoMap.set(entry.path, entry);
+                }
+                this.worktreesEnrichmentCache.set(cacheKey, perRepoMap);
+                this.worktreesEnrichmentCacheKeys.add(cacheKey);
+                const entryKeys = this.worktreesEnrichmentEntryKeys.get(cacheKey) ?? new Set<string>();
+                for (const entry of entries) {
+                    entryKeys.add(entry.path);
+                }
+                this.worktreesEnrichmentEntryKeys.set(cacheKey, entryKeys);
+                return entries;
+            } catch {
+                return null;
+            }
+        })();
+
+        this.worktreesEnrichmentRequests.set(inFlightKey, requestPromise);
+        try {
+            return await requestPromise;
+        } finally {
+            if (this.worktreesEnrichmentRequests.get(inFlightKey) === requestPromise) {
+                this.worktreesEnrichmentRequests.delete(inFlightKey);
+            }
+        }
+    }
+
+    readCachedWorktreesEnrichment(input: Readonly<{
+        machineId: string;
+        path: string;
+        worktreePaths?: ReadonlyArray<string>;
+    }>): ScmWorktreeEnrichmentEntry[] | null {
+        const request = resolveRepoScmMachinePathRequest(input);
+        if (!request) return null;
+        const cacheKey = this.resolveCachedWorktreesEnrichmentKeyForMachinePath({
+            machineId: request.machineId,
+            resolvedPath: request.resolvedPath,
+            repoIdentityKey: request.repoIdentityKey,
+        }) ?? this.applyWorktreesEnrichmentNamespace(request.repoIdentityKey);
+        const perRepoMap = this.worktreesEnrichmentCache.get(cacheKey);
+        if (!perRepoMap || perRepoMap.size === 0) return null;
+
+        const paths = input.worktreePaths;
+        if (paths && paths.length > 0) {
+            const entries = paths
+                .map((path) => perRepoMap.get(path))
+                .filter((entry): entry is ScmWorktreeEnrichmentEntry => entry !== undefined)
+                .map((entry) => ({ ...entry }));
+            return entries.length > 0 ? entries : null;
+        }
+
+        const entryKeys = this.worktreesEnrichmentEntryKeys.get(cacheKey);
+        if (!entryKeys || entryKeys.size === 0) return null;
+        const entries = Array.from(entryKeys)
+            .map((path) => perRepoMap.get(path))
+            .filter((entry): entry is ScmWorktreeEnrichmentEntry => entry !== undefined)
+            .map((entry) => ({ ...entry }));
+        return entries.length > 0 ? entries : null;
+    }
+
+    getWorktreesEnrichmentCacheSize(): number {
+        return this.worktreesEnrichmentCache.size;
     }
 
     readCachedSnapshotForSession(sessionId: string): UiScmWorkingSnapshot | null {
