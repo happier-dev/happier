@@ -1325,6 +1325,42 @@ describe('runHostSessionRuntime', () => {
     expect(capturedMcpServers).toEqual({ happier: { command: 'built-in' }, extra: { command: 'extra' } });
   });
 
+  it('passes the MCP account settings snapshot to the provider runtime', async () => {
+    const harness = createHarness();
+    const runnerAccountSettings = {
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.list': {
+            approvalRequiredSurfaces: ['session_agent'],
+          },
+        },
+      },
+    };
+    let capturedAccountSettings: unknown = null;
+    const createRuntimeOriginal = harness.config.createSessionRuntime;
+    if (!createRuntimeOriginal) {
+      throw new Error('Expected session runtime factory in harness');
+    }
+    const createRuntime = createRuntimeOriginal;
+    harness.config.resolveRunnerMcpServersAccountSettings = () => runnerAccountSettings as never;
+    harness.deps.resolveRunnerMcpServersFn = vi.fn(async (params: any) => {
+      expect(params.accountSettings).toBe(runnerAccountSettings);
+      return {
+        happierMcpServer: { stop: () => undefined },
+        mcpServers: { happier: { command: 'built-in' } },
+      };
+    });
+    setSessionRuntimeFactory(harness.config, (params: any) => {
+      capturedAccountSettings = params.accountSettings;
+      return createRuntime(params);
+    });
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(capturedAccountSettings).toBe(runnerAccountSettings);
+  });
+
   it('uses attached session metadata for runtime metadata, runtime directory, and MCP directory resolution', async () => {
     const harness = createHarness();
     harness.config.flavor = 'claude';

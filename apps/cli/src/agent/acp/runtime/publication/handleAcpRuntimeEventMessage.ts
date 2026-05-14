@@ -20,6 +20,29 @@ function isSessionMediaCommittedRequest(value: unknown): value is SendAgentSessi
         && Array.isArray(record.media);
 }
 
+function stableMediaValue(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((entry) => stableMediaValue(entry));
+    if (!value || typeof value !== 'object') return value;
+
+    const record = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort((left, right) => left.localeCompare(right))) {
+        out[key] = stableMediaValue(record[key]);
+    }
+    return out;
+}
+
+function buildSessionMediaDedupeKey(
+    request: SendAgentSessionMediaCommittedRequest,
+    media: SendAgentSessionMediaCommittedRequest['media'][number],
+): string {
+    return JSON.stringify(stableMediaValue({
+        role: request.role,
+        category: request.category,
+        media,
+    }));
+}
+
 type NormalizedConfigOptionValue = string | number | boolean | null;
 
 type NormalizedConfigOption = {
@@ -94,6 +117,7 @@ function normalizeConfigOptionsArray(raw: unknown): NormalizedConfigOption[] {
 export function handleAcpRuntimeEventMessage(params: Readonly<{
     provider: string;
     session: AcpRuntimeSessionClient;
+    seenSessionMediaKeys?: Set<string>;
     streamedTranscriptWriter: Readonly<{
         appendThinkingDelta: (text: string) => void;
     }>;
@@ -103,9 +127,22 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
 
     if (name === 'session_media') {
         if (!isSessionMediaCommittedRequest(params.msg.payload)) return;
+        const request = params.msg.payload;
+        const seenSessionMediaKeys = params.seenSessionMediaKeys;
+        const media = seenSessionMediaKeys
+            ? request.media.filter((entry) => {
+                const key = buildSessionMediaDedupeKey(request, entry);
+                if (seenSessionMediaKeys.has(key)) return false;
+                seenSessionMediaKeys.add(key);
+                return true;
+            })
+            : request.media;
+        if (media.length === 0) return;
         void params.session.sendAgentSessionMediaCommitted?.(
             params.provider,
-            params.msg.payload,
+            media.length === request.media.length
+                ? request
+                : { ...request, media },
         );
         return;
     }

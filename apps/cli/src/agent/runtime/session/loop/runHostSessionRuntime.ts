@@ -63,6 +63,7 @@ export type HostSessionRuntimeHookRuntime = Readonly<{
   shouldResumeAfterPermissionModeChange?: () => boolean;
   supportsInFlightSteer?: () => boolean;
   isTurnInFlight?: () => boolean;
+  canSteerPrompt?: () => boolean;
   steerPrompt?: (prompt: string) => Promise<void>;
   getSessionId?: () => string | null;
 }> & RuntimeTurnOperations;
@@ -76,6 +77,7 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   messageQueue?: MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
+  accountSettings?: AccountSettings | null;
   permissionHandler: ProviderEnforcedPermissionHandler;
   getPermissionMode: () => PermissionMode;
   setThinking: (value: boolean) => void;
@@ -476,6 +478,11 @@ export async function runHostSessionRuntime(
   const inFlightSteerController: InFlightSteerController = {
     supportsInFlightSteer: () => runtimeForInFlightSteer?.supportsInFlightSteer?.() === true,
     isTurnInFlight: () => runtimeForInFlightSteer?.isTurnInFlight?.() === true,
+    canSteerPrompt: () => (
+      runtimeForInFlightSteer?.canSteerPrompt?.()
+      ?? runtimeForInFlightSteer?.isTurnInFlight?.()
+      ?? false
+    ) === true,
     steerText: async (text: string) => {
       const runtime = runtimeForInFlightSteer;
       if (!runtime?.steerPrompt) {
@@ -546,6 +553,7 @@ export async function runHostSessionRuntime(
     messageQueue,
     messageBuffer,
     mcpServers,
+    accountSettings: runnerMcpAccountSettings,
     permissionHandler,
     getPermissionMode: () => permissionModeState.getCurrentPermissionMode() ?? 'default',
     setThinking: (value) => {

@@ -178,6 +178,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
       }
 
       params.publishSessionId();
+      await params.pendingQueuePump.drainAfterStartOrLoad();
       return params.state.sessionId!;
     },
 

@@ -45,6 +45,18 @@ async function rotateMachineIdForActiveServer(opts: Readonly<{ expectedCurrentMa
       return next;
     })();
 
+    const normalizedAccountId = normalizedTokenSub || '';
+    const nextReplacementCandidates = { ...(settings.machineReplacementCandidatesByServerIdByAccountId ?? {}) };
+    if (normalizedAccountId) {
+      const byAccount = { ...(nextReplacementCandidates[activeServerId] ?? {}) };
+      byAccount[normalizedAccountId] = {
+        machineId: opts.expectedCurrentMachineId,
+        replacementReason: 'rotation',
+        createdAt: Date.now(),
+      };
+      nextReplacementCandidates[activeServerId] = byAccount;
+    }
+
     const nextConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
     if (activeServerId in nextConfirmed) delete nextConfirmed[activeServerId];
 
@@ -52,6 +64,9 @@ async function rotateMachineIdForActiveServer(opts: Readonly<{ expectedCurrentMa
       ...settings,
       machineIdByServerId: nextByServerId,
       ...(nextByServerIdByAccountId ? { machineIdByServerIdByAccountId: nextByServerIdByAccountId } : {}),
+      machineReplacementCandidatesByServerIdByAccountId: Object.keys(nextReplacementCandidates).length
+        ? nextReplacementCandidates
+        : {},
       machineIdConfirmedByServerByServerId: nextConfirmed,
       // derived (not persisted in v5+)
       machineId: nextMachineId,

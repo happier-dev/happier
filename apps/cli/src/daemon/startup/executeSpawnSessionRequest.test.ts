@@ -238,6 +238,70 @@ describe('executeSpawnSessionRequest', () => {
     }));
   });
 
+  it('uses an explicit initial transcript cursor only for the attach payload', async () => {
+    hoisted.requireCatalogEntry.mockReturnValue({});
+    hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
+      ok: true,
+      normalizedExistingSessionId: 'session-1',
+      effectiveResume: '',
+      effectiveBackendTargetV2: {
+        sourceKind: 'built_in',
+        backendId: 'codex',
+      },
+      sessionAttachPayload: { v: 2, encryptionMode: 'plain', lastObservedMessageSeq: 99 },
+      catalogAgentId: 'codex',
+    });
+    hoisted.ensureSessionDirectory.mockImplementationOnce(
+      async () => ({ ok: true, directoryCreated: false }),
+    );
+    const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
+    const { createSessionAttachFile } = await import('../sessionAttachFile');
+    const { routeSpawnModeAndWaitForWebhook } = await import('../spawn/routeSpawnModeAndWaitForWebhook');
+    const { resolveSpawnChildEnvironment } = await import('../spawn/resolveSpawnChildEnvironment');
+    vi.mocked(createSessionAttachFile).mockResolvedValueOnce({
+      filePath: '/tmp/session-attach.json',
+      cleanup: vi.fn(),
+    });
+    vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
+      ok: true,
+      cleanupOnFailure: null,
+      cleanupOnExit: null,
+      expandedEnvironmentVariables: {},
+      extraEnvForChild: {},
+    });
+    vi.mocked(routeSpawnModeAndWaitForWebhook).mockResolvedValueOnce({
+      type: 'success',
+      sessionId: 'session-1',
+    });
+
+    const result = await executeSpawnSessionRequest({
+      ...createParams(),
+      options: {
+        ...createParams().options,
+        resume: undefined,
+        existingSessionId: 'session-1',
+        initialTranscriptAfterSeq: 36,
+      },
+    });
+
+    expect(result).toEqual({
+      type: 'success',
+      sessionId: 'session-1',
+    });
+    expect(createSessionAttachFile).toHaveBeenCalledWith(expect.objectContaining({
+      happySessionId: 'session-1',
+      payload: expect.objectContaining({
+        encryptionMode: 'plain',
+        lastObservedMessageSeq: 36,
+      }),
+    }));
+    expect(routeSpawnModeAndWaitForWebhook).toHaveBeenCalledWith(expect.objectContaining({
+      trackedSpawnOptions: expect.not.objectContaining({
+        initialTranscriptAfterSeq: expect.any(Number),
+      }),
+    }));
+  });
+
   it('canonicalizes legacy runtime descriptors before backend-owned vendor resume hooks read spawn runtime selection', async () => {
     hoisted.requireCatalogEntry.mockReturnValue({
       id: 'codex',

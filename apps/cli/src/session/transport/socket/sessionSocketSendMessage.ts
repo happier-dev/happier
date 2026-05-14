@@ -5,6 +5,7 @@ import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
 import { createSessionScopedSocket } from '@/api/session/sockets';
 import type { SessionStoredMessageContent } from '@happier-dev/protocol';
 import { resolveSessionControlSocketAckTimeoutMs, resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
+import { emitSocketCallbackAck } from '@/session/transport/shared/socketAck';
 import { waitForSocketConnect } from './waitForSocketConnect';
 
 export async function sendSessionMessageViaSocketCommitted(params: Readonly<{
@@ -32,22 +33,17 @@ export async function sendSessionMessageViaSocketCommitted(params: Readonly<{
   await connectPromise;
 
   try {
-    const rawAck = await new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Socket message ACK timeout')), ackTimeoutMs);
-      (socket as any).emit(
-        'message',
-        {
-          sid: params.sessionId,
-          message: params.content,
-          localId: params.localId,
-          ...(params.sentFrom ? { sentFrom: params.sentFrom } : {}),
-          ...(params.permissionMode ? { permissionMode: params.permissionMode } : {}),
-        },
-        (answer: unknown) => {
-          clearTimeout(timer);
-          resolve(answer);
-        },
-      );
+    const rawAck = await emitSocketCallbackAck({
+      socket: socket as any,
+      event: 'message',
+      payload: {
+        sid: params.sessionId,
+        message: params.content,
+        localId: params.localId,
+        ...(params.sentFrom ? { sentFrom: params.sentFrom } : {}),
+        ...(params.permissionMode ? { permissionMode: params.permissionMode } : {}),
+      },
+      timeoutMs: ackTimeoutMs,
     });
 
     const parsed = MessageAckResponseSchema.safeParse(rawAck);

@@ -47,15 +47,20 @@ function extractSessionMediaFromMessageContent(update: SessionUpdate): ReturnTyp
 function emitSessionMediaExtractionResult(
   result: ReturnType<typeof extractAcpMediaContentBlocks>,
   ctx: HandlerContext,
+  options?: Readonly<{
+    localId?: string;
+    messageText?: string;
+  }>,
 ): boolean {
   if (result.media.length > 0) {
     ctx.emit({
       type: 'event',
       name: 'session_media',
       payload: {
-        localId: nextAcpMessageMediaId(),
+        localId: options?.localId ?? nextAcpMessageMediaId(),
         role: 'output',
         category: 'generated',
+        ...(typeof options?.messageText === 'string' ? { messageText: options.messageText } : {}),
         media: result.media,
       },
     });
@@ -70,35 +75,9 @@ function emitSessionMediaExtractionResult(
   return result.media.length > 0 || result.diagnostics.length > 0;
 }
 
-/**
- * Handle agent_message_chunk update (text output from model).
- */
-export function handleAgentMessageChunk(
-  update: SessionUpdate,
-  ctx: HandlerContext,
-): HandlerResult {
-  const text = extractTextFromMessageContent(update.content);
-  const mediaResult = extractSessionMediaFromMessageContent(update);
-  const mediaHandled = mediaResult.media.length > 0 || mediaResult.diagnostics.length > 0;
-  if (typeof text !== 'string' || text.length === 0) {
-    if (mediaHandled) emitSessionMediaExtractionResult(mediaResult, ctx);
-    return { handled: mediaHandled };
-  }
-  // Some ACP providers emit whitespace-only chunks (often "\n") as keepalives.
-  // Dropping these avoids spammy blank lines and reduces unnecessary UI churn while preserving media diagnostics.
-  if (!text.trim()) return { handled: true };
-
-  logger.debug(`[AcpBackend] Received message chunk (length: ${text.length})`);
-  ctx.emit({
-    type: 'model-output',
-    textDelta: text,
-  });
-  emitSessionMediaExtractionResult(mediaResult, ctx);
-
-  // Reset idle timeout - more chunks are coming.
+function refreshMessageIdleTimeout(ctx: HandlerContext): void {
   ctx.clearIdleTimeout();
 
-  // Set timeout to emit 'idle' after a short delay when no more chunks arrive.
   const idleTimeoutMs =
     (ctx.toolCallCountSincePrompt === 0
       ? ctx.transport.getPreToolCallIdleTimeoutMs?.()
@@ -116,6 +95,48 @@ export function handleAgentMessageChunk(
       logger.debug(`[AcpBackend] Delaying idle status - ${ctx.activeToolCalls.size} active tool calls`);
     }
   }, idleTimeoutMs);
+}
+
+/**
+ * Handle agent_message_chunk update (text output from model).
+ */
+export function handleAgentMessageChunk(
+  update: SessionUpdate,
+  ctx: HandlerContext,
+): HandlerResult {
+  const text = extractTextFromMessageContent(update.content);
+  const mediaResult = extractSessionMediaFromMessageContent(update);
+  const mediaHandled = mediaResult.media.length > 0 || mediaResult.diagnostics.length > 0;
+  if (typeof text !== 'string' || text.length === 0) {
+    if (mediaHandled) emitSessionMediaExtractionResult(mediaResult, ctx);
+    return { handled: mediaHandled };
+  }
+  // Some ACP providers emit whitespace-only chunks (often "\n") as keepalives.
+  // Dropping the text avoids spammy blank lines, but media in the same ACP content still belongs to the transcript row.
+  if (!text.trim()) {
+    if (mediaHandled) emitSessionMediaExtractionResult(mediaResult, ctx);
+    return { handled: true };
+  }
+
+  logger.debug(`[AcpBackend] Received message chunk (length: ${text.length})`);
+  if (mediaResult.media.length > 0) {
+    const localId = typeof update.id === 'string' ? update.id : undefined;
+    emitSessionMediaExtractionResult(mediaResult, ctx, {
+      ...(localId ? { localId } : {}),
+      messageText: text,
+    });
+    refreshMessageIdleTimeout(ctx);
+    return { handled: true };
+  }
+
+  ctx.emit({
+    type: 'model-output',
+    textDelta: text,
+  });
+  emitSessionMediaExtractionResult(mediaResult, ctx);
+
+  // Reset idle timeout - more chunks are coming.
+  refreshMessageIdleTimeout(ctx);
 
   return { handled: true };
 }

@@ -40,6 +40,19 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     }));
   });
 
+  it('accepts initial transcript catch-up cursors from resume requests', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      existingSessionId: 'session-1',
+      initialTranscriptAfterSeq: 36,
+    });
+
+    expect(parsed.initialTranscriptAfterSeq).toBe(36);
+    expect(pickDefinedSpawnSessionOptions(parsed)).toEqual(expect.objectContaining({
+      initialTranscriptAfterSeq: 36,
+    }));
+  });
+
   it('rejects unknown legacy built-in agent field when backendTarget is missing', () => {
     expect(() =>
       SpawnDaemonSessionRequestSchema.parse({

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { ApiClient } from './api';
 import axios from 'axios';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
@@ -7,16 +8,31 @@ import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { logger } from '@/ui/logger';
 
 // Use vi.hoisted to ensure mock functions are available when vi.mock factory runs
-const { mockPost, mockIsAxiosError } = vi.hoisted(() => ({
-    mockPost: vi.fn(),
-    mockIsAxiosError: vi.fn(() => true)
-}));
+const { mockGet, mockPost, mockIsAxiosError, configurationMock } = vi.hoisted(() => {
+    const happyHomeDir = `/tmp/happier-api-test-${process.pid}`;
+    return {
+        mockGet: vi.fn(),
+        mockPost: vi.fn(),
+        mockIsAxiosError: vi.fn(() => true),
+        configurationMock: {
+            activeServerId: 'cloud',
+            apiServerUrl: 'https://api.example.com',
+            happyHomeDir,
+            settingsFile: `${happyHomeDir}/settings.json`,
+            privateKeyFile: `${happyHomeDir}/servers/cloud/access.key`,
+            legacyPrivateKeyFile: `${happyHomeDir}/access.key`,
+            installationIdentityFile: '',
+        },
+    };
+});
 
 vi.mock('axios', () => ({
     default: {
+        get: mockGet,
         post: mockPost,
         isAxiosError: mockIsAxiosError
     },
+    get: mockGet,
     isAxiosError: mockIsAxiosError
 }));
 
@@ -41,9 +57,7 @@ vi.mock('./encryption', () => ({
 
 // Mock configuration
 vi.mock('@/configuration', () => ({
-    configuration: {
-        apiServerUrl: 'https://api.example.com'
-    }
+    configuration: configurationMock
 }));
 
 // Mock libsodium encryption
@@ -70,6 +84,15 @@ const testMachineMetadata = {
     happyLibDir: '/home/user/.happy/lib'
 };
 
+function writeApiTestSettings(settings: unknown): void {
+    mkdirSync(configurationMock.happyHomeDir, { recursive: true });
+    writeFileSync(configurationMock.settingsFile, JSON.stringify(settings, null, 2));
+}
+
+function readApiTestSettings(): any {
+    return JSON.parse(readFileSync(configurationMock.settingsFile, 'utf8'));
+}
+
 describe('Api server error handling', () => {
     let api: ApiClient;
     const envKeys = [
@@ -83,6 +106,8 @@ describe('Api server error handling', () => {
     beforeEach(async () => {
         vi.clearAllMocks();
         connectionState.reset(); // Reset offline state between tests
+        rmSync(configurationMock.happyHomeDir, { recursive: true, force: true });
+        mkdirSync(configurationMock.happyHomeDir, { recursive: true });
 
         // Keep retry loops fast and deterministic in unit tests.
         envScope.patch(Object.fromEntries([
@@ -104,6 +129,7 @@ describe('Api server error handling', () => {
     });
 
     afterEach(() => {
+        rmSync(configurationMock.happyHomeDir, { recursive: true, force: true });
         envScope.restore();
         envScope = createEnvKeyScope(envKeys);
     });
@@ -431,6 +457,228 @@ describe('Api server error handling', () => {
 
             const body = mockPost.mock.calls[0]?.[1];
             expect(body?.contentPublicKey).toEqual(dataKeyCredential.encryption.publicKey);
+        });
+
+        it('includes explicit installation identity fields when registering a machine', async () => {
+            mockPost.mockResolvedValue({
+                data: {
+                    machine: {
+                        id: 'test-machine',
+                        metadata: testMachineMetadata,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                },
+            });
+
+            await api.getOrCreateMachine({
+                machineId: 'test-machine',
+                metadata: testMachineMetadata,
+                registrationIdentity: {
+                    installationId: 'installation-1',
+                    installationPublicKey: Buffer.from(new Uint8Array(32)).toString('base64url'),
+                    installationProof: {
+                        version: 1,
+                        algorithm: 'ed25519',
+                        signature: Buffer.from(new Uint8Array(64)).toString('base64url'),
+                    },
+                    replacesMachineId: 'machine-old',
+                    replacementReason: 'reauth',
+                    contentPublicKeyFingerprint: 'content-public-key-sha256:' + 'a'.repeat(64),
+                },
+            });
+
+            const body = mockPost.mock.calls[0]?.[1];
+            expect(body).toEqual(expect.objectContaining({
+                installationId: 'installation-1',
+                installationPublicKey: Buffer.from(new Uint8Array(32)).toString('base64url'),
+                installationProof: {
+                    version: 1,
+                    algorithm: 'ed25519',
+                    signature: Buffer.from(new Uint8Array(64)).toString('base64url'),
+                },
+                replacesMachineId: 'machine-old',
+                replacementReason: 'reauth',
+                contentPublicKeyFingerprint: 'content-public-key-sha256:' + 'a'.repeat(64),
+            }));
+        });
+
+        it('keeps a replacement candidate when an old server ignores replacement fields', async () => {
+            writeApiTestSettings({
+                schemaVersion: 6,
+                onboardingCompleted: true,
+                activeServerId: 'cloud',
+                machineIdByServerId: { cloud: 'machine-new' },
+                machineReplacementCandidatesByServerIdByAccountId: {
+                    cloud: {
+                        'account-1': {
+                            machineId: 'machine-old',
+                            replacementReason: 'reauth',
+                            createdAt: 123,
+                        },
+                    },
+                },
+            });
+
+            mockPost.mockResolvedValue({
+                data: {
+                    machine: {
+                        id: 'test-machine',
+                        metadata: testMachineMetadata,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                },
+            });
+
+            await api.getOrCreateMachine({
+                machineId: 'test-machine',
+                metadata: testMachineMetadata,
+                registrationIdentity: {
+                    installationId: 'installation-1',
+                    installationPublicKey: Buffer.from(new Uint8Array(32)).toString('base64url'),
+                    installationProof: {
+                        version: 1,
+                        algorithm: 'ed25519',
+                        signature: Buffer.from(new Uint8Array(64)).toString('base64url'),
+                    },
+                    replacesMachineId: 'machine-old',
+                    replacementReason: 'reauth',
+                    replacementCandidateAccountId: 'account-1',
+                },
+            });
+
+            expect(
+                readApiTestSettings().machineReplacementCandidatesByServerIdByAccountId?.cloud?.['account-1'],
+            ).toEqual({
+                machineId: 'machine-old',
+                replacementReason: 'reauth',
+                createdAt: 123,
+            });
+        });
+
+        it('consumes a replacement candidate after explicit server acknowledgement', async () => {
+            writeApiTestSettings({
+                schemaVersion: 6,
+                onboardingCompleted: true,
+                activeServerId: 'cloud',
+                machineIdByServerId: { cloud: 'machine-new' },
+                machineReplacementCandidatesByServerIdByAccountId: {
+                    cloud: {
+                        'account-1': {
+                            machineId: 'machine-old',
+                            replacementReason: 'reauth',
+                            createdAt: 123,
+                        },
+                    },
+                },
+            });
+
+            mockPost.mockResolvedValue({
+                data: {
+                    machineReplacement: {
+                        status: 'applied',
+                        replacesMachineId: 'machine-old',
+                    },
+                    machine: {
+                        id: 'test-machine',
+                        metadata: testMachineMetadata,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                },
+            });
+
+            await api.getOrCreateMachine({
+                machineId: 'test-machine',
+                metadata: testMachineMetadata,
+                registrationIdentity: {
+                    installationId: 'installation-1',
+                    installationPublicKey: Buffer.from(new Uint8Array(32)).toString('base64url'),
+                    installationProof: {
+                        version: 1,
+                        algorithm: 'ed25519',
+                        signature: Buffer.from(new Uint8Array(64)).toString('base64url'),
+                    },
+                    replacesMachineId: 'machine-old',
+                    replacementReason: 'reauth',
+                    replacementCandidateAccountId: 'account-1',
+                },
+            });
+
+            expect(
+                readApiTestSettings().machineReplacementCandidatesByServerIdByAccountId?.cloud?.['account-1'],
+            ).toBeUndefined();
+        });
+
+        it('consumes a replacement candidate when the old machine already points at the new machine', async () => {
+            writeApiTestSettings({
+                schemaVersion: 6,
+                onboardingCompleted: true,
+                activeServerId: 'cloud',
+                machineIdByServerId: { cloud: 'machine-new' },
+                machineReplacementCandidatesByServerIdByAccountId: {
+                    cloud: {
+                        'account-1': {
+                            machineId: 'machine-old',
+                            replacementReason: 'reauth',
+                            createdAt: 123,
+                        },
+                    },
+                },
+            });
+
+            mockPost.mockResolvedValue({
+                data: {
+                    machine: {
+                        id: 'test-machine',
+                        metadata: testMachineMetadata,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                },
+            });
+            mockGet.mockResolvedValue({
+                data: {
+                    machine: {
+                        id: 'machine-old',
+                        replacedByMachineId: 'test-machine',
+                    },
+                },
+            });
+
+            await api.getOrCreateMachine({
+                machineId: 'test-machine',
+                metadata: testMachineMetadata,
+                registrationIdentity: {
+                    installationId: 'installation-1',
+                    installationPublicKey: Buffer.from(new Uint8Array(32)).toString('base64url'),
+                    installationProof: {
+                        version: 1,
+                        algorithm: 'ed25519',
+                        signature: Buffer.from(new Uint8Array(64)).toString('base64url'),
+                    },
+                    replacesMachineId: 'machine-old',
+                    replacementReason: 'reauth',
+                    replacementCandidateAccountId: 'account-1',
+                },
+            });
+
+            expect(mockGet).toHaveBeenCalledWith(
+                'https://api.example.com/v1/machines/machine-old',
+                expect.objectContaining({
+                    headers: expect.objectContaining({
+                        Authorization: 'Bearer fake-token',
+                    }),
+                }),
+            );
+            expect(
+                readApiTestSettings().machineReplacementCandidatesByServerIdByAccountId?.cloud?.['account-1'],
+            ).toBeUndefined();
         });
 
         it('throws (instead of returning a synthetic machine) when server is unreachable (ECONNREFUSED)', async () => {

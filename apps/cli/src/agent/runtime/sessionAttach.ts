@@ -7,8 +7,14 @@ import { lstat, readFile, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 export type SessionAttachSecret =
-  | Readonly<{ encryptionMode: 'plain' }>
-  | Readonly<{ encryptionMode: 'e2ee'; encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  | Readonly<{ encryptionMode: 'plain'; lastObservedMessageSeq?: number }>
+  | Readonly<{ encryptionMode: 'e2ee'; encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey'; lastObservedMessageSeq?: number }>;
+
+function readLastObservedMessageSeq(payload: unknown): number | undefined {
+  if (!payload || typeof payload !== 'object' || !('lastObservedMessageSeq' in payload)) return undefined;
+  const value = payload.lastObservedMessageSeq;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
 
 export async function readSessionAttachFromEnv(): Promise<SessionAttachSecret | null> {
   const rawPath = typeof process.env.HAPPIER_SESSION_ATTACH_FILE === 'string' ? process.env.HAPPIER_SESSION_ATTACH_FILE.trim() : '';
@@ -42,8 +48,12 @@ export async function readSessionAttachFromEnv(): Promise<SessionAttachSecret | 
     }
 
     const payload = parsed.data;
+    const lastObservedMessageSeq = readLastObservedMessageSeq(payload);
     if ('encryptionMode' in payload && payload.encryptionMode === 'plain') {
-      return { encryptionMode: 'plain' };
+      return {
+        encryptionMode: 'plain',
+        ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
+      };
     }
 
     const keyBase64 = payload.encryptionKeyBase64;
@@ -52,7 +62,12 @@ export async function readSessionAttachFromEnv(): Promise<SessionAttachSecret | 
       throw new Error('Invalid session encryption key length');
     }
 
-    return { encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: payload.encryptionVariant };
+    return {
+      encryptionMode: 'e2ee',
+      encryptionKey: key,
+      encryptionVariant: payload.encryptionVariant,
+      ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
+    };
   } finally {
     // Best-effort cleanup to keep the key short-lived on disk.
     try {

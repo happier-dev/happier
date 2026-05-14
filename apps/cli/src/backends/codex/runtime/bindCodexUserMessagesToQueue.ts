@@ -25,6 +25,7 @@ export interface CodexSessionQueuedMode {
 export type CodexUserMessageSteeringRuntime = Readonly<{
     supportsInFlightSteer: () => boolean;
     isTurnInFlight: () => boolean;
+    canSteerPrompt?: () => boolean;
     steerPrompt: (prompt: string) => Promise<void>;
 }>;
 
@@ -91,7 +92,7 @@ export function bindCodexUserMessagesToQueue(params: Readonly<{
         if (
             runtime &&
             runtime.supportsInFlightSteer() &&
-            runtime.isTurnInFlight() &&
+            (runtime.canSteerPrompt?.() ?? runtime.isTurnInFlight()) &&
             !didChangePermissionMode &&
             special.type === null
         ) {

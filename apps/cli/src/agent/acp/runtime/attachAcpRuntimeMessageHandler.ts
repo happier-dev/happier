@@ -72,6 +72,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
   recordToolCall: (callId: string, toolName: string) => void;
   state: AcpRuntimeMessageState;
 }>): void {
+  const seenSessionMediaKeys = new Set<string>();
   const forwarder = createAcpAgentMessageForwarder({
     sendAcp: (provider, body) => params.session.sendAgentMessage(provider, body),
     provider: params.provider,
@@ -266,6 +267,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
         handleAcpRuntimeEventMessage({
           provider: params.provider,
           session: params.session,
+          seenSessionMediaKeys,
           streamedTranscriptWriter: params.streamedTranscriptWriter,
           msg,
         });

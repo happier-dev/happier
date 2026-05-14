@@ -111,6 +111,16 @@ export async function createReplayForkSession(params: Readonly<{
                         sourceCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
                         createdAtMs: nowMs,
                     },
+                    ...(resolvedSeed.referencedSessionMediaWorkspacePaths.length > 0
+                        ? {
+                            sessionMediaContinuityV1: {
+                                v: 1,
+                                sourceSessionId: params.parentSessionId,
+                                sourceCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+                                referencedWorkspacePaths: resolvedSeed.referencedSessionMediaWorkspacePaths,
+                            },
+                        }
+                        : {}),
                 },
             });
         } catch (error) {

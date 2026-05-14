@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createAcpRuntime } from '../createAcpRuntime';
+import type { AcpRuntimeBackend } from '../createAcpRuntime';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
 
@@ -11,6 +12,50 @@ function nextTick(): Promise<void> {
 }
 
 describe('createAcpRuntime pending queue pump', () => {
+  it('drains pending messages once after loading a resumable session when opted in', async () => {
+    const { session } = createSessionClientWithMetadata();
+
+    const calls: string[] = [];
+    let popCalls = 0;
+    const backend = {
+      startSession: async () => ({ sessionId: 'fresh-1' }),
+      loadSession: async (sessionId: string) => {
+        calls.push(`load:${sessionId}`);
+        return { sessionId };
+      },
+      sendPrompt: async () => {},
+      cancel: async () => {},
+      onMessage: () => {},
+      dispose: async () => {},
+    } satisfies AcpRuntimeBackend;
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      pendingQueue: {
+        drainAfterStartOrLoad: true,
+        waitForMetadataUpdate: async () => false,
+        popPendingMessage: async () => {
+          popCalls += 1;
+          calls.push('pop');
+          return false;
+        },
+      },
+    });
+
+    await runtime.startOrLoad({ resumeId: 'resume-1', importHistory: false });
+
+    expect(popCalls).toBe(1);
+    expect(calls).toEqual(['load:resume-1', 'pop']);
+
+    await runtime.reset();
+  });
+
   it('does not drain pending messages by default when a steer-capable turn begins', async () => {
     const { session } = createSessionClientWithMetadata();
 

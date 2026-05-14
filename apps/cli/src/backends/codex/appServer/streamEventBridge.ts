@@ -266,7 +266,6 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
                         type: 'session-media',
                         itemId: generatedMedia.itemId,
                         media: generatedMedia.media,
-                        ...(generatedMedia.meta ? { meta: generatedMedia.meta } : {}),
                     }]
                     : [];
             }

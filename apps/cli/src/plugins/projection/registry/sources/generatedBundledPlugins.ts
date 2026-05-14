@@ -795,8 +795,7 @@ export const BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS: readonly ResolvedScm
         "support": "supported"
       },
       "repositoryPublishTargets": {
-        "reason": "not_implemented",
-        "support": "unsupported"
+        "support": "supported"
       }
     },
     "lifecycle": {
@@ -879,7 +878,8 @@ export const BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS: readonly ResolvedScm
         "support": "supported"
       },
       "managedCliResolution": {
-        "support": "supported"
+        "reason": "not_implemented",
+        "support": "unsupported"
       },
       "systemCliResolution": {
         "support": "supported"

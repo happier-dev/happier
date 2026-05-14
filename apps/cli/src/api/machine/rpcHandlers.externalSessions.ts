@@ -58,9 +58,9 @@ function createExternalSessionRpcActionExecutor(
         case 'sessions.external.status.get':
           return { ok: true, result: await executeExternalSessionStatusGetAction(input, context) };
         case 'sessions.external.transcript.page':
-          return { ok: true, result: await executeExternalSessionTranscriptPageAction(input) };
+          return { ok: true, result: await executeExternalSessionTranscriptPageAction(input, context) };
         case 'sessions.external.transcript.readAfter':
-          return { ok: true, result: await executeExternalSessionTranscriptReadAfterAction(input) };
+          return { ok: true, result: await executeExternalSessionTranscriptReadAfterAction(input, context) };
         case 'sessions.external.takeover':
           return { ok: true, result: await executeExternalSessionTakeoverAction(input, context) };
         default:
@@ -126,6 +126,7 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
   spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession?: (sessionId: string) => Promise<boolean>;
   emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptDeltaEphemeral) => void;
+  transientMediaReadAllowance?: ExternalSessionActionContext['transientMediaReadAllowance'];
   actionExecutor?: RpcActionExecutor;
 }>): void {
   const { rpcHandlerManager, emitExternalSessionTranscriptUpdate } = params;
@@ -159,6 +160,7 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
   const externalSessionActionContext: ExternalSessionActionContext = {
     followLeaseManager,
     emitExternalSessionTranscriptUpdate,
+    transientMediaReadAllowance: params.transientMediaReadAllowance,
     spawnSession: params.spawnSession,
     stopSession: params.stopSession,
     takeoverReadiness: {

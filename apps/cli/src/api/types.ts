@@ -2,7 +2,19 @@ import { z } from 'zod'
 import { UsageSchema } from './usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
 import { SentFromSchema } from '@happier-dev/protocol'
-import type { ExecutionRunPublicState, PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol'
+import type {
+  ContentPublicKeyFingerprint,
+  ExecutionRunPublicState,
+  MachineReplacementReason,
+  PrimaryTurnStatusV1,
+  SessionRuntimeIssueV1,
+} from '@happier-dev/protocol'
+import {
+  ContentPublicKeyFingerprintSchema,
+  MachineInstallationProofV1Schema,
+  MachineInstallationPublicKeySchema,
+  MachineReplacementReasonSchema,
+} from '@happier-dev/protocol'
 import {
   DaemonPublicReleaseChannelLabelSchema,
   DaemonStartupSourceSchema,
@@ -243,6 +255,24 @@ export const MachineMetadataSchema = z.object({
 })
 
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>
+
+export const MachineRegistrationIdentitySchema = z.object({
+  installationId: z.string().trim().min(1),
+  installationPublicKey: MachineInstallationPublicKeySchema,
+  installationProof: MachineInstallationProofV1Schema,
+  replacesMachineId: z.string().trim().min(1).optional(),
+  replacementReason: MachineReplacementReasonSchema.optional(),
+  contentPublicKeyFingerprint: ContentPublicKeyFingerprintSchema.optional(),
+  replacementCandidateAccountId: z.string().trim().min(1).optional(),
+})
+
+export type MachineRegistrationIdentity = Readonly<
+  Omit<z.infer<typeof MachineRegistrationIdentitySchema>, 'replacementReason' | 'contentPublicKeyFingerprint'>
+  & {
+    replacementReason?: MachineReplacementReason
+    contentPublicKeyFingerprint?: ContentPublicKeyFingerprint
+  }
+>
 
 /**
  * Daemon transfer runtime capability state - dynamic listener and direct-transfer metadata
@@ -720,6 +750,8 @@ export type AgentState = {
   capabilities?: {
     askUserQuestionAnswersInPermission?: boolean | null | undefined
     inFlightSteer?: boolean | null | undefined
+    inFlightSteerSupported?: boolean | null | undefined
+    inFlightSteerAvailable?: boolean | null | undefined
     localPermissionBridgeInLocalMode?: boolean | null | undefined
   } | null | undefined
       requests?: {

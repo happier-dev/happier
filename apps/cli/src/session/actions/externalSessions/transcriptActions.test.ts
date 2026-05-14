@@ -1,4 +1,6 @@
-import { dirname } from 'node:path';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
@@ -18,13 +20,24 @@ describe('external session transcript actions', () => {
     vi.clearAllMocks();
   });
 
-  it('keeps direct-session media browsing transient with scoped read dirs only', async () => {
-    const providerMediaPath = '/tmp/happier-provider-media/provider-owned.png';
+  it('keeps direct-session media browsing transient with scoped read files only', async () => {
+    const sourceDirectory = await mkdtemp(join(tmpdir(), 'happier-transient-media-source-'));
+    const verifiedDirectory = await mkdtemp(join(tmpdir(), 'happier-transient-media-verified-'));
+    const outsideDirectory = await mkdtemp(join(tmpdir(), 'happier-transient-media-outside-'));
+    const sourceDirectoryMediaPath = join(sourceDirectory, '.opencode', 'media', 'source-directory-owned.png');
+    const providerMediaPath = join(verifiedDirectory, '.opencode', 'media', 'provider-owned.png');
+    const sensitiveMediaPath = join(outsideDirectory, 'sensitive.png');
+    await mkdir(join(sourceDirectory, '.opencode', 'media'), { recursive: true });
+    await mkdir(join(verifiedDirectory, '.opencode', 'media'), { recursive: true });
+    await writeFile(sourceDirectoryMediaPath, 'source-directory-media');
+    await writeFile(providerMediaPath, 'provider-media');
+    await writeFile(sensitiveMediaPath, 'sensitive-media');
     validateDirectMachineSourceMock.mockResolvedValue({
       ok: true,
-      source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: '/repo' },
+      source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: sourceDirectory },
     });
     getExternalSessionProviderOpsMock.mockResolvedValue({
+      resolveTranscriptMediaReadRoots: async () => [verifiedDirectory],
       pageTranscript: async () => ({
         items: [
           {
@@ -48,6 +61,26 @@ describe('external session transcript actions', () => {
                       path: providerMediaPath,
                       sizeBytes: 12,
                       origin: { source: 'provider-generated' },
+                    }, {
+                      id: 'provider-media-source-directory',
+                      role: 'output',
+                      category: 'generated',
+                      mediaKind: 'image',
+                      mimeType: 'image/png',
+                      name: 'source-directory-owned.png',
+                      path: sourceDirectoryMediaPath,
+                      sizeBytes: 12,
+                      origin: { source: 'provider-generated' },
+                    }, {
+                      id: 'provider-media-2',
+                      role: 'output',
+                      category: 'generated',
+                      mediaKind: 'image',
+                      mimeType: 'image/png',
+                      name: 'sensitive.png',
+                      path: sensitiveMediaPath,
+                      sizeBytes: 12,
+                      origin: { source: 'provider-generated' },
                     }],
                   },
                 },
@@ -61,21 +94,29 @@ describe('external session transcript actions', () => {
       }),
     });
 
-    const { executeExternalSessionTranscriptPageAction } = await import('./transcriptActions');
-    const response = await executeExternalSessionTranscriptPageAction({
-      machineId: 'machine-1',
-      providerId: 'opencode',
-      remoteSessionId: 'provider-session-1',
-      source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: '/repo' },
-      direction: 'older',
-    });
+    try {
+      const { executeExternalSessionTranscriptPageAction } = await import('./transcriptActions');
+      const response = await executeExternalSessionTranscriptPageAction({
+        machineId: 'machine-1',
+        providerId: 'opencode',
+        remoteSessionId: 'provider-session-1',
+        source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: sourceDirectory },
+        direction: 'older',
+      });
 
-    expect(response.ok).toBe(true);
-    if (!response.ok) throw new Error('expected transcript page to succeed');
-    expect(JSON.stringify(response.items)).toContain(providerMediaPath);
-    expect(JSON.stringify(response.items)).not.toContain('.happier/uploads/generated');
-    expect((response as { transientMediaReadDirs?: readonly string[] }).transientMediaReadDirs).toEqual([
-      dirname(providerMediaPath),
-    ]);
+      expect(response.ok).toBe(true);
+      if (!response.ok) throw new Error('expected transcript page to succeed');
+      expect(JSON.stringify(response.items)).toContain(providerMediaPath);
+      expect(JSON.stringify(response.items)).toContain(sourceDirectoryMediaPath);
+      expect(JSON.stringify(response.items)).toContain(sensitiveMediaPath);
+      expect(JSON.stringify(response.items)).not.toContain('.happier/uploads/generated');
+      expect((response as { transientMediaReadFiles?: readonly string[] }).transientMediaReadFiles).toEqual([
+        providerMediaPath,
+      ]);
+    } finally {
+      await rm(sourceDirectory, { recursive: true, force: true });
+      await rm(verifiedDirectory, { recursive: true, force: true });
+      await rm(outsideDirectory, { recursive: true, force: true });
+    }
   });
 });

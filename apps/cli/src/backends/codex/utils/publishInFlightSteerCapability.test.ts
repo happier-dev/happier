@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentState } from '@/api/types';
 
 describe('publishInFlightSteerCapability', () => {
-  it('publishes inFlightSteer=true when runtime supports in-flight steer', async () => {
+  it('publishes in-flight steer support and active-turn availability', async () => {
     const { publishInFlightSteerCapability } = await import('./publishInFlightSteerCapability');
 
     let state: AgentState = {};
@@ -12,11 +12,13 @@ describe('publishInFlightSteerCapability', () => {
         state = updater(state);
       },
     };
-    const runtime = { supportsInFlightSteer: () => true };
+    const runtime = { supportsInFlightSteer: () => true, canSteerPrompt: () => false };
 
     publishInFlightSteerCapability({ session: session as any, runtime: runtime as any });
 
     expect(state.capabilities?.inFlightSteer).toBe(true);
+    expect(state.capabilities?.inFlightSteerSupported).toBe(true);
+    expect(state.capabilities?.inFlightSteerAvailable).toBe(false);
   });
 
   it('publishes inFlightSteer=false when runtime does not support in-flight steer', async () => {
@@ -33,6 +35,7 @@ describe('publishInFlightSteerCapability', () => {
     publishInFlightSteerCapability({ session: session as any, runtime: runtime as any });
 
     expect(state.capabilities?.inFlightSteer).toBe(false);
+    expect(state.capabilities?.inFlightSteerSupported).toBe(false);
+    expect(state.capabilities?.inFlightSteerAvailable).toBe(false);
   });
 });
-

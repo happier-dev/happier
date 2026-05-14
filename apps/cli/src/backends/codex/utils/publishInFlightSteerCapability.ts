@@ -3,9 +3,10 @@ import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffor
 
 export function publishInFlightSteerCapability(opts: {
   session: { updateAgentState: (updater: (current: AgentState) => AgentState) => Promise<void> | void };
-  runtime: { supportsInFlightSteer: () => boolean };
+  runtime: { supportsInFlightSteer: () => boolean; canSteerPrompt?: () => boolean };
 }): void {
   const supported = opts.runtime.supportsInFlightSteer() === true;
+  const available = supported && (opts.runtime.canSteerPrompt?.() ?? supported) === true;
   updateAgentStateBestEffort(
     opts.session,
     (currentState) => ({
@@ -13,6 +14,8 @@ export function publishInFlightSteerCapability(opts: {
       capabilities: {
         ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
         inFlightSteer: supported,
+        inFlightSteerSupported: supported,
+        inFlightSteerAvailable: available,
       },
     }),
     '[codex]',

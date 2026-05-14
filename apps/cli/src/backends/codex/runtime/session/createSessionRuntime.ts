@@ -117,7 +117,8 @@ export function createCodexSessionRuntime(sessionParams: unknown): HostSessionRu
                     }
 
                     if (backendMode === 'appServer') {
-                        const nativeRuntime = createCodexAppServerRuntime({
+                        let nativeRuntime: ReturnType<typeof createCodexAppServerRuntime> | null = null;
+                        nativeRuntime = createCodexAppServerRuntime({
                             directory: params.directory,
                             activeServerDir: configuration.activeServerDir,
                             processEnv: process.env,
@@ -127,6 +128,13 @@ export function createCodexSessionRuntime(sessionParams: unknown): HostSessionRu
                             onThinkingChange: params.setThinking,
                             permissionHandler: params.permissionHandler,
                             getPermissionMode: () => params.getPermissionMode?.() ?? 'default',
+                            onInFlightSteerAvailabilityChange: () => {
+                                if (!nativeRuntime) return;
+                                publishInFlightSteerCapability({
+                                    session: params.session,
+                                    runtime: nativeRuntime,
+                                });
+                            },
                         });
                         let didSeedPendingOverrides = false;
                         const startOrLoadNative = nativeRuntime.startOrLoad.bind(nativeRuntime);
@@ -215,6 +223,7 @@ export function createCodexSessionRuntime(sessionParams: unknown): HostSessionRu
                         session,
                         runtime: {
                             supportsInFlightSteer: () => runtime.supportsInFlightSteer?.() === true,
+                            canSteerPrompt: () => runtime.canSteerPrompt?.() ?? runtime.isTurnInFlight?.() ?? true,
                         },
                     });
                 },

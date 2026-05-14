@@ -18,6 +18,7 @@ import { buildWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/w
 import {
   collectReferencedSessionMediaWorkspacePaths,
   collectReferencedSessionMediaWorkspacePathsFromProviderBundle,
+  collectReferencedSessionMediaWorkspacePathsFromSessionMetadata,
 } from '@/session/media/referencedPaths';
 import { createWorkspaceReplicationEngine } from '@/workspaces/replication/engine';
 import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
@@ -170,6 +171,7 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
   sourceRootPath: string;
   activeServerDir: string;
   workspaceTransfer: SessionHandoffWorkspaceTransfer;
+  sessionMetadata?: Record<string, unknown>;
   sessionTranscriptRecords?: readonly unknown[];
   providerBundle?: SessionHandoffProviderBundle;
 }>): Promise<Readonly<{
@@ -178,6 +180,7 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
   const referencedMediaPaths = [
     ...collectReferencedSessionMediaWorkspacePaths(input.sessionTranscriptRecords ?? []),
     ...collectReferencedSessionMediaWorkspacePathsFromProviderBundle(input.providerBundle),
+    ...collectReferencedSessionMediaWorkspacePathsFromSessionMetadata(input.sessionMetadata),
   ];
   const workspaceTransfer = mergeReferencedMediaWorkspaceTransfer({
     workspaceTransfer: input.workspaceTransfer,
@@ -508,6 +511,7 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
   directPeerTransfer?: DirectPeerTransferPublisher;
   sourceRootPath: string;
   providerBundleTransferPublication?: SessionHandoffProviderBundleTransferPublication;
+  sessionMetadata?: Record<string, unknown>;
   sessionTranscriptRecords?: readonly unknown[];
   providerBundle?: SessionHandoffProviderBundle;
 }>): Promise<Readonly<{
@@ -521,6 +525,7 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
       sourceRootPath: input.sourceRootPath,
       activeServerDir: input.activeServerDir,
       workspaceTransfer: input.workspaceTransfer,
+      sessionMetadata: input.sessionMetadata,
       sessionTranscriptRecords: input.sessionTranscriptRecords,
       providerBundle: input.providerBundle,
     })

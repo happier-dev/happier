@@ -131,6 +131,11 @@ export function createCodexTerminalRuntime(params: Readonly<{
             remoteRuntime?.shouldResumeAfterPermissionModeChange?.() ?? false,
         supportsInFlightSteer: () => remoteRuntime?.supportsInFlightSteer?.() === true,
         isTurnInFlight: () => remoteRuntime?.isTurnInFlight?.() === true,
+        canSteerPrompt: () => (
+            remoteRuntime?.canSteerPrompt?.()
+            ?? remoteRuntime?.isTurnInFlight?.()
+            ?? false
+        ) === true,
         steerPrompt: async (prompt: string) => {
             const remote = await ensureRemoteRuntime();
             await remote.steerInFlightTurn(prompt);

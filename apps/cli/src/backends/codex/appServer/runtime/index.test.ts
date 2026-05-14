@@ -42,6 +42,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         'import readline from "node:readline";',
         `const requestLogPath = ${JSON.stringify(params.requestLogPath)};`,
         'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
+        'let lastTurnStartText = null;',
         'for await (const line of rl) {',
         '    if (!line.trim()) continue;',
         '    const msg = JSON.parse(line);',
@@ -82,9 +83,10 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '    }',
         '    if (msg.method === "turn/start") {',
         '        const text = Array.isArray(msg.params?.input) ? String(msg.params.input[0]?.text ?? "unknown") : "unknown";',
+        '        lastTurnStartText = text;',
         '        const turnId = `turn-${text}`;',
         '        const matchingTurnStartCount = (await readFile(requestLogPath, "utf8").catch(() => "")).split("\\n").filter((line) => { try { const entry = JSON.parse(line); return entry.method === "turn/start" && Array.isArray(entry.params?.input) && String(entry.params.input[0]?.text ?? "") === text; } catch { return false; } }).length;',
-        '        const completionDelayMs = text === "cancel-me" ? 50 : 15;',
+        '        const completionDelayMs = text === "cancel-me" || text === "cancel-no-active-turn" ? 50 : 15;',
         '        const respondDelayMs = text === "steer-delay" ? 60 : 0;',
         '        setTimeout(() => {',
         '            process.stdout.write(JSON.stringify({ id: msg.id, result: { turn: { id: turnId }, threadId: msg.params?.threadId ?? null } }) + "\\n");',
@@ -393,6 +395,10 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        continue;',
         '    }',
         '    if (msg.method === "turn/interrupt") {',
+        '        if (lastTurnStartText === "cancel-no-active-turn") {',
+        '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32000, message: "no active turn to interrupt" } }) + "\\n");',
+        '            continue;',
+        '        }',
         '        const turnId = msg.params?.turnId ?? null;',
         '        process.stdout.write(JSON.stringify({ id: msg.id, result: { ok: true } }) + "\\n");',
         '        setTimeout(() => {',
@@ -767,7 +773,7 @@ describe('createCodexAppServerRuntime', () => {
 
         await runtime.startOrLoad({});
         const sendPromptPromise = runtime.sendPrompt('cancel-me');
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        await new Promise((resolve) => setTimeout(resolve, 60));
 
         expect(runtime.isTurnInFlight()).toBe(true);
         await runtime.cancel();
@@ -784,6 +790,29 @@ describe('createCodexAppServerRuntime', () => {
                 params: expect.objectContaining({ threadId: 'thread-started', turnId: 'turn-cancel-me' }),
             }),
         ]);
+    });
+
+    it('clears in-flight state when Codex reports there is no active turn to interrupt', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-interrupt-none-');
+
+        const onThinkingChange = vi.fn();
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange,
+            session: { updateMetadata: vi.fn() } as any,
+        });
+
+        await runtime.startOrLoad({});
+        const sendPromptPromise = runtime.sendPrompt('cancel-no-active-turn');
+        await new Promise((resolve) => setTimeout(resolve, 30));
+
+        expect(runtime.isTurnInFlight()).toBe(true);
+        await expect(runtime.cancel()).resolves.toBeUndefined();
+        await sendPromptPromise;
+
+        expect(runtime.isTurnInFlight()).toBe(false);
+        expect(onThinkingChange).toHaveBeenCalledWith(true);
+        expect(onThinkingChange).toHaveBeenLastCalledWith(false);
     });
 
     it('advertises in-flight steer support and can call turn/steer while a turn is in flight', async () => {
@@ -816,6 +845,49 @@ describe('createCodexAppServerRuntime', () => {
             }),
         ]);
         expect(requestLog.filter((entry: { method: string }) => entry.method === 'turn/start')).toHaveLength(1);
+    });
+
+    it('marks a completed turn as non-steerable while completion is still settling', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-steer-settle-');
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+        });
+
+        await runtime.startOrLoad({});
+        const sendPromptPromise = runtime.sendPrompt('cancel-me');
+        await new Promise((resolve) => setTimeout(resolve, 60));
+
+        expect(runtime.isTurnInFlight()).toBe(true);
+        expect(runtime.canSteerPrompt()).toBe(false);
+        await expect(runtime.steerPrompt('late-nudge')).rejects.toThrow('not steerable');
+
+        await sendPromptPromise;
+    });
+
+    it('marks an active turn as non-steerable when the selected session mode changes', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-steer-mode-change-');
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+        });
+
+        await runtime.startOrLoad({});
+        const sendPromptPromise = runtime.sendPrompt('cancel-me');
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        expect(runtime.isTurnInFlight()).toBe(true);
+        expect(runtime.canSteerPrompt()).toBe(true);
+
+        await runtime.setSessionMode('default');
+
+        expect(runtime.isTurnInFlight()).toBe(true);
+        expect(runtime.canSteerPrompt()).toBe(false);
+        await expect(runtime.steerPrompt('mode-boundary-nudge')).rejects.toThrow('not steerable');
+
+        await sendPromptPromise;
     });
 
     it('waits for the active turn id before calling turn/steer', async () => {

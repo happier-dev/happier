@@ -235,6 +235,59 @@ async function readChangedPaths(input: Readonly<{
     return result.stdout.split('\0').filter((path) => path.trim().length > 0);
 }
 
+async function compareCurrentWorktreeToExpectedFinal(input: Readonly<{
+    cwd: string;
+    expectedFinalRef: string;
+}>): Promise<
+    | { success: true; diverged: boolean }
+    | { success: false; diagnostics: readonly string[] }
+> {
+    const expectedTree = await runGitCheckpointCommand({
+        cwd: input.cwd,
+        args: ['rev-parse', `${input.expectedFinalRef}^{tree}`],
+        timeoutMs: 5000,
+    });
+    if (!expectedTree.success) {
+        const failure = classifyGitCheckpointCommandFailure(expectedTree, 'Failed to read expected checkpoint final tree');
+        return { success: false, diagnostics: [failure.reason, failure.error] };
+    }
+    const expectedTreeSha = expectedTree.stdout.trim();
+    if (!expectedTreeSha) return { success: false, diagnostics: ['Failed to read expected checkpoint final tree'] };
+
+    const temporaryIndex = await createGitCheckpointTemporaryIndex({ cwd: input.cwd });
+    if (!temporaryIndex.success) return { success: false, diagnostics: [temporaryIndex.reason, temporaryIndex.error] };
+
+    try {
+        const stageCurrent = await runGitCheckpointCommand({
+            cwd: input.cwd,
+            args: ['add', '-A', '--', '.'],
+            timeoutMs: 10_000,
+            env: temporaryIndex.tempIndex.env,
+        });
+        if (!stageCurrent.success) {
+            const failure = classifyGitCheckpointCommandFailure(stageCurrent, 'Failed to stage current rollback candidate contents');
+            return { success: false, diagnostics: [failure.reason, failure.error] };
+        }
+
+        const currentTree = await runGitCheckpointCommand({
+            cwd: input.cwd,
+            args: ['write-tree'],
+            timeoutMs: 5000,
+            env: temporaryIndex.tempIndex.env,
+        });
+        if (!currentTree.success) {
+            const failure = classifyGitCheckpointCommandFailure(currentTree, 'Failed to write current rollback candidate tree');
+            return { success: false, diagnostics: [failure.reason, failure.error] };
+        }
+        const currentTreeSha = currentTree.stdout.trim();
+        if (!currentTreeSha) return { success: false, diagnostics: ['Failed to write current rollback candidate tree'] };
+
+        return { success: true, diverged: currentTreeSha !== expectedTreeSha };
+    } finally {
+        temporaryIndex.tempIndex.cleanup();
+    }
+}
+
 export async function applyGitCheckpointReversePatch(input: Readonly<{
     context: ScmBackendContext;
     request: CheckpointCodeRollbackRequest;
@@ -282,6 +335,35 @@ export async function applyGitCheckpointReversePatch(input: Readonly<{
         };
     }
 
+    const changedPaths = await readChangedPaths({
+        cwd: availability.repoRoot,
+        expectedStartRef: input.request.expectedStartRef,
+        expectedFinalRef: input.request.expectedFinalRef,
+    });
+
+    const currentMatchesExpectedFinal = await compareCurrentWorktreeToExpectedFinal({
+        cwd: availability.repoRoot,
+        expectedFinalRef: input.request.expectedFinalRef,
+    });
+    if (!currentMatchesExpectedFinal.success) {
+        return {
+            status: 'unavailable',
+            changedPaths: [],
+            skippedPaths: changedPaths,
+            receipts: [CHECKPOINT_ROLLBACK_RECEIPT_IDS.aborted],
+            diagnostics: currentMatchesExpectedFinal.diagnostics,
+        };
+    }
+    if (currentMatchesExpectedFinal.diverged) {
+        return {
+            status: 'conflict',
+            changedPaths: [],
+            skippedPaths: changedPaths,
+            receipts: [CHECKPOINT_ROLLBACK_RECEIPT_IDS.conflict],
+            diagnostics: ['checkpoint_rollback_worktree_diverged'],
+        };
+    }
+
     const diff = await runGitCheckpointCommand({
         cwd: availability.repoRoot,
         args: ['diff', '--binary', input.request.expectedFinalRef, input.request.expectedStartRef],
@@ -311,12 +393,6 @@ export async function applyGitCheckpointReversePatch(input: Readonly<{
             diagnostics: ['binary_checkpoint_rollback_unsupported'],
         };
     }
-
-    const changedPaths = await readChangedPaths({
-        cwd: availability.repoRoot,
-        expectedStartRef: input.request.expectedStartRef,
-        expectedFinalRef: input.request.expectedFinalRef,
-    });
 
     const preflight = await runGitCheckpointCommand({
         cwd: availability.repoRoot,

@@ -21,6 +21,7 @@ import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedA
 import { applyPermissionIntentFromMetadataIfNewer } from '@/agent/runtime/permissions/modeStateSync';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
 import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
+import { shouldSuppressProviderPermissionForHappierApproval } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import {
     CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
     isClaudeLocalPermissionBridgeAgentStateRequest,
@@ -158,7 +159,7 @@ export class ClaudeLocalPermissionBridge {
             };
         }
 
-        const policyDecision = this.computePolicyDecision(toolName);
+        const policyDecision = this.computePolicyDecision(toolName, toolInput);
         if (!this.isInteractiveTool(toolName) && policyDecision === 'allow') {
             const hookResponse: PermissionHookResponse = {
                 continue: true,
@@ -257,14 +258,28 @@ export class ClaudeLocalPermissionBridge {
         );
     }
 
-    private computePolicyDecision(toolName: string): 'prompt' | 'allow' | 'deny' {
+    private computePolicyDecision(toolName: string, toolInput: unknown): 'prompt' | 'allow' | 'deny' {
         if (isChangeTitleToolLikeName(toolName)) return 'allow';
         const mode = this.permissionMode;
+        if ((mode === 'read-only' || mode === 'plan') && isDefaultWriteLikeToolName(toolName)) {
+            return 'deny';
+        }
+        if (shouldSuppressProviderPermissionForHappierApproval({
+            toolName,
+            input: toolInput,
+            accountSettings: this.session.accountSettings ?? null,
+            surface: 'session_agent',
+        }).suppress) {
+            return 'allow';
+        }
         if (mode === 'yolo') return 'allow';
         if (mode === 'safe-yolo') {
             return isDefaultWriteLikeToolName(toolName) ? 'prompt' : 'allow';
         }
         if (mode === 'read-only') {
+            return isDefaultWriteLikeToolName(toolName) ? 'deny' : 'allow';
+        }
+        if (mode === 'plan') {
             return isDefaultWriteLikeToolName(toolName) ? 'deny' : 'allow';
         }
         return 'prompt';
@@ -436,7 +451,7 @@ export class ClaudeLocalPermissionBridge {
         for (const [id, pending] of this.pendingRequests.entries()) {
             if (id === excludeRequestId) continue;
             if (this.isInteractiveTool(pending.toolName)) continue;
-            const decision = this.computePolicyDecision(pending.toolName);
+            const decision = this.computePolicyDecision(pending.toolName, pending.toolInput);
             if (decision === 'allow') idsToApprove.push(id);
             if (decision === 'deny') idsToDeny.push(id);
         }

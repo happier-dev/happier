@@ -123,6 +123,13 @@ export function createAcpRuntime(params: {
      */
     drainDuringTurn?: boolean;
     /**
+     * Whether the runtime should pop server-pending messages once after session start/load.
+     *
+     * This covers inactive-session resume: the process is awake again, but no turn has started
+     * until the server-backed pending message is materialized into the normal transcript.
+     */
+    drainAfterStartOrLoad?: boolean;
+    /**
      * Fallback polling interval used while a steer-capable turn is in-flight.
      *
      * Some pending-queue updates may not publish metadata wake signals, so polling avoids

@@ -39,6 +39,7 @@ export function registerCodexAppServerClientHandlers(params: Readonly<{
     publishThreadId: () => void;
     setTurnInFlight: (value: boolean) => void;
     setThinking: (value: boolean) => void;
+    markActiveTurnNonSteerable: () => void;
     notificationMatchesPendingTurn: (notificationParams: unknown) => boolean;
     resolveStreamUpdateContext: (notificationParams: unknown) => StreamUpdateContext | null;
     ensureSyntheticSubagentThread: (sidechainId: string) => Promise<unknown>;
@@ -108,6 +109,7 @@ export function registerCodexAppServerClientHandlers(params: Readonly<{
             if (!params.notificationMatchesPendingTurn(notificationParams)) return;
             const notificationRecord = readRecord(notificationParams);
             if (notificationRecord?.willRetry === true) return;
+            params.markActiveTurnNonSteerable();
             const failure = createCodexAppServerTurnFailure(notificationParams);
             if (isCodexAppServerAuthAccountChangedError(failure)) {
                 await params.finishPendingTurn({
@@ -149,6 +151,7 @@ export function registerCodexAppServerClientHandlers(params: Readonly<{
         params.client.registerNotificationHandler(method, async (notificationParams) => {
             await params.runBridgeWork(async () => {
                 if (params.notificationMatchesPendingTurn(notificationParams)) {
+                    params.markActiveTurnNonSteerable();
                     if (method === 'turn/completed' && readCodexTurnStatus(notificationParams) === 'failed') {
                         const failure = createCodexAppServerTurnFailure(notificationParams);
                         if (isCodexAppServerAuthAccountChangedError(failure)) {

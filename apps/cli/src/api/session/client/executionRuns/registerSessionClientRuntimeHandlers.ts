@@ -9,6 +9,7 @@ import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
 
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
+import { createExecutionRunRpcApprovalDeps } from '@/rpc/handlers/executionRuns/createExecutionRunRpcApprovalDeps';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { commitSessionStoredMessage } from '@/session/transport/http/sessionsHttp';
 import { createServerBackedSessionTranscriptStore } from '@/api/session/createServerBackedSessionTranscriptStore';
@@ -206,5 +207,6 @@ export function registerSessionClientRuntimeHandlers(
             const context = await bootstrapAccountSettingsContext({ credentials, mode: 'fast' });
             return context.settings ?? null;
         },
+        actionApprovalDeps: createExecutionRunRpcApprovalDeps({ readCredentials }),
     });
 }

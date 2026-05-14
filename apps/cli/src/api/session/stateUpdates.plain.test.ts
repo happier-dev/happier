@@ -269,4 +269,52 @@ describe('stateUpdates (plaintext sessions)', () => {
     expect(timedSocket.emitWithAck).toHaveBeenCalledTimes(1);
     expect(socket.emitWithAck).not.toHaveBeenCalled();
   });
+
+  it('does not leave metadata updates pending forever when the socket ACK never settles', async () => {
+    const previousTimeout = process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS;
+    process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS = '5';
+    vi.useFakeTimers();
+
+    try {
+      const socket = {
+        connected: true,
+        emitWithAck: vi.fn(() => new Promise<never>(() => {})),
+      };
+
+      const updatePromise = updateSessionMetadataWithAck({
+        socket,
+        sessionId: 's1',
+        sessionEncryptionMode: 'plain',
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'legacy',
+        getMetadata: () => createMetadata({ path: '/tmp' }),
+        setMetadata: () => {},
+        getMetadataVersion: () => 1,
+        setMetadataVersion: () => {},
+        syncSessionSnapshotFromServer: async () => {},
+        handler: (current) => current,
+      }).then(
+        () => ({ status: 'resolved' as const }),
+        (error) => ({
+          status: 'rejected' as const,
+          code: error && typeof error === 'object' && 'code' in error ? String(error.code) : null,
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      const outcome = await Promise.race([
+        updatePromise,
+        Promise.resolve({ status: 'pending' as const }),
+      ]);
+
+      expect(outcome).toEqual({ status: 'rejected', code: 'socket_ack_timeout' });
+    } finally {
+      vi.useRealTimers();
+      if (typeof previousTimeout === 'string') {
+        process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS = previousTimeout;
+      } else {
+        delete process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS;
+      }
+    }
+  });
 });

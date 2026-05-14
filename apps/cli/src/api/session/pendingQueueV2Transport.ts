@@ -5,6 +5,7 @@ import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';
 import type { ClientToServerEvents, ServerToClientEvents } from '../types';
 import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
+import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 
 export type PendingQueueMaterializeNextResult = {
     didMaterialize: boolean;
@@ -99,11 +100,18 @@ async function tryMaterializeNextViaSocket(params: {
     sessionId: string;
 }): Promise<PendingQueueSocketMaterializeResult> {
     try {
-        const rawAck = await (params.socket as any).timeout(7_500).emitWithAck('pending-materialize-next', { sid: params.sessionId });
+        const rawAck = await emitSocketWithAck<Record<string, unknown>>({
+            socket: params.socket as any,
+            event: 'pending-materialize-next',
+            payload: { sid: params.sessionId },
+        });
         if (!rawAck || typeof rawAck !== 'object') return { ok: false };
         if (rawAck.ok !== true) return { ok: false };
         if (rawAck.didMaterialize !== true) return { ok: true, didMaterialize: false };
-        const localId = typeof rawAck?.message?.localId === 'string' ? String(rawAck.message.localId) : null;
+        const message = rawAck.message;
+        const localId = message && typeof message === 'object' && 'localId' in message && typeof message.localId === 'string'
+            ? String(message.localId)
+            : null;
         const didWrite = rawAck.didWrite === true;
         return { ok: true, didMaterialize: true, localId, didWrite };
     } catch (error) {

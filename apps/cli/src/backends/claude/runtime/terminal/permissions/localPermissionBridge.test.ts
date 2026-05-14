@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 import { createPermissionHandlerSessionStub } from '../../../utils/permissionHandler.testkit';
 import { ClaudeLocalPermissionBridge } from './localPermissionBridge';
@@ -252,6 +253,58 @@ describe('ClaudeLocalPermissionBridge', () => {
       },
     });
     expect(client.agentState.requests.toolu_default_title_1).toBeUndefined();
+  });
+
+  it('suppresses local provider prompts for Happier MCP tools only when Happier approval is required', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-happier-approval-suppression');
+    session.accountSettings = {
+      actionsSettingsV1: ActionsSettingsV1Schema.parse({
+        v: 1,
+        actions: {
+          'session.list': {
+            disabledSurfaces: [],
+            approvalRequiredSurfaces: ['session_agent'],
+          },
+        },
+      }),
+    } as typeof session.accountSettings;
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const res = await bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'mcp__happier__session_list',
+      tool_input: {},
+      tool_use_id: 'toolu_session_list_1',
+    });
+
+    expect(res).toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'allow' },
+      },
+    });
+    expect(client.agentState.requests.toolu_session_list_1).toBeUndefined();
+
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'happier_action_execute',
+      tool_input: { actionId: 'session.status.get' },
+      tool_use_id: 'toolu_status_get_1',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests.toolu_status_get_1).toBeDefined();
+    await client.rpcHandlerManager.getHandler('permission')?.({
+      id: 'toolu_status_get_1',
+      approved: false,
+    });
+    await expect(pending).resolves.toMatchObject({
+      hookSpecificOutput: {
+        decision: { behavior: 'deny' },
+      },
+    });
   });
 
   it('auto-approves a pending request when metadata permissionMode flips to yolo', async () => {

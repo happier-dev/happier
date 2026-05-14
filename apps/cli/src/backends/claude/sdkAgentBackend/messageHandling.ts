@@ -181,25 +181,6 @@ function handleAssistantMessage(params: Readonly<{
   }
 
   const text = extractAssistantText(params.assistantMessage);
-  const providerEventId = typeof params.assistantMessage.uuid === 'string'
-    ? params.assistantMessage.uuid
-    : undefined;
-  const mediaResult = extractAcpMediaContentBlocks(assistantContent, {
-    originSource: 'provider-generated',
-    ...(providerEventId ? { providerEventId } : {}),
-  });
-  if (mediaResult.media.length > 0) {
-    params.emit({
-      type: 'event',
-      name: 'session_media',
-      payload: {
-        localId: `claude-media-${providerEventId ?? 'assistant'}`,
-        role: 'output',
-        category: 'generated',
-        media: mediaResult.media,
-      },
-    });
-  }
   if (!text) return;
   const pending = params.runtime.pendingTurn;
   if (pending) {

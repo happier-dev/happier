@@ -14,7 +14,12 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
   limit: number;
   maxTextChars?: number;
   upToSeqInclusive?: number;
-}>): Promise<{ dialog: HappierReplayDialogItem[]; sourceCutoffSeqInclusive: number; synopsisText?: string | null } | null> {
+}>): Promise<{
+  dialog: HappierReplayDialogItem[];
+  sourceCutoffSeqInclusive: number;
+  synopsisText?: string | null;
+  referencedSessionMediaWorkspacePaths: readonly string[];
+} | null> {
   const session = await fetchSessionById({ token: params.credentials.token, sessionId: params.previousSessionId });
   if (!session) return null;
 
@@ -49,7 +54,12 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
       maxTextChars: params.maxTextChars,
       maxDialogItems: params.limit,
     });
-    return { dialog: slice.dialog, sourceCutoffSeqInclusive, synopsisText: slice.latestSynopsisText };
+    return {
+      dialog: slice.dialog,
+      sourceCutoffSeqInclusive,
+      synopsisText: slice.latestSynopsisText,
+      referencedSessionMediaWorkspacePaths: slice.referencedSessionMediaWorkspacePaths,
+    };
   }
 
   if (params.credentials.encryption.type !== 'dataKey') {
@@ -75,5 +85,10 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
     maxDialogItems: params.limit,
   });
 
-  return { dialog: slice.dialog, sourceCutoffSeqInclusive, synopsisText: slice.latestSynopsisText };
+  return {
+    dialog: slice.dialog,
+    sourceCutoffSeqInclusive,
+    synopsisText: slice.latestSynopsisText,
+    referencedSessionMediaWorkspacePaths: slice.referencedSessionMediaWorkspacePaths,
+  };
 }

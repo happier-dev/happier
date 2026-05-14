@@ -137,6 +137,7 @@ export function createClaudeSessionRuntimePlan(sessionParams: unknown): HostSess
         machineId,
         session,
         mcpServers,
+        accountSettings,
         setThinking,
         getPermissionMode,
       }) => {
@@ -153,6 +154,7 @@ export function createClaudeSessionRuntimePlan(sessionParams: unknown): HostSess
           machineId,
           session,
           mcpServers,
+          accountSettings: accountSettings ?? null,
           hookSettingsPath: hookAdjunct.hookSettingsPath,
           hookPluginDir: hookAdjunct.hookPluginDir,
           hookServer: hookAdjunct.hookServer,

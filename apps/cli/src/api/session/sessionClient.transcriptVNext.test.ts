@@ -1,33 +1,73 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
+import { sendClaudeSessionClientMessage } from '@/backends/claude/session/sendMessage';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
-  flushApiSessionClientMessageCommitQueue,
 } from '@/testkit/backends/apiSessionSocketHarness';
-
-type ClientWithQueuedCommits = {
-  messageCommitQueueTail: Promise<void>;
-};
-
-async function flushQueuedCommits(client: ClientWithQueuedCommits): Promise<void> {
-  await flushApiSessionClientMessageCommitQueue(client);
-}
+import { createSessionClientCommitQueueRuntime } from './client/transport/createSessionClientCommitQueueRuntime';
+import type { SessionClientTranscriptSendPort } from './client/transcript/sendMessages';
+import { ApiSessionClient as StaticApiSessionClient } from './sessionClient';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
+const openClients: Array<{ close: () => Promise<void> }> = [];
 
 const pngBytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU6w9wAAAABJRU5ErkJggg==',
   'base64',
 );
+
+function readSessionMediaEnvelope(meta: Record<string, unknown>): unknown {
+  const primary = meta.happier;
+  if (primary && typeof primary === 'object' && (primary as { kind?: unknown }).kind === 'session_media.v1') {
+    return primary;
+  }
+  return meta.happierMedia;
+}
+
+function trackClient<T extends { close: () => Promise<void> }>(client: T): T {
+  openClients.push(client);
+  return client;
+}
+
+function createTranscriptSendPort(): SessionClientTranscriptSendPort {
+  return {
+    sessionId: 'session-1',
+    socket: {
+      connected: true,
+      emit: vi.fn(),
+    },
+    outboundShapeLogger: {
+      log: vi.fn(),
+    },
+    debug: vi.fn(),
+    debugLargeJson: vi.fn(),
+    getMetadataSnapshot: () => null,
+    buildOutboundSessionMessagePayload: (content) => ({ t: 'plain', v: content }),
+    commitSessionMessageBestEffort: vi.fn(),
+    logSendWhileDisconnected: vi.fn(),
+    markAgentQueueEchoSuppressedLocalId: vi.fn(),
+    toolCallCanonicalNameByProviderAndId: new Map(),
+    permissionToolCallRawInputByProviderAndId: new Map(),
+    toolCallInputByProviderAndId: new Map(),
+  };
+}
+
+afterEach(async () => {
+  const clients = openClients.splice(0);
+  await Promise.allSettled(clients.map((client) => client.close()));
+  sessionSocketStub = null;
+  userSocketStub = null;
+  vi.clearAllMocks();
+});
 
 vi.mock('./sockets', () => ({
   createUserScopedSocket: () => {
@@ -67,67 +107,63 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
 
 describe('ApiSessionClient transcript vNext transport', () => {
   it('forwards sidechainId as plaintext metadata on durable commits', async () => {
-    vi.resetModules();
-    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1', didWrite: true } });
-    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const socket = createApiSessionSocketStub({
+      connected: true,
+      emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1', didWrite: true },
+    });
+    const runtime = createSessionClientCommitQueueRuntime({
+      sessionId: 's1',
+      transcriptStorage: 'persisted',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'dataKey',
+      getSocket: () => socket as never,
+      getClosed: () => false,
+      addPendingMaterializedLocalId: vi.fn(),
+      hasPendingMaterializedLocalId: vi.fn(() => false),
+      markCommittedLocalIdAwaitingEcho: vi.fn(),
+      deleteMaterializedLocalId: vi.fn(),
+      scheduleMaterializationRecovery: vi.fn(),
+      recoverMaterializedLocalId: vi.fn(async () => false),
+      observeCommittedAck: vi.fn(),
+    });
 
-    const { ApiSessionClient } = await import('./sessionClient');
+    await runtime.commitSessionMessage({
+      message: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'hi' } } },
+      localId: 'l1',
+      sidechainId: 'sc-1',
+      requireCommit: true,
+    });
 
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
-    await client.sendAgentMessageCommitted(
-      'codex' as any,
-      { type: 'message', message: 'hi', sidechainId: 'sc-1' } as any,
-      { localId: 'l1' },
-    );
-
-    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledTimes(1);
-    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
+    expect(socket.emitWithAck).toHaveBeenCalledTimes(1);
+    expect(socket.emitWithAck).toHaveBeenCalledWith(
       'message',
       expect.objectContaining({ sidechainId: 'sc-1' }),
     );
   });
 
-  it('forwards Claude sidechainId on durable commits for imported sidechain messages', async () => {
-    vi.resetModules();
-    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1', didWrite: true } });
-    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+  it('forwards Claude sidechainId on durable commits for imported sidechain messages', () => {
+    const port = createTranscriptSendPort();
+    const body = {
+      type: 'assistant',
+      uuid: 'sidechain-uuid',
+      sidechainId: 'tool_agent_1',
+      isSidechain: true,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hello from teammate' }],
+      },
+    } satisfies RawJSONLines;
 
-    const { ApiSessionClient } = await import('./sessionClient');
+    sendClaudeSessionClientMessage(port, body, { importedFrom: 'claude-team-inbox' });
 
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
-    client.sendProviderMessage({
-      provider: 'claude',
-      body: {
-        type: 'assistant',
-        uuid: 'sidechain-uuid',
-        sidechainId: 'tool_agent_1',
-        isSidechain: true,
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'hello from teammate' }],
-        },
-      } satisfies RawJSONLines,
-      meta: { importedFrom: 'claude-team-inbox' },
-    });
-
-    await flushQueuedCommits(client as unknown as ClientWithQueuedCommits);
-
-    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledTimes(1);
-    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
-      'message',
+    expect(port.commitSessionMessageBestEffort).toHaveBeenCalledWith(
       expect.objectContaining({ sidechainId: 'tool_agent_1' }),
     );
   });
 
-  it('does not expose transcript-draft ephemerals (legacy partial streaming removed)', async () => {
-    vi.resetModules();
-    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1', didWrite: true } });
-    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-
-    const { ApiSessionClient } = await import('./sessionClient');
-
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
-    expect((client as any).sendTranscriptDraftDelta).toBeUndefined();
+  it('does not expose transcript-draft ephemerals (legacy partial streaming removed)', () => {
+    expect('sendTranscriptDraftDelta' in StaticApiSessionClient.prototype).toBe(false);
   });
 
   it('emits live transcript stream segments on the session socket without waiting for durable ACKs', async () => {
@@ -137,7 +173,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
 
     const { ApiSessionClient } = await import('./sessionClient');
 
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' })));
     (client as any).sendAgentMessageEphemeral(
       'codex',
       { type: 'message', message: 'Hello', sidechainId: 'sc-1' } as any,
@@ -190,7 +226,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
 
     const { ApiSessionClient } = await import('./sessionClient');
 
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', seq: 5 }));
+    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', seq: 5 })));
     const snapshotStore = client.getTurnAssistantTextSnapshotStore();
     snapshotStore.beginTurn({ turnToken: 'turn-1', startSeqExclusive: client.getLastObservedMessageSeq(), startedAtMs: 1_000 });
 
@@ -226,15 +262,16 @@ describe('ApiSessionClient transcript vNext transport', () => {
       await mkdir(join(workingDirectory, '.git', 'info'), { recursive: true });
       const { ApiSessionClient } = await import('./sessionClient');
 
-      const client = new ApiSessionClient('tok', createPlainSessionFixture({
+      const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({
         id: 's1',
         metadata: createTestMetadata({ path: workingDirectory }),
-      }));
+      })));
 
       await client.sendAgentSessionMediaCommitted('codex', {
         localId: 'media-row-1',
         role: 'output',
         category: 'generated',
+        messageText: 'Generated image:',
         media: [{
           source: {
             kind: 'base64',
@@ -257,10 +294,10 @@ describe('ApiSessionClient transcript vNext transport', () => {
             content: {
               type: 'acp',
               provider: 'codex',
-              data: { type: 'message', message: '' },
+              data: { type: 'message', message: 'Generated image:' },
             },
             meta: {
-              happierMedia: {
+              happier: {
                 kind: 'session_media.v1',
                 payload: {
                   media: [expect.objectContaining({
@@ -278,7 +315,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
         },
       });
       expect(JSON.stringify(payload)).not.toContain(pngBytes.toString('base64'));
-      const media = (payload as any).message.v.meta.happierMedia.payload.media[0];
+      const media = (readSessionMediaEnvelope((payload as any).message.v.meta) as any).payload.media[0];
       await expect(readFile(resolve(workingDirectory, media.path))).resolves.toEqual(pngBytes);
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
@@ -287,7 +324,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
 
   it('commits successful session media when another item fails with sanitized failure metadata', async () => {
     vi.resetModules();
-    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-partial-failure-'));
+    const workingDirectory = await realpath(await mkdtemp(join(tmpdir(), 'happier-session-media-partial-failure-')));
     const missingSourcePath = join(workingDirectory, 'provider-cache', 'generated.png');
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 8, localId: 'media-row-partial', didWrite: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
@@ -296,10 +333,10 @@ describe('ApiSessionClient transcript vNext transport', () => {
       await mkdir(join(workingDirectory, '.git', 'info'), { recursive: true });
       const { ApiSessionClient } = await import('./sessionClient');
 
-      const client = new ApiSessionClient('tok', createPlainSessionFixture({
+      const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({
         id: 's1',
         metadata: createTestMetadata({ path: workingDirectory }),
-      }));
+      })));
 
       await client.sendAgentSessionMediaCommitted('codex', {
         localId: 'media-row-partial',
@@ -341,6 +378,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
               source: 'provider-generated',
               providerFileId: 'file-missing',
             },
+            sourceAccessPolicy: { kind: 'restrictedRoots', roots: [workingDirectory] },
           },
         ],
       });
@@ -349,7 +387,8 @@ describe('ApiSessionClient transcript vNext transport', () => {
       const [, payload] = sessionSocketStub.emitWithAck.mock.calls[0]!;
       const meta = (payload as any).message.v.meta;
       expect(meta.sentFrom).toBe('cli');
-      expect(meta.happierMedia).toMatchObject({
+      const sessionMediaEnvelope = readSessionMediaEnvelope(meta);
+      expect(sessionMediaEnvelope).toMatchObject({
         kind: 'session_media.v1',
         payload: {
           media: [expect.objectContaining({
@@ -382,7 +421,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
       expect(serializedMeta).not.toContain(missingSourcePath);
       expect(serializedMeta).not.toContain('providerId');
       expect(serializedMeta).not.toContain('summary');
-      const media = meta.happierMedia.payload.media[0];
+      const media = (sessionMediaEnvelope as any).payload.media[0];
       await expect(readFile(resolve(workingDirectory, media.path))).resolves.toEqual(pngBytes);
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
@@ -391,7 +430,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
 
   it('commits all-failure media-only rows as durable sanitized session media failure metadata', async () => {
     vi.resetModules();
-    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-all-failure-'));
+    const workingDirectory = await realpath(await mkdtemp(join(tmpdir(), 'happier-session-media-all-failure-')));
     const missingSourcePath = join(workingDirectory, 'provider-cache', 'missing.png');
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 8, localId: 'media-row-failed', didWrite: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
@@ -400,10 +439,10 @@ describe('ApiSessionClient transcript vNext transport', () => {
       await mkdir(join(workingDirectory, '.git', 'info'), { recursive: true });
       const { ApiSessionClient } = await import('./sessionClient');
 
-      const client = new ApiSessionClient('tok', createPlainSessionFixture({
+      const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({
         id: 's1',
         metadata: createTestMetadata({ path: workingDirectory }),
-      }));
+      })));
 
       await client.sendAgentSessionMediaCommitted('codex', {
         localId: 'media-row-failed',
@@ -420,6 +459,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
             source: 'provider-generated',
             providerFileId: 'file-missing',
           },
+          sourceAccessPolicy: { kind: 'restrictedRoots', roots: [workingDirectory] },
         }],
       });
 
@@ -437,7 +477,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
               data: { type: 'message', message: '' },
             },
             meta: {
-              happierMedia: {
+              happier: {
                 kind: 'session_media.v1',
                 payload: {
                   media: [],
@@ -474,10 +514,10 @@ describe('ApiSessionClient transcript vNext transport', () => {
 
     const { ApiSessionClient } = await import('./sessionClient');
 
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({
+    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({
       id: 's1',
       metadata: createTestMetadata({ path: '' }),
-    }));
+    })));
 
     await expect(client.sendAgentSessionMediaCommitted('codex', {
       localId: 'media-row-no-wd',
@@ -497,7 +537,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
     expect(sessionSocketStub.emitWithAck).toHaveBeenCalledTimes(1);
     const [, payload] = sessionSocketStub.emitWithAck.mock.calls[0]!;
     const meta = (payload as any).message.v.meta;
-    expect(meta.happierMedia).toMatchObject({
+    expect(readSessionMediaEnvelope(meta)).toMatchObject({
       kind: 'session_media.v1',
       payload: {
         media: [],
@@ -526,11 +566,11 @@ describe('ApiSessionClient transcript vNext transport', () => {
       await mkdir(join(workingDirectory, '.git', 'info'), { recursive: true });
       const { ApiSessionClient } = await import('./sessionClient');
 
-      const client = new ApiSessionClient('tok', createPlainSessionFixture({
+      const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({
         id: 's1',
         seq: 5,
         metadata: createTestMetadata({ path: workingDirectory }),
-      }));
+      })));
       const snapshotStore = client.getTurnAssistantTextSnapshotStore();
       snapshotStore.beginTurn({ turnToken: 'turn-media-only', startSeqExclusive: client.getLastObservedMessageSeq(), startedAtMs: 1_000 });
 
@@ -579,7 +619,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
 
     const { ApiSessionClient } = await import('./sessionClient');
 
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' })));
     await client.sendAgentMessageCommitted(
       'codex' as any,
       { type: 'message', message: 'Hello' } as any,

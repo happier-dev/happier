@@ -18,7 +18,11 @@ import {
   type PermissionResult,
 } from '@/agent/permissions/BasePermissionHandler';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
-import type { AccountSettings } from '@happier-dev/protocol';
+import {
+  resolveHappierActionForMcpToolName,
+  shouldSuppressProviderPermissionForHappierApproval,
+} from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
+import type { AccountSettings, ActionId } from '@happier-dev/protocol';
 import {
   isSharedPermissionSafeToolName,
   SHARED_PROVIDER_ENFORCED_SAFE_TOOL_CALL_ID_SEGMENTS,
@@ -41,6 +45,13 @@ type HandlerOpts = Readonly<{
 const DEFAULT_SAFE_TOOL_NAME_SEGMENTS = SHARED_PROVIDER_ENFORCED_SAFE_TOOL_NAME_SEGMENTS;
 
 const DEFAULT_SAFE_TOOL_CALL_ID_SEGMENTS = SHARED_PROVIDER_ENFORCED_SAFE_TOOL_CALL_ID_SEGMENTS;
+
+const ALWAYS_AUTO_APPROVE_HAPPIER_ACTION_IDS = new Set<ActionId>([
+  'session.title.set',
+  'action.spec.search',
+  'action.spec.get',
+  'action.options.resolve',
+]);
 
 export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   private readonly logPrefix: string;
@@ -95,9 +106,11 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     return lowerValue === lowerCandidate || lowerValue.endsWith(`_${lowerCandidate}`);
   }
 
-  private isAlwaysAutoApprove(toolName: string, toolCallId: string): boolean {
+  private isAlwaysAutoApprove(toolName: string, toolCallId: string, input: unknown): boolean {
     if (isSharedPermissionSafeToolName(toolName)) return true;
     if (isSharedPermissionSafeToolName(toolCallId)) return true;
+    const happierActionId = resolveHappierActionForMcpToolName({ toolName, input });
+    if (happierActionId && ALWAYS_AUTO_APPROVE_HAPPIER_ACTION_IDS.has(happierActionId)) return true;
     const toolNameTokens = this.splitNameTokens(toolName);
     const toolCallIdTokens = this.splitNameTokens(toolCallId);
     if (this.alwaysAutoApproveToolCallIdIncludes.some((n) => toolCallId.toLowerCase().includes(n.toLowerCase()))) return true;
@@ -108,6 +121,15 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     return false;
   }
 
+  private shouldSuppressForHappierActionApproval(toolName: string, input: unknown): boolean {
+    return shouldSuppressProviderPermissionForHappierApproval({
+      toolName,
+      input,
+      accountSettings: this.getAccountSettingsSnapshot(),
+      surface: 'session_agent',
+    }).suppress;
+  }
+
   getImmediateDecision(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
     if (shouldDenyAgentSessionTitleToolCall({
       settings: this.getAccountSettingsSnapshot(),
@@ -116,10 +138,13 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     })) {
       return { decision: 'denied' };
     }
-    if (!this.isAlwaysAutoApprove(toolName, toolCallId)) {
-      return null;
+    if (this.isAlwaysAutoApprove(toolName, toolCallId, input)) {
+      return { decision: 'approved' };
     }
-    return { decision: 'approved' };
+    if (this.shouldSuppressForHappierActionApproval(toolName, input)) {
+      return { decision: 'approved' };
+    }
+    return null;
   }
 
   async handleToolCall(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {

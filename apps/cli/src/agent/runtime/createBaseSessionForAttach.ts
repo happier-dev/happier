@@ -15,11 +15,15 @@ export async function createBaseSessionForAttach(opts: Readonly<{
   if (!attach) {
     throw new Error(`Cannot resume session ${existingSessionId}: missing session attach secret`);
   }
+  const seq =
+    typeof attach.lastObservedMessageSeq === 'number' && Number.isFinite(attach.lastObservedMessageSeq) && attach.lastObservedMessageSeq >= 0
+      ? Math.trunc(attach.lastObservedMessageSeq)
+      : 0;
 
   if (attach.encryptionMode === 'plain') {
     return {
       id: existingSessionId,
-      seq: 0,
+      seq,
       encryptionMode: 'plain',
       metadata: opts.metadata,
       metadataVersion: -1,
@@ -30,7 +34,7 @@ export async function createBaseSessionForAttach(opts: Readonly<{
 
   return {
     id: existingSessionId,
-    seq: 0,
+    seq,
     encryptionMode: 'e2ee',
     encryptionKey: attach.encryptionKey,
     encryptionVariant: attach.encryptionVariant,

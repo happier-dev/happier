@@ -3,6 +3,7 @@ import { logger } from '@/ui/logger';
 import { encodeBase64, encrypt } from '../../../encryption';
 import { MessageAckResponseSchema, type ClientToServerEvents, type ServerToClientEvents } from '../../../types';
 import type { Socket } from 'socket.io-client';
+import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 
@@ -68,15 +69,17 @@ export function createSessionClientCommitQueueRuntime(
         }>,
     ) => {
         try {
-            const raw = await deps.getSocket()
-                .timeout(7_500)
-                .emitWithAck('message', {
+            const raw = await emitSocketWithAck({
+                socket: deps.getSocket() as any,
+                event: 'message',
+                payload: {
                     sid: deps.sessionId,
                     message: params.message,
                     localId: params.localId,
                     echoToSender: true,
                     sidechainId: params.sidechainId,
-                }) as unknown;
+                },
+            });
 
             const parsed = MessageAckResponseSchema.safeParse(raw);
             return parsed.success ? parsed.data : null;

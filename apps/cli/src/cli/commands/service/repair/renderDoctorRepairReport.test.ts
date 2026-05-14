@@ -93,6 +93,21 @@ describe('renderDoctorRepairReport — clean state', () => {
     const out = renderDoctorRepairReport(makeReport({ automaticStartup: [stopped] })).join('\n');
     expect(out).toContain('configured (not currently running)');
   });
+
+  it('does not call a fallback wrong-lane background service a CLI match', () => {
+    const stableEntry: AutomaticStartupEntry = {
+      ...entry,
+      releaseChannel: 'stable',
+      ringId: 'stable',
+      configuredCliVersion: '0.2.1-preview.4227',
+      runningCliVersion: '0.2.1-preview.4227',
+    };
+    const out = renderDoctorRepairReport(makeReport({
+      automaticStartup: [stableEntry],
+    })).join('\n');
+    expect(out).toContain('different release channel');
+    expect(out).not.toContain('matches this CLI');
+  });
 });
 
 describe('renderDoctorRepairReport — mismatched state', () => {

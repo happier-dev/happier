@@ -55,6 +55,7 @@ describe('ApiMachineClient SCM handlers', () => {
     expect(rpc.hasHandler(RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.SCM_REPOSITORY_CLONE)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.SCM_WORKTREES_ENRICHMENT)).toBe(true);
   });
 
   it('applies configured restricted roots to machine-scoped SCM cwd validation', async () => {

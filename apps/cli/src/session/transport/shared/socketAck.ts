@@ -1,0 +1,85 @@
+import { resolveSessionControlSocketAckTimeoutMs } from './sessionTimeouts';
+
+type AckableSocket = Readonly<{
+  connected?: boolean;
+  emitWithAck?: (event: string, payload: unknown) => Promise<unknown>;
+  emit?: (event: string, payload: unknown, callback: (answer: unknown) => void) => void;
+  timeout?: (ms: number) => AckableSocket;
+}>;
+
+export type SocketAckErrorCode = 'socket_not_connected' | 'socket_ack_timeout';
+
+export class SocketAckError extends Error {
+  readonly code: SocketAckErrorCode;
+  readonly event: string;
+  readonly retryable = true;
+  readonly timeoutMs?: number;
+
+  constructor(params: Readonly<{
+    code: SocketAckErrorCode;
+    event: string;
+    timeoutMs?: number;
+  }>) {
+    super(params.code === 'socket_not_connected'
+      ? `Socket is disconnected before ${params.event} ACK`
+      : `Socket ACK timed out for ${params.event}`);
+    this.name = 'SocketAckError';
+    this.code = params.code;
+    this.event = params.event;
+    this.timeoutMs = params.timeoutMs;
+  }
+}
+
+function resolveAckTimeoutMs(timeoutMs?: number): number {
+  if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    return Math.min(60_000, Math.trunc(timeoutMs));
+  }
+  return resolveSessionControlSocketAckTimeoutMs();
+}
+
+function ensureSocketConnected(socket: AckableSocket, event: string): void {
+  if (socket.connected === false) {
+    throw new SocketAckError({ code: 'socket_not_connected', event });
+  }
+}
+
+function createAckTimeoutPromise(event: string, timeoutMs: number): Promise<never> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new SocketAckError({ code: 'socket_ack_timeout', event, timeoutMs })), timeoutMs);
+  });
+}
+
+export async function emitSocketWithAck<T = unknown>(params: Readonly<{
+  socket: AckableSocket;
+  event: string;
+  payload: unknown;
+  timeoutMs?: number;
+}>): Promise<T> {
+  ensureSocketConnected(params.socket, params.event);
+  const timeoutMs = resolveAckTimeoutMs(params.timeoutMs);
+  const socketWithTimeout = params.socket.timeout?.(timeoutMs) ?? params.socket;
+  if (typeof socketWithTimeout.emitWithAck !== 'function') {
+    throw new Error(`Socket does not support emitWithAck for ${params.event}`);
+  }
+
+  const ackPromise = Promise.resolve(socketWithTimeout.emitWithAck(params.event, params.payload));
+  return await Promise.race([ackPromise, createAckTimeoutPromise(params.event, timeoutMs)]) as T;
+}
+
+export async function emitSocketCallbackAck<T = unknown>(params: Readonly<{
+  socket: AckableSocket;
+  event: string;
+  payload: unknown;
+  timeoutMs?: number;
+}>): Promise<T> {
+  ensureSocketConnected(params.socket, params.event);
+  const timeoutMs = resolveAckTimeoutMs(params.timeoutMs);
+  if (typeof params.socket.emit !== 'function') {
+    throw new Error(`Socket does not support callback ACKs for ${params.event}`);
+  }
+
+  const ackPromise = new Promise<unknown>((resolve) => {
+    params.socket.emit?.(params.event, params.payload, (answer: unknown) => resolve(answer));
+  });
+  return await Promise.race([ackPromise, createAckTimeoutPromise(params.event, timeoutMs)]) as T;
+}

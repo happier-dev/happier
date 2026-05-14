@@ -20,6 +20,13 @@ export type InFlightSteerController = Readonly<{
    */
   supportsInFlightSteer: () => boolean;
   /**
+   * Whether the current active turn can safely accept steering right now.
+   *
+   * Some runtimes can keep a turn marked in-flight briefly after a terminal event, or after
+   * the selected runtime configuration changes. Those turns must be handled by the normal queue.
+   */
+  canSteerPrompt?: () => boolean;
+  /**
    * Send additional user text to the in-flight turn.
    *
    * This should NOT abort the current turn.
@@ -67,7 +74,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     if (
       steer &&
       steer.supportsInFlightSteer() &&
-      steer.isTurnInFlight() &&
+      (steer.canSteerPrompt?.() ?? steer.isTurnInFlight()) &&
       !didChangePermissionMode &&
       special.type === null
     ) {

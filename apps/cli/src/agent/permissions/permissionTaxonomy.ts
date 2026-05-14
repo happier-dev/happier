@@ -31,7 +31,6 @@ function matchesSharedPermissionToolToken(toolName: string, token: string): bool
 }
 
 export const SHARED_PROVIDER_ENFORCED_SAFE_TOOL_NAME_SEGMENTS = [
-  'action_execute',
   // Action-spec discovery tools are read-only and used by several providers before invoking actions/tools.
   // Auto-approve to avoid blocking harmless capability discovery behind provider-native permission prompts.
   'action_spec_search',
@@ -49,7 +48,6 @@ export const SHARED_PROVIDER_ENFORCED_SAFE_TOOL_NAME_SEGMENTS = [
 export const SHARED_PROVIDER_ENFORCED_SAFE_TOOL_CALL_ID_SEGMENTS = [
   'change_title',
   ...SHARED_PERMISSION_SAFE_TOOL_NAME_TOKENS,
-  'action_execute',
 ] as const;
 
 export function isSharedPermissionSafeToolName(toolName: string): boolean {

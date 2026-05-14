@@ -59,6 +59,7 @@ export function createCodexAcpRuntime(params: {
     // Codex ACP supports in-flight steering via the ACP backend's dedicated steer entrypoint.
     inFlightSteer: { enabled: true },
     pendingQueue: {
+      drainAfterStartOrLoad: true,
       // Drain server-pending messages mid-turn only in the provider harness / e2e context.
       // In normal interactive use, "queue for review" semantics should not be defeated.
       drainDuringTurn: drainPendingDuringTurn,

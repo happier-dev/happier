@@ -11,6 +11,8 @@ import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import {
   FeaturesResponseSchema,
   type ActionId,
+  type ActionExecutorDeps,
+  type ApprovalRequestV1,
   type BackendTargetRefV1,
   type ExecutionRunPublicState,
   type ExecutionRunStartResponse,
@@ -18,6 +20,8 @@ import {
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { createExecutionRunRpcApprovalDeps } from './executionRuns/createExecutionRunRpcApprovalDeps';
+import type { Credentials } from '@/persistence';
 
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 import { registerExecutionRunHandlers as registerExecutionRunHandlersBase } from './executionRuns';
@@ -66,6 +70,20 @@ vi.mock('@/session/replay/summary/runReplaySummaryForDialog', () => ({
   runReplaySummaryForDialog: vi.fn(),
 }));
 
+const approvalStoreMockState = vi.hoisted(() => ({
+  approvalsUpdate: vi.fn(),
+  approvalsGet: vi.fn(),
+}));
+
+vi.mock('@/session/actions/approvals/artifactStore', () => ({
+  createCliApprovalsArtifactStore: vi.fn(() => ({
+    approvalsList: vi.fn(),
+    approvalsCreate: vi.fn(),
+    approvalsGet: approvalStoreMockState.approvalsGet,
+    approvalsUpdate: approvalStoreMockState.approvalsUpdate,
+  })),
+}));
+
 const voiceEnabledServerSnapshot = {
   status: 'ready',
   features: FeaturesResponseSchema.parse({
@@ -79,6 +97,10 @@ const voiceEnabledServerSnapshot = {
 type TestExecutionRunHandlerContext = Parameters<typeof registerExecutionRunHandlersBase>[1] & Readonly<{
   createBackend?: TestExecutionRunRuntimeFactory;
   actionExecutor?: RpcActionExecutor;
+  actionApprovalDeps?: Pick<
+    ActionExecutorDeps,
+    'approvalsCreate' | 'approvalsUpdate' | 'approvalsWaitForDecision' | 'approvalsResolveBlockingDecision'
+  >;
 }>;
 
 const registerExecutionRunHandlers = (
@@ -97,6 +119,10 @@ const registerExecutionRunHandlers = (
 
 beforeEach(async () => {
   runtimeFactoryState.current = null;
+  approvalStoreMockState.approvalsUpdate.mockReset();
+  approvalStoreMockState.approvalsGet.mockReset();
+  approvalStoreMockState.approvalsUpdate.mockResolvedValue({ ok: true });
+  approvalStoreMockState.approvalsGet.mockResolvedValue(null);
   const { readCredentials } = await import('@/persistence');
   const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
   const { fetchEncryptedTranscriptMessages } = await import('@/session/replay/fetchEncryptedTranscriptMessages');
@@ -106,6 +132,43 @@ beforeEach(async () => {
   vi.mocked(fetchEncryptedTranscriptMessages).mockReset();
   vi.mocked(runReplaySummaryForDialog).mockReset();
 });
+
+function createApprovalRequest(
+  overrides: Partial<ApprovalRequestV1> = {},
+): ApprovalRequestV1 {
+  return {
+    v: 1,
+    status: 'open',
+    createdAtMs: 1,
+    updatedAtMs: 1,
+    createdBy: { surface: 'system', sessionId: 'sess_1' },
+    requestedSurface: 'rpc',
+    approval: { flow: 'blocking', result: 'required' },
+    actionId: 'execution.run.list',
+    actionArgs: { limit: 10 },
+    summary: 'Approve listing execution runs',
+    preview: { actionId: 'execution.run.list', actionArgs: { limit: 10 } },
+    ...overrides,
+  };
+}
+
+function createApprovalCredentials(): Credentials {
+  return {
+    token: 'token',
+    encryption: {
+      type: 'legacy',
+      secret: new Uint8Array(32).fill(1),
+    },
+  };
+}
+
+async function expectPromisePending(promise: Promise<unknown>): Promise<void> {
+  const settled = await Promise.race([
+    promise.then(() => true, () => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20)),
+  ]);
+  expect(settled).toBe(false);
+}
 
 function asExecutionRunHostRuntime<T extends AgentBackend>(backend: T): T & ExecutionRunHostRuntime {
   return Object.assign({}, backend, createExecutionRunHostRuntimeFromAgentBackend(backend));
@@ -510,7 +573,7 @@ describe('executionRuns session RPC handlers', () => {
     }
   });
 
-  it('fails closed when RPC execution-run actions require approvals before approval storage is wired', async () => {
+  it('returns approved result-bearing execution-run RPC reads through blocking approval storage', async () => {
     const previousActionsSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
@@ -520,6 +583,23 @@ describe('executionRuns session RPC handlers', () => {
     });
 
     try {
+      const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(
+        async () => ({ artifactId: 'approval_1' }),
+      );
+      const approvalsWaitForDecision = vi.fn<NonNullable<ActionExecutorDeps['approvalsWaitForDecision']>>(async ({ request }) => ({
+        decision: 'approve',
+        request: {
+          ...request,
+          status: 'approved',
+          decision: { kind: 'approve', decidedAtMs: 2 },
+          updatedAtMs: 2,
+        },
+      }));
+      const approvalsUpdate = vi.fn<NonNullable<ActionExecutorDeps['approvalsUpdate']>>(async () => ({ ok: true }));
+      const approvalsResolveBlockingDecision = vi.fn<NonNullable<ActionExecutorDeps['approvalsResolveBlockingDecision']>>(
+        async () => ({ resolved: false }),
+      );
+
       const client = createEncryptedRpcTestClient({
         scopePrefix: 'sess_1',
         registerHandlers: (rpc) => {
@@ -529,17 +609,34 @@ describe('executionRuns session RPC handlers', () => {
             parentProvider: 'claude',
             createBackend: () => createStaticBackend('unused'),
             sendAcp: () => {},
+            actionApprovalDeps: {
+              approvalsCreate,
+              approvalsUpdate,
+              approvalsWaitForDecision,
+              approvalsResolveBlockingDecision,
+            },
           });
         },
       });
 
       const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, { limit: 1 });
 
-      expect(listed).toEqual({
-        ok: false,
-        error: 'approvals_not_supported',
-        errorCode: 'approvals_not_supported',
-      });
+      expect(listed).toEqual({ runs: [] });
+      expect(approvalsCreate).toHaveBeenCalledOnce();
+      expect(approvalsWaitForDecision).toHaveBeenCalledWith(expect.objectContaining({
+        artifactId: 'approval_1',
+        serverId: null,
+      }));
+      expect(approvalsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        artifactId: 'approval_1',
+        request: expect.objectContaining({
+          status: 'executed',
+          execution: expect.objectContaining({
+            ok: true,
+            result: { runs: [] },
+          }),
+        }),
+      }));
     } finally {
       if (previousActionsSettings === undefined) {
         delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
@@ -547,6 +644,72 @@ describe('executionRuns session RPC handlers', () => {
         process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousActionsSettings;
       }
     }
+  });
+
+  it('keeps execution-run RPC approved approval updates claimed by the explicit decision seam', async () => {
+    const deps = createExecutionRunRpcApprovalDeps({
+      readCredentials: async () => createApprovalCredentials(),
+    });
+    const pending = deps.approvalsWaitForDecision?.({
+      artifactId: 'approval_execution_run_intermediate',
+      request: createApprovalRequest(),
+    });
+    if (!pending || !deps.approvalsUpdate || !deps.approvalsResolveBlockingDecision) {
+      throw new Error('expected execution-run approval deps');
+    }
+
+    const approvedRequest = createApprovalRequest({
+      status: 'approved',
+      updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2 },
+    });
+    await deps.approvalsUpdate({
+      artifactId: 'approval_execution_run_intermediate',
+      request: approvedRequest,
+      serverId: null,
+    });
+
+    await expectPromisePending(pending);
+
+    await expect(deps.approvalsResolveBlockingDecision({
+      artifactId: 'approval_execution_run_intermediate',
+      decision: 'approve',
+      request: approvedRequest,
+      serverId: null,
+    })).resolves.toEqual({ resolved: true });
+    await expect(pending).resolves.toMatchObject({ decision: 'approve' });
+  });
+
+  it('wakes execution-run RPC blocking approval waiters on terminal updates', async () => {
+    const deps = createExecutionRunRpcApprovalDeps({
+      readCredentials: async () => createApprovalCredentials(),
+    });
+    const pending = deps.approvalsWaitForDecision?.({
+      artifactId: 'approval_execution_run_terminal',
+      request: createApprovalRequest(),
+    });
+    if (!pending || !deps.approvalsUpdate) {
+      throw new Error('expected execution-run approval deps');
+    }
+
+    await deps.approvalsUpdate({
+      artifactId: 'approval_execution_run_terminal',
+      request: createApprovalRequest({
+        status: 'executed',
+        updatedAtMs: 3,
+        decision: { kind: 'approve', decidedAtMs: 2 },
+        execution: { executedAtMs: 3, ok: true, result: { runs: [] } },
+      }),
+      serverId: null,
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      decision: 'approve',
+      request: {
+        status: 'executed',
+        execution: { ok: true, result: { runs: [] } },
+      },
+    });
   });
 
   it('does not materialize the full execution-run public list for bounded list RPC calls', async () => {

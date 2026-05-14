@@ -20,6 +20,7 @@ import { backoff } from '@/utils/time';
 import { addDiscardedCommittedMessageLocalIds } from '../../../queue/discardedCommittedMessageLocalIds';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../../../encryption';
 import { buildDaemonInitialPromptLocalId } from '@/agent/runtime/daemonInitialPrompt';
+import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 
 export type SessionClientInteractionApi = Readonly<{
     onUserMessage: (callback: (data: UserMessage) => void) => void;
@@ -390,10 +391,14 @@ export function createSessionClientInteractionApi(
                         deps.getSessionEncryptionMode() === 'plain'
                             ? JSON.stringify(nextMetadata)
                             : encodeBase64(encrypt(deps.getEncryptionKey(), deps.getEncryptionVariant(), nextMetadata));
-                    const answer = await socket.emitWithAck('update-metadata', {
-                        sid: deps.sessionId,
-                        expectedVersion: deps.getMetadataVersion(),
-                        metadata: metadataPayload,
+                    const answer = await emitSocketWithAck<any>({
+                        socket: socket as any,
+                        event: 'update-metadata',
+                        payload: {
+                            sid: deps.sessionId,
+                            expectedVersion: deps.getMetadataVersion(),
+                            metadata: metadataPayload,
+                        },
                     });
                     if (answer.result === 'success') {
                         deps.setMetadata(
@@ -448,7 +453,7 @@ export function createSessionClientInteractionApi(
             if (!materializeResult.didMaterialize) {
                 return false;
             }
-            if (materializeResult.didWrite && materializeResult.localId) {
+            if (materializeResult.localId) {
                 deps.scheduleMaterializationRecovery(materializeResult.localId);
             }
             return true;

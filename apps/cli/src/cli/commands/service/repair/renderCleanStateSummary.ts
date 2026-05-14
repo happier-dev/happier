@@ -15,6 +15,23 @@ function column1(label: string): string {
   return bold(label.padEnd(20));
 }
 
+function summarizeAutomaticStartupStatus(
+  entry: DoctorRepairReport['automaticStartup'][number],
+  cli: DoctorRepairReport['currentCli'],
+): string {
+  if (entry.running !== true) {
+    return muted(CONFIGURED_NOT_RUNNING);
+  }
+  if (entry.ringId !== cli.ringId) {
+    return `${muted('running')}, ${muted('different release channel')}`;
+  }
+  const runningVersion = entry.runningCliVersion ?? entry.configuredCliVersion;
+  if (runningVersion !== null && runningVersion !== undefined && runningVersion !== cli.version) {
+    return `${muted('running')}, ${muted('different CLI version')}`;
+  }
+  return `${muted('running')}, ${muted(MATCHES_THIS_CLI)}`;
+}
+
 /**
  * Three-line aligned "looks good" block. No prompts. No Currently running
  * section — when everything matches, the Automatic startup line already says so.
@@ -35,9 +52,8 @@ export function renderCleanStateSummary(report: DoctorRepairReport): string[] {
   // Automatic startup
   const aEntry = report.automaticStartup.find((e) => e.ringId === cli.ringId) ?? report.automaticStartup[0] ?? null;
   if (aEntry) {
-    const running = aEntry.running === true;
     const version = compactVersion(aEntry.configuredCliVersion ?? aEntry.runningCliVersion ?? cli.version);
-    const status = running ? `${muted('running')}, ${muted(MATCHES_THIS_CLI)}` : muted(CONFIGURED_NOT_RUNNING);
+    const status = summarizeAutomaticStartupStatus(aEntry, cli);
     lines.push(`     ${column1(SECTION_BACKGROUND_SERVICES)}${formatReleaseChannel(aEntry.releaseChannel)} • ${version}   ${status}`);
   } else {
     lines.push(`     ${column1(SECTION_BACKGROUND_SERVICES)}${muted('none configured to auto-start')}`);

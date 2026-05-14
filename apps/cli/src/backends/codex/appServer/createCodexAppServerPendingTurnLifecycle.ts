@@ -57,6 +57,8 @@ export function createCodexAppServerPendingTurnLifecycle(params: Readonly<{
     setPendingTurnFinalizationTimer: (timer: ReturnType<typeof setTimeout> | null) => void;
     getScheduledPendingTurnFlushReason: () => 'turn-end' | 'abort' | null;
     setScheduledPendingTurnFlushReason: (reason: 'turn-end' | 'abort' | null) => void;
+    markActiveTurnNonSteerable: () => void;
+    clearActiveTurnSteerability: () => void;
 }>): Readonly<{
     finishPendingTurn: (options?: Readonly<{
         error?: Error;
@@ -84,6 +86,7 @@ export function createCodexAppServerPendingTurnLifecycle(params: Readonly<{
         params.setPendingTurn(null);
         params.setPendingTurnStartSeqInclusive(null);
         params.setTurnInFlight(false);
+        params.clearActiveTurnSteerability();
         params.setThinking(false);
         if (options?.flushReason === 'turn-end') {
             await recordPrimaryTurnCompleted({ session: params.session });
@@ -128,6 +131,7 @@ export function createCodexAppServerPendingTurnLifecycle(params: Readonly<{
 
     const schedulePendingTurnFinalization = (flushReason: 'turn-end' | 'abort'): void => {
         if (!params.getPendingTurn()) return;
+        params.markActiveTurnNonSteerable();
         params.setScheduledPendingTurnFlushReason(
             params.getScheduledPendingTurnFlushReason() === 'abort' || flushReason === 'abort'
                 ? 'abort'

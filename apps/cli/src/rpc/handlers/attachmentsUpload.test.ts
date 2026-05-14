@@ -468,6 +468,7 @@ describe('attachments upload (chunked)', () => {
     try {
       await mkdir(join(sessionWorkspaceRoot, '.git'), { recursive: true });
       await writeFile(join(sessionWorkspaceRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf8');
+      await writeFile(join(sessionWorkspaceRoot, '.gitignore'), '# existing\n', 'utf8');
 
       const mgr = createRpcHandlerManager();
       const pathAllowanceRegistry = createTransferPathAllowanceRegistry({
@@ -503,8 +504,8 @@ describe('attachments upload (chunked)', () => {
         uploadLocation: 'workspace',
         workspaceRootPath: sessionWorkspaceRoot,
         workspaceRelativeDir: '.happier/uploads',
-        vcsIgnoreStrategy: 'none',
-        vcsIgnoreWritesEnabled: false,
+        vcsIgnoreStrategy: 'gitignore',
+        vcsIgnoreWritesEnabled: true,
       });
       expect(initResult).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
 
@@ -524,6 +525,10 @@ describe('attachments upload (chunked)', () => {
 
       await expect(readFile(resolve(sessionWorkspaceRoot, finalizeResult.path), 'utf8')).resolves.toBe('hello');
       await expect(stat(resolve(handlerWorkingDirectory, finalizeResult.path))).rejects.toMatchObject({ code: 'ENOENT' });
+      const ignoreContents = await readFile(join(sessionWorkspaceRoot, '.gitignore'), 'utf8');
+      expect(ignoreContents).toContain('# existing');
+      expect(ignoreContents).toContain('/.happier/uploads/');
+      await expect(stat(join(handlerWorkingDirectory, '.gitignore'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await rm(handlerWorkingDirectory, { recursive: true, force: true }).catch(() => {});
       await rm(sessionWorkspaceRoot, { recursive: true, force: true }).catch(() => {});

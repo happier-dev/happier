@@ -21,7 +21,6 @@ describe('createCodexAppServerStreamLifecycle', () => {
                     source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'img_1.png' },
                     origin: { source: 'provider-generated', generationId: 'img_1', providerEventId: 'img_1' },
                 }],
-                meta: { codexImageGenerationV1: { revisedPrompt: 'safe prompt' } },
             },
             { sidechainId: null, streamScopeId: 'turn_1' },
         );
@@ -34,7 +33,6 @@ describe('createCodexAppServerStreamLifecycle', () => {
                 source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'img_1.png' },
                 origin: { source: 'provider-generated', generationId: 'img_1', providerEventId: 'img_1' },
             }],
-            meta: { codexImageGenerationV1: { revisedPrompt: 'safe prompt' } },
         });
     });
 });

@@ -1,7 +1,9 @@
+import { execFile as execFileCallback } from 'node:child_process';
 import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
@@ -22,6 +24,7 @@ import { createWorkspaceReplicationPackIdForDigests } from '../../../workspaces/
 import { createSessionHandoffPrepareTargetJobStore } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { buildSessionHandoffProviderBundleTransferId } from '../../../session/handoff/providerBundle/transferPublication';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
+import { readWorkspaceReplicationManifestFromFile } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
 import { registerMachineSessionHandoffRpcHandlers } from './handlers';
 
 type ExportSessionBundle = NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['exportSessionBundle']>;
@@ -36,6 +39,16 @@ type DirectPeerPublishPayloadSource = Parameters<DirectPeerPublishTransfer>[0]['
 type DirectPeerPublishPayloadHasWorkspaceBundle = 'workspaceBundle' extends keyof DirectPeerPublishPayload ? true : false;
 type DirectPeerPublishPayloadHasProviderBundle = 'providerBundle' extends keyof DirectPeerPublishPayload ? true : false;
 type LoopbackListener = (payload: MachineTransferReceiveEnvelope) => void;
+const execFile = promisify(execFileCallback);
+
+async function runGit(cwd: string, args: readonly string[]): Promise<void> {
+  await execFile('git', [...args], { cwd });
+}
+
+async function configureGitRepo(cwd: string): Promise<void> {
+  await runGit(cwd, ['config', 'user.email', 'test@example.com']);
+  await runGit(cwd, ['config', 'user.name', 'Happier Test']);
+}
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -759,12 +772,49 @@ function createLoopbackMachineTransferChannels() {
     const published = await createPublishedDirectPeerPayloadRouter();
     try {
       await mkdir(join(workspaceRoot, 'files'), { recursive: true });
+      await mkdir(join(workspaceRoot, '.happier', 'uploads', 'generated', 'sess-v2', 'msg-v2'), { recursive: true });
       await writeFile(join(workspaceRoot, 'files', 'a.txt'), 'hello\n', 'utf8');
+      await writeFile(join(workspaceRoot, '.gitignore'), '.happier/uploads/**\n', 'utf8');
+      await writeFile(
+        join(workspaceRoot, '.happier', 'uploads', 'generated', 'sess-v2', 'msg-v2', 'handoff-image.png'),
+        'handoff media\n',
+        'utf8',
+      );
+      await writeFile(
+        join(workspaceRoot, '.happier', 'uploads', 'generated', 'sess-v2', 'msg-v2', 'unreferenced.png'),
+        'unreferenced media\n',
+        'utf8',
+      );
+      await runGit(workspaceRoot, ['init']);
+      await configureGitRepo(workspaceRoot);
+      await runGit(workspaceRoot, ['add', 'files/a.txt', '.gitignore']);
+      await runGit(workspaceRoot, ['commit', '-m', 'initial']);
+      const transcriptBase64 = Buffer.from(`${JSON.stringify({
+        meta: {
+          happierMedia: {
+            kind: 'session_media.v1',
+            payload: {
+              media: [{
+                id: 'media-1',
+                role: 'output',
+                category: 'generated',
+                mediaKind: 'image',
+                mimeType: 'image/png',
+                name: 'handoff-image.png',
+                path: '.happier/uploads/generated/sess-v2/msg-v2/handoff-image.png',
+                sizeBytes: 14,
+                origin: { source: 'provider-generated' },
+              }],
+            },
+          },
+        },
+      })}\n`, 'utf8').toString('base64');
 
       vi.doMock('@/configuration', () => ({
         configuration: {
           activeServerDir,
           activeServerId: 'server_test',
+          happyHomeDir: activeServerDir,
           workspaceReplicationBlobPackTargetBytes: 1024 * 1024,
           workspaceReplicationBlobPackMaxBlobs: 1024,
           workspaceReplicationBlobPackMaxSingleBlobBytes: 1024 * 1024,
@@ -777,7 +827,7 @@ function createLoopbackMachineTransferChannels() {
 	        providerBundle: {
 	          providerId: 'claude' as const,
 	          remoteSessionId: 'claude_session_1',
-	          transcriptBase64: 'e30K',
+	          transcriptBase64,
 	        },
 	        targetPath: workspaceRoot,
 	      });
@@ -887,6 +937,13 @@ function createLoopbackMachineTransferChannels() {
           }
         }
         await expect(readFile(destinationPath, 'utf8')).resolves.toContain('HAPPIER_WORKSPACE_REPLICATION_MANIFEST_V1');
+        const onDemandManifest = await readWorkspaceReplicationManifestFromFile({
+          transferId: manifestTransferPublication!.transferId,
+          filePath: destinationPath,
+        });
+        const manifestPaths = onDemandManifest.entries.map((entry) => entry.relativePath);
+        expect(manifestPaths).toContain('.happier/uploads/generated/sess-v2/msg-v2/handoff-image.png');
+        expect(manifestPaths).not.toContain('.happier/uploads/generated/sess-v2/msg-v2/unreferenced.png');
       } finally {
         await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
       }
@@ -3395,6 +3452,7 @@ function createLoopbackMachineTransferChannels() {
 	    vi.doMock('@/configuration', () => ({
 	      configuration: {
 	        activeServerDir: '/tmp/happier-adapter-seam',
+	        happyHomeDir: '/tmp/happier-adapter-seam-home',
 	        activeServerId: 'test_adapter_seam',
         workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
         workspaceReplicationBlobPackMaxBlobs: 64,
@@ -4618,6 +4676,7 @@ function createLoopbackMachineTransferChannels() {
       vi.doMock('@/configuration', () => ({
         configuration: {
           activeServerDir: sourceActiveServerDir,
+          happyHomeDir: sourceActiveServerDir,
           activeServerId: 'test_direct_peer_header_only',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
           workspaceReplicationBlobPackMaxBlobs: 64,

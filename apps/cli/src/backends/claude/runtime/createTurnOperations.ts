@@ -4,6 +4,7 @@ import type { McpServerConfig } from '@/agent';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { DeferredStartupPushSender } from '@/agent/runtime/startup/deferredStartupTypes';
+import type { AccountSettings } from '@happier-dev/protocol';
 import { normalizeStartingMode } from '@/agent/runtime/session/loop/resolveStartingMode';
 import type {
     HostSessionTerminalRemoteHandoffReason,
@@ -36,6 +37,7 @@ type ClaudeRuntimeTurnOperationsParams = Readonly<{
     machineId: string;
     session: ApiSessionClient;
     mcpServers: Record<string, McpServerConfig>;
+    accountSettings?: AccountSettings | null;
     hookSettingsPath: string;
     hookPluginDir: string | null;
     hookServer: Readonly<{ stop: () => void }>;
@@ -127,7 +129,9 @@ export function createClaudeRuntimeTurnOperations(
         const sessionInstance = new Session({
             client: params.session as SessionClientPort,
             pushSender: null,
-            accountSettings: params.opts.accountSettings ?? params.opts.accountSettingsContext?.settings ?? null,
+            accountSettings: params.accountSettings !== undefined
+                ? params.accountSettings
+                : params.opts.accountSettings ?? params.opts.accountSettingsContext?.settings ?? null,
             accountSettingsSecretsReadKeys: params.opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
             path: params.directory,
             sessionId: null,

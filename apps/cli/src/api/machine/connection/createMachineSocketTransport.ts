@@ -17,6 +17,13 @@ export function createMachineSocketTransport(params: Readonly<{
   startupSource?: string;
   serviceManaged?: boolean;
   serviceLabel?: string;
+  installationId?: string;
+  installationPublicKey?: string;
+  installationProof?: {
+    version: 1;
+    algorithm: 'ed25519';
+    signature: string;
+  };
   takeover?: boolean;
   transports?: string[];
   env: NodeJS.ProcessEnv;

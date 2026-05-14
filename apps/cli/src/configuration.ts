@@ -69,6 +69,7 @@ class Configuration {
   public readonly activeServerDir: string
   public readonly legacyPrivateKeyFile: string
   public readonly privateKeyFile: string
+  public readonly installationIdentityFile: string
   public readonly daemonStateFile: string
   public readonly daemonLockFile: string
   // Session attach file pruning (best-effort; defense-in-depth for crash-before-read scenarios).
@@ -263,6 +264,7 @@ class Configuration {
     this.activeServerDir = join(this.serversDir, this.activeServerId)
     this.legacyPrivateKeyFile = join(this.happyHomeDir, 'access.key')
     this.privateKeyFile = join(this.activeServerDir, 'access.key')
+    this.installationIdentityFile = join(this.happyHomeDir, 'installation-identity.json')
     this.daemonStateFile = join(this.activeServerDir, CANONICAL_DAEMON_STATE_BASENAME)
     this.daemonLockFile = join(this.activeServerDir, `${CANONICAL_DAEMON_STATE_BASENAME}.lock`)
 
@@ -818,6 +820,7 @@ class Configuration {
         this.settingsFile,
         this.legacyPrivateKeyFile,
         this.privateKeyFile,
+        this.installationIdentityFile,
         this.daemonStateFile,
         this.daemonLockFile,
       ]

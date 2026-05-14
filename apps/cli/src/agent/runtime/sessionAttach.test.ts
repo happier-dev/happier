@@ -126,13 +126,14 @@ describe('readSessionAttachFromEnv', () => {
       const payload = {
         v: 2,
         encryptionMode: 'plain',
+        lastObservedMessageSeq: 55,
       };
 
       await writeFile(filePath, JSON.stringify(payload), { mode: 0o600 });
       process.env.HAPPIER_SESSION_ATTACH_FILE = filePath;
 
       const res = await readSessionAttachFromEnv();
-      expect(res).toEqual({ encryptionMode: 'plain' });
+      expect(res).toEqual({ encryptionMode: 'plain', lastObservedMessageSeq: 55 });
       expect(process.env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
 
       // File should be deleted.

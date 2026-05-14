@@ -159,6 +159,16 @@ export async function continueSessionWithReplay(
                         sourceCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
                         createdAtMs: nowMs,
                     },
+                    ...(resolvedSeed.referencedSessionMediaWorkspacePaths.length > 0
+                        ? {
+                            sessionMediaContinuityV1: {
+                                v: 1,
+                                sourceSessionId: replay.previousSessionId,
+                                sourceCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
+                                referencedWorkspacePaths: resolvedSeed.referencedSessionMediaWorkspacePaths,
+                            },
+                        }
+                        : {}),
                 },
             });
         } catch (error) {

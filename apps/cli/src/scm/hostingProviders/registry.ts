@@ -47,6 +47,7 @@ type ScmHostingProviderResolvedRemote = Readonly<{
     kind: string;
     displayName: string;
     baseUrl: string;
+    repositoryWebUrl?: string;
     nameWithOwner?: string;
     remoteName?: string | null;
     urlSafety?: Readonly<{
@@ -178,12 +179,81 @@ function isUnresolvedScmHostingProvider(
     return provider.id === 'unknown' && provider.kind === 'unknown';
 }
 
-function normalizeDetectedProvider(provider: ScmHostingProviderResolvedRemote): ScmHostingProviderResolvedRemote {
+function normalizeUrlPath(pathname: string): string {
+    const trimmed = pathname.replace(/\/+$/, '');
+    return trimmed || '/';
+}
+
+function isUrlWithinBaseUrl(url: URL, baseUrl: URL): boolean {
+    if (url.origin !== baseUrl.origin) {
+        return false;
+    }
+
+    const basePath = normalizeUrlPath(baseUrl.pathname);
+    if (basePath === '/') {
+        return true;
+    }
+
+    const targetPath = normalizeUrlPath(url.pathname);
+    return targetPath === basePath || targetPath.startsWith(`${basePath}/`);
+}
+
+function readDetectedProviderAllowedSchemes(descriptor: ResolvedScmHostingProvider): readonly string[] {
+    if (descriptor.urlSafety?.allowedSchemes?.length) {
+        return descriptor.urlSafety.allowedSchemes;
+    }
+    return ['https:'];
+}
+
+function parseUrlWithAllowedScheme(value: string, allowedSchemes: readonly string[]): URL | null {
+    try {
+        const url = new URL(value);
+        return allowedSchemes.includes(url.protocol) ? url : null;
+    } catch {
+        return null;
+    }
+}
+
+function resolveDetectedRepositoryWebUrl(
+    detectedProvider: ScmHostingProviderResolvedRemote,
+    descriptor: ResolvedScmHostingProvider,
+): string | undefined {
+    if (!detectedProvider.repositoryWebUrl) {
+        return undefined;
+    }
+
+    const allowedSchemes = readDetectedProviderAllowedSchemes(descriptor);
+    const repositoryWebUrl = parseUrlWithAllowedScheme(detectedProvider.repositoryWebUrl, allowedSchemes);
+    const providerBaseUrl = parseUrlWithAllowedScheme(detectedProvider.baseUrl, allowedSchemes);
+    if (!repositoryWebUrl || !providerBaseUrl) {
+        return undefined;
+    }
+    if (
+        repositoryWebUrl.username
+        || repositoryWebUrl.password
+        || repositoryWebUrl.search
+        || repositoryWebUrl.hash
+    ) {
+        return undefined;
+    }
+    if (!isUrlWithinBaseUrl(repositoryWebUrl, providerBaseUrl)) {
+        return undefined;
+    }
+
+    return repositoryWebUrl.toString().replace(/\/+$/, '');
+}
+
+function normalizeDetectedProvider(
+    provider: ScmHostingProviderResolvedRemote,
+    descriptor: ResolvedScmHostingProvider,
+): ScmHostingProviderResolvedRemote {
+    const repositoryWebUrl = resolveDetectedRepositoryWebUrl(provider, descriptor);
     return Object.freeze({
         id: provider.id,
         kind: provider.kind,
         displayName: provider.displayName,
         baseUrl: provider.baseUrl,
+        ...(repositoryWebUrl ? { repositoryWebUrl } : {}),
         ...(provider.nameWithOwner ? { nameWithOwner: provider.nameWithOwner } : {}),
         ...(provider.remoteName !== undefined ? { remoteName: provider.remoteName } : {}),
         ...(provider.urlSafety ? { urlSafety: provider.urlSafety } : {}),
@@ -276,7 +346,7 @@ export function createScmHostingProviderRegistry(params: Readonly<{
                 return Object.freeze({
                     kind: 'resolved' as const,
                     providerId: provider.id,
-                    provider: normalizeDetectedProvider(detected),
+                    provider: normalizeDetectedProvider(detected, provider),
                 });
             }
             return Object.freeze({

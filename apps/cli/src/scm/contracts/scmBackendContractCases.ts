@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol';
 import { expect } from 'vitest';
 
 import type { ScmBackend, ScmBackendContext } from '../types';
@@ -427,7 +427,12 @@ async function assertWorktreeRemoveSupported(input: ScmBackendContractOperationI
     assertSupportedResult(created);
     const removed = await input.backend.worktreeRemove({
         context: input.context,
-        request: { cwd: input.fixture.rootPath, worktreePath: created.worktreePath },
+        request: {
+            cwd: input.fixture.rootPath,
+            worktreePath: created.worktreePath,
+            confirmed: true,
+            authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
+        },
     });
     assertSupportedResult(removed);
 }
@@ -733,7 +738,12 @@ export function createScmBackendContractOperations(): readonly ScmBackendContrac
             assertSupported: assertWorktreeRemoveSupported,
             assertUnsupported: (input) => assertFeatureUnsupported(input.backend.worktreeRemove({
                 context: input.context,
-                request: { cwd: input.fixture.rootPath, worktreePath: join(input.fixture.rootPath, 'missing-worktree') },
+                request: {
+                    cwd: input.fixture.rootPath,
+                    worktreePath: join(input.fixture.rootPath, 'missing-worktree'),
+                    confirmed: true,
+                    authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
+                },
             })),
         },
         {

@@ -187,6 +187,33 @@ describe('persistSessionMedia', () => {
     }
   });
 
+  it('rejects malformed base64 image sources before accepting permissively decoded bytes', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-malformed-base64-'));
+
+    try {
+      await expect(persistSessionMedia({
+        workingDirectory,
+        pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+        maxBytes: pngBytes.byteLength,
+        input: {
+          sessionId: 'session-malformed-base64',
+          messageLocalId: 'message-1',
+          role: 'output',
+          category: 'generated',
+          source: {
+            kind: 'base64',
+            data: `!!!!${pngBytes.toString('base64')}`,
+            mimeType: 'image/png',
+            fileNameHint: 'generated.png',
+          },
+          origin: { source: 'provider-generated' },
+        },
+      })).resolves.toMatchObject({ success: false, code: 'invalid_base64' });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('persists provider-file media when a provider downloader supplies bytes', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-provider-file-'));
 
@@ -224,6 +251,78 @@ describe('persistSessionMedia', () => {
       });
       if (!result.success) throw new Error('expected persistence to succeed');
       await expect(readFile(resolve(workingDirectory, result.item.path))).resolves.toEqual(pngBytes);
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('sanitizes origin identifiers before returning persisted media metadata', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-origin-'));
+
+    try {
+      const result = await persistSessionMedia({
+        workingDirectory,
+        pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+        maxBytes: pngBytes.byteLength,
+        input: {
+          sessionId: 'session-origin',
+          messageLocalId: 'message-1',
+          role: 'output',
+          category: 'generated',
+          source: { kind: 'base64', data: pngBytes.toString('base64'), mimeType: 'image/png' },
+          origin: {
+            source: 'provider-generated',
+            agentId: 'agent-safe',
+            providerEventId: 'https://provider.example/events/secret-token',
+            providerFileId: 'aW1hZ2VCeXRlcw==',
+            generationId: '$CODEX_HOME/generated/image.png',
+          },
+        },
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        item: {
+          origin: { source: 'provider-generated', agentId: 'agent-safe' },
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain('provider.example');
+      expect(JSON.stringify(result)).not.toContain('aW1hZ2VCeXRlcw');
+      expect(JSON.stringify(result)).not.toContain('$CODEX_HOME');
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('uses fallback names for unsafe successful media file name hints', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-safe-name-'));
+    const inlineDataUri = `data:image/png;base64,${pngBytes.toString('base64')}`;
+
+    try {
+      const result = await persistSessionMedia({
+        workingDirectory,
+        pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+        maxBytes: pngBytes.byteLength,
+        input: {
+          sessionId: 'session-safe-name',
+          messageLocalId: 'message-1',
+          role: 'output',
+          category: 'generated',
+          source: {
+            kind: 'base64',
+            data: pngBytes.toString('base64'),
+            mimeType: 'image/png',
+            fileNameHint: inlineDataUri,
+          },
+          origin: { source: 'provider-generated' },
+        },
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error('expected persistence to succeed');
+      expect(result.item.name).toBe('generated-image.png');
+      expect(JSON.stringify(result.item)).not.toContain('data:image');
+      expect(JSON.stringify(result.item)).not.toContain(pngBytes.toString('base64'));
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }
@@ -305,6 +404,46 @@ describe('persistSessionMedia', () => {
       if (!first.success || !second.success) throw new Error('expected persistence to succeed');
       expect(second.item.path).toBe(first.item.path);
       await expect(readFile(resolve(workingDirectory, second.item.path))).resolves.toEqual(pngBytes);
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves deterministic filename collisions without throwing or overwriting existing bytes', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-collision-'));
+    const sessionId = 'session-collision';
+    const messageLocalId = 'message-1';
+    const conflictPath = `.happier/uploads/generated/${sessionId}/${messageLocalId}/${sha256Hex(pngBytes).slice(0, 12)}-generated.png`;
+
+    try {
+      await mkdir(dirname(resolve(workingDirectory, conflictPath)), { recursive: true });
+      await writeFile(resolve(workingDirectory, conflictPath), gifBytes);
+
+      const result = await persistSessionMedia({
+        workingDirectory,
+        pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+        maxBytes: pngBytes.byteLength,
+        input: {
+          sessionId,
+          messageLocalId,
+          role: 'output',
+          category: 'generated',
+          source: {
+            kind: 'base64',
+            data: pngBytes.toString('base64'),
+            mimeType: 'image/png',
+            fileNameHint: 'generated.png',
+          },
+          origin: { source: 'provider-generated' },
+        },
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error('expected persistence to succeed');
+      expect(result.item.path).not.toBe(conflictPath);
+      expect(result.item.path).toMatch(/-generated-1\.png$/);
+      await expect(readFile(resolve(workingDirectory, conflictPath))).resolves.toEqual(gifBytes);
+      await expect(readFile(resolve(workingDirectory, result.item.path))).resolves.toEqual(pngBytes);
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }

@@ -8,6 +8,7 @@ const LegacyAttachPayloadSchema = z.object({
 const AttachPayloadV2PlainSchema = z.object({
   v: z.literal(2),
   encryptionMode: z.literal('plain'),
+  lastObservedMessageSeq: z.number().int().nonnegative().optional(),
 });
 
 const AttachPayloadV2E2eeSchema = z.object({
@@ -15,6 +16,7 @@ const AttachPayloadV2E2eeSchema = z.object({
   encryptionMode: z.literal('e2ee'),
   encryptionKeyBase64: z.string().min(1),
   encryptionVariant: z.union([z.literal('legacy'), z.literal('dataKey')]),
+  lastObservedMessageSeq: z.number().int().nonnegative().optional(),
 });
 
 export const SessionAttachPayloadV2Schema = z.union([AttachPayloadV2PlainSchema, AttachPayloadV2E2eeSchema]);
@@ -29,4 +31,3 @@ export const SessionAttachPayloadSchema = z.union([
 ]);
 
 export type SessionAttachPayload = z.infer<typeof SessionAttachPayloadSchema>;
-

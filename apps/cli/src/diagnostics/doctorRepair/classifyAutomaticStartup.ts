@@ -73,6 +73,11 @@ export function classifyAutomaticStartup(params: Readonly<{
   const installActions = params.plan.actions.flatMap((a) =>
     a.kind === 'install-default-following-service' ? [a] : [],
   );
+  const hasCompatibleDefaultFollowing = params.entries.some((e) =>
+    e.targetMode === 'default-following'
+    && e.ringId === params.currentCliRingId
+    && !e.isForeignHome,
+  );
 
   // Find the entry that matches a remove action so we can attach it to findings.
   const matchRemoveEntry = (installedPath: string): AutomaticStartupEntry | null => {
@@ -140,13 +145,13 @@ export function classifyAutomaticStartup(params: Readonly<{
     }
   }
 
-  // Lane mismatch: default-following removals on a DIFFERENT channel + install for current
+  // Lane mismatch: a default-following service exists, but not for the current lane.
   const laneMismatchEntries = params.entries.filter((e) =>
     e.targetMode === 'default-following'
     && e.ringId !== params.currentCliRingId
     && !e.isForeignHome,
   );
-  if (laneMismatchEntries.length > 0 && installActions.length > 0) {
+  if (laneMismatchEntries.length > 0 && !hasCompatibleDefaultFollowing) {
     const laneMismatch: AutomaticStartupLaneMismatch = {
       kind: 'automatic_startup_lane_mismatch',
       severity: 'warning',
@@ -196,11 +201,6 @@ export function classifyAutomaticStartup(params: Readonly<{
   }
 
   // Missing: no compatible default-following + an install action queued
-  const hasCompatibleDefaultFollowing = params.entries.some((e) =>
-    e.targetMode === 'default-following'
-    && e.ringId === params.currentCliRingId
-    && !e.isForeignHome,
-  );
   if (!hasCompatibleDefaultFollowing && installActions.length > 0 && findings.length === 0) {
     const missing: AutomaticStartupMissing = {
       kind: 'automatic_startup_missing',

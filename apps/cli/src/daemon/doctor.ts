@@ -35,7 +35,8 @@ async function getProcessInfoByPidProcfs(pid: number): Promise<{ pid: number; na
 }
 
 function normalizeProcessName(name: string | undefined): string {
-  return String(name ?? '').trim().toLowerCase();
+  const normalized = String(name ?? '').trim().replaceAll('\\', '/').toLowerCase();
+  return normalized.split('/').pop() ?? normalized;
 }
 
 function isWindowsHappyHostProcessCandidate(name: string | undefined): boolean {

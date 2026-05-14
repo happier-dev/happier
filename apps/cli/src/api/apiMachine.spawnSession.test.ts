@@ -85,6 +85,7 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
       codexBackendMode: 'appServer',
       experimentalCodexAcp: true,
       attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+      initialTranscriptAfterSeq: 199,
       environmentVariables: {
         HAPPIER_OPENCODE_BACKEND_MODE: 'server',
         HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
@@ -105,6 +106,7 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
         resume: 'codex-session-123',
         codexBackendMode: 'appServer',
         attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+        initialTranscriptAfterSeq: 199,
         environmentVariables: {
           HAPPIER_OPENCODE_BACKEND_MODE: 'server',
           HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',

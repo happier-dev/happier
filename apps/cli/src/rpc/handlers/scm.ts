@@ -70,11 +70,14 @@ import type {
     ScmStatusSnapshotResponse,
     ScmWorktreeCreateRequest,
     ScmWorktreeCreateResponse,
+    ScmWorktreesEnrichmentRequest,
+    ScmWorktreesEnrichmentResponse,
     ScmWorktreePruneRequest,
     ScmWorktreePruneResponse,
     ScmWorktreeRemoveRequest,
     ScmWorktreeRemoveResponse,
 } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -127,6 +130,27 @@ export function registerScmHandlers(
                     }),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.statusSnapshot({ context, request }),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmWorktreesEnrichmentRequest, ScmWorktreesEnrichmentResponse>(
+        RPC_METHODS.SCM_WORKTREES_ENRICHMENT,
+        async (request) =>
+            runScmRoute<ScmWorktreesEnrichmentRequest, ScmWorktreesEnrichmentResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmWorktreesEnrichmentResponse>(),
+                runWithBackend: async ({ context, selection }) => {
+                    const handler = selection.backend.worktreesEnrichment;
+                    if (!handler) {
+                        return {
+                            success: false,
+                            errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                            error: 'SCM backend operation is not implemented by this backend',
+                        };
+                    }
+                    return handler({ context, request });
+                },
             })
     );
 

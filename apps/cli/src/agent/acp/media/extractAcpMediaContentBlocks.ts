@@ -1,12 +1,15 @@
 import type { SessionMediaBridgeInput } from '@/api/session/client/transcript/sessionMediaBridge';
+import { decodeSessionMediaBase64Prefix } from '@/session/media/base64';
 import {
   resolveSessionMediaMimeType,
   sniffSessionMediaMimeType,
 } from '@/session/media/mime';
 import type { SessionMediaOrigin } from '@/session/media/_types';
 
+const BASE64_IMAGE_SNIFF_PREFIX_BYTES = 4096;
+
 export type AcpSessionMediaDiagnostic = Readonly<{
-  code: 'unsupported_audio' | 'unsupported_mime' | 'http_uri_unavailable' | 'malformed_media_block';
+  code: 'unsupported_audio' | 'unsupported_mime' | 'invalid_base64' | 'http_uri_unavailable' | 'malformed_media_block';
   contentIndex: number;
   message: string;
 }>;
@@ -149,8 +152,12 @@ export function extractAcpMediaContentBlocks(
     const origin = buildOrigin(options);
 
     if (data) {
-      const bytes = Buffer.from(data, 'base64');
-      const mimeType = sniffSessionMediaMimeType(bytes);
+      const decoded = decodeSessionMediaBase64Prefix(data, BASE64_IMAGE_SNIFF_PREFIX_BYTES);
+      if (!decoded.success) {
+        diagnostics.push(diagnostic(decoded.code, contentIndex, decoded.error));
+        return;
+      }
+      const mimeType = sniffSessionMediaMimeType(decoded.bytes);
       if (!mimeType) {
         diagnostics.push(diagnostic('unsupported_mime', contentIndex, 'Unsupported image MIME type'));
         return;

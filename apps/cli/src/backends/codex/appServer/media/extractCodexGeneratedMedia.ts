@@ -1,14 +1,16 @@
-import { basename } from 'node:path';
+import { posix, win32 } from 'node:path';
 
 import type { SessionMediaBridgeInput } from '@/api/session/client/transcript/sessionMediaBridge';
+import { decodeSessionMediaBase64Prefix } from '@/session/media/base64';
 import { sniffSessionMediaMimeType } from '@/session/media/mime';
 
 type RecordLike = Record<string, unknown>;
 
+const BASE64_IMAGE_SNIFF_PREFIX_BYTES = 4096;
+
 export type CodexGeneratedMediaResult = Readonly<{
   itemId: string;
   media: readonly SessionMediaBridgeInput[];
-  meta?: Record<string, unknown>;
 }>;
 
 function readString(value: unknown): string | null {
@@ -32,11 +34,36 @@ function readSavedPath(item: RecordLike): string | null {
     ?? readString(item.path);
 }
 
-function buildMeta(item: RecordLike): Record<string, unknown> | undefined {
-  const revisedPrompt = readString(item.revised_prompt) ?? readString(item.revisedPrompt);
-  return revisedPrompt
-    ? { codexImageGenerationV1: { revisedPrompt } }
-    : undefined;
+function pathApiFor(value: string): typeof posix | typeof win32 {
+  return /^[a-z]:[\\/]/iu.test(value) || value.includes('\\') ? win32 : posix;
+}
+
+function isAbsoluteSavedPath(value: string): boolean {
+  return posix.isAbsolute(value) || win32.isAbsolute(value);
+}
+
+function buildSavedPathMediaInput(
+  itemId: string,
+  savedPath: string,
+  origin: SessionMediaBridgeInput['origin'],
+): SessionMediaBridgeInput | null {
+  if (!isAbsoluteSavedPath(savedPath)) return null;
+  const api = pathApiFor(savedPath);
+  const root = api.dirname(savedPath);
+  if (!root || root === '.') return null;
+  const fileNameHint = api.basename(savedPath) || `${itemId}.png`;
+  return {
+    source: {
+      kind: 'local-file',
+      path: savedPath,
+      fileNameHint,
+    },
+    origin,
+    sourceAccessPolicy: {
+      kind: 'restrictedRoots',
+      roots: [root],
+    },
+  };
 }
 
 export function extractCodexGeneratedMedia(
@@ -48,9 +75,22 @@ export function extractCodexGeneratedMedia(
     providerEventId: itemId,
     generationId: itemId,
   };
+  const savedPath = readSavedPath(item);
+  if (savedPath) {
+    const media = buildSavedPathMediaInput(itemId, savedPath, origin);
+    if (media) {
+      return {
+        itemId,
+        media: [media],
+      };
+    }
+  }
+
   const base64Image = readBase64Image(item);
   if (base64Image) {
-    const mimeType = sniffSessionMediaMimeType(Buffer.from(base64Image, 'base64'));
+    const decoded = decodeSessionMediaBase64Prefix(base64Image, BASE64_IMAGE_SNIFF_PREFIX_BYTES);
+    if (!decoded.success) return null;
+    const mimeType = sniffSessionMediaMimeType(decoded.bytes);
     if (!mimeType) return null;
     return {
       itemId,
@@ -63,22 +103,8 @@ export function extractCodexGeneratedMedia(
         },
         origin,
       }],
-      ...(buildMeta(item) ? { meta: buildMeta(item) } : {}),
     };
   }
 
-  const savedPath = readSavedPath(item);
-  if (!savedPath) return null;
-  return {
-    itemId,
-    media: [{
-      source: {
-        kind: 'local-file',
-        path: savedPath,
-        fileNameHint: basename(savedPath),
-      },
-      origin,
-    }],
-    ...(buildMeta(item) ? { meta: buildMeta(item) } : {}),
-  };
+  return null;
 }

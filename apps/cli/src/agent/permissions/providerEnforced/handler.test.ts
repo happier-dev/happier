@@ -68,6 +68,38 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     expect(session.agentState.requests['pending-1']).toBeFalsy();
   });
 
+  it('suppresses provider prompts for Happier action tools only when Happier approval is required', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, {
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        actionsSettingsV1: {
+          v: 1,
+          actions: {
+            'session.list': {
+              disabledSurfaces: [],
+              approvalRequiredSurfaces: ['session_agent'],
+            },
+          },
+        },
+      } as any),
+    });
+
+    await expect(handler.handleToolCall('list-1', 'mcp__happier__session_list', {})).resolves.toEqual({
+      decision: 'approved',
+    });
+    await expect(handler.handleToolCall('list-2', 'happier__session_list', {})).resolves.toEqual({
+      decision: 'approved',
+    });
+    expect(session.agentState.requests['list-1']).toBeFalsy();
+    expect(session.agentState.requests['list-2']).toBeFalsy();
+
+    const pending = handler.handleToolCall('status-1', 'happier_action_execute', { actionId: 'session.status.get' });
+    expect(session.agentState.requests['status-1']).toBeTruthy();
+    await session.rpcHandlerManager.handlers.get('permission')?.({ id: 'status-1', approved: false, decision: 'denied' });
+    await expect(pending).resolves.toEqual({ decision: 'denied' });
+  });
+
   it('auto-approves ACP fs bridge tool names to avoid duplicate host-side permission prompts', async () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });

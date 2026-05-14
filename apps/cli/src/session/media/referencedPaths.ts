@@ -1,4 +1,5 @@
-import { dirname, isAbsolute } from 'node:path';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { SessionHandoffProviderBundle } from '@/session/handoff/types';
@@ -96,14 +97,83 @@ function readSessionMediaEnvelopePaths(envelope: unknown): readonly string[] {
   return paths;
 }
 
-function readTransientSessionMediaDirs(envelope: unknown): readonly string[] {
+export function isCanonicalSessionMediaWorkspacePath(
+  path: string,
+  category?: 'attachment' | 'generated' | 'tool-artifact',
+): boolean {
+  const normalizedPath = normalizeReferencedSessionMediaWorkspacePath(path);
+  if (!normalizedPath) return false;
+
+  if (category === 'attachment') return normalizedPath.startsWith(ATTACHMENT_MEDIA_PREFIX);
+  if (category === 'generated') return normalizedPath.startsWith(GENERATED_MEDIA_PREFIX);
+  if (category === 'tool-artifact') return normalizedPath.startsWith(ARTIFACT_MEDIA_PREFIX);
+
+  return normalizedPath.startsWith(ATTACHMENT_MEDIA_PREFIX)
+    || normalizedPath.startsWith(GENERATED_MEDIA_PREFIX)
+    || normalizedPath.startsWith(ARTIFACT_MEDIA_PREFIX);
+}
+
+function isPathWithinAllowedRoots(path: string, allowedRoots: readonly string[]): boolean {
+  const resolvedPath = resolve(path);
+  return isResolvedPathWithinAllowedRoots(resolvedPath, allowedRoots);
+}
+
+function isResolvedPathWithinAllowedRoots(resolvedPath: string, allowedRoots: readonly string[]): boolean {
+  for (const root of allowedRoots) {
+    if (typeof root !== 'string' || root.trim().length === 0) continue;
+    const resolvedRoot = resolve(root.trim());
+    const rel = relative(resolvedRoot, resolvedPath);
+    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isRealPathWithinAllowedRoots(realPath: string, allowedRoots: readonly string[]): boolean {
+  for (const root of allowedRoots) {
+    if (typeof root !== 'string' || root.trim().length === 0) continue;
+    try {
+      if (isResolvedPathWithinAllowedRoots(realPath, [realpathSync(root.trim())])) {
+        return true;
+      }
+    } catch {
+      // Invalid roots cannot safely authorize provider-controlled media paths.
+    }
+  }
+  return false;
+}
+
+function realRegularFilePath(path: string): string | null {
+  try {
+    const linkOrFile = lstatSync(path);
+    if (!linkOrFile.isFile() && !linkOrFile.isSymbolicLink()) return null;
+
+    const realPath = realpathSync(path);
+    return statSync(realPath).isFile() ? realPath : null;
+  } catch {
+    return null;
+  }
+}
+
+function isTransientMediaFileAllowed(path: string, allowedRoots: readonly string[]): boolean {
+  if (!isPathWithinAllowedRoots(path, allowedRoots)) return false;
+
+  const realPath = realRegularFilePath(path);
+  return realPath !== null && isRealPathWithinAllowedRoots(realPath, allowedRoots);
+}
+
+function readTransientSessionMediaFiles(
+  envelope: unknown,
+  options: Readonly<{ allowedRoots: readonly string[] }>,
+): readonly string[] {
   const record = asRecord(envelope);
   if (!record || record.kind !== SESSION_MEDIA_ENVELOPE_KIND) return [];
   if (hasForbiddenMediaReferenceKey(record)) return [];
 
   const payload = asRecord(record.payload);
   const media = Array.isArray(payload?.media) ? payload.media : [];
-  const dirs: string[] = [];
+  const files: string[] = [];
   for (const item of media) {
     const mediaRecord = asRecord(item);
     if (!mediaRecord || hasForbiddenMediaReferenceKey(mediaRecord)) continue;
@@ -113,18 +183,21 @@ function readTransientSessionMediaDirs(envelope: unknown): readonly string[] {
 
     if (path.startsWith('file://')) {
       try {
-        dirs.push(dirname(fileURLToPath(path)));
+        const filePath = fileURLToPath(path);
+        if (isTransientMediaFileAllowed(filePath, options.allowedRoots)) {
+          files.push(filePath);
+        }
       } catch {
         // Invalid provider file URI; ignore instead of broadening file access.
       }
       continue;
     }
 
-    if (isAbsolute(path)) {
-      dirs.push(dirname(path));
+    if (isAbsolute(path) && isTransientMediaFileAllowed(path, options.allowedRoots)) {
+      files.push(path);
     }
   }
-  return dirs;
+  return files;
 }
 
 function readLegacyAttachmentEnvelopePaths(envelope: unknown): readonly string[] {
@@ -168,15 +241,18 @@ export function collectReferencedSessionMediaWorkspacePaths(records: readonly un
   return [...paths].sort((left, right) => left.localeCompare(right));
 }
 
-export function collectTransientSessionMediaReadDirs(records: readonly unknown[]): readonly string[] {
-  const dirs = new Set<string>();
+export function collectTransientSessionMediaReadFiles(
+  records: readonly unknown[],
+  options: Readonly<{ allowedRoots: readonly string[] }>,
+): readonly string[] {
+  const files = new Set<string>();
   for (const record of records) {
     const meta = readRecordMeta(record);
     if (!meta) continue;
-    for (const dir of readTransientSessionMediaDirs(meta.happier)) dirs.add(dir);
-    for (const dir of readTransientSessionMediaDirs(meta.happierMedia)) dirs.add(dir);
+    for (const file of readTransientSessionMediaFiles(meta.happier, options)) files.add(file);
+    for (const file of readTransientSessionMediaFiles(meta.happierMedia, options)) files.add(file);
   }
-  return [...dirs].sort((left, right) => left.localeCompare(right));
+  return [...files].sort((left, right) => left.localeCompare(right));
 }
 
 function decodeBase64Utf8(value: string): string {
@@ -227,4 +303,21 @@ export function collectReferencedSessionMediaWorkspacePathsFromProviderBundle(
     default:
       return [];
   }
+}
+
+export function collectReferencedSessionMediaWorkspacePathsFromSessionMetadata(
+  metadata: Record<string, unknown> | undefined,
+): readonly string[] {
+  const continuity = asRecord(metadata?.sessionMediaContinuityV1);
+  const referencedPaths = Array.isArray(continuity?.referencedWorkspacePaths)
+    ? continuity.referencedWorkspacePaths
+    : [];
+  const paths = new Set<string>();
+  for (const value of referencedPaths) {
+    if (typeof value !== 'string') continue;
+    if (isCanonicalSessionMediaWorkspacePath(value)) {
+      paths.add(value);
+    }
+  }
+  return [...paths].sort((left, right) => left.localeCompare(right));
 }

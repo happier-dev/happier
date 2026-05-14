@@ -142,6 +142,8 @@ export async function prepareStartedState(input: Readonly<{
       directPeerTransfer: input.directPeerTransfer,
       sourceRootPath: exported.targetPath,
       providerBundleTransferPublication,
+      sessionMetadata: callInput.metadata,
+      providerBundle: exported.providerBundle,
     });
 
     const workspaceReplicationMetadata = preparedWorkspaceTransfer.workspaceReplicationMetadata;

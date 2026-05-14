@@ -352,6 +352,54 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('after-gate');
   });
 
+  it('drains accepted pending rows after eager initial resume before parking idle', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    session.popPendingMessage = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    let shouldExit = false;
+    const onAfterStart = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {},
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      initialResumeId: 'resume-123',
+      strictInitialResume: true,
+      onAfterStart,
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.startOrLoadSession).toHaveBeenCalledWith({ resumeId: 'resume-123', importHistory: false });
+    expect(onAfterStart).toHaveBeenCalledTimes(1);
+    expect(session.popPendingMessage).toHaveBeenCalledTimes(2);
+  });
+
   it('does not emit ready or turn_completed when runtime startup exits before the turn begins', async () => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();

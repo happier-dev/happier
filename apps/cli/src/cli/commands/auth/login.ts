@@ -7,9 +7,18 @@ import { stopDaemon } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { createOutputBuilder, definitionList, errorFrame, ok, warn } from '@happier-dev/cli-common/output';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 
 import { showAuthHelp } from './help';
 import { resolveAuthMethodFlag } from './methodFlag';
+
+function readAccountIdFromCredentials(credentials: Awaited<ReturnType<typeof readCredentials>>): string | null {
+  const token = typeof credentials?.token === 'string' ? credentials.token : '';
+  if (!token) return null;
+  const payload = decodeJwtPayload(token);
+  const subject = typeof payload?.sub === 'string' ? payload.sub.trim() : '';
+  return subject || null;
+}
 
 export async function handleAuthLogin(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -40,6 +49,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
   }
 
   if (forceAuth) {
+    const replacementAccountId = readAccountIdFromCredentials(await readCredentials());
     const out = createOutputBuilder();
     out.line(warn('Force authentication requested.'));
     out.blank();
@@ -64,7 +74,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
     await clearCredentials();
     console.log(ok('Cleared credentials'));
 
-    await clearMachineId();
+    await clearMachineId({ preserveReplacementCandidate: true, replacementReason: 'reauth', replacementAccountId });
     console.log(ok('Cleared machine ID'));
 
     console.log('');
@@ -77,6 +87,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
     if (existingCreds) {
       const authValidation = await validateStoredAuthTokenAgainstActiveServer(existingCreds.token);
       if (authValidation.state === 'invalid') {
+        const replacementAccountId = readAccountIdFromCredentials(existingCreds);
         const out = createOutputBuilder();
         out.line(warn('Stored credentials were rejected by the selected server'));
         out.line('  Repairing local authentication state before logging in again...');
@@ -92,7 +103,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
         }
 
         await clearCredentials();
-        await clearMachineId();
+        await clearMachineId({ preserveReplacementCandidate: true, replacementReason: 'reauth', replacementAccountId });
         existingCreds = null;
       }
     }

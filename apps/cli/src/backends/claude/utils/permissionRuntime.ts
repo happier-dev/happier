@@ -1,6 +1,7 @@
 import { logger } from '@/lib';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
+import { shouldSuppressProviderPermissionForHappierApproval } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import { delay } from '@/utils/time';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 
@@ -71,6 +72,15 @@ export class ClaudePermissionRuntime {
         }
 
         if (isChangeTitleToolLikeName(toolName)) {
+            return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
+        }
+
+        if (shouldSuppressProviderPermissionForHappierApproval({
+            toolName,
+            input: rewrittenInput,
+            accountSettings: this.session.accountSettings ?? null,
+            surface: 'session_agent',
+        }).suppress) {
             return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
         }
 

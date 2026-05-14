@@ -15,6 +15,7 @@ import {
   resolveProviderPromptWithReplaySeed,
 } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
+import { drainPendingQueueMessages } from '@/agent/runtime/drainPendingQueueMessages';
 import {
   beginAssistantTextSnapshotTurnScope,
   completeAssistantTextSnapshotTurnScope,
@@ -308,6 +309,13 @@ export async function runPermissionModePromptLoop(opts: {
     overrideSync.syncFromMetadata();
     const eagerStart = await ensureRuntimeStarted();
     if (eagerStart.exitRequested) return;
+    await drainPendingQueueMessages({
+      pendingQueue: {
+        popPendingMessage: () => opts.session.popPendingMessage(),
+      },
+      beforeDrain: opts.beforePendingMaterialize,
+      logPrefix: `[${opts.providerName}]`,
+    });
     pendingFreshSessionSystemPrompt = eagerStart.startedFreshSessionForTurn;
   }
 

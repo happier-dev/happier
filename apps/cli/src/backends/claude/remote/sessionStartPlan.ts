@@ -1,5 +1,8 @@
 import { claudeCheckSession } from '@/backends/claude/utils/claudeCheckSession';
 import { claudeFindLastSession } from '@/backends/claude/utils/claudeFindLastSession';
+import { getProjectPath } from '@/backends/claude/utils/path';
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 export type ClaudeRemoteSessionStartPlan = {
   startFrom: string | null;
@@ -9,9 +12,28 @@ export type ClaudeRemoteSessionStartPlan = {
 type ResolveClaudeRemoteSessionStartPlanDeps = {
   checkSession: (sessionId: string, path: string, transcriptPath: string | null) => boolean;
   findLastSession: (path: string, configDir: string | null) => string | null;
+  hasMaterializedSessionTranscript: (sessionId: string, path: string, transcriptPath: string | null, configDir: string | null) => boolean;
   logDebug: (message: string) => void;
   logPrefix: string;
 };
+
+function hasClaudeMaterializedSessionTranscript(
+  sessionId: string,
+  path: string,
+  transcriptPath: string | null,
+  configDir: string | null,
+): boolean {
+  const explicitPath = typeof transcriptPath === 'string' && transcriptPath.trim().length > 0
+    ? transcriptPath.trim()
+    : null;
+  const sessionFile = explicitPath ?? join(getProjectPath(path, configDir), `${sessionId}.jsonl`);
+  try {
+    if (!existsSync(sessionFile)) return false;
+    return statSync(sessionFile).size > 0;
+  } catch {
+    return false;
+  }
+}
 
 export function resolveClaudeRemoteSessionStartPlan(
   opts: {
@@ -26,6 +48,7 @@ export function resolveClaudeRemoteSessionStartPlan(
   const effectiveDeps: ResolveClaudeRemoteSessionStartPlanDeps = {
     checkSession: deps?.checkSession ?? claudeCheckSession,
     findLastSession: deps?.findLastSession ?? claudeFindLastSession,
+    hasMaterializedSessionTranscript: deps?.hasMaterializedSessionTranscript ?? hasClaudeMaterializedSessionTranscript,
     logDebug: deps?.logDebug ?? (() => undefined),
     logPrefix: deps?.logPrefix ?? 'claudeRemote',
   };
@@ -33,10 +56,17 @@ export function resolveClaudeRemoteSessionStartPlan(
   let startFrom = opts.sessionId;
   let shouldContinue = false;
 
-  if (opts.sessionId && !effectiveDeps.checkSession(opts.sessionId, opts.path, opts.transcriptPath)) {
-    effectiveDeps.logDebug(
-      `[${effectiveDeps.logPrefix}] Session ${opts.sessionId} did not pass transcript validation yet; attempting resume anyway`,
-    );
+  if (opts.sessionId) {
+    if (!effectiveDeps.hasMaterializedSessionTranscript(opts.sessionId, opts.path, opts.transcriptPath, opts.claudeConfigDir)) {
+      effectiveDeps.logDebug(
+        `[${effectiveDeps.logPrefix}] Session ${opts.sessionId} has no materialized transcript yet; starting fresh instead of resuming`,
+      );
+      startFrom = null;
+    } else if (!effectiveDeps.checkSession(opts.sessionId, opts.path, opts.transcriptPath)) {
+      effectiveDeps.logDebug(
+        `[${effectiveDeps.logPrefix}] Session ${opts.sessionId} did not pass transcript validation yet; attempting resume anyway`,
+      );
+    }
   }
 
   if (!startFrom && opts.claudeArgs) {

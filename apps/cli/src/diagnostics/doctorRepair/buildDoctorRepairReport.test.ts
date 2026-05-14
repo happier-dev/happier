@@ -303,6 +303,46 @@ describe('buildDoctorRepairReport — lane mismatch', async () => {
     expect(f?.autoApplyWithoutPrompt).toBe(false);
   });
 
+  it('flags a wrong-lane background service even when a current-lane relay exists', async () => {
+    const existingOnStable = makeAutomaticStartupEntry({
+      releaseChannel: 'stable',
+      ringId: 'stable',
+      running: true,
+      configuredCliVersion: '0.2.1-preview.4227',
+      runningCliVersion: '0.2.1-preview.4227',
+    });
+    const currentLaneRelay: LocalRelayEntry = {
+      releaseChannel: 'dev',
+      ringId: 'publicdev',
+      mode: 'user',
+      version: '0.2.4-dev.43.1',
+      serviceActive: false,
+      serviceEnabled: true,
+      healthy: false,
+      relayUrl: 'http://127.0.0.1:3005',
+      port: 3005,
+      installRoot: '/Users/me/.happier/relay-host-dev',
+    };
+    const report = await buildDoctorRepairReport({
+      currentCli: makeCurrentCli({ version: '0.2.6-dev.125.1' }),
+      automaticStartup: [existingOnStable],
+      currentlyRunning: [],
+      localRelays: [currentLaneRelay],
+      plan: makePlan(),
+      currentServerId: 'default',
+      preferredMode: 'user',
+      latestRelayVersionForCurrentChannel: null,
+      activeServerUrl: null,
+      authSignals: [],
+      hasAnyServerProfile: true,
+      platform: 'darwin' as NodeJS.Platform,
+      uid: null,
+    });
+    const kinds = report.findings.map((f) => f.kind);
+    expect(kinds).toContain('automatic_startup_lane_mismatch');
+    expect(kinds).not.toContain('channel_switch_recommended');
+  });
+
   it('onMigration broadens lane mismatch to auto-apply', async () => {
     const existingOnStable = makeAutomaticStartupEntry({
       releaseChannel: 'stable',

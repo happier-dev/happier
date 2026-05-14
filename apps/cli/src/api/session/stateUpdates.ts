@@ -1,6 +1,6 @@
 import { logger } from '@/ui/logger'
 import { backoff } from '@/utils/time';
-import { resolveSessionControlSocketAckTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
+import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
@@ -8,6 +8,7 @@ import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/pr
 
 type AckableSocket = {
     emitWithAck: (event: string, ...args: any[]) => Promise<any>;
+    connected?: boolean;
     timeout?: (ms: number) => AckableSocket;
 };
 
@@ -32,15 +33,6 @@ function describeAckFailure(answer: any): string {
                 ? answer.result
                 : 'unknown result';
     return reason;
-}
-
-async function emitWithAck(opts: {
-    socket: AckableSocket;
-    event: string;
-    payload: unknown;
-}): Promise<any> {
-    const socketWithTimeout = opts.socket.timeout?.(resolveSessionControlSocketAckTimeoutMs()) ?? opts.socket;
-    return await socketWithTimeout.emitWithAck(opts.event, opts.payload);
 }
 
 function readLoggedCurrentModeId(metadata: Record<string, unknown> | null | undefined): string | null {
@@ -96,7 +88,7 @@ export async function updateSessionMetadataWithAck(opts: {
             opts.sessionEncryptionMode === 'plain'
                 ? JSON.stringify(updated)
                 : encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated));
-        const answer = await emitWithAck({
+        const answer = await emitSocketWithAck<any>({
             socket: opts.socket,
             event: 'update-metadata',
             payload: {
@@ -185,7 +177,7 @@ export async function updateSessionAgentStateWithAck(opts: {
                 ? JSON.stringify(updated)
                 : (updated ? encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated)) : null);
         const activitySummaryV1 = deriveActivitySummaryFromAgentState(updated);
-        const answer = await emitWithAck({
+        const answer = await emitSocketWithAck<any>({
             socket: opts.socket,
             event: 'update-state',
             payload: {

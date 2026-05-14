@@ -275,16 +275,50 @@ describe('createCodexAppServerStreamEventBridge', () => {
                         },
                     },
                 ],
-                meta: {
-                    codexImageGenerationV1: {
-                        revisedPrompt: 'safe prompt',
-                    },
-                },
             },
         ]);
     });
 
-    it('maps saved Codex image generation files without embedding bytes', () => {
+    it('omits Codex image generation revised prompt metadata from transcript updates', () => {
+        const bridge = createCodexAppServerStreamEventBridge();
+        const hostilePrompt = `\u0000 show\n\t image ${'x'.repeat(700)} /tmp/secret.png`;
+
+        const updates = bridge.onNotification({
+            method: 'item/completed',
+            params: {
+                item: {
+                    id: 'img_prompt_1',
+                    type: 'image_generation_call',
+                    result: 'iVBORw0KGgo=',
+                    revised_prompt: hostilePrompt,
+                },
+            },
+        });
+
+        expect(updates).toHaveLength(1);
+        expect((updates[0] as { meta?: unknown }).meta).toBeUndefined();
+        expect(JSON.stringify(updates)).not.toContain('revisedPrompt');
+        expect(JSON.stringify(updates)).not.toContain('show image');
+    });
+
+    it('does not emit session media for malformed Codex image generation base64 payloads', () => {
+        const bridge = createCodexAppServerStreamEventBridge();
+
+        expect(
+            bridge.onNotification({
+                method: 'item/completed',
+                params: {
+                    item: {
+                        id: 'img_malformed_1',
+                        type: 'image_generation_call',
+                        result: `!!!!${'iVBORw0KGgo='}`,
+                    },
+                },
+            }),
+        ).toEqual([]);
+    });
+
+    it('maps saved Codex image generation files with a scoped read policy', () => {
         const bridge = createCodexAppServerStreamEventBridge();
 
         expect(
@@ -296,6 +330,7 @@ describe('createCodexAppServerStreamEventBridge', () => {
                         type: 'imageGeneration',
                         status: 'generating',
                         savedPath: '/tmp/codex/generated.png',
+                        revised_prompt: 'saved image prompt',
                     },
                 },
             }),
@@ -314,6 +349,51 @@ describe('createCodexAppServerStreamEventBridge', () => {
                             source: 'provider-generated',
                             generationId: 'img_saved_1',
                             providerEventId: 'img_saved_1',
+                        },
+                        sourceAccessPolicy: {
+                            kind: 'restrictedRoots',
+                            roots: ['/tmp/codex'],
+                        },
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it('prefers saved Codex image generation files over inline base64 results', () => {
+        const bridge = createCodexAppServerStreamEventBridge();
+
+        expect(
+            bridge.onNotification({
+                method: 'item/completed',
+                params: {
+                    item: {
+                        id: 'img_saved_preferred_1',
+                        type: 'image_generation_call',
+                        result: 'iVBORw0KGgo=',
+                        saved_path: '/tmp/codex/preferred.png',
+                    },
+                },
+            }),
+        ).toEqual([
+            {
+                type: 'session-media',
+                itemId: 'img_saved_preferred_1',
+                media: [
+                    {
+                        source: {
+                            kind: 'local-file',
+                            path: '/tmp/codex/preferred.png',
+                            fileNameHint: 'preferred.png',
+                        },
+                        origin: {
+                            source: 'provider-generated',
+                            generationId: 'img_saved_preferred_1',
+                            providerEventId: 'img_saved_preferred_1',
+                        },
+                        sourceAccessPolicy: {
+                            kind: 'restrictedRoots',
+                            roots: ['/tmp/codex'],
                         },
                     },
                 ],

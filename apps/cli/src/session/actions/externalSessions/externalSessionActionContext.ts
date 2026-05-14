@@ -2,6 +2,7 @@ import type { ExternalSessionTranscriptDeltaEphemeral } from '@happier-dev/proto
 
 import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import type { TransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
 
 export type ExternalSessionTakeoverActionInput = Readonly<{
     linkedSessionId: string;
@@ -14,6 +15,7 @@ export type ExternalSessionTakeoverActionInput = Readonly<{
 export type ExternalSessionActionContext = Readonly<{
     followLeaseManager: ReturnType<typeof createExternalSessionFollowLeaseManager>;
     emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptDeltaEphemeral) => void;
+    transientMediaReadAllowance?: Pick<TransientSessionMediaReadAllowance, 'grantReadFiles'>;
     spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     stopSession?: (sessionId: string) => Promise<boolean>;
     takeoverReadiness: Readonly<{

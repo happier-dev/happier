@@ -16,7 +16,7 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 import { EXECUTION_RUN_RPC_SCOPES } from '../actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from '../registerActionSpecRpcHandlers';
-import { createExecutionRunRpcActionExecutor } from './dispatchExecutionRunRpcAction';
+import { createExecutionRunRpcActionExecutor, type ExecutionRunRpcApprovalDeps } from './dispatchExecutionRunRpcAction';
 
 export type ExecutionRunRpcHandlerContext = Readonly<{
   sessionId: string;
@@ -56,6 +56,7 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   onExecutionRunVoiceAgentWelcomed?: (run: ExecutionRunPublicState, welcomedEpoch: number) => void | Promise<void>;
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
   actionExecutor?: RpcActionExecutor;
+  actionApprovalDeps?: Partial<ExecutionRunRpcApprovalDeps>;
 }>;
 
 function invalidParams(): Readonly<{ ok: false; error: string; errorCode: string }> {
@@ -130,6 +131,7 @@ export function registerExecutionRunRpcHandlers(
     context: ctx,
     policy,
     isExecutionRunsEnabled,
+    approvalDeps: ctx.actionApprovalDeps,
   });
 
   registerActionSpecRpcHandlers({

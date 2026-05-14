@@ -275,11 +275,14 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     });
   });
 
-  it('persists ACP session media events through the central transcript bridge', async () => {
+  it('persists ACP text and session media events through one central transcript bridge row request', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const durableCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
     const sessionMediaCalls: unknown[] = [];
     const session = createBasicSessionClientWithOverrides({
-      sendAgentMessageCommitted: async () => undefined,
+      sendAgentMessageCommitted: async (_provider, body, opts) => {
+        durableCalls.push({ body, meta: opts.meta });
+      },
       sendAgentSessionMediaCommitted: async (_provider, request) => {
         sessionMediaCalls.push(request);
       },
@@ -306,6 +309,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
         localId: 'media-row-1',
         role: 'output',
         category: 'generated',
+        messageText: 'Generated image:',
         media: [{
           source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'generated.png' },
           origin: { source: 'acp-content' },
@@ -320,10 +324,71 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       localId: 'media-row-1',
       role: 'output',
       category: 'generated',
+      messageText: 'Generated image:',
       media: [{
         source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'generated.png' },
         origin: { source: 'acp-content' },
       }],
+    });
+    expect(durableCalls).toEqual([]);
+  });
+
+  it('deduplicates repeated ACP session media events before persistence', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const sessionMediaCalls: unknown[] = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async () => undefined,
+      sendAgentSessionMediaCommitted: async (_provider, request) => {
+        sessionMediaCalls.push(request);
+      },
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'opencode',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const media = [{
+      source: { kind: 'base64' as const, data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'generated.png' },
+      origin: { source: 'acp-content' as const, providerEventId: 'final-message-1' },
+    }];
+
+    backend.emit({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        localId: 'media-row-chunk',
+        role: 'output',
+        category: 'generated',
+        media,
+      },
+    } satisfies AgentMessage);
+    backend.emit({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        localId: 'media-row-final',
+        role: 'output',
+        category: 'generated',
+        media,
+      },
+    } satisfies AgentMessage);
+
+    await vi.waitFor(() => {
+      expect(sessionMediaCalls).toHaveLength(1);
+    });
+    expect(sessionMediaCalls[0]).toMatchObject({
+      localId: 'media-row-chunk',
+      media,
     });
   });
 });

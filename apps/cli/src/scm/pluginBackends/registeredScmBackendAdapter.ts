@@ -287,6 +287,9 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
                 ),
             );
         },
+        async worktreesEnrichment({ context, request }) {
+            return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.read?.worktreesEnrichment, { context, request });
+        },
         async diffFile({ context, request }) {
             return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.read?.diffFile, { context, request });
         },

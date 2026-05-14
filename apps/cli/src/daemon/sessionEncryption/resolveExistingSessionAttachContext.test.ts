@@ -49,6 +49,7 @@ describe('resolveExistingSessionAttachContext', () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
       createSessionRecordFixture({
         id: 'sess_plain',
+        seq: 42,
         encryptionMode: 'plain',
         metadata: JSON.stringify({ flavor: 'codex', path: '/tmp', codexSessionId: 'vendor-plain-1' }),
         dataEncryptionKey: null,
@@ -58,7 +59,7 @@ describe('resolveExistingSessionAttachContext', () => {
     const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_plain', credentials: null });
     expect(out).toEqual({
       ok: true,
-      attachPayload: { v: 2, encryptionMode: 'plain' },
+      attachPayload: { v: 2, encryptionMode: 'plain', lastObservedMessageSeq: 42 },
       vendorResumeId: 'vendor-plain-1',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
     });
@@ -90,7 +91,7 @@ describe('resolveExistingSessionAttachContext', () => {
 
     expect(out).toEqual({
       ok: true,
-      attachPayload: { v: 2, encryptionMode: 'plain' },
+      attachPayload: { v: 2, encryptionMode: 'plain', lastObservedMessageSeq: 0 },
       vendorResumeId: 'sess-direct-1',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
     });
@@ -123,7 +124,7 @@ describe('resolveExistingSessionAttachContext', () => {
 
     expect(out).toEqual({
       ok: true,
-      attachPayload: { v: 2, encryptionMode: 'plain' },
+      attachPayload: { v: 2, encryptionMode: 'plain', lastObservedMessageSeq: 0 },
       vendorResumeId: null,
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
     });
@@ -160,6 +161,7 @@ describe('resolveExistingSessionAttachContext', () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
       createSessionRecordFixture({
         id: 'sess_e2ee',
+        seq: 77,
         encryptionMode: 'e2ee',
         metadata: metadataCiphertext,
         dataEncryptionKey: encryptedEnvelopeBase64,
@@ -175,6 +177,7 @@ describe('resolveExistingSessionAttachContext', () => {
 
     expect(out.attachPayload.v).toBe(2);
     expect(out.attachPayload.encryptionMode).toBe('e2ee');
+    expect(out.attachPayload.lastObservedMessageSeq).toBe(77);
     expect(out.vendorResumeId).toBe('vendor-e2ee-1');
     expect(out.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
 

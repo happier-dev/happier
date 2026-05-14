@@ -64,7 +64,7 @@ describe('mapPiRpcEventToAgentMessages', () => {
     expect(output).toEqual([{ type: 'model-output', fullText: 'final' }]);
   });
 
-  it('maps Pi assistant image output blocks to provider-generated session media events', () => {
+  it('does not claim Pi assistant image blocks as provider-generated session media', () => {
     const output = mapPiRpcEventToAgentMessages({
       type: 'message_end',
       message: {
@@ -77,22 +77,48 @@ describe('mapPiRpcEventToAgentMessages', () => {
       },
     });
 
+    expect(output).toEqual([{ type: 'model-output', fullText: 'final' }]);
+  });
+
+  it('maps Pi tool result image blocks to tool-artifact session media events', () => {
+    const output = mapPiRpcEventToAgentMessages({
+      type: 'tool_execution_end',
+      toolCallId: 'tool-call-1',
+      toolName: 'render_image',
+      result: {
+        content: [
+          { type: 'text', text: 'rendered' },
+          { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png', name: 'tool-image.png' },
+        ],
+      },
+    });
+
     expect(output).toEqual([
-      { type: 'model-output', fullText: 'final' },
+      {
+        type: 'tool-result',
+        callId: 'tool-call-1',
+        toolName: 'render_image',
+        result: {
+          content: [
+            { type: 'text', text: 'rendered' },
+            { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png', name: 'tool-image.png' },
+          ],
+        },
+      },
       {
         type: 'event',
         name: 'session_media',
         payload: {
-          localId: 'pi-media-pi-message-1',
+          localId: 'pi-media-tool-call-1',
           role: 'output',
-          category: 'generated',
+          category: 'tool-artifact',
           media: [
             {
-              source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'pi-image.png' },
-              suggestedName: 'pi-image.png',
+              source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'tool-image.png' },
+              suggestedName: 'tool-image.png',
               origin: {
-                source: 'provider-generated',
-                providerEventId: 'pi-message-1',
+                source: 'tool-output',
+                toolCallId: 'tool-call-1',
               },
             },
           ],

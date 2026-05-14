@@ -15,6 +15,7 @@ describe('resolveClaudeRemoteSessionStartPlan', () => {
       {
         checkSession: () => true,
         findLastSession: () => null,
+        hasMaterializedSessionTranscript: () => true,
         logDebug: vi.fn(),
         logPrefix: 'claudeRemote',
       },
@@ -35,6 +36,7 @@ describe('resolveClaudeRemoteSessionStartPlan', () => {
       {
         checkSession: () => true,
         findLastSession: () => null,
+        hasMaterializedSessionTranscript: () => false,
         logDebug: vi.fn(),
         logPrefix: 'claudeRemote',
       },
@@ -55,6 +57,7 @@ describe('resolveClaudeRemoteSessionStartPlan', () => {
       {
         checkSession: () => true,
         findLastSession: () => null,
+        hasMaterializedSessionTranscript: () => false,
         logDebug: vi.fn(),
         logPrefix: 'claudeRemoteAgentSdk',
       },
@@ -75,11 +78,61 @@ describe('resolveClaudeRemoteSessionStartPlan', () => {
       {
         checkSession: () => true,
         findLastSession: () => 'last-session-id',
+        hasMaterializedSessionTranscript: () => false,
         logDebug: vi.fn(),
         logPrefix: 'claudeRemoteAgentSdk',
       },
     );
 
     expect(result).toEqual({ startFrom: 'last-session-id', shouldContinue: false });
+  });
+
+  it('starts fresh for a hook-only current session whose transcript has not materialized', () => {
+    const logDebug = vi.fn();
+
+    const result = resolveClaudeRemoteSessionStartPlan(
+      {
+        sessionId: 'startup-only-session',
+        transcriptPath: '/tmp/missing.jsonl',
+        path: '/tmp/workspace',
+        claudeConfigDir: null,
+        claudeArgs: undefined,
+      },
+      {
+        checkSession: vi.fn(() => {
+          throw new Error('checkSession should not run when transcript has not materialized');
+        }),
+        findLastSession: () => null,
+        hasMaterializedSessionTranscript: () => false,
+        logDebug,
+        logPrefix: 'claudeRemoteAgentSdk',
+      },
+    );
+
+    expect(result).toEqual({ startFrom: null, shouldContinue: false });
+    expect(logDebug).toHaveBeenCalledWith(
+      '[claudeRemoteAgentSdk] Session startup-only-session has no materialized transcript yet; starting fresh instead of resuming',
+    );
+  });
+
+  it('keeps a materialized current session even when deep transcript validation is conservative', () => {
+    const result = resolveClaudeRemoteSessionStartPlan(
+      {
+        sessionId: 'materialized-session',
+        transcriptPath: '/tmp/session.jsonl',
+        path: '/tmp/workspace',
+        claudeConfigDir: null,
+        claudeArgs: undefined,
+      },
+      {
+        checkSession: () => false,
+        findLastSession: () => null,
+        hasMaterializedSessionTranscript: () => true,
+        logDebug: vi.fn(),
+        logPrefix: 'claudeRemote',
+      },
+    );
+
+    expect(result).toEqual({ startFrom: 'materialized-session', shouldContinue: false });
   });
 });

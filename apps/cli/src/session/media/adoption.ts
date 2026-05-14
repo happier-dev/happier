@@ -1,4 +1,10 @@
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
+import {
+  SessionMediaFailureV1Schema,
+  SessionMediaItemV1Schema,
+  type SessionMediaFailureV1,
+  type SessionMediaItemV1,
+} from '@happier-dev/protocol';
 
 import type { SessionMediaOrigin } from './_types';
 import {
@@ -6,10 +12,35 @@ import {
   type PersistSessionMediaResult,
 } from './persistSessionMedia';
 import {
-  normalizeReferencedSessionMediaWorkspacePath,
+  isCanonicalSessionMediaWorkspacePath,
 } from './referencedPaths';
+import {
+  sanitizeSessionMediaFailureName,
+  sanitizeSessionMediaIdentifier,
+} from './names';
 
 const SESSION_MEDIA_ENVELOPE_KIND = 'session_media.v1';
+const FORBIDDEN_DURABLE_MEDIA_KEYS = new Set([
+  'data',
+  'base64',
+  'b64',
+  'b64_json',
+  'inlineData',
+  'url',
+  'uri',
+  'fileUrl',
+  'sourcePath',
+  'sourceUri',
+  'sourceUrl',
+  'filePath',
+  'localPath',
+  'provider',
+  'providerId',
+  'backendId',
+  'summary',
+  'summaryPreview',
+  'providerSummary',
+]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -30,9 +61,21 @@ function readMediaCategory(value: unknown): 'attachment' | 'generated' | 'tool-a
   return 'generated';
 }
 
+function readMediaMimeType(value: unknown): 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | undefined {
+  if (value === 'image/png' || value === 'image/jpeg' || value === 'image/webp' || value === 'image/gif') {
+    return value;
+  }
+  return undefined;
+}
+
 function readMediaOrigin(value: unknown): SessionMediaOrigin {
   const record = asRecord(value);
   const source = record?.source;
+  const agentId = sanitizeSessionMediaIdentifier(readString(record?.agentId));
+  const toolCallId = sanitizeSessionMediaIdentifier(readString(record?.toolCallId));
+  const generationId = sanitizeSessionMediaIdentifier(readString(record?.generationId));
+  const providerEventId = sanitizeSessionMediaIdentifier(readString(record?.providerEventId));
+  const providerFileId = sanitizeSessionMediaIdentifier(readString(record?.providerFileId));
   const normalizedSource =
     source === 'user-upload'
     || source === 'provider-generated'
@@ -45,16 +88,151 @@ function readMediaOrigin(value: unknown): SessionMediaOrigin {
 
   return {
     source: normalizedSource,
-    ...(readString(record?.agentId) ? { agentId: readString(record?.agentId)! } : {}),
-    ...(readString(record?.toolCallId) ? { toolCallId: readString(record?.toolCallId)! } : {}),
-    ...(readString(record?.generationId) ? { generationId: readString(record?.generationId)! } : {}),
-    ...(readString(record?.providerEventId) ? { providerEventId: readString(record?.providerEventId)! } : {}),
-    ...(readString(record?.providerFileId) ? { providerFileId: readString(record?.providerFileId)! } : {}),
+    ...(agentId ? { agentId } : {}),
+    ...(toolCallId ? { toolCallId } : {}),
+    ...(generationId ? { generationId } : {}),
+    ...(providerEventId ? { providerEventId } : {}),
+    ...(providerFileId ? { providerFileId } : {}),
   };
 }
 
-function isDurableSessionMediaWorkspacePath(path: string): boolean {
-  return normalizeReferencedSessionMediaWorkspacePath(path) !== null;
+function isDurableSessionMediaWorkspacePath(
+  path: string,
+  category: 'attachment' | 'generated' | 'tool-artifact',
+): boolean {
+  return isCanonicalSessionMediaWorkspacePath(path, category);
+}
+
+function buildUnavailableMediaFailure(input: Readonly<{
+  index: number;
+  mediaRecord: Record<string, unknown> | null;
+  code: string;
+}>): SessionMediaFailureV1 {
+  const mediaRecord = input.mediaRecord ?? {};
+  return sanitizeUnavailableMediaFailure({
+    index: input.index,
+    code: input.code,
+    role: readMediaRole(mediaRecord.role),
+    category: readMediaCategory(mediaRecord.category),
+    mediaKind: 'image',
+    name: readString(mediaRecord.name) ?? null,
+    ...(readMediaMimeType(mediaRecord.mimeType) ? { mimeType: readMediaMimeType(mediaRecord.mimeType) } : {}),
+    origin: readMediaOrigin(mediaRecord.origin),
+  });
+}
+
+function sanitizeUnavailableMediaFailure(value: Readonly<{
+  index: number;
+  code: unknown;
+  role: unknown;
+  category: unknown;
+  mediaKind?: unknown;
+  name: unknown;
+  mimeType?: unknown;
+  origin?: unknown;
+  createdAtMs?: unknown;
+}>): SessionMediaFailureV1 {
+  const index = Number.isInteger(value.index) && value.index >= 0 ? value.index : 0;
+  const failure: SessionMediaFailureV1 = {
+    index,
+    code: sanitizeSessionMediaIdentifier(readString(value.code)) ?? 'unavailable',
+    role: readMediaRole(value.role),
+    category: readMediaCategory(value.category),
+    mediaKind: 'image',
+    name: sanitizeSessionMediaFailureName(readString(value.name), `image-${index + 1}`),
+    ...(readMediaMimeType(value.mimeType) ? { mimeType: readMediaMimeType(value.mimeType) } : {}),
+    origin: readMediaOrigin(value.origin),
+    ...(typeof value.createdAtMs === 'number' && Number.isInteger(value.createdAtMs) && value.createdAtMs >= 0
+      ? { createdAtMs: value.createdAtMs }
+      : {}),
+  };
+
+  const parsed = SessionMediaFailureV1Schema.safeParse(failure);
+  return parsed.success
+    ? selectSessionMediaFailureFields(parsed.data)
+    : {
+        index,
+        code: 'unavailable',
+        role: failure.role,
+        category: failure.category,
+        mediaKind: 'image',
+        name: `image-${index + 1}`,
+        origin: { source: 'provider-generated' },
+      };
+}
+
+function selectSessionMediaFailureFields(failure: SessionMediaFailureV1): SessionMediaFailureV1 {
+  return {
+    index: failure.index,
+    code: failure.code,
+    role: failure.role,
+    category: failure.category,
+    mediaKind: 'image',
+    name: failure.name,
+    ...(failure.mimeType ? { mimeType: failure.mimeType } : {}),
+    origin: {
+      source: failure.origin.source,
+      ...(failure.origin.agentId ? { agentId: failure.origin.agentId } : {}),
+      ...(failure.origin.toolCallId ? { toolCallId: failure.origin.toolCallId } : {}),
+      ...(failure.origin.generationId ? { generationId: failure.origin.generationId } : {}),
+      ...(failure.origin.providerEventId ? { providerEventId: failure.origin.providerEventId } : {}),
+      ...(failure.origin.providerFileId ? { providerFileId: failure.origin.providerFileId } : {}),
+    },
+    ...(failure.createdAtMs !== undefined ? { createdAtMs: failure.createdAtMs } : {}),
+  };
+}
+
+function hasForbiddenDurableMediaKey(value: Record<string, unknown>): boolean {
+  for (const [key, child] of Object.entries(value)) {
+    if (FORBIDDEN_DURABLE_MEDIA_KEYS.has(key)) return true;
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const itemRecord = asRecord(item);
+        if (itemRecord && hasForbiddenDurableMediaKey(itemRecord)) return true;
+      }
+      continue;
+    }
+    const childRecord = asRecord(child);
+    if (childRecord && hasForbiddenDurableMediaKey(childRecord)) return true;
+  }
+  return false;
+}
+
+function sanitizeDurableSessionMediaItem(mediaRecord: Record<string, unknown>): SessionMediaItemV1 | null {
+  if (hasForbiddenDurableMediaKey(mediaRecord)) return null;
+  const candidate = {
+    id: mediaRecord.id,
+    role: mediaRecord.role,
+    category: mediaRecord.category,
+    mediaKind: mediaRecord.mediaKind,
+    mimeType: mediaRecord.mimeType,
+    name: mediaRecord.name,
+    path: mediaRecord.path,
+    sizeBytes: mediaRecord.sizeBytes,
+    ...(mediaRecord.sha256 !== undefined ? { sha256: mediaRecord.sha256 } : {}),
+    ...(mediaRecord.width !== undefined ? { width: mediaRecord.width } : {}),
+    ...(mediaRecord.height !== undefined ? { height: mediaRecord.height } : {}),
+    ...(mediaRecord.createdAtMs !== undefined ? { createdAtMs: mediaRecord.createdAtMs } : {}),
+    origin: readMediaOrigin(mediaRecord.origin),
+  };
+  const parsed = SessionMediaItemV1Schema.safeParse(candidate);
+  if (!parsed.success || !isCanonicalSessionMediaWorkspacePath(parsed.data.path, parsed.data.category)) return null;
+  const item = parsed.data;
+  return {
+    id: item.id,
+    role: item.role,
+    category: item.category,
+    mediaKind: 'image',
+    mimeType: item.mimeType,
+    name: item.name,
+    path: item.path,
+    sizeBytes: item.sizeBytes,
+    ...(item.sha256 ? { sha256: item.sha256 } : {}),
+    ...(item.width !== undefined ? { width: item.width } : {}),
+    ...(item.height !== undefined ? { height: item.height } : {}),
+    ...(item.createdAtMs !== undefined ? { createdAtMs: item.createdAtMs } : {}),
+    origin: readMediaOrigin(item.origin),
+  };
 }
 
 async function adoptSessionMediaEnvelope(params: Readonly<{
@@ -62,38 +240,66 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
   sessionId: string;
   messageLocalId: string;
   workingDirectory: string;
+  sourceReadRoots?: readonly string[];
 }>): Promise<unknown> {
   const envelope = asRecord(params.envelope);
   if (!envelope || envelope.kind !== SESSION_MEDIA_ENVELOPE_KIND) return params.envelope;
   const payload = asRecord(envelope.payload);
   const media = Array.isArray(payload?.media) ? payload.media : [];
-  if (media.length === 0) return params.envelope;
+  const existingFailures = Array.isArray(payload?.failures) ? payload.failures : [];
+  if (media.length === 0 && existingFailures.length === 0) return params.envelope;
 
   const adoptedMedia: unknown[] = [];
+  const failures: SessionMediaFailureV1[] = [];
   const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
+  const sourceAccessRoots = [
+    params.workingDirectory,
+    ...(params.sourceReadRoots ?? []).filter((root) => typeof root === 'string' && root.trim().length > 0),
+  ];
 
-  for (const mediaValue of media) {
+  for (const [index, mediaValue] of media.entries()) {
     const mediaRecord = asRecord(mediaValue);
-    const path = readString(mediaRecord?.path);
-    if (!mediaRecord || !path) continue;
+    if (!mediaRecord) {
+      failures.push(buildUnavailableMediaFailure({ index, mediaRecord: null, code: 'malformed_media_record' }));
+      continue;
+    }
 
-    if (isDurableSessionMediaWorkspacePath(path)) {
-      adoptedMedia.push(mediaRecord);
+    const path = readString(mediaRecord.path);
+    if (!path) {
+      failures.push(buildUnavailableMediaFailure({ index, mediaRecord, code: 'missing_source_path' }));
+      continue;
+    }
+
+    const category = readMediaCategory(mediaRecord.category);
+    if (isDurableSessionMediaWorkspacePath(path, category)) {
+      const sanitized = sanitizeDurableSessionMediaItem(mediaRecord);
+      if (sanitized) {
+        adoptedMedia.push(sanitized);
+      } else {
+        failures.push(buildUnavailableMediaFailure({ index, mediaRecord, code: 'invalid_media_record' }));
+      }
+      continue;
+    }
+
+    if (isCanonicalSessionMediaWorkspacePath(path)) {
+      failures.push(buildUnavailableMediaFailure({ index, mediaRecord, code: 'invalid_media_record' }));
       continue;
     }
 
     if (/^https?:\/\//iu.test(path) || /^data:/iu.test(path)) {
+      failures.push(buildUnavailableMediaFailure({ index, mediaRecord, code: 'unsupported_source_path' }));
       continue;
     }
 
     const result: PersistSessionMediaResult = await persistSessionMedia({
       workingDirectory: params.workingDirectory,
+      sourceAccessPolicy: { kind: 'restrictedRoots', roots: sourceAccessRoots },
       pathAllowanceRegistry,
       input: {
         sessionId: params.sessionId,
         messageLocalId: params.messageLocalId,
         role: readMediaRole(mediaRecord.role),
-        category: readMediaCategory(mediaRecord.category),
+        category,
         source: path.startsWith('file://')
           ? {
               kind: 'local-uri',
@@ -113,13 +319,32 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
 
     if (result.success) {
       adoptedMedia.push(result.item);
+    } else {
+      failures.push(buildUnavailableMediaFailure({ index, mediaRecord, code: result.code }));
     }
   }
 
-  if (adoptedMedia.length === 0) return undefined;
+  for (const [offset, failureValue] of existingFailures.entries()) {
+    const failureRecord = asRecord(failureValue);
+    failures.push(sanitizeUnavailableMediaFailure({
+      index: typeof failureRecord?.index === 'number' ? failureRecord.index : media.length + offset,
+      code: failureRecord?.code,
+      role: failureRecord?.role,
+      category: failureRecord?.category,
+      name: failureRecord?.name,
+      mimeType: failureRecord?.mimeType,
+      origin: failureRecord?.origin,
+      createdAtMs: failureRecord?.createdAtMs,
+    }));
+  }
+
+  if (adoptedMedia.length === 0 && failures.length === 0) return undefined;
   return {
     kind: SESSION_MEDIA_ENVELOPE_KIND,
-    payload: { media: adoptedMedia },
+    payload: {
+      media: adoptedMedia,
+      ...(failures.length > 0 ? { failures } : {}),
+    },
   };
 }
 
@@ -128,6 +353,7 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
   sessionId: string;
   messageLocalId: string;
   workingDirectory: string | null;
+  sourceReadRoots?: readonly string[];
 }>): Promise<Record<string, unknown>> {
   if (!params.workingDirectory) return params.raw;
   const meta = asRecord(params.raw.meta);
@@ -139,12 +365,14 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
     sessionId: params.sessionId,
     messageLocalId: params.messageLocalId,
     workingDirectory: params.workingDirectory,
+    sourceReadRoots: params.sourceReadRoots,
   });
   const secondary = await adoptSessionMediaEnvelope({
     envelope: nextMeta.happierMedia,
     sessionId: params.sessionId,
     messageLocalId: params.messageLocalId,
     workingDirectory: params.workingDirectory,
+    sourceReadRoots: params.sourceReadRoots,
   });
 
   if (primary === undefined) {

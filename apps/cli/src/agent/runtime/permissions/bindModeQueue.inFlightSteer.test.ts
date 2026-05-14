@@ -80,6 +80,32 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     expect(spyPush).not.toHaveBeenCalled();
   });
 
+  it('queues instead of steering when the active turn is not steerable', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush } = createQueue();
+
+    const steerText = vi.fn(async () => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        canSteerPrompt: () => false,
+        steerText,
+      },
+    } as any);
+
+    emitUserMessage({ content: { text: 'queue me' }, meta: {} });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(spyPush).toHaveBeenCalledWith({ text: 'queue me', localId: null }, { permissionMode: 'default' });
+  });
+
   it('prefixes replaySeedV1 when steering and consumes it exactly once', async () => {
     const { session, emitUserMessage, setMetadataSnapshot } = createSessionHarness();
     const { queue, spyPush } = createQueue();

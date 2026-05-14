@@ -5,7 +5,10 @@ import {
 import { readOpenCodeSessionRuntimeHandleFromMetadata } from '@happier-dev/agents';
 
 import { getOpenCodeExternalSessionActivity } from './getOpenCodeExternalSessionActivity';
-import { getOpenCodeExternalSessionWorkingDirectory } from './getOpenCodeExternalSessionWorkingDirectory';
+import {
+    getOpenCodeExternalSessionVerifiedWorkingDirectory,
+    getOpenCodeExternalSessionWorkingDirectory,
+} from './getOpenCodeExternalSessionWorkingDirectory';
 import { listOpenCodeSessionCandidates } from './listOpenCodeSessionCandidates';
 import { pageOpenCodeTranscript } from './pageOpenCodeTranscript';
 import { readAfterOpenCodeTranscript } from './readAfterOpenCodeTranscript';
@@ -42,6 +45,10 @@ export const openCodeExternalSessionProviderOps: ExternalSessionProviderOps = {
     readAfterTranscript: async ({ source, remoteSessionId, cursor, maxBytes, maxItems }) => {
         const res = await readAfterOpenCodeTranscript({ source, remoteSessionId, cursor, maxBytes, maxItems });
         return { items: res.items, nextCursor: res.nextCursor ?? null, truncated: res.truncated === true };
+    },
+    resolveTranscriptMediaReadRoots: async ({ source, remoteSessionId }) => {
+        const directory = await getOpenCodeExternalSessionVerifiedWorkingDirectory({ source, remoteSessionId });
+        return directory ? [directory] : [];
     },
     canonicalizeLinkedSession: async ({ metadata, remoteSessionId, source }) => {
         const externalSession = asRecord((metadata as any).externalSessionV1);

@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { rmSync } from 'fs';
 
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createTestRpcManager, runGit as git } from './testRpcHarness';
@@ -205,11 +205,18 @@ describe('git RPC handlers (branches + stash)', () => {
         git(workspace, ['worktree', 'add', worktreePath, '-b', 'feature-auth']);
 
         const { call } = createTestRpcManager({ workingDirectory: workspace });
-        const remove = await call<any, { cwd?: string; worktreePath: string }>(
+        const remove = await call<any, {
+            authorizationToken: typeof SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN;
+            confirmed: true;
+            cwd?: string;
+            worktreePath: string;
+        }>(
             RPC_METHODS.SCM_WORKTREE_REMOVE,
             {
                 cwd: '.',
                 worktreePath,
+                confirmed: true,
+                authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
             },
         );
 

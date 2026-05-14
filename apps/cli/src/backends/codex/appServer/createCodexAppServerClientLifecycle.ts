@@ -36,6 +36,7 @@ export function createCodexAppServerClientLifecycle(params: Readonly<{
     hasServiceTierOverride: () => boolean;
     setTurnInFlight: (value: boolean) => void;
     setThinking: (value: boolean) => void;
+    markActiveTurnNonSteerable: () => void;
     lastPublishedThreadId: { value: string | null };
     runBridgeWork: <T>(work: () => Promise<T>) => Promise<T>;
     ensureSyntheticSubagentThread: (threadId: string) => Promise<string>;
@@ -121,6 +122,7 @@ export function createCodexAppServerClientLifecycle(params: Readonly<{
                         publishThreadId,
                         setTurnInFlight: params.setTurnInFlight,
                         setThinking: params.setThinking,
+                        markActiveTurnNonSteerable: params.markActiveTurnNonSteerable,
                         notificationMatchesPendingTurn: params.notificationMatchesPendingTurn,
                         resolveStreamUpdateContext: params.resolveStreamUpdateContext,
                         ensureSyntheticSubagentThread: params.ensureSyntheticSubagentThread,

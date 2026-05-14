@@ -4,11 +4,20 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtempSync } from 'node:fs';
 
-import type { ScmBackendContribution } from '@happier-dev/protocol';
-import type { ScmBackendRuntimeRegistration } from '@happier-dev/plugin-sdk';
+import type {
+    ScmBackendContribution,
+    ScmWorktreesEnrichmentRequest,
+} from '@happier-dev/protocol';
+import type {
+    ScmBackendRuntimeHandlerInput,
+    ScmBackendRuntimeRegistration,
+} from '@happier-dev/plugin-sdk';
 import { readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { createRegisteredScmBackendRegistry } from './registeredScmBackendRegistry';
+import type { ScmBackend } from '../types';
+
+const TEST_LAST_ACTIVITY_AT_MS = Date.UTC(2026, 4, 13, 4, 0, 0);
 
 function createCapabilities(input?: Readonly<{
     branchList?: 'supported' | 'unsupported';
@@ -229,7 +238,7 @@ describe('registered SCM backend registry', () => {
     });
 
     it('adapts advertised executable branch leaves through plugin handlers', async () => {
-        const registration = {
+        const registration: ScmBackendRuntimeRegistration = {
             id: 'acme-vcs',
             handlers: {
                 detection: {
@@ -281,6 +290,66 @@ describe('registered SCM backend registry', () => {
                 name: 'main',
                 current: true,
                 remote: false,
+            }],
+        });
+    });
+
+    it('adapts dedicated worktree enrichment through plugin read handlers', async () => {
+        const registration = {
+            id: 'acme-vcs',
+            handlers: {
+                detection: {
+                    detectRepo: async () => ({ isRepo: true, rootPath: '/repo', mode: '.git' as const }),
+                },
+                read: {
+                    statusSnapshot: async () => ({ success: true }),
+                    diffFile: async () => ({ success: true, diff: '' }),
+                    worktreesEnrichment: async ({ request }: ScmBackendRuntimeHandlerInput<ScmWorktreesEnrichmentRequest>) => ({
+                        success: true,
+                        worktrees: request.worktreePaths.map((path) => ({
+                            path,
+                            changeCount: 2,
+                            lastActivityAt: TEST_LAST_ACTIVITY_AT_MS,
+                        })),
+                    }),
+                },
+            },
+        };
+
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: [{
+                pluginId: 'acme.scm.backend',
+                contributionId: 'acme-vcs',
+                definition: createDefinition(),
+            }],
+            registrations: [{
+                pluginId: 'acme.scm.backend',
+                registration,
+            }],
+        });
+
+        expect(resolved.diagnostics).toEqual([]);
+        const backend = resolved.backends[0];
+        if (!backend) throw new Error('Expected registered backend');
+        expect(typeof backend.worktreesEnrichment).toBe('function');
+        if (!backend.worktreesEnrichment) throw new Error('Expected worktree enrichment handler');
+
+        await expect(backend.worktreesEnrichment({
+            context: {
+                cwd: '/repo',
+                projectKey: 'acme-vcs:/repo',
+                detection: { isRepo: true, rootPath: '/repo', mode: '.git' },
+            },
+            request: {
+                cwd: '/repo',
+                worktreePaths: ['/repo/feature'],
+            },
+        })).resolves.toEqual({
+            success: true,
+            worktrees: [{
+                path: '/repo/feature',
+                changeCount: 2,
+                lastActivityAt: TEST_LAST_ACTIVITY_AT_MS,
             }],
         });
     });

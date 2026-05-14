@@ -149,6 +149,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends AgentFac
     inFlightSteer: params.inFlightSteer,
     memoryRecallGuidance: params.memoryRecallGuidance,
     pendingQueue: {
+      drainAfterStartOrLoad: true,
       waitForMetadataUpdate: (signal) => params.session.waitForMetadataUpdate(signal),
       popPendingMessage: () => params.session.popPendingMessage(),
     },

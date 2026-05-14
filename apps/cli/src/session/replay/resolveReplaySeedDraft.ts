@@ -9,6 +9,12 @@ import { hydrateReplayDialogFromForkChain } from './hydrateReplayDialogFromForkC
 import { hydrateVoiceReplayDialogFromTranscript } from './hydrateVoiceReplayDialogFromTranscript';
 import { runReplaySummaryForDialog } from './summary/runReplaySummaryForDialog';
 
+function readReferencedSessionMediaWorkspacePaths(value: unknown): readonly string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const paths = (value as { referencedSessionMediaWorkspacePaths?: unknown }).referencedSessionMediaWorkspacePaths;
+  return Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : [];
+}
+
 export type ReplaySeedSource =
   | Readonly<{
       kind: 'fork_chain';
@@ -39,6 +45,7 @@ export async function resolveReplaySeedDraft(params: Readonly<{
   dialog: readonly HappierReplayDialogItem[];
   summaryText: string | null;
   sourceCutoffSeqInclusive: number;
+  referencedSessionMediaWorkspacePaths: readonly string[];
 } | null> {
   const hydrated =
     params.source.kind === 'fork_chain'
@@ -65,6 +72,7 @@ export async function resolveReplaySeedDraft(params: Readonly<{
         });
 
   if (!hydrated || hydrated.dialog.length === 0) return null;
+  const referencedSessionMediaWorkspacePaths = readReferencedSessionMediaWorkspacePaths(hydrated);
 
   const summaryText = await (async () => {
     if (params.strategy !== 'summary_plus_recent') return null;
@@ -108,5 +116,6 @@ export async function resolveReplaySeedDraft(params: Readonly<{
     dialog: hydrated.dialog,
     summaryText,
     sourceCutoffSeqInclusive: hydrated.sourceCutoffSeqInclusive,
+    referencedSessionMediaWorkspacePaths,
   };
 }

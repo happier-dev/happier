@@ -4121,7 +4121,31 @@ describe('registerMachineRpcHandlers', () => {
             {
               seq: 2,
               createdAt: 2,
-              content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'msg-2' } } },
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: { type: 'text', text: 'msg-2' },
+                  meta: {
+                    happierMedia: {
+                      kind: 'session_media.v1',
+                      payload: {
+                        media: [{
+                          id: 'media-1',
+                          role: 'output',
+                          category: 'generated',
+                          mediaKind: 'image',
+                          mimeType: 'image/png',
+                          name: 'fork-image.png',
+                          path: '.happier/uploads/generated/sess_parent/msg-2/fork-image.png',
+                          sizeBytes: 12,
+                          origin: { source: 'provider-generated' },
+                        }],
+                      },
+                    },
+                  },
+                },
+              },
             },
           ],
         },
@@ -4160,6 +4184,12 @@ describe('registerMachineRpcHandlers', () => {
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
     expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('msg-1');
+    expect(createdMeta.sessionMediaContinuityV1).toMatchObject({
+      v: 1,
+      sourceSessionId: 'sess_parent',
+      sourceCutoffSeqInclusive: 3,
+      referencedWorkspacePaths: ['.happier/uploads/generated/sess_parent/msg-2/fork-image.png'],
+    });
   });
 
   it('includes fork-chain ancestor transcript in replaySeedV1 when forking a forked session', async () => {

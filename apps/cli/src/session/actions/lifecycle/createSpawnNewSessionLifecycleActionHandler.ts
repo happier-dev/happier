@@ -43,6 +43,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             modelId,
             modelUpdatedAt,
             accountSettingsVersionHint,
+            initialTranscriptAfterSeq,
             sessionConfigOptionOverrides,
             windowsRemoteSessionLaunchMode,
             windowsRemoteSessionConsole,
@@ -68,6 +69,12 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             && Number.isInteger(accountSettingsVersionHint)
             && accountSettingsVersionHint >= 0
                 ? accountSettingsVersionHint
+                : undefined;
+        const normalizedInitialTranscriptAfterSeq =
+            typeof initialTranscriptAfterSeq === 'number'
+            && Number.isInteger(initialTranscriptAfterSeq)
+            && initialTranscriptAfterSeq >= 0
+                ? initialTranscriptAfterSeq
                 : undefined;
         const normalizedEnvironmentVariables = environmentVariables && typeof environmentVariables === 'object'
             ? environmentVariables as Record<string, string>
@@ -138,6 +145,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             mcpSelectionForceIncludeCount: normalizedMcpSelection?.forceIncludeServerIds.length ?? 0,
             mcpSelectionForceExcludeCount: normalizedMcpSelection?.forceExcludeServerIds.length ?? 0,
             hasResume: normalizedResume !== undefined,
+            hasInitialTranscriptAfterSeq: normalizedInitialTranscriptAfterSeq !== undefined,
             codexBackendMode: normalizedCodexBackendMode,
         });
 
@@ -157,6 +165,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             permissionMode: normalizedPermissionMode,
             permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
             accountSettingsVersionHint: normalizedAccountSettingsVersionHint,
+            initialTranscriptAfterSeq: normalizedInitialTranscriptAfterSeq,
             agentModeId: normalizedAgentModeId,
             agentModeUpdatedAt: normalizedAgentModeUpdatedAt,
             modelId: normalizedModelId,

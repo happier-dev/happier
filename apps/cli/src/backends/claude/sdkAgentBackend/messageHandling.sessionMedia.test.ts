@@ -23,7 +23,7 @@ function collectMessages(sdkMessage: unknown): AgentMessage[] {
 }
 
 describe('handleClaudeSdkMessage session media mapping', () => {
-  it('maps Claude SDK assistant image blocks to provider-generated session media events', () => {
+  it('does not classify Claude SDK assistant image blocks as provider-generated session media', () => {
     const messages = collectMessages({
       type: 'assistant',
       uuid: 'assistant-img-1',
@@ -44,22 +44,9 @@ describe('handleClaudeSdkMessage session media mapping', () => {
     });
 
     expect(messages).toContainEqual({ type: 'model-output', fullText: 'Generated image:' });
-    expect(messages).toContainEqual(expect.objectContaining({
+    expect(messages).not.toContainEqual(expect.objectContaining({
       type: 'event',
       name: 'session_media',
-      payload: expect.objectContaining({
-        role: 'output',
-        category: 'generated',
-        media: [
-          expect.objectContaining({
-            source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png' },
-            origin: {
-              source: 'provider-generated',
-              providerEventId: 'assistant-img-1',
-            },
-          }),
-        ],
-      }),
     }));
   });
 

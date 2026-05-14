@@ -73,7 +73,7 @@ describe('ACP update message handlers', () => {
     expect(emitted).toEqual([{ type: 'model-output', textDelta: text }]);
   });
 
-  it('emits ACP image content blocks as session media without interrupting text streaming', () => {
+  it('emits ACP text and image content blocks as one session media row request', () => {
     const { ctx, emitted } = createHandlerContext();
 
     const result = handleAgentMessageChunk(
@@ -87,8 +87,49 @@ describe('ACP update message handlers', () => {
     );
 
     expect(result.handled).toBe(true);
-    expect(emitted[0]).toEqual({ type: 'model-output', textDelta: 'Generated image:' });
-    expect(emitted[1]).toMatchObject({
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        localId: expect.any(String),
+        role: 'output',
+        category: 'generated',
+        messageText: 'Generated image:',
+        media: [
+          {
+            source: {
+              kind: 'base64',
+              data: 'iVBORw0KGgo=',
+              mimeType: 'image/png',
+              fileNameHint: 'generated.png',
+            },
+            origin: {
+              source: 'acp-content',
+              providerEventId: expect.any(String),
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  it('emits ACP media blocks when accompanying text is whitespace keepalive content', () => {
+    const { ctx, emitted } = createHandlerContext();
+
+    const result = handleAgentMessageChunk(
+      {
+        content: [
+          { type: 'text', text: '\n' },
+          { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png', uri: 'file:///tmp/generated.png' },
+        ],
+      },
+      ctx,
+    );
+
+    expect(result.handled).toBe(true);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
       type: 'event',
       name: 'session_media',
       payload: {
@@ -111,6 +152,7 @@ describe('ACP update message handlers', () => {
         ],
       },
     });
+    expect((emitted[0] as { payload?: Record<string, unknown> }).payload).not.toHaveProperty('messageText');
   });
 
   it('records unsupported ACP media blocks diagnostically without failing the turn', () => {
@@ -130,6 +172,31 @@ describe('ACP update message handlers', () => {
           diagnostics: [
             expect.objectContaining({
               code: 'unsupported_audio',
+              contentIndex: 0,
+            }),
+          ],
+        },
+      }),
+    ]);
+  });
+
+  it('records malformed ACP image base64 diagnostically without emitting session media', () => {
+    const { ctx, emitted } = createHandlerContext();
+
+    const result = handleAgentMessageChunk(
+      { content: [{ type: 'image', data: '!!!!iVBORw0KGgo=', mimeType: 'image/png' }] },
+      ctx,
+    );
+
+    expect(result.handled).toBe(true);
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: 'event',
+        name: 'session_media_diagnostics',
+        payload: {
+          diagnostics: [
+            expect.objectContaining({
+              code: 'invalid_base64',
               contentIndex: 0,
             }),
           ],

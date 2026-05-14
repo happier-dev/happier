@@ -25,6 +25,7 @@ import { decodeBase64, encodeBase64 } from './api/encryption';
 import { logger } from './ui/logger';
 import { resolveMachineIdForServerFromSettings } from './daemon/resolveMachineIdForServerFromSettings';
 import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from './utils/fs/writeJsonAtomicSync';
+import type { MachineReplacementReason } from '@happier-dev/protocol';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;
@@ -132,6 +133,7 @@ export interface Settings {
    */
   lastTokenSubByServerId?: Record<string, string | undefined>
   machineIdConfirmedByServerByServerId?: Record<string, boolean | undefined>
+  machineReplacementCandidatesByServerIdByAccountId?: Record<string, Record<string, MachineReplacementCandidate> | undefined>
   daemonAutoStartWhenRunningHappy?: boolean
   chromeMode?: boolean
   /**
@@ -160,6 +162,12 @@ export interface Settings {
   memory?: unknown
 }
 
+export type MachineReplacementCandidate = Readonly<{
+  machineId: string
+  replacementReason: MachineReplacementReason
+  createdAt: number
+}>
+
 const defaultSettings: Settings = {
   schemaVersion: SUPPORTED_SCHEMA_VERSION,
   onboardingCompleted: false,
@@ -179,6 +187,7 @@ const defaultSettings: Settings = {
   machineIdByServerIdByAccountId: {},
   lastTokenSubByServerId: {},
   machineIdConfirmedByServerByServerId: {},
+  machineReplacementCandidatesByServerIdByAccountId: {},
   lastChangesCursorByServerIdByAccountId: {},
 }
 
@@ -666,16 +675,41 @@ export async function clearCredentials(): Promise<void> {
   }
 }
 
-export async function clearMachineId(): Promise<void> {
+export async function clearMachineId(opts?: Readonly<{
+  preserveReplacementCandidate?: boolean
+  replacementAccountId?: string | null
+  replacementReason?: MachineReplacementReason
+  now?: number
+}>): Promise<void> {
   await updateSettings((settings) => {
     const activeServerId = sanitizeServerIdForFilesystem(
       configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
       'cloud',
     );
     const nextMap = { ...(settings.machineIdByServerId ?? {}) };
+    const currentMachineId = typeof nextMap[activeServerId] === 'string'
+      ? String(nextMap[activeServerId]).trim()
+      : '';
     const nextPerAccount = { ...(settings.machineIdByServerIdByAccountId ?? {}) };
     if (activeServerId in nextPerAccount) delete nextPerAccount[activeServerId];
     const nextLastSub = { ...(settings.lastTokenSubByServerId ?? {}) };
+    const explicitReplacementAccountId = typeof opts?.replacementAccountId === 'string'
+      ? opts.replacementAccountId.trim()
+      : '';
+    const storedAccountId = typeof nextLastSub[activeServerId] === 'string'
+      ? String(nextLastSub[activeServerId]).trim()
+      : '';
+    const currentAccountId = explicitReplacementAccountId || storedAccountId;
+    const nextReplacementCandidates = { ...(settings.machineReplacementCandidatesByServerIdByAccountId ?? {}) };
+    if (opts?.preserveReplacementCandidate === true && currentMachineId && currentAccountId) {
+      const byAccount = { ...(nextReplacementCandidates[activeServerId] ?? {}) };
+      byAccount[currentAccountId] = {
+        machineId: currentMachineId,
+        replacementReason: opts.replacementReason ?? 'reauth',
+        createdAt: opts.now ?? Date.now(),
+      };
+      nextReplacementCandidates[activeServerId] = byAccount;
+    }
     if (activeServerId in nextLastSub) delete nextLastSub[activeServerId];
     if (activeServerId in nextMap) delete nextMap[activeServerId];
     const nextConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
@@ -684,6 +718,7 @@ export async function clearMachineId(): Promise<void> {
       ...settings,
       machineIdByServerId: Object.keys(nextMap).length ? nextMap : {},
       machineIdByServerIdByAccountId: Object.keys(nextPerAccount).length ? nextPerAccount : {},
+      machineReplacementCandidatesByServerIdByAccountId: Object.keys(nextReplacementCandidates).length ? nextReplacementCandidates : {},
       lastTokenSubByServerId: Object.keys(nextLastSub).length ? nextLastSub : {},
       machineIdConfirmedByServerByServerId: Object.keys(nextConfirmed).length ? nextConfirmed : {},
     };

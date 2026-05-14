@@ -47,6 +47,7 @@ import { registerTransferRelayV2DownloadSessionResponder } from '@/machines/tran
 import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import { configuration } from '@/configuration';
+import type { TransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
 import type {
   AccountPetCreateRequestV1,
   AccountPetCreateResponseV1,
@@ -140,6 +141,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   workingDirectory?: string;
   filesystemAccessPolicy?: FilesystemAccessPolicy;
   getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
+  transientMediaReadAllowance?: TransientSessionMediaReadAllowance;
   extraTransferRelayV2DownloadOwners?: readonly TransferRelayV2DownloadSessionOwner[];
   emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptDeltaEphemeral) => void;
   createAccountPet?: (request: AccountPetCreateRequestV1) => Promise<AccountPetCreateResponseV1>;
@@ -263,6 +265,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     spawnSession,
     stopSession,
     emitExternalSessionTranscriptUpdate: params.deps?.emitExternalSessionTranscriptUpdate,
+    transientMediaReadAllowance: params.deps?.transientMediaReadAllowance,
   });
   if (handlers.directTransferImport) {
     registerMachineDirectTransferImportRpcHandlers({

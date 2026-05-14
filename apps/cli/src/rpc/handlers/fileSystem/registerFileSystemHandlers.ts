@@ -1,7 +1,7 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
 
-import { registerReadFileHandler } from './readFileHandler';
+import { registerReadFileHandler, type ExactAllowedReadFile } from './readFileHandler';
 import { registerWriteFileHandler } from './writeFileHandler';
 import { registerDirectoryHandlers } from './directoryHandlers';
 import { registerPathMutationHandlers } from './pathMutationHandlers';
@@ -33,6 +33,7 @@ export function registerFileSystemHandlers(
   opts?: Readonly<{
     accessPolicy?: FilesystemAccessPolicy;
     getAdditionalAllowedReadDirs?: () => ReadonlyArray<string>;
+    getAdditionalAllowedReadFiles?: () => ReadonlyArray<ExactAllowedReadFile>;
     getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
     actionExecutor?: RpcActionExecutor;
     directoryLimits?: Readonly<{
@@ -45,6 +46,7 @@ export function registerFileSystemHandlers(
   transferSessionStore: TransferSessionStore;
 }> {
   const getAdditionalAllowedReadDirs = opts?.getAdditionalAllowedReadDirs;
+  const getAdditionalAllowedReadFiles = opts?.getAdditionalAllowedReadFiles;
   const getAdditionalAllowedWriteDirs = opts?.getAdditionalAllowedWriteDirs;
   const accessPolicy = opts?.accessPolicy ?? OS_USER_FILESYSTEM_ACCESS_POLICY;
   const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
@@ -61,6 +63,7 @@ export function registerFileSystemHandlers(
     workingDirectory,
     accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
+    ...(getAdditionalAllowedReadFiles ? { getAdditionalAllowedReadFiles } : {}),
     actionExecutor: opts?.actionExecutor,
   });
   registerWriteFileHandler(rpcHandlerManager, {

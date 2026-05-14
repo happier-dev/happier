@@ -11,6 +11,8 @@ import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers'
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
+import { registerWorkspaceAnchorHandlers } from '@/rpc/handlers/workspaceAnchors/registerWorkspaceAnchorHandlers';
+import { registerWorkspaceFaviconHandlers } from '@/rpc/handlers/workspaceFavicon/registerWorkspaceFaviconHandlers';
 import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
@@ -29,6 +31,7 @@ import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
 import { createAuthenticationHttpStatusError, isAuthenticationError, isAuthenticationStatus } from './client/httpStatusError';
 import { handleRequestAuthenticationFailure } from '@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
+import { createTransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import { registerMachineRpcHandlers, type MachineRpcHandlerDeps, type MachineRpcHandlers } from './machine/rpcHandlers';
@@ -50,6 +53,9 @@ import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackRea
 import { createMachineSocketTransport } from '@/api/machine/connection/createMachineSocketTransport';
 import { readMachineOwnerConflictFromSocketError, type MachineOwnerConflictDetails } from '@/api/machine/machineOwnerConflict';
 import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/accountSettingsVersion';
+import { buildInstallationProofForMachine } from '@/daemon/identity/proof';
+import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 
 export type AccountSettingsVersionHintSource = 'changes' | 'cursor-gone' | 'page-limit';
 
@@ -75,6 +81,7 @@ export class ApiMachineClient {
     private readonly filesystemAccessPolicy: FilesystemAccessPolicy;
     private additionalAllowedReadDirs: string[] = [];
     private additionalAllowedWriteDirs: string[] = [];
+    private readonly transientSessionMediaReadAllowance = createTransientSessionMediaReadAllowance();
     private readonly fileSystemTransferRelayOwner: TransferRelayV2DownloadSessionOwner;
     private activeTransportGeneration = 0;
     private currentConnectionState: ManagedConnectionState = {
@@ -155,6 +162,7 @@ export class ApiMachineClient {
         const fileSystemHandlers = registerFileSystemHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
             accessPolicy: this.filesystemAccessPolicy,
             getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
+            getAdditionalAllowedReadFiles: () => this.transientSessionMediaReadAllowance.readAllowedReadFiles(),
             getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs,
         });
         this.fileSystemTransferRelayOwner = {
@@ -167,6 +175,14 @@ export class ApiMachineClient {
         registerMachineFileBrowserHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
             workingDirectory: this.machineRpcWorkingDirectory,
+            accessPolicy: this.filesystemAccessPolicy,
+        });
+        registerWorkspaceAnchorHandlers(this.rpcHandlerManager, {
+            defaultDirectory: this.machineRpcWorkingDirectory,
+            accessPolicy: this.filesystemAccessPolicy,
+        });
+        registerWorkspaceFaviconHandlers(this.rpcHandlerManager, {
+            defaultDirectory: this.machineRpcWorkingDirectory,
             accessPolicy: this.filesystemAccessPolicy,
         });
         // SCM must be machine-scoped so the UI can view diffs/logs and perform staging/commit operations
@@ -213,6 +229,7 @@ export class ApiMachineClient {
                 workingDirectory: deps?.workingDirectory ?? this.machineRpcWorkingDirectory,
                 filesystemAccessPolicy: deps?.filesystemAccessPolicy ?? this.filesystemAccessPolicy,
                 getAdditionalAllowedWriteDirs: deps?.getAdditionalAllowedWriteDirs ?? (() => this.additionalAllowedWriteDirs),
+                transientMediaReadAllowance: deps?.transientMediaReadAllowance ?? this.transientSessionMediaReadAllowance,
                 extraTransferRelayV2DownloadOwners: [
                     this.fileSystemTransferRelayOwner,
                     ...(deps?.extraTransferRelayV2DownloadOwners ?? []),
@@ -325,10 +342,14 @@ export class ApiMachineClient {
                 return;
             }
 
-            const answer = await this.socket.emitWithAck('machine-update-metadata', {
-                machineId: this.machine.id,
-                metadata: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, updated)),
-                expectedVersion: this.machine.metadataVersion
+            const answer = await emitSocketWithAck<any>({
+                socket: this.socket as any,
+                event: 'machine-update-metadata',
+                payload: {
+                    machineId: this.machine.id,
+                    metadata: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, updated)),
+                    expectedVersion: this.machine.metadataVersion,
+                },
             });
 
             if (answer.result === 'success') {
@@ -356,10 +377,14 @@ export class ApiMachineClient {
             }
             const updated = handler(this.machine.daemonState);
 
-            const answer = await this.socket.emitWithAck('machine-update-state', {
-                machineId: this.machine.id,
-                daemonState: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, updated)),
-                expectedVersion: this.machine.daemonStateVersion
+            const answer = await emitSocketWithAck<any>({
+                socket: this.socket as any,
+                event: 'machine-update-state',
+                payload: {
+                    machineId: this.machine.id,
+                    daemonState: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, updated)),
+                    expectedVersion: this.machine.daemonStateVersion,
+                },
             });
 
             if (answer.result === 'success') {
@@ -399,10 +424,27 @@ export class ApiMachineClient {
                 createTransport: () => {
                     const transportGeneration = this.activeTransportGeneration + 1;
                     this.activeTransportGeneration = transportGeneration;
+                    const installationIdentity = configuration.installationIdentityFile
+                        ? readInstallationIdentityIfExistsSync()
+                        : null;
+                    const installationProof = installationIdentity
+                        ? buildInstallationProofForMachine({
+                            identity: installationIdentity,
+                            machineId: this.machine.id,
+                            token: this.token,
+                        })
+                        : null;
                     const { socket, transport } = createMachineSocketTransport({
                         serverUrl,
                         token: this.token,
                         machineId: this.machine.id,
+                        ...(installationProof
+                            ? {
+                                installationId: installationProof.installationId,
+                                installationPublicKey: installationProof.installationPublicKey,
+                                installationProof: installationProof.installationProof,
+                            }
+                            : null),
                         ...this.ownershipMetadata,
                         takeover: takeoverOnNextConnect,
                         transports: configuration.socketIoTransports,

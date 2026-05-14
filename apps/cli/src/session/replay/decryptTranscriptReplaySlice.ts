@@ -13,6 +13,10 @@ export function decryptTranscriptReplaySlice(params: Readonly<{
   encryptionVariant?: 'dataKey';
   maxTextChars?: number;
   maxDialogItems?: number;
-}>): Readonly<{ dialog: HappierReplayDialogItem[]; latestSynopsisText: string | null }> {
+}>): Readonly<{
+  dialog: HappierReplayDialogItem[];
+  latestSynopsisText: string | null;
+  referencedSessionMediaWorkspacePaths: readonly string[];
+}> {
   return decryptTranscriptReplayCore(params);
 }

@@ -23,6 +23,12 @@ type PendingTurn = Readonly<{
 const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_RECOVERY_STATUS_MESSAGE =
     'Codex detected that the signed-in account changed and refused to continue in the current process. Restarting the Codex process and resuming this session...';
 
+function isNoActiveTurnToInterruptError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const message = 'message' in error ? String(error.message ?? '') : '';
+    return message.toLowerCase().includes('no active turn to interrupt');
+}
+
 export function createCodexAppServerRuntimeOperations(params: Readonly<{
     ensureClient: () => Promise<Readonly<{
         request: (method: string, params: unknown) => Promise<unknown>;
@@ -56,6 +62,11 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
     setPendingTurnStartSeqInclusive: (value: number | null) => void;
     setTurnInFlight: (value: boolean) => void;
     setThinking: (value: boolean) => void;
+    canSteerPrompt: () => boolean;
+    markActiveTurnSteerable: () => void;
+    markActiveTurnNonSteerable: () => void;
+    clearActiveTurnSteerability: () => void;
+    publishInFlightSteerAvailabilityIfChanged: () => void;
     publishSessionControls: () => Promise<void>;
     disposeClient: () => Promise<void>;
     sendSessionStatusMessage: (message: string) => void;
@@ -90,12 +101,14 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
         }
         params.setCurrentModeId(selection.modeId);
         await params.publishSessionControls();
+        params.publishInFlightSteerAvailabilityIfChanged();
     };
 
     const setSessionModel = async (model: string): Promise<void> => {
         params.setCurrentModelId(trimSessionId(model));
         await params.ensureClient();
         await params.publishSessionControls();
+        params.publishInFlightSteerAvailabilityIfChanged();
     };
 
     const setSessionConfigOption = async (key: string, value: unknown): Promise<void> => {
@@ -107,6 +120,7 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
             params.setCurrentReasoningEffort(nextReasoningEffort);
             await params.ensureClient();
             await params.publishSessionControls();
+            params.publishInFlightSteerAvailabilityIfChanged();
             return;
         }
         if (key === 'service_tier' || key === 'speed') {
@@ -118,6 +132,7 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
             params.setHasServiceTierOverride(true);
             await params.ensureClient();
             await params.publishSessionControls();
+            params.publishInFlightSteerAvailabilityIfChanged();
             return;
         }
         throw new Error(`Unsupported Codex app-server config option: ${String(key)}`);
@@ -127,6 +142,9 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
         const activeTurn = params.getPendingTurn();
         if (!activeTurn) {
             throw new Error('Codex app-server steerPrompt requires an active turn');
+        }
+        if (!params.canSteerPrompt()) {
+            throw new Error('Codex app-server active turn is not steerable');
         }
         const client = await params.ensureClient();
         const expectedTurnId = (activeTurn.turnId ?? params.getLatestPendingTurnId()) ?? (await params.waitForActiveTurnId());
@@ -176,6 +194,7 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
             params.setPendingTurn(activeTurn);
             params.setLatestPendingTurnId(null);
             params.setTurnInFlight(true);
+            params.markActiveTurnSteerable();
             params.setThinking(true);
             try {
                 // null policy (Happier 'default') → omit approvalPolicy/sandboxPolicy so Codex uses ~/.codex/config.toml.
@@ -241,6 +260,7 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
     const beginTurn = (): void => {
         params.beginTurnDiffProjection();
         params.setTurnInFlight(true);
+        params.markActiveTurnSteerable();
         params.setThinking(true);
     };
 
@@ -248,16 +268,24 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
         const activeTurn = params.getPendingTurn();
         if (!activeTurn) {
             params.setTurnInFlight(false);
+            params.clearActiveTurnSteerability();
             params.setThinking(false);
             return;
         }
+        params.markActiveTurnNonSteerable();
         const client = await params.ensureClient();
         const interruptTurnId = (activeTurn.turnId ?? params.getLatestPendingTurnId()) ?? (await params.waitForActiveTurnId());
         if (!interruptTurnId) {
             await params.disposeClient();
             return;
         }
-        await client.request('turn/interrupt', { threadId: activeTurn.threadId, turnId: interruptTurnId });
+        try {
+            await client.request('turn/interrupt', { threadId: activeTurn.threadId, turnId: interruptTurnId });
+        } catch (error) {
+            if (!isNoActiveTurnToInterruptError(error)) {
+                throw error;
+            }
+        }
         await params.finishPendingTurn({ flushReason: 'abort' });
     };
 
@@ -268,6 +296,7 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
         params.setCurrentServiceTier(null);
         await params.disposeClient();
         params.setTurnInFlight(false);
+        params.clearActiveTurnSteerability();
         params.setThinking(false);
     };
 

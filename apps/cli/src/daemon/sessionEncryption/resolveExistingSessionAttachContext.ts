@@ -36,6 +36,11 @@ function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function resolveLastObservedMessageSeq(rawSession: Readonly<{ seq?: unknown }>): number | undefined {
+  const seq = rawSession.seq;
+  return typeof seq === 'number' && Number.isInteger(seq) && seq >= 0 ? seq : undefined;
+}
+
 function tryReadExistingSessionMetadataRecord(params: Readonly<{
   rawSession: Readonly<{ metadata?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown }>;
   credentials: Credentials | null;
@@ -83,7 +88,7 @@ function resolveExistingSessionBackendTarget(metadataRecord: Record<string, unkn
 }
 
 function buildExistingSessionAttachContext(params: Readonly<{
-  rawSession: Readonly<{ metadata?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown }>;
+  rawSession: Readonly<{ metadata?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown; seq?: unknown }>;
   credentials: Credentials | null;
 }>): ExistingSessionAttachContext | ExistingSessionAttachContextFailure {
   const metadataRecord = tryReadExistingSessionMetadataRecord({
@@ -92,10 +97,15 @@ function buildExistingSessionAttachContext(params: Readonly<{
   });
   const backendTarget = resolveExistingSessionBackendTarget(metadataRecord);
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
+  const lastObservedMessageSeq = resolveLastObservedMessageSeq(params.rawSession);
   if (mode === 'plain') {
     return {
       ok: true,
-      attachPayload: { v: 2, encryptionMode: 'plain' },
+      attachPayload: {
+        v: 2,
+        encryptionMode: 'plain',
+        ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
+      },
       backendTarget,
       vendorResumeId: resolveVendorResumeIdForExistingSession({
         agent: undefined,
@@ -118,6 +128,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
       encryptionMode: 'e2ee',
       encryptionKeyBase64: encodeBase64(ctx.encryptionKey, 'base64'),
       encryptionVariant: ctx.encryptionVariant,
+      ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
     },
     backendTarget,
     vendorResumeId: resolveVendorResumeIdForExistingSession({

@@ -59,6 +59,27 @@ describe('ApiSessionClient pending queue materialization', () => {
         expect(sessionSocket.emitWithAck).toHaveBeenCalledWith('pending-materialize-next', { sid: mockSession.id });
     });
 
+    it('tracks materialized localIds for recovery even when the server reports an idempotent write', async () => {
+        const sessionSocket = createApiSessionSocketStub({
+            connected: true,
+            emitWithAck: async () => ({
+                ok: true,
+                didMaterialize: true,
+                didWrite: false,
+                message: { id: 'msg-2', seq: 2, localId: 'local-p1' },
+            }),
+        });
+        const userSocket = createApiSessionSocketStub();
+
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+        const popped = await client.popPendingMessage();
+
+        expect(popped).toBe(true);
+        expect((client as any).materializationRuntime.hasPendingQueueMaterializedLocalId('local-p1')).toBe(true);
+    });
+
     it('does not double-deliver a materialized message when both sockets observe it', async () => {
         const sessionSocket = createApiSessionSocketStub({
             connected: true,
@@ -166,6 +187,48 @@ describe('ApiSessionClient pending queue materialization', () => {
                 'Content-Type': 'application/json',
             }),
         });
+    });
+
+    it('popPendingMessage falls back to HTTP materialize when the socket ACK never settles', async () => {
+        const previousTimeout = process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS;
+        process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS = '5';
+        vi.useFakeTimers();
+
+        try {
+            const sessionSocket = createApiSessionSocketStub({
+                connected: true,
+                emitWithAck: async () => new Promise<never>(() => {}),
+            });
+            const userSocket = createApiSessionSocketStub();
+
+            bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
+
+            const axiosMod = await import('axios');
+            const axios = axiosMod.default as any;
+            const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({ data: { ok: true, didMaterialize: false } });
+
+            const client = new ApiSessionClient('fake-token', mockSession);
+            const poppedPromise = client.popPendingMessage().then((value) => ({
+                status: 'resolved' as const,
+                value,
+            }));
+
+            await vi.advanceTimersByTimeAsync(100);
+            const outcome = await Promise.race([
+                poppedPromise,
+                Promise.resolve({ status: 'pending' as const }),
+            ]);
+
+            expect(outcome).toEqual({ status: 'resolved', value: false });
+            expect(postSpy).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+            if (typeof previousTimeout === 'string') {
+                process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS = previousTimeout;
+            } else {
+                delete process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS;
+            }
+        }
     });
 
     it('popPendingMessage rethrows terminal auth failures from the HTTP fallback instead of collapsing them to false', async () => {

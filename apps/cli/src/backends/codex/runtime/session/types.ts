@@ -38,5 +38,6 @@ export type CodexNativeRuntime = RuntimeTurnOperations & Partial<{
     shouldResumeAfterPermissionModeChange: () => boolean;
     supportsInFlightSteer: () => boolean;
     isTurnInFlight: () => boolean;
+    canSteerPrompt: () => boolean;
     steerPrompt: (prompt: string) => Promise<void>;
 }>;

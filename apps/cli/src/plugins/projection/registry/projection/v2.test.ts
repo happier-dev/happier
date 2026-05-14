@@ -118,7 +118,7 @@ describe('buildPluginProjectionV2', () => {
             generation: 1,
         });
 
-        expect((projection.backendsById['acme.backend'] as Record<string, unknown> | undefined)?.capabilities).toEqual({
+        expect((projection.backendsById['acme.backend'] as Record<string, unknown> | undefined)?.capabilities).toMatchObject({
             executionRun: { supported: true },
         });
     });
@@ -143,6 +143,22 @@ describe('buildPluginProjectionV2', () => {
                     },
                 },
             ],
+            mcpDiscoveryProviders: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'acme.mcp',
+                    manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:mcp',
+                    daemonEntryPath: '/tmp/acme/daemon.mjs',
+                    definition: {
+                        id: 'acme.discovery',
+                        kind: 'mcp.discoveryProvider',
+                        version: '1.0.0',
+                        providerId: 'acme',
+                    },
+                },
+            ],
         } as unknown as ResolvedContributionRegistry;
 
         const projection = buildPluginProjectionV2({
@@ -150,13 +166,23 @@ describe('buildPluginProjectionV2', () => {
             generation: 6,
         });
 
-        expect(projection.familiesById.mcp?.entriesById['server:acme.server']).toEqual({
+        expect(projection.familiesById.mcp?.entriesById['server:acme.server']).toMatchObject({
             id: 'server:acme.server',
             pluginId: 'acme.mcp',
             contributionKind: 'server',
             name: 'acme-hosted',
             transport: 'hosted',
         });
+        expect(projection.familiesById.mcp?.entriesById['discoveryProvider:acme.discovery']).toMatchObject({
+            id: 'discoveryProvider:acme.discovery',
+            pluginId: 'acme.mcp',
+            contributionKind: 'discoveryProvider',
+            providerId: 'acme',
+        });
+        expect(projection.familiesById.mcp?.entriesById['backendClient:acme.backendClient']).toBeUndefined();
+        expect(projection.familiesById.mcp?.entriesById['tool:acme.tool']).toBeUndefined();
+        expect('mcpBackendClients' in projection).toBe(false);
+        expect('mcpTools' in projection).toBe(false);
     });
 
     it('projects hook semantics from the canonical protocol hook catalog when normalized hook records omit raw v2 fields', () => {

@@ -29,6 +29,16 @@ import { isActionApprovalRequiredByEnv, isActionEnabledByEnv } from '@/settings/
 
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 
+export type ExecutionRunRpcApprovalDeps = Pick<
+  ActionExecutorDeps,
+  | 'approvalsCreate'
+  | 'approvalsGet'
+  | 'approvalsList'
+  | 'approvalsResolveBlockingDecision'
+  | 'approvalsUpdate'
+  | 'approvalsWaitForDecision'
+>;
+
 type ExecutionRunRpcFailure = Readonly<{ ok: false; error: string; errorCode: string }>;
 type ExecutionRunStartResult =
   | Readonly<{ ok: true; runId: string; callId: string; sidechainId: string }>
@@ -39,6 +49,7 @@ type ExecutionRunRpcActionDepsParams = Readonly<{
   context: ExecutionRunRpcActionContext;
   policy: ExecutionRunPolicy;
   isExecutionRunsEnabled: () => boolean;
+  approvalDeps?: Partial<ExecutionRunRpcApprovalDeps>;
 }>;
 
 type ExecutionRunRpcActionContext = Readonly<{
@@ -376,6 +387,8 @@ function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams
     daemonMemoryGetWindow: unsupportedActionDependency,
     daemonMemoryEnsureUpToDate: unsupportedActionDependency,
 
+    ...(params.approvalDeps ?? {}),
+
     isActionEnabled: (id, ctx) => isActionEnabledByEnv(id, {
       surface: ctx.surface ?? null,
       placement: ctx.placement ?? null,
@@ -383,8 +396,6 @@ function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams
     isActionApprovalRequired: (id, ctx) => isActionApprovalRequiredByEnv(id, {
       surface: ctx.surface ?? null,
     }),
-    // Approval artifact storage belongs to A.12-approvals; until that packet wires
-    // RPC approval storage, approval-required execution-run RPC actions fail closed.
   };
 }
 

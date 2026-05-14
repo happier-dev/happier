@@ -38,6 +38,19 @@ function createBaseManifestV2(
   });
 }
 
+function expectedBackendCapabilities(executionRunSupported: boolean): Record<string, unknown> {
+  return {
+    executionRun: { supported: executionRunSupported },
+    session: {
+      media: {
+        acceptsImageInput: { supported: false },
+        emitsSessionMedia: { supported: false },
+        nativeImageGeneration: { supported: false },
+      },
+    },
+  };
+}
+
 describe('readPluginManifest', () => {
   it('reads schemaVersion 2 manifests into the canonical grouped CLI manifest shape', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
@@ -203,9 +216,7 @@ describe('readPluginManifest', () => {
     ]);
     expect(result.manifest.contributes.providers.map((definition) => definition.id)).toEqual(['acme.provider']);
     expect(result.manifest.contributes.backends.map((definition) => definition.id)).toEqual(['acme.backend']);
-    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual({
-      executionRun: { supported: true },
-    });
+    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
     expect(result.manifest.contributes.actions.map((definition) => definition.id)).toEqual(['acme.action']);
     expect(result.manifest.contributes.tools.map((definition) => definition.id)).toEqual(['acme.tool']);
         expect(result.manifest.contributes.commands.map((definition) => definition.id)).toEqual(['acme.command']);
@@ -261,9 +272,7 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual({
-      executionRun: { supported: false },
-    });
+    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual(expectedBackendCapabilities(false));
   });
 
   it('accepts manifest-only ACP backends as runtimeCore-backed execution-run capable', async () => {
@@ -315,9 +324,7 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual({
-      executionRun: { supported: true },
-    });
+    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
   });
 
   it('returns a semantic diagnostic when default execution-run backend support lacks runtimeCore launch proof', async () => {

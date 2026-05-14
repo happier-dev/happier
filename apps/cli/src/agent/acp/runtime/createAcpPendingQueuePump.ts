@@ -5,6 +5,7 @@ export type AcpRuntimePendingQueue = Readonly<{
   popPendingMessage: () => Promise<boolean>;
   maxPopPerWake?: number;
   drainDuringTurn?: boolean;
+  drainAfterStartOrLoad?: boolean;
   pollIntervalMs?: number;
 }>;
 
@@ -14,6 +15,7 @@ export function createAcpPendingQueuePump(params: Readonly<{
 }>): Readonly<{
   start: () => void;
   stop: () => void;
+  drainAfterStartOrLoad: () => Promise<void>;
 }> {
   let pendingPumpController: AbortController | null = null;
 
@@ -27,6 +29,25 @@ export function createAcpPendingQueuePump(params: Readonly<{
     pendingPumpController = null;
   };
 
+  const drainPendingOnce = async (controller?: AbortController): Promise<void> => {
+    if (!params.pendingQueue) return;
+    const maxPopPerWake = Math.max(1, params.pendingQueue.maxPopPerWake ?? 25);
+    for (let i = 0; i < maxPopPerWake; i += 1) {
+      if (controller?.signal.aborted) break;
+      let did = false;
+      try {
+        did = await params.pendingQueue.popPendingMessage();
+      } catch (error) {
+        if (readAuthenticationStatus(error) !== null) {
+          stop();
+          break;
+        }
+        did = false;
+      }
+      if (!did) break;
+    }
+  };
+
   const start = () => {
     if (!params.enabled) return;
     if (!params.pendingQueue) return;
@@ -35,7 +56,6 @@ export function createAcpPendingQueuePump(params: Readonly<{
 
     const controller = new AbortController();
     pendingPumpController = controller;
-    const maxPopPerWake = Math.max(1, params.pendingQueue.maxPopPerWake ?? 25);
     const pollIntervalMs = Math.max(5, params.pendingQueue.pollIntervalMs ?? 2_000);
 
     const waitForPollWake = async (): Promise<boolean> =>
@@ -54,24 +74,7 @@ export function createAcpPendingQueuePump(params: Readonly<{
       });
 
     void (async () => {
-      const drainPendingOnce = async (): Promise<void> => {
-        for (let i = 0; i < maxPopPerWake; i += 1) {
-          if (controller.signal.aborted) break;
-          let did = false;
-          try {
-            did = await params.pendingQueue!.popPendingMessage();
-          } catch (error) {
-            if (readAuthenticationStatus(error) !== null) {
-              stop();
-              break;
-            }
-            did = false;
-          }
-          if (!did) break;
-        }
-      };
-
-      await drainPendingOnce();
+      await drainPendingOnce(controller);
 
       while (!controller.signal.aborted) {
         const iteration = new AbortController();
@@ -98,7 +101,7 @@ export function createAcpPendingQueuePump(params: Readonly<{
         }
         if (controller.signal.aborted) break;
 
-        await drainPendingOnce();
+        await drainPendingOnce(controller);
       }
     })();
   };
@@ -106,5 +109,9 @@ export function createAcpPendingQueuePump(params: Readonly<{
   return {
     start,
     stop,
+    drainAfterStartOrLoad: async () => {
+      if (params.pendingQueue?.drainAfterStartOrLoad !== true) return;
+      await drainPendingOnce();
+    },
   };
 }

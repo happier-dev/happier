@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -48,6 +48,39 @@ describe('git RPC handlers', () => {
 
         expect(response.success).toBe(false);
         expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY);
+    });
+
+    it('loads dedicated worktree enrichment through the machine SCM RPC route', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
+        git(workspace, ['init']);
+        git(workspace, ['config', 'user.email', 'test@example.com']);
+        git(workspace, ['config', 'user.name', 'Test User']);
+        writeFileSync(join(workspace, 'a.txt'), 'before\n');
+        git(workspace, ['add', 'a.txt']);
+        git(workspace, ['commit', '-m', 'add file']);
+        writeFileSync(join(workspace, 'a.txt'), 'after\n');
+
+        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const enrichment = await call<{
+            success: boolean;
+            worktrees?: Array<{ path: string; changeCount?: number; lastActivityAt?: number }>;
+            errorCode?: string;
+        }, { cwd?: string; worktreePaths: string[] }>(
+            RPC_METHODS.SCM_WORKTREES_ENRICHMENT,
+            {
+                cwd: '.',
+                worktreePaths: [workspace],
+            },
+        );
+
+        expect(enrichment.success).toBe(true);
+        expect(enrichment.worktrees).toHaveLength(1);
+        const [worktree] = enrichment.worktrees ?? [];
+        expect(worktree).toBeDefined();
+        if (!worktree) return;
+        expect(realpathSync(worktree.path)).toBe(realpathSync(workspace));
+        expect(worktree.changeCount).toBeGreaterThanOrEqual(1);
+        expect(worktree.lastActivityAt).toBeGreaterThan(0);
     });
 
     it('loads file diffs even when diff.external is configured to fail', async () => {

@@ -6,14 +6,28 @@ import {
 } from '@happier-dev/protocol';
 
 import { validateDirectMachineSource } from '@/api/session/external/security/validateDirectMachineSource';
-import { collectTransientSessionMediaReadDirs } from '@/session/media/referencedPaths';
+import { collectTransientSessionMediaReadFiles } from '@/session/media/referencedPaths';
 
 import { resolveDefaultMaxBytes, resolveDefaultMaxItems } from './actionConfiguration';
+import type { ExternalSessionActionContext } from './externalSessionActionContext';
 import { getExternalSessionProviderOps } from './providerOpsResolution';
 import { externalSessionsError, internalErrorResponse } from './responseErrors';
 
+async function resolveTransientMediaAllowedRoots(input: Readonly<{
+    providerOps: Awaited<ReturnType<typeof getExternalSessionProviderOps>>;
+    source: unknown;
+    remoteSessionId: string;
+}>): Promise<readonly string[]> {
+    if (!input.source || typeof input.source !== 'object' || Array.isArray(input.source)) return [];
+    return input.providerOps.resolveTranscriptMediaReadRoots?.({
+        source: input.source as Parameters<NonNullable<typeof input.providerOps.resolveTranscriptMediaReadRoots>>[0]['source'],
+        remoteSessionId: input.remoteSessionId,
+    }) ?? [];
+}
+
 export async function executeExternalSessionTranscriptPageAction(
     raw: unknown,
+    context?: Pick<ExternalSessionActionContext, 'transientMediaReadAllowance'>,
 ): Promise<ExternalSessionTranscriptPageResponse> {
     const parsed = ExternalSessionTranscriptPageRequestSchema.safeParse(raw);
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionTranscriptPageResponse;
@@ -40,7 +54,8 @@ export async function executeExternalSessionTranscriptPageAction(
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const res = await (await getExternalSessionProviderOps(providerId)).pageTranscript({
+        const providerOps = await getExternalSessionProviderOps(providerId);
+        const res = await providerOps.pageTranscript({
             source,
             remoteSessionId,
             direction,
@@ -48,6 +63,11 @@ export async function executeExternalSessionTranscriptPageAction(
             maxBytes,
             maxItems,
         });
+        const allowedRoots = await resolveTransientMediaAllowedRoots({ providerOps, source, remoteSessionId });
+        const transientMediaReadFiles = collectTransientSessionMediaReadFiles(res.items, {
+            allowedRoots,
+        });
+        context?.transientMediaReadAllowance?.grantReadFiles(transientMediaReadFiles);
         return {
             ok: true,
             items: res.items,
@@ -55,7 +75,7 @@ export async function executeExternalSessionTranscriptPageAction(
             tailCursor: res.tailCursor,
             hasMore: res.hasMore,
             truncated: res.truncated,
-            transientMediaReadDirs: collectTransientSessionMediaReadDirs(res.items),
+            transientMediaReadFiles,
         } satisfies ExternalSessionTranscriptPageResponse;
     } catch (error) {
         return internalErrorResponse(
@@ -68,6 +88,7 @@ export async function executeExternalSessionTranscriptPageAction(
 
 export async function executeExternalSessionTranscriptReadAfterAction(
     raw: unknown,
+    context?: Pick<ExternalSessionActionContext, 'transientMediaReadAllowance'>,
 ): Promise<ExternalSessionTranscriptReadAfterResponse> {
     const parsed = ExternalSessionTranscriptReadAfterRequestSchema.safeParse(raw);
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionTranscriptReadAfterResponse;
@@ -95,19 +116,25 @@ export async function executeExternalSessionTranscriptReadAfterAction(
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const res = await (await getExternalSessionProviderOps(providerId)).readAfterTranscript({
+        const providerOps = await getExternalSessionProviderOps(providerId);
+        const res = await providerOps.readAfterTranscript({
             source,
             remoteSessionId,
             cursor,
             maxBytes,
             maxItems,
         });
+        const allowedRoots = await resolveTransientMediaAllowedRoots({ providerOps, source, remoteSessionId });
+        const transientMediaReadFiles = collectTransientSessionMediaReadFiles(res.items, {
+            allowedRoots,
+        });
+        context?.transientMediaReadAllowance?.grantReadFiles(transientMediaReadFiles);
         return {
             ok: true,
             items: res.items,
             nextCursor: res.nextCursor,
             truncated: res.truncated,
-            transientMediaReadDirs: collectTransientSessionMediaReadDirs(res.items),
+            transientMediaReadFiles,
         } satisfies ExternalSessionTranscriptReadAfterResponse;
     } catch (error) {
         return internalErrorResponse(

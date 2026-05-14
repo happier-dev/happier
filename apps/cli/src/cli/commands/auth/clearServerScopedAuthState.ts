@@ -16,6 +16,7 @@ export function clearServerScopedAuthStateInSettings(settings: Settings, serverI
 
   const nextMachineIds = deleteKey(settings.machineIdByServerId, target);
   const nextMachineIdsByAccountId = deleteKey(settings.machineIdByServerIdByAccountId, target);
+  const nextReplacementCandidates = deleteKey(settings.machineReplacementCandidatesByServerIdByAccountId, target);
   const nextLastTokenSubs = deleteKey(settings.lastTokenSubByServerId, target);
   const nextMachineConfirmed = deleteKey(settings.machineIdConfirmedByServerByServerId, target);
   const nextCursors = deleteKey(settings.lastChangesCursorByServerIdByAccountId, target);
@@ -24,6 +25,7 @@ export function clearServerScopedAuthStateInSettings(settings: Settings, serverI
     ...settings,
     machineIdByServerId: nextMachineIds,
     machineIdByServerIdByAccountId: nextMachineIdsByAccountId,
+    machineReplacementCandidatesByServerIdByAccountId: nextReplacementCandidates,
     lastTokenSubByServerId: nextLastTokenSubs,
     machineIdConfirmedByServerByServerId: nextMachineConfirmed,
     lastChangesCursorByServerIdByAccountId: nextCursors,

@@ -12,7 +12,7 @@ const validateStoredAuthTokenAgainstActiveServerMock = vi.hoisted(() =>
 const readCredentialsMock = vi.hoisted(() => vi.fn<() => Promise<Credentials | null>>(async () => null));
 const readSettingsMock = vi.hoisted(() => vi.fn<() => Promise<Partial<Settings>>>(async () => ({})));
 const clearCredentialsMock = vi.hoisted(() => vi.fn(async () => {}));
-const clearMachineIdMock = vi.hoisted(() => vi.fn(async () => {}));
+const clearMachineIdMock = vi.hoisted(() => vi.fn<(opts?: unknown) => Promise<void>>(async () => {}));
 const stopDaemonMock = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock('@/ui/auth', () => ({
@@ -31,7 +31,7 @@ vi.mock('@/persistence', () => ({
   readCredentials: () => readCredentialsMock(),
   readSettings: () => readSettingsMock(),
   clearCredentials: () => clearCredentialsMock(),
-  clearMachineId: () => clearMachineIdMock(),
+  clearMachineId: (opts?: unknown) => clearMachineIdMock(opts),
 }));
 
 vi.mock('@/daemon/controlClient', () => ({
@@ -43,6 +43,14 @@ vi.mock('@/ui/logger', () => ({
     debug: vi.fn(),
   },
 }));
+
+function createJwtWithSubject(subject: string): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url'),
+    Buffer.from(JSON.stringify({ sub: subject })).toString('base64url'),
+    '',
+  ].join('.');
+}
 
 describe('happier auth login --print-configure-links', () => {
   const prev = process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS;
@@ -121,6 +129,31 @@ describe('happier auth login --print-configure-links', () => {
       expect(clearMachineIdMock).toHaveBeenCalledTimes(1);
       expect(authAndSetupMachineIfNeededMock).toHaveBeenCalledTimes(1);
       expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('Already authenticated'));
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('preserves force-auth replacement candidate using existing credential subject when settings are legacy', async () => {
+    readCredentialsMock.mockResolvedValue({
+      token: createJwtWithSubject('account-legacy'),
+      encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    });
+    readSettingsMock.mockResolvedValue({
+      machineIdByServerId: { cloud: 'machine-legacy' },
+    });
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { handleAuthLogin } = await import('./login');
+      await handleAuthLogin(['--force']);
+
+      expect(clearCredentialsMock).toHaveBeenCalledTimes(1);
+      expect(clearMachineIdMock).toHaveBeenCalledWith(expect.objectContaining({
+        preserveReplacementCandidate: true,
+        replacementReason: 'reauth',
+        replacementAccountId: 'account-legacy',
+      }));
     } finally {
       consoleSpy.mockRestore();
     }

@@ -19,6 +19,7 @@ import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentit
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import { resolveDaemonStartupSourceFromEnv } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { resolveDarwinBackgroundServiceSpawnDirectoryFailure } from '../spawn/resolveDarwinBackgroundServiceSpawnDirectoryFailure';
+import { applyInitialTranscriptAfterSeqToAttachPayload } from '../sessionEncryption/applyInitialTranscriptAfterSeqToAttachPayload';
 
 type DaemonVendorResumeSupportHook = Readonly<{
     resolveVendorResumeSupportParams?: (params: Readonly<{
@@ -109,6 +110,7 @@ export async function prepareExecuteSpawnSessionRequest(
         backendTarget: options.backendTarget,
         profileId: options.profileId,
         hasInitialPrompt: typeof options.initialPrompt === 'string' && options.initialPrompt.trim().length > 0,
+        hasInitialTranscriptAfterSeq: typeof options.initialTranscriptAfterSeq === 'number',
         hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
         windowsRemoteSessionLaunchMode: options.windowsRemoteSessionLaunchMode,
         windowsRemoteSessionConsole: options.windowsRemoteSessionConsole,
@@ -162,6 +164,9 @@ export async function prepareExecuteSpawnSessionRequest(
         sessionAttachPayload,
         catalogAgentId,
     } = backendIdentityResolution;
+    const effectiveSessionAttachPayload = sessionAttachPayload
+        ? applyInitialTranscriptAfterSeqToAttachPayload(sessionAttachPayload, options.initialTranscriptAfterSeq)
+        : sessionAttachPayload;
     const catalogAgentIdForConnectedServices = (catalogAgentId ?? DEFAULT_CATALOG_AGENT_ID) as CatalogAgentId;
     const daemonSpawnHooks = catalogAgentId
         ? await (async () => {
@@ -240,7 +245,7 @@ export async function prepareExecuteSpawnSessionRequest(
         normalizedExistingSessionId,
         effectiveResume,
         effectiveBackendTargetV2,
-        sessionAttachPayload,
+        sessionAttachPayload: effectiveSessionAttachPayload,
         catalogAgentId: catalogAgentId as CatalogAgentId | null,
         catalogAgentIdForConnectedServices,
         daemonSpawnHooks,

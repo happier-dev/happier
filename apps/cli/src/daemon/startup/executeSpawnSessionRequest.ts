@@ -189,8 +189,12 @@ export async function executeSpawnSessionRequest(
                 expandedEnvironmentVariables: extraEnv,
                 extraEnvForChild,
             });
+            const {
+                initialTranscriptAfterSeq: _initialTranscriptAfterSeq,
+                ...trackedSpawnOptionsBase
+            } = options;
             const trackedSpawnOptions: SpawnSessionOptions = {
-                ...options,
+                ...trackedSpawnOptionsBase,
                 ...(trackedSessionEnvironmentVariables
                     ? { environmentVariables: trackedSessionEnvironmentVariables }
                     : {}),

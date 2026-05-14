@@ -74,6 +74,10 @@ export type ExternalSessionProviderOps = Readonly<{
     maxBytes: number;
     maxItems: number;
   }>) => Promise<ExternalSessionTranscriptReadAfter>;
+  resolveTranscriptMediaReadRoots?: (params: Readonly<{
+    source: ExternalSessionsSource;
+    remoteSessionId: string;
+  }>) => Promise<readonly string[]>;
   acquireFollowLease?: (params: Readonly<{
     source: ExternalSessionsSource;
     remoteSessionId: string;

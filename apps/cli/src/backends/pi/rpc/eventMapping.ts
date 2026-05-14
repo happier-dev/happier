@@ -40,38 +40,40 @@ function extractAssistantText(message: unknown): string | null {
   return text;
 }
 
-function extractAssistantContent(message: unknown): unknown {
-  const record = asRecord(message);
-  if (!record || record.role !== 'assistant') return undefined;
-  return record.content;
-}
-
-function extractAssistantMessageId(message: unknown): string | null {
-  const record = asRecord(message);
-  if (!record) return null;
-  return asNonEmptyString(record.id) ?? asNonEmptyString(record.messageId);
-}
-
 function buildPiAssistantMessages(message: unknown): AgentMessage[] {
   const messages: AgentMessage[] = [];
   const fullText = extractAssistantText(message);
   if (fullText !== null && fullText.length > 0) {
     messages.push({ type: 'model-output', fullText });
   }
+  return messages;
+}
 
-  const messageId = extractAssistantMessageId(message);
-  const mediaResult = extractAcpMediaContentBlocks(extractAssistantContent(message), {
-    originSource: 'provider-generated',
-    ...(messageId ? { providerEventId: messageId } : {}),
+function buildPiToolResultMessages(params: Readonly<{
+  callId: string;
+  toolName: string;
+  result: unknown;
+  isError?: boolean;
+}>): AgentMessage[] {
+  const messages: AgentMessage[] = [{
+    type: 'tool-result',
+    callId: params.callId,
+    toolName: params.toolName,
+    result: params.result,
+    ...(params.isError ? { isError: true } : {}),
+  }];
+  const mediaResult = extractAcpMediaContentBlocks(params.result, {
+    originSource: 'tool-output',
+    toolCallId: params.callId,
   });
   if (mediaResult.media.length > 0) {
     messages.push({
       type: 'event',
       name: 'session_media',
       payload: {
-        localId: `pi-media-${messageId ?? 'assistant'}`,
+        localId: `pi-media-${params.callId}`,
         role: 'output',
-        category: 'generated',
+        category: 'tool-artifact',
         media: mediaResult.media,
       },
     });
@@ -138,7 +140,7 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
     const toolName = asNonEmptyString(record.toolName);
     if (!callId || !toolName) return [];
     const isError = isBoolean(record.isError) ? record.isError : undefined;
-    return [{ type: 'tool-result', callId, toolName, result: record.result, ...(isError ? { isError: true } : {}) }];
+    return buildPiToolResultMessages({ callId, toolName, result: record.result, isError });
   }
 
   if (type === 'tool_execution_update') {

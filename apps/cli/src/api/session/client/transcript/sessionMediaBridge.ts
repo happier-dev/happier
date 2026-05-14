@@ -10,6 +10,11 @@ import {
     inferSessionMediaMimeTypeFromName,
     normalizeSessionMediaMimeType,
 } from '@/session/media/mime';
+import {
+    isUnsafeSessionMediaMetadataString,
+    sanitizeSessionMediaIdentifier,
+} from '@/session/media/names';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { SessionMediaFailureV1 } from '@happier-dev/protocol';
 import type {
     SessionMediaIngestionSource,
@@ -22,6 +27,8 @@ export type SessionMediaBridgeInput = Readonly<{
     origin: SessionMediaOrigin;
     suggestedName?: string;
     createdAtMs?: number;
+    sourceAccessPolicy?: FilesystemAccessPolicy;
+    accessPolicy?: FilesystemAccessPolicy;
 }>;
 
 export type SendAgentSessionMediaCommittedRequest = Readonly<{
@@ -49,6 +56,7 @@ export type SessionMediaBridgePersistResult =
     }>;
 
 const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
+const MAX_SAFE_FAILURE_NAME_LENGTH = 120;
 
 const UNSAFE_META_KEYS = new Set([
     'data',
@@ -70,6 +78,9 @@ const UNSAFE_META_KEYS = new Set([
     'providerSummary',
     'sourcePath',
     'path',
+    'prompt',
+    'revisedPrompt',
+    'revised_prompt',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -77,13 +88,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isUnsafeString(value: string): boolean {
-    const trimmed = value.trim();
-    return (
-        trimmed.startsWith('/')
-        || trimmed.startsWith('\\')
-        || /^[a-z]:[\\/]/i.test(trimmed)
-        || /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
-    );
+    return isUnsafeSessionMediaMetadataString(value);
 }
 
 function sanitizeBridgeMetaValue(value: unknown): unknown {
@@ -118,13 +123,18 @@ function sanitizeBridgeMeta(meta: Record<string, unknown> | undefined): Record<s
 }
 
 function sanitizeOrigin(origin: SessionMediaOrigin): SessionMediaOrigin {
+    const agentId = sanitizeSessionMediaIdentifier(origin.agentId);
+    const toolCallId = sanitizeSessionMediaIdentifier(origin.toolCallId);
+    const generationId = sanitizeSessionMediaIdentifier(origin.generationId);
+    const providerEventId = sanitizeSessionMediaIdentifier(origin.providerEventId);
+    const providerFileId = sanitizeSessionMediaIdentifier(origin.providerFileId);
     return {
         source: origin.source,
-        ...(typeof origin.agentId === 'string' && origin.agentId.trim() ? { agentId: origin.agentId } : {}),
-        ...(typeof origin.toolCallId === 'string' && origin.toolCallId.trim() ? { toolCallId: origin.toolCallId } : {}),
-        ...(typeof origin.generationId === 'string' && origin.generationId.trim() ? { generationId: origin.generationId } : {}),
-        ...(typeof origin.providerEventId === 'string' && origin.providerEventId.trim() ? { providerEventId: origin.providerEventId } : {}),
-        ...(typeof origin.providerFileId === 'string' && origin.providerFileId.trim() ? { providerFileId: origin.providerFileId } : {}),
+        ...(agentId ? { agentId } : {}),
+        ...(toolCallId ? { toolCallId } : {}),
+        ...(generationId ? { generationId } : {}),
+        ...(providerEventId ? { providerEventId } : {}),
+        ...(providerFileId ? { providerFileId } : {}),
     };
 }
 
@@ -133,6 +143,16 @@ function sanitizeMediaItem(item: SessionMediaItemV1): SessionMediaItemV1 {
         ...item,
         origin: sanitizeOrigin(item.origin),
     };
+}
+
+function requiresScopedSourceAccessPolicy(source: SessionMediaIngestionSource): boolean {
+    return source.kind === 'local-file' || source.kind === 'local-uri';
+}
+
+function hasRestrictedRootsAccessPolicy(
+    accessPolicy: FilesystemAccessPolicy | undefined,
+): accessPolicy is Extract<FilesystemAccessPolicy, { kind: 'restrictedRoots' }> {
+    return accessPolicy?.kind === 'restrictedRoots' && accessPolicy.roots.length > 0;
 }
 
 function buildFailure(
@@ -167,14 +187,53 @@ function readSourceNameHint(source: SessionMediaIngestionSource): string | undef
 }
 
 function sanitizeFailureName(value: string, fallback: string): string {
+    if (isUnsafeFailureNameCandidate(value)) return fallback;
     const baseName = basename(value).trim();
+    if (isUnsafeFailureNameCandidate(baseName)) return fallback;
     const normalized = baseName.replace(/[^\w.\- ()]/g, '_').replace(/_+/g, '_');
-    if (!normalized || normalized === '.' || normalized === '..') return fallback;
+    if (
+        !normalized
+        || normalized === '.'
+        || normalized === '..'
+        || normalized.length > MAX_SAFE_FAILURE_NAME_LENGTH
+    ) {
+        return fallback;
+    }
     return normalized;
 }
 
+function isUnsafeFailureNameCandidate(value: string): boolean {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return true;
+    if (trimmed.length > MAX_SAFE_FAILURE_NAME_LENGTH) return true;
+    if (/^(?:data|file|https?|blob):/iu.test(trimmed)) return true;
+    if (/^[a-z][a-z0-9+.-]*:/iu.test(trimmed)) return true;
+    if (trimmed.startsWith('/') || trimmed.startsWith('\\') || /^[a-z]:[\\/]/iu.test(trimmed)) return true;
+    if (isBase64LikeFailureName(trimmed)) return true;
+    return false;
+}
+
+function isBase64LikeFailureName(value: string): boolean {
+    const trimmed = value.trim();
+    if (trimmed.length < 11) return false;
+    if (trimmed.includes('.') || /\s/u.test(trimmed)) return false;
+    if (!/[A-Z]/u.test(trimmed) || !/[a-z]/u.test(trimmed) || !/[0-9+/_=-]/u.test(trimmed)) return false;
+    if (!/^[A-Za-z0-9+/_-]+={0,2}$/u.test(trimmed)) return false;
+    const unpadded = trimmed.replace(/=+$/u, '');
+    const normalized = unpadded.replace(/-/gu, '+').replace(/_/gu, '/');
+    if (normalized.length % 4 === 1) return false;
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    try {
+        const decoded = Buffer.from(padded, 'base64');
+        if (decoded.byteLength < 8) return false;
+        return decoded.toString('base64').replace(/=+$/u, '') === normalized;
+    } catch {
+        return false;
+    }
+}
+
 function resolveFailureName(entry: SessionMediaBridgeInput, index: number): string {
-    const fallback = `media-${index + 1}`;
+    const fallback = `image-${index + 1}`;
     if (entry.suggestedName) return sanitizeFailureName(entry.suggestedName, fallback);
     const sourceNameHint = readSourceNameHint(entry.source);
     if (sourceNameHint) return sanitizeFailureName(sourceNameHint, fallback);
@@ -196,6 +255,19 @@ function buildSessionMediaMeta(
     };
 }
 
+function attachSessionMediaMeta(
+    meta: Record<string, unknown>,
+    items: readonly SessionMediaItemV1[],
+    failures: readonly SessionMediaFailureV1[],
+): Record<string, unknown> {
+    if (items.length === 0 && failures.length === 0) return meta;
+    const sessionMediaMeta = buildSessionMediaMeta(items, failures);
+    if (Object.prototype.hasOwnProperty.call(meta, 'happier')) {
+        return { ...meta, happierMedia: sessionMediaMeta };
+    }
+    return { ...meta, happier: sessionMediaMeta };
+}
+
 export async function persistSessionMediaForTranscript(
     deps: SessionMediaBridgePersistDeps,
 ): Promise<SessionMediaBridgePersistResult> {
@@ -211,10 +283,16 @@ export async function persistSessionMediaForTranscript(
             failures.push(buildFailure(deps.request, entry, index, { code: 'missing_working_directory' }));
             continue;
         }
+        if (requiresScopedSourceAccessPolicy(entry.source) && !hasRestrictedRootsAccessPolicy(entry.sourceAccessPolicy)) {
+            failures.push(buildFailure(deps.request, entry, index, { code: 'scoped_media_access_policy_required' }));
+            continue;
+        }
         const result = await persistSessionMedia({
             workingDirectory,
             pathAllowanceRegistry,
             providerFileDownloader: deps.providerFileDownloader,
+            ...(entry.accessPolicy ? { accessPolicy: entry.accessPolicy } : {}),
+            ...(entry.sourceAccessPolicy ? { sourceAccessPolicy: entry.sourceAccessPolicy } : {}),
             input: {
                 sessionId: deps.sessionId,
                 messageLocalId: deps.request.localId,
@@ -233,10 +311,7 @@ export async function persistSessionMediaForTranscript(
         }
     }
 
-    const meta = {
-        ...sanitizeBridgeMeta(deps.request.meta),
-        ...(items.length > 0 || failures.length > 0 ? { happierMedia: buildSessionMediaMeta(items, failures) } : {}),
-    };
+    const meta = attachSessionMediaMeta(sanitizeBridgeMeta(deps.request.meta), items, failures);
 
     return {
         success: failures.length === 0,

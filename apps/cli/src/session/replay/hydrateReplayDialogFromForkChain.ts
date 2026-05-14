@@ -122,7 +122,12 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
    * (e.g. replay strategy `summary_plus_recent`).
    */
   wantSynopsisText?: boolean;
-}>): Promise<{ dialog: HappierReplayDialogItem[]; sourceCutoffSeqInclusive: number; synopsisText?: string | null } | null> {
+}>): Promise<{
+  dialog: HappierReplayDialogItem[];
+  sourceCutoffSeqInclusive: number;
+  synopsisText?: string | null;
+  referencedSessionMediaWorkspacePaths: readonly string[];
+} | null> {
   const maxDepth =
     typeof params.maxDepth === 'number' && Number.isFinite(params.maxDepth)
       ? Math.max(1, Math.min(25, Math.floor(params.maxDepth)))
@@ -165,6 +170,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
   if (segments.length === 0) return null;
 
   const dialogs: HappierReplayDialogItem[] = [];
+  const referencedSessionMediaWorkspacePaths = new Set<string>();
   let sourceCutoffSeqInclusive = 0;
   let synopsisText: string | null = null;
   const wantSynopsisText = params.wantSynopsisText === true;
@@ -206,6 +212,9 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     if (encryptionMode === 'plain') {
       const slice = decryptTranscriptReplaySlice({ rows, maxTextChars: params.maxTextChars, maxDialogItems: params.limit });
       dialogs.push(...slice.dialog);
+      for (const path of slice.referencedSessionMediaWorkspacePaths) {
+        referencedSessionMediaWorkspacePaths.add(path);
+      }
       if (segment.sessionId === params.startingSessionId) {
         sourceCutoffSeqInclusive = cutoff;
         synopsisText = slice.latestSynopsisText;
@@ -259,6 +268,9 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       maxDialogItems: params.limit,
     });
     dialogs.push(...slice.dialog);
+    for (const path of slice.referencedSessionMediaWorkspacePaths) {
+      referencedSessionMediaWorkspacePaths.add(path);
+    }
     if (segment.sessionId === params.startingSessionId) {
       sourceCutoffSeqInclusive = cutoff;
       synopsisText = slice.latestSynopsisText;
@@ -299,5 +311,10 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
   if (dialogs.length === 0) return null;
   dialogs.sort((a, b) => a.createdAt - b.createdAt);
   const dialog = dialogs.length > params.limit ? dialogs.slice(dialogs.length - params.limit) : dialogs;
-  return { dialog, sourceCutoffSeqInclusive, synopsisText };
+  return {
+    dialog,
+    sourceCutoffSeqInclusive,
+    synopsisText,
+    referencedSessionMediaWorkspacePaths: [...referencedSessionMediaWorkspacePaths].sort((left, right) => left.localeCompare(right)),
+  };
 }

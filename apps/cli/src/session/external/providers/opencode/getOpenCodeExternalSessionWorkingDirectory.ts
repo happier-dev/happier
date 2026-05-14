@@ -6,11 +6,21 @@ export async function getOpenCodeExternalSessionWorkingDirectory(params: Readonl
     source: ExternalSessionsSource;
     remoteSessionId: string;
 }>): Promise<string | null> {
+    const verified = await getOpenCodeExternalSessionVerifiedWorkingDirectory(params);
+    if (verified) return verified;
+
     if (params.source.kind === 'opencodeServer') {
         const fromSource = typeof params.source.directory === 'string' ? params.source.directory.trim() : '';
         if (fromSource.length > 0) return fromSource;
     }
 
+    return null;
+}
+
+export async function getOpenCodeExternalSessionVerifiedWorkingDirectory(params: Readonly<{
+    source: ExternalSessionsSource;
+    remoteSessionId: string;
+}>): Promise<string | null> {
     const client = await createOpenCodeDirectClient(params.source);
     try {
         const session = await client.sessionGet({ sessionId: params.remoteSessionId });

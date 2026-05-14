@@ -75,6 +75,26 @@ function createPendingTurn(threadId: string): CodexAppServerPendingTurn {
     };
 }
 
+type CodexAppServerSteerContext = Readonly<{
+    modeId: string | null;
+    modelId: string | null;
+    reasoningEffort: string | null;
+    serviceTier: string | null;
+    hasServiceTierOverride: boolean;
+}>;
+
+function areSteerContextsEqual(
+    left: CodexAppServerSteerContext | null,
+    right: CodexAppServerSteerContext | null,
+): boolean {
+    if (!left || !right) return false;
+    return left.modeId === right.modeId
+        && left.modelId === right.modelId
+        && left.reasoningEffort === right.reasoningEffort
+        && left.serviceTier === right.serviceTier
+        && left.hasServiceTierOverride === right.hasServiceTierOverride;
+}
+
 export function createCodexAppServerRuntime(params: Readonly<{
     directory: string;
     activeServerDir?: string | null;
@@ -86,9 +106,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
     permissionHandler?: CodexAppServerPermissionHandler | null;
     getPermissionMode?: (() => PermissionMode) | null;
     permissionMode?: PermissionMode;
+    onInFlightSteerAvailabilityChange?: (available: boolean) => void;
 }>): Readonly<{
     getSessionId: () => string | null;
     supportsInFlightSteer: () => boolean;
+    canSteerPrompt: () => boolean;
     isTurnInFlight: () => boolean;
     beginTurn: () => void;
     cancel: () => Promise<void>;
@@ -118,11 +140,47 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const completedTurnSeqRanges: CompletedTurnSeqRange[] = [];
     let pendingTurnFinalizationTimer: ReturnType<typeof setTimeout> | null = null;
     let scheduledPendingTurnFlushReason: 'turn-end' | 'abort' | null = null;
+    let activeTurnSteerContext: CodexAppServerSteerContext | null = null;
+    let activeTurnAcceptsSteer = false;
+    let lastPublishedInFlightSteerAvailability: boolean | null = null;
     const setPrimaryTurnInFlight = (value: boolean): void => {
         if (value && !turnInFlight) {
             void recordPrimaryTurnInProgress({ session: params.session });
         }
         turnInFlight = value;
+    };
+    const captureCurrentSteerContext = (): CodexAppServerSteerContext => ({
+        modeId: currentModeId,
+        modelId: currentModelId,
+        reasoningEffort: currentReasoningEffort,
+        serviceTier: currentServiceTier,
+        hasServiceTierOverride,
+    });
+    const canSteerPrompt = (): boolean => Boolean(
+        pendingTurn
+        && turnInFlight
+        && activeTurnAcceptsSteer
+        && areSteerContextsEqual(activeTurnSteerContext, captureCurrentSteerContext()),
+    );
+    const publishInFlightSteerAvailabilityIfChanged = (): void => {
+        const next = canSteerPrompt();
+        if (next === lastPublishedInFlightSteerAvailability) return;
+        lastPublishedInFlightSteerAvailability = next;
+        params.onInFlightSteerAvailabilityChange?.(next);
+    };
+    const markActiveTurnSteerable = (): void => {
+        activeTurnSteerContext = captureCurrentSteerContext();
+        activeTurnAcceptsSteer = true;
+        publishInFlightSteerAvailabilityIfChanged();
+    };
+    const markActiveTurnNonSteerable = (): void => {
+        activeTurnAcceptsSteer = false;
+        publishInFlightSteerAvailabilityIfChanged();
+    };
+    const clearActiveTurnSteerability = (): void => {
+        activeTurnSteerContext = null;
+        activeTurnAcceptsSteer = false;
+        publishInFlightSteerAvailabilityIfChanged();
     };
     const streamEventBridge = createCodexAppServerStreamEventBridge();
     const streamLifecycle = createCodexAppServerStreamLifecycle({
@@ -189,6 +247,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
         setScheduledPendingTurnFlushReason: (reason) => {
             scheduledPendingTurnFlushReason = reason;
         },
+        markActiveTurnNonSteerable,
+        clearActiveTurnSteerability,
     });
     const clientLifecycle = createCodexAppServerClientLifecycle({
         directory: params.directory,
@@ -222,6 +282,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         hasServiceTierOverride: () => hasServiceTierOverride,
         setTurnInFlight: setPrimaryTurnInFlight,
         setThinking: runtimeControlState.setThinking,
+        markActiveTurnNonSteerable,
         lastPublishedThreadId,
         runBridgeWork: streamLifecycle.runBridgeWork,
         ensureSyntheticSubagentThread: streamLifecycle.ensureSyntheticSubagentThread,
@@ -285,6 +346,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
         },
         setTurnInFlight: setPrimaryTurnInFlight,
         setThinking: runtimeControlState.setThinking,
+        canSteerPrompt,
+        markActiveTurnSteerable,
+        markActiveTurnNonSteerable,
+        clearActiveTurnSteerability,
+        publishInFlightSteerAvailabilityIfChanged,
         publishSessionControls: async () => {
             const client = await clientLifecycle.ensureClient();
             await clientLifecycle.publishSessionControls(client);
@@ -306,6 +372,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         // turn without interrupting it. This may not affect a currently-running tool until that
         // tool finishes, but it should still be handled within the same turn.
         supportsInFlightSteer: () => true,
+        canSteerPrompt,
         isTurnInFlight: () => turnInFlight,
         beginTurn: runtimeOperations.beginTurn,
         cancel: runtimeOperations.cancel,

@@ -11,6 +11,7 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { waitForSocketConnect } from '@/session/transport/socket/waitForSocketConnect';
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
+import { emitSocketCallbackAck } from '@/session/transport/shared/socketAck';
 
 type UpdateMetadataAck =
   | { result: 'success'; version: number; metadata: string }
@@ -30,10 +31,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 async function emitUpdateMetadataWithAck(socket: Socket, payload: { sid: string; expectedVersion: number; metadata: string }): Promise<UpdateMetadataAck> {
-  const res = await new Promise<UpdateMetadataAck>((resolve) => {
-    socket.emit('update-metadata', payload, (answer: unknown) => resolve(answer as UpdateMetadataAck));
+  return await emitSocketCallbackAck<UpdateMetadataAck>({
+    socket: socket as any,
+    event: 'update-metadata',
+    payload,
   });
-  return res;
 }
 
 export async function updateSessionMetadataWithRetry(params: Readonly<{

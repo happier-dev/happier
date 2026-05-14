@@ -246,6 +246,38 @@ describe('CodexLikePermissionHandler', () => {
     );
   });
 
+  it('suppresses provider prompts for Happier MCP tools only when Happier approval is required', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({
+      session: session as any,
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        actionsSettingsV1: {
+          v: 1,
+          actions: {
+            'session.list': {
+              disabledSurfaces: [],
+              approvalRequiredSurfaces: ['session_agent'],
+            },
+          },
+        },
+      } as any),
+    });
+
+    await expect(handler.handleToolCall('list-1', 'mcp__happier__session_list', {})).resolves.toEqual({
+      decision: 'approved',
+    });
+    expect(session.agentState.requests['list-1']).toBeUndefined();
+
+    const pending = handler.handleToolCall('status-1', 'happier_action_execute', { actionId: 'session.status.get' });
+    expect(session.agentState.requests['status-1']).toEqual(
+      expect.objectContaining({ tool: 'happier_action_execute' }),
+    );
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    await rpc!({ id: 'status-1', approved: false, decision: 'denied' });
+    await expect(pending).resolves.toEqual({ decision: 'denied' });
+  });
+
   it('denies session_title_set when coding prompt title updates are disabled', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({

@@ -1,6 +1,7 @@
 import { SessionSynopsisV1Schema } from '@happier-dev/protocol';
 
 import { decodeBase64, decrypt } from '@/api/encryption';
+import { collectReferencedSessionMediaWorkspacePaths } from '@/session/media/referencedPaths';
 
 import type { HappierReplayDialogItem } from './types';
 
@@ -263,11 +264,16 @@ export function decryptTranscriptReplayCore(params: Readonly<{
   encryptionVariant?: 'dataKey';
   maxTextChars?: number;
   maxDialogItems?: number;
-}>): Readonly<{ dialog: HappierReplayDialogItem[]; latestSynopsisText: string | null }> {
+}>): Readonly<{
+  dialog: HappierReplayDialogItem[];
+  latestSynopsisText: string | null;
+  referencedSessionMediaWorkspacePaths: readonly string[];
+}> {
   const maxTextChars = params.maxTextChars;
   const maxDialogItems = normalizePositiveInt(params.maxDialogItems, 200, { min: 1, max: 10_000 });
   const out: Array<{ role: 'User' | 'Assistant'; createdAt: number; seq: number | null; text: string }> = [];
   let bestSynopsis: { synopsis: string; updatedAtMs: number; seqTo: number } | null = null;
+  const referencedSessionMediaWorkspacePaths = new Set<string>();
 
   for (const row of params.rows ?? []) {
     try {
@@ -286,6 +292,9 @@ export function decryptTranscriptReplayCore(params: Readonly<{
         decryptedValue = decrypt(params.encryptionKey, 'dataKey', decodeBase64(content.c));
       }
       if (!decryptedValue || typeof decryptedValue !== 'object') continue;
+      for (const path of collectReferencedSessionMediaWorkspacePaths([decryptedValue])) {
+        referencedSessionMediaWorkspacePaths.add(path);
+      }
 
       const synopsisCandidate = tryReadSessionSynopsisText(decryptedValue.meta);
       if (synopsisCandidate) {
@@ -387,5 +396,6 @@ export function decryptTranscriptReplayCore(params: Readonly<{
   return {
     dialog: bounded.map(({ seq: _seq, ...rest }) => rest),
     latestSynopsisText: bestSynopsis?.synopsis ?? null,
+    referencedSessionMediaWorkspacePaths: [...referencedSessionMediaWorkspacePaths].sort((left, right) => left.localeCompare(right)),
   };
 }

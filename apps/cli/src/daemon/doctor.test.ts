@@ -37,6 +37,16 @@ describe('classifyHappyProcess', () => {
     expect(res!.type).toBe('daemon-spawned-session');
   });
 
+  it('should detect a daemon-spawned dev session when ps reports the full node executable path', () => {
+    const res = classifyHappyProcess({
+      pid: 123,
+      name: '/Users/leeroy/.local/share/fnm/node-versions/v22.22.1/installation/bin/node',
+      cmd: '/Users/leeroy/.local/share/fnm/node-versions/v22.22.1/installation/bin/node --no-warnings --no-deprecation --import /repo/node_modules/tsx/dist/esm/index.mjs /repo/apps/cli/src/index.ts codex --happy-starting-mode remote --started-by daemon',
+    });
+    expect(res).not.toBeNull();
+    expect(res!.type).toBe('dev-daemon-spawned');
+  });
+
   it('should detect a packaged Windows daemon-spawned session process when ps-list reports happier.exe', () => {
     const res = classifyHappyProcess({
       pid: 123,

@@ -130,6 +130,9 @@ describe('ensureMachineRegistered', () => {
             machineIdByServerId: {
               cloud: oldMachineId,
             },
+            lastTokenSubByServerId: {
+              cloud: 'account-1',
+            },
             machineIdConfirmedByServerByServerId: {
               cloud: true,
             },
@@ -179,6 +182,11 @@ describe('ensureMachineRegistered', () => {
       const settings = await readSettings();
       expect(settings.machineId).toBe(calls[1]);
       expect(settings.machineIdConfirmedByServer).toBeUndefined();
+      expect(settings.machineReplacementCandidatesByServerIdByAccountId?.cloud?.['account-1']).toEqual({
+        machineId: oldMachineId,
+        replacementReason: 'rotation',
+        createdAt: expect.any(Number),
+      });
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }

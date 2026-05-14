@@ -77,6 +77,14 @@ export interface SpawnSessionOptions {
      */
     existingSessionId?: string;
     /**
+     * Existing-session attach cursor for wake-after-send resume.
+     *
+     * When a UI first commits a wake prompt to the Happier transcript and then asks the daemon
+     * to resume the stopped runner, the child must catch up after this seq so the new prompt is
+     * delivered once without replaying older turns.
+     */
+    initialTranscriptAfterSeq?: number;
+    /**
      * Optional attach-only metadata identity policy.
      * Preserve current persisted machine identity for normal attaches, but allow runtime replacement
      * for cross-machine handoff cutover.

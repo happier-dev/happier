@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { HostSessionTerminalRemoteModeRuntime } from '@/agent/runtime/session/loop/terminalRemoteModeRuntime';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
@@ -7,6 +8,7 @@ import { createClaudeRuntimeTurnOperations } from './createTurnOperations';
 
 const mocks = vi.hoisted(() => {
   class TestClaudeSession {
+    public readonly accountSettings: unknown;
     public claudeCodeExperimentalAgentTeamsEnabled = false;
     public lastPermissionMode = 'default';
     public lastPermissionModeUpdatedAt = 0;
@@ -23,7 +25,8 @@ const mocks = vi.hoisted(() => {
       return true;
     });
 
-    constructor() {
+    constructor(options?: Readonly<{ accountSettings?: unknown }>) {
+      this.accountSettings = options?.accountSettings ?? null;
       mocks.createdSessions.push(this);
     }
   }
@@ -102,6 +105,8 @@ function createRuntime(params?: Readonly<{
   startingMode?: 'terminal' | 'remote';
   experimentalAgentTeams?: boolean;
   session?: ApiSessionClient;
+  accountSettings?: AccountSettings | null;
+  optsAccountSettings?: AccountSettings | null;
 }>): RuntimeTurnOperations & HostSessionTerminalRemoteModeRuntime {
   return createClaudeRuntimeTurnOperations({
     opts: {
@@ -110,11 +115,15 @@ function createRuntime(params?: Readonly<{
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
       },
       startingMode: params?.startingMode,
+      accountSettings: params?.optsAccountSettings,
     },
     directory: '/tmp/project',
     machineId: 'machine-1',
     session: params?.session ?? createSessionClient(),
     mcpServers: {},
+    accountSettings: params && Object.prototype.hasOwnProperty.call(params, 'accountSettings')
+      ? params.accountSettings
+      : null,
     hookSettingsPath: '/tmp/hooks.json',
     hookPluginDir: null,
     hookServer: { stop: vi.fn() },
@@ -171,6 +180,27 @@ describe('createClaudeRuntimeTurnOperations', () => {
     await modeLoop?.runRemote();
     expect(mocks.remoteLaunch).toHaveBeenCalledWith(mocks.createdSessions[0]);
     expect(mocks.createdSessions).toHaveLength(1);
+  });
+
+  it('honors an explicit null MCP account settings snapshot instead of falling back to stale start options', async () => {
+    const staleSettings = accountSettingsParse({
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.list': {
+            approvalRequiredSurfaces: ['session_agent'],
+          },
+        },
+      },
+    });
+    const runtime = createRuntime({
+      accountSettings: null,
+      optsAccountSettings: staleSettings,
+    });
+
+    await runtime.startOrLoadSession();
+
+    expect(mocks.createdSessions[0]?.accountSettings).toBeNull();
   });
 
   it('exposes a graceful remote handoff handle through the shared terminal mode loop', async () => {
