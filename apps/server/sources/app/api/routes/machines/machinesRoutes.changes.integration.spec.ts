@@ -33,9 +33,6 @@ vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
 
 const markAccountChanged = vi.fn(async () => 123);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
-const markAccountChangedAfterCommit = vi.fn(async () => 123);
-vi.mock("@/app/changes/markAccountChangedAfterCommit", () => ({ markAccountChangedAfterCommit }));
-
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 installDbModuleMock(() => ({
@@ -76,8 +73,9 @@ describe("machinesRoutes (AccountChange integration)", () => {
             },
         );
 
-        expect(markAccountChanged).not.toHaveBeenCalled();
-        expect(markAccountChangedAfterCommit).toHaveBeenCalledWith(
+        expect(markAccountChanged).toHaveBeenCalledTimes(1);
+        expect(markAccountChanged).toHaveBeenCalledWith(
+            expect.anything(),
             expect.objectContaining({ accountId: "u1", kind: "machine", entityId: "m1" }),
         );
 

@@ -82,6 +82,7 @@ model Account {
     AccountIdentity        AccountIdentity[]
     automations            Automation[]
     automationRuns         AutomationRun[]
+    SessionFolderAssignment SessionFolderAssignment[]
 }
 
 enum AccountIdentityEligibilityStatus {
@@ -327,6 +328,7 @@ model Session {
     accessKeys        AccessKey[]
     shares            SessionShare[]
     publicShare       PublicSessionShare?
+    sessionFolderAssignments SessionFolderAssignment[]
     accountChanges    AccountChange[]    @relation("AccountChangeSession")
     producedByAutomationRuns AutomationRun[] @relation("AutomationRunProducedSession")
 
@@ -334,6 +336,22 @@ model Session {
     @@index([accountId, updatedAt])
     @@index([accountId, archivedAt])
     @@index([lastActiveAt, updatedAt])
+}
+
+model SessionFolderAssignment {
+    id        String   @id @default(cuid())
+    accountId String
+    sessionId String
+    folderId  String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId])
+    @@index([accountId, folderId, updatedAt])
+    @@index([sessionId])
 }
 
 model SessionMessage {
@@ -503,6 +521,14 @@ model Machine {
     daemonState        String? @db.LongText // Encrypted - contains dynamic daemon state
     daemonStateVersion Int         @default(0)
     dataEncryptionKey  Bytes?
+    installationId     String?
+    installationPublicKey Bytes?
+    contentPublicKeyFingerprint String?
+    replacedByMachineId String?
+    replacedAt         DateTime?
+    replacementReason  String?
+    replacementSource  String?
+    replacementActorUserId String?
     seq                Int         @default(0)
     active             Boolean     @default(true)
     lastActiveAt       DateTime    @default(now())
@@ -516,6 +542,9 @@ model Machine {
 
     @@unique([accountId, id])
     @@index([accountId])
+    @@index([accountId, installationId])
+    @@index([accountId, replacedByMachineId])
+    @@index([accountId, replacedAt])
     @@index([accountId, revokedAt])
 }
 

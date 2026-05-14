@@ -8,12 +8,24 @@ import { buildNewMachineUpdate, buildUpdateMachineUpdate } from "@/app/events/ev
 import { activityCache } from "@/app/presence/sessionCache";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { markAccountChangedAfterCommit } from "@/app/changes/markAccountChangedAfterCommit";
 import { timingSafeEqual } from "node:crypto";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 import { parseBooleanEnv } from "@/config/env";
+import {
+    applyVerifiedMachineRegistrationReplacement,
+    MachineRegistrationReplacementError,
+    type MachineRegistrationReplacementResult,
+} from "@/app/machines/applyVerifiedMachineRegistrationReplacement";
+import {
+    computeContentPublicKeyFingerprint,
+    normalizeContentPublicKeyFingerprint,
+    verifyMachineInstallationRegistration,
+    type VerifiedMachineInstallationIdentity,
+} from "@/app/machines/installationProof";
+import { serializeMachineRow } from "@/app/machines/machineSerialization";
+import { registerMachineReplacementRoutes } from "./registerMachineReplacementRoutes";
 
 function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
     if (a === b) return true;
@@ -22,40 +34,67 @@ function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
     return timingSafeEqual(a, b);
 }
 
-function serializeMachineRow(row: {
-    id: string;
-    metadata: string;
-    metadataVersion: number;
-    daemonState: string | null;
-    daemonStateVersion: number;
-    dataEncryptionKey: Uint8Array | null;
-    seq: number;
-    active: boolean;
-    lastActiveAt: Date;
-    revokedAt: Date | null;
-    createdAt: Date;
-    updatedAt: Date;
-}) {
-    return {
-        id: row.id,
-        metadata: row.metadata,
-        metadataVersion: row.metadataVersion,
-        daemonState: row.daemonState,
-        daemonStateVersion: row.daemonStateVersion,
-        dataEncryptionKey: row.dataEncryptionKey ? Buffer.from(row.dataEncryptionKey).toString('base64') : null,
-        seq: row.seq,
-        active: row.active,
-        activeAt: row.lastActiveAt.getTime(),  // Return as activeAt for API consistency
-        revokedAt: row.revokedAt ? row.revokedAt.getTime() : null,
-        createdAt: row.createdAt.getTime(),
-        updatedAt: row.updatedAt.getTime(),
-    };
+function copyToArrayBufferBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    return copy;
 }
 
 function isMachineRevokedError(value: unknown): value is { error: 'machine_revoked' } {
     if (typeof value !== 'object' || value === null) return false;
     if (!('error' in value)) return false;
     return (value as { error?: unknown }).error === 'machine_revoked';
+}
+
+type ExistingMachineInstallationIdentity = Readonly<{
+    installationId?: string | null;
+    installationPublicKey?: Uint8Array | null;
+    contentPublicKeyFingerprint?: string | null;
+}>;
+
+type InstallationIdentityUpdateResolution =
+    | Readonly<{
+        ok: true;
+        data: {
+            installationId?: string;
+            installationPublicKey?: Uint8Array<ArrayBuffer>;
+            contentPublicKeyFingerprint?: string | null;
+        };
+    }>
+    | Readonly<{ ok: false; reason: string }>;
+
+function resolveInstallationIdentityUpdate(
+    machine: ExistingMachineInstallationIdentity,
+    identity: VerifiedMachineInstallationIdentity | null,
+): InstallationIdentityUpdateResolution {
+    if (!identity) {
+        return { ok: true, data: {} };
+    }
+
+    if (machine.installationId && machine.installationId !== identity.installationId) {
+        return { ok: false, reason: "installation_id_mismatch" };
+    }
+    if (machine.installationPublicKey && !bytesEqual(machine.installationPublicKey, identity.installationPublicKey)) {
+        return { ok: false, reason: "installation_public_key_mismatch" };
+    }
+    if (
+        machine.contentPublicKeyFingerprint
+        && identity.contentPublicKeyFingerprint
+        && machine.contentPublicKeyFingerprint !== identity.contentPublicKeyFingerprint
+    ) {
+        return { ok: false, reason: "content_public_key_fingerprint_mismatch" };
+    }
+
+    return {
+        ok: true,
+        data: {
+            ...(!machine.installationId ? { installationId: identity.installationId } : {}),
+            ...(!machine.installationPublicKey ? { installationPublicKey: identity.installationPublicKey } : {}),
+            ...(!machine.contentPublicKeyFingerprint && identity.contentPublicKeyFingerprint
+                ? { contentPublicKeyFingerprint: identity.contentPublicKeyFingerprint }
+                : {}),
+        },
+    };
 }
 
 function describeUnknownError(error: unknown): { code?: string; message: string } {
@@ -74,6 +113,8 @@ function describeUnknownError(error: unknown): { code?: string; message: string 
 }
 
 export function machinesRoutes(app: Fastify) {
+    registerMachineReplacementRoutes(app);
+
     app.post('/v1/machines', {
         preHandler: app.authenticate,
         schema: {
@@ -91,6 +132,12 @@ export function machinesRoutes(app: Fastify) {
                 // When the account has not yet stored its `contentPublicKey`, providing this signature allows the
                 // server to persist the key safely without requiring a full /v1/auth key-proof flow.
                 contentPublicKeySig: z.string().optional(),
+                installationId: z.string().optional(),
+                installationPublicKey: z.string().optional(),
+                installationProof: z.unknown().optional(),
+                replacesMachineId: z.string().optional(),
+                replacementReason: z.string().optional(),
+                contentPublicKeyFingerprint: z.string().optional(),
             })
         }
     }, async (request, reply) => {
@@ -102,7 +149,25 @@ export function machinesRoutes(app: Fastify) {
             dataEncryptionKey,
             contentPublicKey: contentPublicKeyB64,
             contentPublicKeySig: contentPublicKeySigB64,
+            installationId,
+            installationPublicKey,
+            installationProof,
+            replacesMachineId,
+            replacementReason,
+            contentPublicKeyFingerprint,
         } = request.body;
+
+        let resolvedContentPublicKeyFingerprint =
+            typeof contentPublicKeyFingerprint === "string" && contentPublicKeyFingerprint.trim()
+                ? contentPublicKeyFingerprint.trim()
+                : null;
+        if (resolvedContentPublicKeyFingerprint) {
+            const normalizedFingerprint = normalizeContentPublicKeyFingerprint(resolvedContentPublicKeyFingerprint);
+            if (!normalizedFingerprint) {
+                return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_fingerprint_invalid" });
+            }
+            resolvedContentPublicKeyFingerprint = normalizedFingerprint;
+        }
 
         // Guardrail: for E2EE accounts, reject machine writes that include a DEK envelope but whose
         // claimed content public key does not match the account. Without this, a token/key mismatch
@@ -150,6 +215,19 @@ export function machinesRoutes(app: Fastify) {
                     );
                     return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
                 }
+
+                const derivedContentPublicKeyFingerprint = computeContentPublicKeyFingerprint(decoded);
+                if (
+                    resolvedContentPublicKeyFingerprint
+                    && resolvedContentPublicKeyFingerprint !== derivedContentPublicKeyFingerprint
+                ) {
+                    log(
+                        { module: "machines", machineId: id, userId, reason: "content_public_key_fingerprint_mismatch" },
+                        "Machine registration rejected (contentPublicKeyFingerprint mismatch)",
+                    );
+                    return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_fingerprint_mismatch" });
+                }
+                resolvedContentPublicKeyFingerprint = derivedContentPublicKeyFingerprint;
 
                 const account = await db.account.findUnique({
                     where: { id: userId },
@@ -252,6 +330,25 @@ export function machinesRoutes(app: Fastify) {
             }
         }
 
+        const automaticReplacementReason = typeof replacementReason === "string" && replacementReason.trim()
+            ? replacementReason.trim()
+            : "machine_rotation";
+
+        const installationRegistration = verifyMachineInstallationRegistration({
+            accountId: userId,
+            machineId: id,
+            installationId,
+            installationPublicKey,
+            installationProof,
+            replacesMachineId,
+            replacementReason: automaticReplacementReason,
+            contentPublicKeyFingerprint: resolvedContentPublicKeyFingerprint,
+        });
+        if (!installationRegistration.ok) {
+            return reply.code(400).send({ error: "invalid-params", reason: installationRegistration.reason });
+        }
+        const verifiedInstallationIdentity = installationRegistration.identity;
+
         // Check if machine exists (like sessions do)
         const machine = await db.machine.findFirst({
             where: {
@@ -277,8 +374,20 @@ export function machinesRoutes(app: Fastify) {
             const wantsDataEncryptionKeyUpdate =
                 nextDataEncryptionKey !== undefined
                 && !bytesEqual(machine.dataEncryptionKey ?? null, nextDataEncryptionKey);
+            const installationIdentityUpdate = resolveInstallationIdentityUpdate(machine, verifiedInstallationIdentity);
+            if (!installationIdentityUpdate.ok) {
+                return reply.code(400).send({ error: "invalid-params", reason: installationIdentityUpdate.reason });
+            }
+            const wantsInstallationUpdate = Object.keys(installationIdentityUpdate.data).length > 0;
+            const wantsAutomaticReplacement = Boolean(verifiedInstallationIdentity?.replacesMachineId);
 
-            if (!wantsMetadataUpdate && !wantsDaemonStateUpdate && !wantsDataEncryptionKeyUpdate) {
+            if (
+                !wantsMetadataUpdate
+                && !wantsDaemonStateUpdate
+                && !wantsDataEncryptionKeyUpdate
+                && !wantsInstallationUpdate
+                && !wantsAutomaticReplacement
+            ) {
                 // Machine exists and payload matches - just return it.
                 // Note: This checks the pre-tx row (which may be slightly stale under concurrency),
                 // but the response is still safe and consistent for the authenticated account.
@@ -292,7 +401,8 @@ export function machinesRoutes(app: Fastify) {
 
             log({ module: 'machines', machineId: id, userId }, 'Updating existing machine');
 
-            type UpdatedMachineRow = Parameters<typeof serializeMachineRow>[0] | null | { error: 'machine_revoked' };
+            type UpdatedMachineRow = Parameters<typeof serializeMachineRow>[0] | null | { error: 'machine_revoked' } | { error: 'invalid_installation_identity'; reason: string };
+            let machineReplacement: MachineRegistrationReplacementResult | null = null;
             let updated: UpdatedMachineRow;
             try {
                 updated = await inTx(async (tx) => {
@@ -311,31 +421,72 @@ export function machinesRoutes(app: Fastify) {
                     const currentWantsDataEncryptionKeyUpdate =
                         nextDataEncryptionKey !== undefined
                         && !bytesEqual(current.dataEncryptionKey ?? null, nextDataEncryptionKey);
+                    const currentInstallationIdentityUpdate = resolveInstallationIdentityUpdate(current, verifiedInstallationIdentity);
+                    if (!currentInstallationIdentityUpdate.ok) {
+                        return { error: 'invalid_installation_identity' as const, reason: currentInstallationIdentityUpdate.reason };
+                    }
+                    const currentWantsInstallationUpdate = Object.keys(currentInstallationIdentityUpdate.data).length > 0;
+                    const currentWantsAutomaticReplacement = Boolean(verifiedInstallationIdentity?.replacesMachineId);
 
-                    if (!currentWantsMetadataUpdate && !currentWantsDaemonStateUpdate && !currentWantsDataEncryptionKeyUpdate) {
+                    if (
+                        !currentWantsMetadataUpdate
+                        && !currentWantsDaemonStateUpdate
+                        && !currentWantsDataEncryptionKeyUpdate
+                        && !currentWantsInstallationUpdate
+                        && !currentWantsAutomaticReplacement
+                    ) {
                         return current;
                     }
 
-                    const updatedMachine = await tx.machine.update({
-                        where: { accountId_id: { accountId: userId, id } },
-                        data: {
-                            ...(currentWantsMetadataUpdate
-                                ? { metadata, metadataVersion: { increment: 1 } }
-                                : {}),
-                            ...(currentWantsDaemonStateUpdate
-                                ? { daemonState, daemonStateVersion: { increment: 1 } }
-                                : {}),
-                            ...(currentWantsDataEncryptionKeyUpdate
-                                ? { dataEncryptionKey: nextDataEncryptionKey }
-                                : {}),
-                        },
-                    });
+                    const updatedMachine = currentWantsMetadataUpdate
+                        || currentWantsDaemonStateUpdate
+                        || currentWantsDataEncryptionKeyUpdate
+                        || currentWantsInstallationUpdate
+                        ? await tx.machine.update({
+                            where: { accountId_id: { accountId: userId, id } },
+                            data: {
+                                ...(currentWantsMetadataUpdate
+                                    ? { metadata, metadataVersion: { increment: 1 } }
+                                    : {}),
+                                ...(currentWantsDaemonStateUpdate
+                                    ? { daemonState, daemonStateVersion: { increment: 1 } }
+                                    : {}),
+                                ...(currentWantsDataEncryptionKeyUpdate
+                                    ? { dataEncryptionKey: nextDataEncryptionKey }
+                                    : {}),
+                                ...(currentWantsInstallationUpdate && verifiedInstallationIdentity
+                                    ? currentInstallationIdentityUpdate.data
+                                    : {}),
+                            },
+                        })
+                        : current;
 
-                    await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: updatedMachine.id });
+                    if (
+                        currentWantsMetadataUpdate
+                        || currentWantsDaemonStateUpdate
+                        || currentWantsDataEncryptionKeyUpdate
+                        || currentWantsInstallationUpdate
+                    ) {
+                        await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: updatedMachine.id });
+                    }
+
+                    if (verifiedInstallationIdentity?.replacesMachineId) {
+                        machineReplacement = await applyVerifiedMachineRegistrationReplacement({
+                            tx,
+                            accountId: userId,
+                            replacementMachineId: updatedMachine.id,
+                            replacementMachine: updatedMachine,
+                            replacesMachineId: verifiedInstallationIdentity.replacesMachineId,
+                            reason: automaticReplacementReason,
+                        });
+                    }
 
                     return updatedMachine;
                 });
             } catch (error) {
+                if (error instanceof MachineRegistrationReplacementError) {
+                    return reply.code(error.statusCode).send({ error: "invalid-params", reason: error.reason });
+                }
                 if (wantsDataEncryptionKeyUpdate && (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008'))) {
                     throw error;
                 }
@@ -374,16 +525,22 @@ export function machinesRoutes(app: Fastify) {
                 return reply.code(410).send({ error: 'machine_revoked' });
             }
 
+            if (typeof updated === 'object' && updated && 'error' in updated && updated.error === 'invalid_installation_identity') {
+                return reply.code(400).send({ error: "invalid-params", reason: updated.reason });
+            }
+
             return reply.send({
                 machine: {
                     ...serializeMachineRow(updated),
-                }
+                },
+                ...(machineReplacement ? { machineReplacement } : {}),
             });
         } else {
             // Create new machine
             log({ module: 'machines', machineId: id, userId }, 'Creating new machine');
 
             let newMachine;
+            let machineReplacement: MachineRegistrationReplacementResult | null = null;
             try {
                 newMachine = await inTx(async (tx) => {
                     const created = await tx.machine.create({
@@ -394,39 +551,66 @@ export function machinesRoutes(app: Fastify) {
                             metadataVersion: 1,
                             daemonState: daemonState || null,
                             daemonStateVersion: daemonState ? 1 : 0,
-                            dataEncryptionKey: dataEncryptionKey ? new Uint8Array(Buffer.from(dataEncryptionKey, 'base64')) : undefined,
+                            dataEncryptionKey: dataEncryptionKey
+                                ? copyToArrayBufferBytes(Buffer.from(dataEncryptionKey, 'base64'))
+                                : undefined,
+                            ...(verifiedInstallationIdentity
+                                ? {
+                                    installationId: verifiedInstallationIdentity.installationId,
+                                    installationPublicKey: verifiedInstallationIdentity.installationPublicKey,
+                                    contentPublicKeyFingerprint: verifiedInstallationIdentity.contentPublicKeyFingerprint,
+                                }
+                                : resolvedContentPublicKeyFingerprint
+                                    ? { contentPublicKeyFingerprint: resolvedContentPublicKeyFingerprint }
+                                    : {}),
                             // Default to offline - in case the user does not start daemon
                             active: false,
                             // lastActiveAt and activeAt defaults to now() in schema
                         }
                     });
 
+                    if (verifiedInstallationIdentity?.replacesMachineId) {
+                        machineReplacement = await applyVerifiedMachineRegistrationReplacement({
+                            tx,
+                            accountId: userId,
+                            replacementMachineId: created.id,
+                            replacementMachine: created,
+                            replacesMachineId: verifiedInstallationIdentity.replacesMachineId,
+                            reason: automaticReplacementReason,
+                        });
+                    }
+
+                    const cursor = await markAccountChanged(tx, {
+                        accountId: userId,
+                        kind: 'machine',
+                        entityId: created.id,
+                    });
+
+                    afterTx(tx, () => {
+                        // Emit both new-machine and update-machine events for backward compatibility.
+                        // IMPORTANT: Both share the same cursor (one durable change).
+                        const newMachinePayload = buildNewMachineUpdate(created, cursor, randomKeyNaked(12));
+                        eventRouter.emitUpdate({
+                            userId,
+                            payload: newMachinePayload,
+                            recipientFilter: { type: 'user-scoped-only' }
+                        });
+
+                        const machineMetadata = { version: 1, value: metadata };
+                        const updatePayload = buildUpdateMachineUpdate(created.id, cursor, randomKeyNaked(12), machineMetadata);
+                        eventRouter.emitUpdate({
+                            userId,
+                            payload: updatePayload,
+                            recipientFilter: { type: 'machine-scoped-only', machineId: created.id }
+                        });
+                    });
+
                     return created;
                 });
-
-                const cursor = await markAccountChangedAfterCommit({
-                    accountId: userId,
-                    kind: 'machine',
-                    entityId: newMachine.id,
-                });
-
-                // Emit both new-machine and update-machine events for backward compatibility.
-                // IMPORTANT: Both share the same cursor (one durable change).
-                const newMachinePayload = buildNewMachineUpdate(newMachine, cursor, randomKeyNaked(12));
-                eventRouter.emitUpdate({
-                    userId,
-                    payload: newMachinePayload,
-                    recipientFilter: { type: 'user-scoped-only' }
-                });
-
-                const machineMetadata = { version: 1, value: metadata };
-                const updatePayload = buildUpdateMachineUpdate(newMachine.id, cursor, randomKeyNaked(12), machineMetadata);
-                eventRouter.emitUpdate({
-                    userId,
-                    payload: updatePayload,
-                    recipientFilter: { type: 'machine-scoped-only', machineId: newMachine.id }
-                });
             } catch (e) {
+                if (e instanceof MachineRegistrationReplacementError) {
+                    return reply.code(e.statusCode).send({ error: "invalid-params", reason: e.reason });
+                }
                 // Concurrency safety: multiple clients may race to create the same machine (e.g. daemon + session spawns).
                 // If we lost the race, fetch the winner row and return it instead of surfacing a 500.
                 if (isPrismaErrorCode(e, 'P2002')) {
@@ -435,11 +619,36 @@ export function machinesRoutes(app: Fastify) {
                         if (existingSameAccount.revokedAt) {
                             return reply.code(410).send({ error: 'machine_revoked' });
                         }
+                        let machineReplacement: MachineRegistrationReplacementResult | null = null;
+                        if (verifiedInstallationIdentity?.replacesMachineId) {
+                            try {
+                                await inTx(async (tx) => {
+                                    machineReplacement = await applyVerifiedMachineRegistrationReplacement({
+                                        tx,
+                                        accountId: userId,
+                                        replacementMachineId: existingSameAccount.id,
+                                        replacementMachine: existingSameAccount,
+                                        replacesMachineId: verifiedInstallationIdentity.replacesMachineId,
+                                        reason: automaticReplacementReason,
+                                    });
+                                    return null;
+                                });
+                            } catch (replacementError) {
+                                if (replacementError instanceof MachineRegistrationReplacementError) {
+                                    return reply.code(replacementError.statusCode).send({
+                                        error: "invalid-params",
+                                        reason: replacementError.reason,
+                                    });
+                                }
+                                throw replacementError;
+                            }
+                        }
                         log({ module: 'machines', machineId: id, userId }, 'Machine created concurrently; returning existing machine');
                         return reply.send({
                             machine: {
                                 ...serializeMachineRow(existingSameAccount),
                             },
+                            ...(machineReplacement ? { machineReplacement } : {}),
                         });
                     }
 
@@ -455,7 +664,8 @@ export function machinesRoutes(app: Fastify) {
             return reply.send({
                 machine: {
                     ...serializeMachineRow(newMachine),
-                }
+                },
+                ...(machineReplacement ? { machineReplacement } : {}),
             });
         }
     });
