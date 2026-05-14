@@ -11,6 +11,24 @@ type RevealTextProps = {
     inView?: boolean;
 };
 
+export const DESKTOP_REVEAL_INTERSECTION_OPTIONS = {
+    threshold: 0.22,
+    rootMargin: '0px 0px -18% 0px',
+} satisfies IntersectionObserverInit;
+
+export const MOBILE_REVEAL_INTERSECTION_OPTIONS = {
+    threshold: 0.01,
+    rootMargin: '0px 0px 20% 0px',
+} satisfies IntersectionObserverInit;
+
+export function resolveRevealIntersectionOptions(isMobilePointer: boolean): IntersectionObserverInit {
+    return isMobilePointer ? MOBILE_REVEAL_INTERSECTION_OPTIONS : DESKTOP_REVEAL_INTERSECTION_OPTIONS;
+}
+
+function hasMobilePointer(): boolean {
+    return window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+}
+
 /**
  * Word-by-word reveal port from introvid.html:
  *   opacity 0→1, blur 10px→0, translateY 18px→0, scale 0.94→1,
@@ -48,7 +66,7 @@ export function RevealText({
                     }
                 }
             },
-            { threshold: 0.22, rootMargin: '0px 0px -18% 0px' },
+            resolveRevealIntersectionOptions(hasMobilePointer()),
         );
         observer.observe(node);
         return () => observer.disconnect();

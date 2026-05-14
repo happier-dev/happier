@@ -142,6 +142,32 @@ body {
     }
 }
 
+@media (hover: none) and (pointer: coarse) {
+    .reveal-word {
+        filter: blur(2px);
+        transform: translate3d(0, 18px, 0) scale(0.96);
+        will-change: transform, opacity;
+    }
+
+    @keyframes reveal-word {
+        to {
+            opacity: 1;
+            filter: blur(0);
+            transform: translate3d(0, 0, 0) scale(1);
+        }
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .reveal-word {
+        opacity: 1;
+        filter: none;
+        transform: none;
+        animation: none;
+        will-change: auto;
+    }
+}
+
 .text-balance {
     text-wrap: balance;
 }
