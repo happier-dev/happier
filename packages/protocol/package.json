@@ -78,6 +78,10 @@
       "types": "./dist/sessions/index.d.ts",
       "default": "./dist/sessions/index.js"
     },
+    "./sessionFolders": {
+      "types": "./dist/sessionFolders/index.d.ts",
+      "default": "./dist/sessionFolders/index.js"
+    },
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
       "default": "./dist/runtime/index.js"

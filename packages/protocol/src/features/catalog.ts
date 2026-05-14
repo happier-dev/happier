@@ -129,6 +129,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['sessions'],
     representation: 'server',
   },
+  'sessions.folders': {
+    description: 'Organize synced sessions into user-defined folders.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['sessions'],
+    representation: 'server',
+  },
   machines: {
     description: 'Machine control-plane transport capabilities.',
     defaultFailMode: 'fail_closed',

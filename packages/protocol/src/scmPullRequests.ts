@@ -264,6 +264,9 @@ export function resolveScmHostingProviderFollowupAllowedBaseUrl(input: Readonly<
   } catch {
     return null;
   }
+  if (base.username || base.password || base.search || base.hash) {
+    return null;
+  }
   if (!isAllowedBaseWithinProviderBase({ provider: input.provider, allowedBase: base })) {
     return null;
   }
@@ -279,7 +282,13 @@ export function resolveScmHostingProviderFollowupAllowedBaseUrl(input: Readonly<
   } catch {
     return null;
   }
-  if (repositoryBase.search || repositoryBase.hash || !isUrlWithinBase({ url: repositoryBase, base })) return null;
+  if (
+    repositoryBase.username
+    || repositoryBase.password
+    || repositoryBase.search
+    || repositoryBase.hash
+    || !isUrlWithinBase({ url: repositoryBase, base })
+  ) return null;
   return stripTrailingSlashes(repositoryBase.toString());
 }
 

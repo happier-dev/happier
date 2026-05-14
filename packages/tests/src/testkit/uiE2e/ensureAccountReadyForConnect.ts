@@ -100,8 +100,7 @@ async function ensureReadyOrProgress(params: Readonly<{
   page: EnsureAccountReadyForConnectPage;
   clickCreateAccount: boolean;
 }>): Promise<boolean> {
-  if ((await countReadySignals(params.page)) > 0) return true;
-  await advanceStoryDeckIfPresent(params.page);
+  if (await advanceStoryDeckIfPresent(params.page)) return false;
   if ((await countReadySignals(params.page)) > 0) return true;
   if (!params.clickCreateAccount) return false;
   await clickCreateAccountIfPresent(params.page);

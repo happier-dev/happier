@@ -5,6 +5,8 @@ import {
   ScmRequestBaseSchema,
 } from './scm.js';
 
+export const SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN = 'remove-worktree' as const;
+
 export const ScmWorktreeCommandResponseSchema = z.object({
   success: z.boolean(),
   stdout: z.string().optional(),
@@ -34,6 +36,8 @@ export type ScmWorktreeCreateResponse = z.infer<typeof ScmWorktreeCreateResponse
 
 export const ScmWorktreeRemoveRequestSchema = ScmRequestBaseSchema.extend({
   worktreePath: z.string().min(1),
+  confirmed: z.literal(true),
+  authorizationToken: z.literal(SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN),
 });
 export type ScmWorktreeRemoveRequest = z.infer<typeof ScmWorktreeRemoveRequestSchema>;
 

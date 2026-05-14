@@ -29,9 +29,13 @@ function normalizeResolvedAgentId(value: unknown): AgentId | null {
 }
 
 function readDirectSessionProviderId(metadata: Record<string, unknown>): AgentId | null {
-  const directSession = asRecord(metadata.directSessionV1);
-  const providerId = typeof directSession?.providerId === 'string' ? directSession.providerId.trim() : null;
-  return normalizeResolvedAgentId(providerId);
+  for (const key of ['directSessionV1', 'externalSessionV1'] as const) {
+    const directSession = asRecord(metadata[key]);
+    const providerId = typeof directSession?.providerId === 'string' ? directSession.providerId.trim() : null;
+    const resolvedProviderId = normalizeResolvedAgentId(providerId);
+    if (resolvedProviderId) return resolvedProviderId;
+  }
+  return null;
 }
 
 export function resolveAgentIdFromSessionMetadata(metadata: unknown): AgentId | null {

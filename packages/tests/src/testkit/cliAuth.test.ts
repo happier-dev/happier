@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { seedCliAuthForServer } from './cliAuth';
+import { readCliAccessKey } from './cliAccessKey';
+import { seedCliAuthForServer, seedCliDataKeyAuthForServer } from './cliAuth';
 
 function deriveExpectedServerId(url: string): string {
   const value = createServerUrlComparableKey(url) || url;
@@ -41,5 +42,72 @@ describe('seedCliAuthForServer', () => {
     });
 
     expect(seeded.serverId).toBe(expectedServerId);
+  });
+});
+
+describe('seedCliDataKeyAuthForServer', () => {
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(tempDirs.map(async (dir) => await rm(dir, { recursive: true, force: true })));
+    tempDirs.length = 0;
+  });
+
+  it('preserves the provided account content public key when reseeding credentials', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-tests-cli-datakey-auth-'));
+    tempDirs.push(cliHome);
+    const machineKey = Uint8Array.from(randomBytes(32));
+    const publicKey = Uint8Array.from(randomBytes(32));
+
+    const seeded = await seedCliDataKeyAuthForServer({
+      cliHome,
+      serverUrl: 'http://127.0.0.1:34567',
+      token: 'token-1',
+      machineKey,
+      publicKey,
+    });
+
+    const accessKey = await readCliAccessKey(cliHome);
+    expect(seeded.publicKey).toEqual(publicKey);
+    expect(accessKey).toEqual({
+      token: 'token-1',
+      encryption: {
+        publicKey: Buffer.from(publicKey).toString('base64'),
+        machineKey: Buffer.from(machineKey).toString('base64'),
+      },
+    });
+  });
+
+  it('records an explicit replacement candidate for the token account when requested', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-tests-cli-datakey-auth-'));
+    tempDirs.push(cliHome);
+    const machineKey = Uint8Array.from(randomBytes(32));
+    const accountId = 'account-for-replacement';
+    const token = [
+      'header',
+      Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url'),
+      'signature',
+    ].join('.');
+    const serverUrl = 'http://127.0.0.1:34567';
+    const oldMachineId = 'machine-old';
+
+    const seeded = await seedCliDataKeyAuthForServer({
+      cliHome,
+      serverUrl,
+      token,
+      machineKey,
+      replacementCandidate: {
+        machineId: oldMachineId,
+        replacementReason: 'reauth',
+      },
+    });
+
+    const settings = JSON.parse(await readFile(join(cliHome, 'settings.json'), 'utf8')) as {
+      machineReplacementCandidatesByServerIdByAccountId?: Record<string, Record<string, unknown>>;
+    };
+    expect(settings.machineReplacementCandidatesByServerIdByAccountId?.[seeded.serverId]?.[accountId]).toMatchObject({
+      machineId: oldMachineId,
+      replacementReason: 'reauth',
+    });
   });
 });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ActionApprovalSchema } from '../actions/actionApprovalMetadata.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
 
 export const ApprovalRequestStatusSchema = z.enum(['open', 'approved', 'rejected', 'executed', 'failed', 'canceled']);
@@ -36,6 +37,7 @@ export const ApprovalRequestV1Schema = z.object({
   updatedAtMs: z.number().int().min(0),
   createdBy: ApprovalRequestCreatedBySchema,
   requestedSurface: ApprovalRequestedSurfaceSchema.optional(),
+  approval: ActionApprovalSchema.optional(),
   actionId: ActionIdSchema,
   actionArgs: z.unknown(),
   summary: z.string().min(1),
@@ -79,6 +81,55 @@ export const ApprovalRequestV1Schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['execution'],
       message: `status ${value.status} requires execution metadata`,
+    });
+  }
+
+  if (!requiresExecution && value.execution != null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['execution'],
+      message: `status ${value.status} must not include execution metadata`,
+    });
+  }
+
+  if ((value.status === 'approved' || value.status === 'executed' || value.status === 'failed')
+    && value.decision?.kind !== 'approve') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['decision'],
+      message: `status ${value.status} requires an approve decision`,
+    });
+  }
+
+  if (value.status === 'rejected' && value.decision?.kind !== 'reject') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['decision'],
+      message: 'status rejected requires a reject decision',
+    });
+  }
+
+  if (value.status === 'canceled' && value.decision != null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['decision'],
+      message: 'canceled approval requests must not include a decision',
+    });
+  }
+
+  if (value.status === 'executed' && value.execution?.ok !== true) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['execution'],
+      message: 'status executed requires a successful execution result',
+    });
+  }
+
+  if (value.status === 'failed' && value.execution?.ok !== false) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['execution'],
+      message: 'status failed requires a failed execution result',
     });
   }
 });

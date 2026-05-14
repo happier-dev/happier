@@ -93,6 +93,7 @@ export function serializeActionSpec(spec: ActionSpec): SerializedActionSpec {
     title: spec.title,
     description: spec.description ?? null,
     safety: spec.safety,
+    approval: spec.approval,
     placements: spec.placements ?? [],
     slash: spec.slash ?? null,
     bindings: spec.bindings ?? null,

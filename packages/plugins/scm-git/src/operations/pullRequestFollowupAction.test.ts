@@ -78,4 +78,13 @@ describe('pull request follow-up action validation', () => {
             allowedBaseUrl: 'https://github.example.com/org',
         })).toEqual({ kind: 'none' });
     });
+
+    it('falls back to none when the target URL contains credentials', () => {
+        expect(createValidatedPullRequestFollowupAction({
+            provider,
+            purpose: 'compose',
+            url: 'https://token@github.example.com/org/repo/compare/main...feature',
+            allowedBaseUrl: 'https://github.example.com/org',
+        })).toEqual({ kind: 'none' });
+    });
 });

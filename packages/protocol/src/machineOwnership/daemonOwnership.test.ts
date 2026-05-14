@@ -8,6 +8,9 @@ import {
     readMachineOwnerConflictSocketPayload,
 } from './daemonOwnership.js';
 
+const validInstallationPublicKey = Buffer.from(new Uint8Array(32)).toString('base64url');
+const validInstallationProofSignature = Buffer.from(new Uint8Array(64)).toString('base64url');
+
 describe('machine daemon ownership protocol', () => {
     it('builds machine-scoped socket auth with ownership metadata', () => {
         expect(buildMachineScopedSocketAuth({
@@ -19,6 +22,13 @@ describe('machine daemon ownership protocol', () => {
             startupSource: 'manual',
             serviceManaged: false,
             serviceLabel: 'com.happier.cli.daemon.default',
+            installationId: 'installation-1',
+            installationPublicKey: validInstallationPublicKey,
+            installationProof: {
+                version: 1,
+                algorithm: 'ed25519',
+                signature: validInstallationProofSignature,
+            },
             takeover: true,
         })).toEqual({
             token: 'token',
@@ -30,6 +40,13 @@ describe('machine daemon ownership protocol', () => {
             startupSource: 'manual',
             serviceManaged: false,
             serviceLabel: 'com.happier.cli.daemon.default',
+            installationId: 'installation-1',
+            installationPublicKey: validInstallationPublicKey,
+            installationProof: {
+                version: 1,
+                algorithm: 'ed25519',
+                signature: validInstallationProofSignature,
+            },
             takeover: true,
         });
     });
@@ -42,10 +59,37 @@ describe('machine daemon ownership protocol', () => {
             startupSource: 'invalid',
             serviceManaged: 'true',
             serviceLabel: '  ',
+            installationId: 'installation-1',
+            installationPublicKey: '',
+            installationProof: {
+                version: 1,
+                algorithm: 'ed25519',
+                signature: validInstallationProofSignature,
+            },
             ignoredFutureField: 'future-value',
         })).toEqual({
             runtimeId: 'runtime-1',
             publicReleaseChannel: 'preview',
+            installationId: 'installation-1',
+            installationProof: {
+                version: 1,
+                algorithm: 'ed25519',
+                signature: validInstallationProofSignature,
+            },
+        });
+    });
+
+    it('drops malformed installation proof material from socket auth metadata', () => {
+        expect(readMachineDaemonOwnershipMetadataFromSocketAuth({
+            installationId: 'installation-1',
+            installationPublicKey: 'public-key',
+            installationProof: {
+                version: 1,
+                algorithm: 'ed25519',
+                signature: 'signature',
+            },
+        })).toEqual({
+            installationId: 'installation-1',
         });
     });
 

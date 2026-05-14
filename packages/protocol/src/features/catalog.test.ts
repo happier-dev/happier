@@ -69,6 +69,12 @@ describe('feature catalog', () => {
     expect(isFeatureId('machines.transfer.directPeer.transportRns')).toBe(false);
   });
 
+  it('includes session folders as a server-represented session feature', () => {
+    expect(isFeatureId('sessions.folders')).toBe(true);
+    expect(FEATURE_CATALOG['sessions.folders']?.representation).toBe('server');
+    expect(FEATURE_CATALOG['sessions.folders']?.dependencies).toEqual(['sessions']);
+  });
+
   it('includes peer mediation direct and server-routed feature ids', () => {
     expect(isFeatureId('machines.tunnel.directPeer')).toBe(true);
     expect(isFeatureId('machines.tunnel.serverRouted')).toBe(true);

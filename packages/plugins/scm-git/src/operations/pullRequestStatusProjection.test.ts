@@ -172,6 +172,72 @@ describe('pull request status projection', () => {
         expect(projected.totals).toBe(snapshot.totals);
     });
 
+    it('prefers the upstream remote hosting provider before origin in multi-remote repositories', () => {
+        const snapshot = createSnapshot();
+        const projected = projectPullRequestStatus({
+            snapshot: {
+                ...snapshot,
+                repo: {
+                    ...snapshot.repo,
+                    remotes: [
+                        {
+                            name: 'origin',
+                            fetchUrl: 'https://gitlab.com/happier-dev/fork.git',
+                            pushUrl: 'https://gitlab.com/happier-dev/fork.git',
+                        },
+                        {
+                            name: 'upstream',
+                            fetchUrl: 'git@github.com:happier-dev/happier.git',
+                            pushUrl: 'git@github.com:happier-dev/happier.git',
+                        },
+                    ],
+                },
+                branch: {
+                    ...snapshot.branch,
+                    upstream: 'upstream/feature/pr-cache',
+                },
+            },
+            registry: {
+                detectRemote({ remoteName, remoteUrl }) {
+                    if (remoteName === 'upstream' && remoteUrl.includes('github.com')) {
+                        return {
+                            kind: 'resolved' as const,
+                            providerId: provider.id,
+                            provider: {
+                                ...provider,
+                                remoteName: 'upstream',
+                            },
+                        };
+                    }
+                    return {
+                        kind: 'resolved' as const,
+                        providerId: 'scm.gitlab',
+                        provider: {
+                            id: 'scm.gitlab',
+                            kind: 'gitlab',
+                            displayName: 'GitLab',
+                            baseUrl: 'https://gitlab.com',
+                            nameWithOwner: 'happier-dev/fork',
+                            remoteName: 'origin',
+                        },
+                    };
+                },
+                buildCompareUrl() {
+                    return {
+                        kind: 'unsupported' as const,
+                    };
+                },
+            },
+            cache: createPrStatusCache({ now: () => 1000 }),
+            now: () => 1000,
+        });
+
+        expect(projected.hostingProvider).toMatchObject({
+            kind: 'github',
+            remoteName: 'upstream',
+        });
+    });
+
     it('uses the detected repository default branch when the current feature branch has no upstream', () => {
         const baseSnapshot = createSnapshot();
         const snapshot: ScmWorkingSnapshot = {

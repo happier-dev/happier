@@ -278,7 +278,7 @@ describe('createActionExecutor (approvals)', () => {
     expect((res as any).result?.artifactId).toBe('a1');
   });
 
-  it('routes any surfaced action through approvals when required by the caller policy', async () => {
+  it('returns unsupported after creating a blocking approval when no live approval waiter is available', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
     const agentsBackendsList = vi.fn(async () => ({ items: [] }));
 
@@ -294,14 +294,196 @@ describe('createActionExecutor (approvals)', () => {
       { surface: 'cli' },
     );
 
-    expect(res.ok).toBe(true);
-    expect((res as any).result?.kind).toBe('approval_request_created');
-    expect((res as any).result?.artifactId).toBe('a1');
+    expect(res).toEqual({ ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' });
     expect(agentsBackendsList).not.toHaveBeenCalled();
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         actionId: 'agents.backends.list',
+        approval: { flow: 'blocking', result: 'required' },
         createdBy: expect.objectContaining({ surface: 'cli' }),
+      }),
+    }));
+  });
+
+  it('waits for a blocking approval and returns the underlying action result when approved', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const sessionList = vi.fn(async () => ({ sessions: [{ id: 's1', title: 'One' }] }));
+    const approvalsWaitForDecision = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
+      expect(sessionList).not.toHaveBeenCalled();
+      return {
+        decision: 'approve' as const,
+        request: {
+          ...request,
+          status: 'approved' as const,
+          decision: { kind: 'approve' as const, decidedAtMs: 2 },
+        },
+      };
+    });
+
+    const executor = createExecutor({
+      approvalsCreate,
+      approvalsUpdate,
+      approvalsWaitForDecision,
+      sessionList,
+      isActionApprovalRequired: (actionId) => actionId === 'session.list',
+    } as any);
+
+    const res = await executor.execute(
+      'session.list' as any,
+      { limit: 10 },
+      { surface: 'mcp' },
+    );
+
+    expect(res).toEqual({ ok: true, result: { sessions: [{ id: 's1', title: 'One' }] } });
+    expect(approvalsWaitForDecision).toHaveBeenCalledWith(expect.objectContaining({
+      artifactId: 'a1',
+      request: expect.objectContaining({
+        actionId: 'session.list',
+        approval: { flow: 'blocking', result: 'required' },
+      }),
+      serverId: null,
+    }));
+    expect(sessionList).toHaveBeenCalledWith({
+      limit: 10,
+      cursor: undefined,
+      includeLastMessagePreview: undefined,
+      activeOnly: undefined,
+      archivedOnly: undefined,
+      includeSystem: undefined,
+      resumableOnly: undefined,
+    });
+    expect(approvalsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      artifactId: 'a1',
+      request: expect.objectContaining({
+        status: 'executed',
+        execution: expect.objectContaining({ ok: true, result: { sessions: [{ id: 's1', title: 'One' }] } }),
+      }),
+    }));
+  });
+
+  it('returns an already executed blocking approval result without re-executing the target action', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const recordedResult = { sessions: [{ id: 's1', title: 'Recorded' }] };
+    const sessionList = vi.fn(async () => ({ sessions: [{ id: 's2', title: 'Duplicate' }] }));
+    const approvalsWaitForDecision = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => ({
+      decision: 'approve' as const,
+      request: {
+        ...request,
+        status: 'executed' as const,
+        decision: { kind: 'approve' as const, decidedAtMs: 2 },
+        execution: { executedAtMs: 3, ok: true as const, result: recordedResult },
+      },
+    }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      approvalsUpdate,
+      approvalsWaitForDecision,
+      sessionList,
+      isActionApprovalRequired: (actionId) => actionId === 'session.list',
+    } as any);
+
+    const res = await executor.execute(
+      'session.list' as any,
+      { limit: 10 },
+      { surface: 'mcp' },
+    );
+
+    expect(res).toEqual({ ok: true, result: recordedResult });
+    expect(sessionList).not.toHaveBeenCalled();
+    expect(approvalsUpdate).not.toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ status: 'executed' }),
+    }));
+  });
+
+  it('executes a concurrently approved blocking action exactly once', async () => {
+    let storedRequest: ApprovalRequestV1 | null = null;
+    let resolveWaiter: ((request: ApprovalRequestV1) => void) | null = null;
+    let markWaiterReady: (() => void) | null = null;
+    const waiterReady = new Promise<void>((resolve) => {
+      markWaiterReady = resolve;
+    });
+    const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
+      storedRequest = request;
+      return { artifactId: 'a1' };
+    });
+    const approvalsGet = vi.fn(async () => storedRequest);
+    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
+      storedRequest = request;
+      if (request.status === 'approved') resolveWaiter?.(request);
+      return { ok: true as const };
+    });
+    const approvalsResolveBlockingDecision = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
+      resolveWaiter?.(request);
+      return { resolved: true };
+    });
+    const approvalsWaitForDecision = vi.fn(async () => {
+      markWaiterReady?.();
+      const request = await new Promise<ApprovalRequestV1>((resolveDecision) => {
+        resolveWaiter = resolveDecision;
+      });
+      return { decision: 'approve' as const, request };
+    });
+    const sessionList = vi.fn(async () => ({ sessions: [{ id: 's1', title: 'One' }] }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      approvalsGet,
+      approvalsUpdate,
+      approvalsResolveBlockingDecision,
+      approvalsWaitForDecision,
+      sessionList,
+      isActionApprovalRequired: (actionId) => actionId === 'session.list',
+    } as any);
+
+    const blockingCall = executor.execute('session.list' as any, {}, { surface: 'mcp' });
+
+    await waiterReady;
+    const decideResult = await executor.execute('approval.request.decide' as any, {
+      artifactId: 'a1',
+      decision: 'approve',
+    }, {
+      surface: 'mcp',
+    });
+    const blockingResult = await blockingCall;
+
+    expect(decideResult.ok).toBe(true);
+    expect(blockingResult).toEqual({ ok: true, result: { sessions: [{ id: 's1', title: 'One' }] } });
+    expect(sessionList).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns approval_rejected when a blocking approval is rejected', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const sessionList = vi.fn(async () => ({ sessions: [] }));
+    const approvalsWaitForDecision = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => ({
+      decision: 'reject' as const,
+      request,
+    }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      approvalsUpdate,
+      approvalsWaitForDecision,
+      sessionList,
+      isActionApprovalRequired: (actionId) => actionId === 'session.list',
+    } as any);
+
+    const res = await executor.execute(
+      'session.list' as any,
+      {},
+      { surface: 'mcp' },
+    );
+
+    expect(res).toEqual({ ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' });
+    expect(sessionList).not.toHaveBeenCalled();
+    expect(approvalsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      artifactId: 'a1',
+      request: expect.objectContaining({
+        status: 'rejected',
+        decision: expect.objectContaining({ kind: 'reject' }),
       }),
     }));
   });
@@ -355,6 +537,33 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
+  it('rejects deciding approval artifacts that target approval queue actions', async () => {
+    for (const actionId of ['approval.request.list', 'approval.request.get'] as const) {
+      const approvalsGet = vi.fn(async () => createApprovalRequest('open', {
+        actionId,
+        actionArgs: actionId === 'approval.request.get' ? { artifactId: 'a2' } : {},
+        summary: 'Nested approval action',
+      }));
+      const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+      const approvalsList = vi.fn(async () => ({ items: [], queryPlan: { kind: 'approval_artifact_header_scan', hydratedTranscripts: false } }));
+
+      const executor = createExecutor({
+        approvalsGet,
+        approvalsUpdate,
+        approvalsList,
+      } as any);
+
+      const res = await executor.execute('approval.request.decide' as any, {
+        artifactId: 'a1',
+        decision: 'approve',
+      });
+
+      expect(res).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+      expect(approvalsUpdate).not.toHaveBeenCalled();
+      expect(approvalsList).not.toHaveBeenCalled();
+    }
+  });
+
   it('creates an approval request via deps.approvalsCreate', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
 
@@ -375,6 +584,22 @@ describe('createActionExecutor (approvals)', () => {
         summary: 'Send message',
       }),
     }));
+  });
+
+  it('rejects approval.request.create when target action args fail target schema validation', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    const executor = createExecutor({ approvalsCreate });
+
+    const res = await executor.execute('approval.request.create' as any, {
+      actionId: 'session.message.send',
+      actionArgs: { sessionId: 's1', message: '' },
+      summary: 'Send message',
+      createdBy: { surface: 'system' },
+    });
+
+    expect(res).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(approvalsCreate).not.toHaveBeenCalled();
   });
 
   it('rejects creating approval requests with a blank (trimmed) summary', async () => {
@@ -541,6 +766,86 @@ describe('createActionExecutor (approvals)', () => {
         execution: expect.objectContaining({ ok: true }),
       }),
     }));
+  });
+
+  it('returns an approved blocking decision without executing when an external waiter owns execution', async () => {
+    const approvalsGet = vi.fn(async () => createApprovalRequest('open', {
+      actionId: 'session.list',
+      actionArgs: {},
+      approval: { flow: 'blocking', result: 'required' },
+      summary: 'List sessions',
+      requestedSurface: 'mcp',
+    }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const approvalsResolveBlockingDecision = vi.fn(async () => ({ resolved: true }));
+    const sessionList = vi.fn(async () => ({ sessions: [{ id: 's1', title: 'One' }] }));
+
+    const executor = createExecutor({
+      approvalsGet,
+      approvalsUpdate,
+      approvalsResolveBlockingDecision,
+      sessionList,
+    } as any);
+
+    const res = await executor.execute('approval.request.decide' as any, {
+      artifactId: 'a1',
+      decision: 'approve',
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        status: 'approved',
+      },
+    });
+    expect(approvalsResolveBlockingDecision).toHaveBeenCalledWith(expect.objectContaining({
+      artifactId: 'a1',
+      decision: 'approve',
+      request: expect.objectContaining({
+        status: 'approved',
+        actionId: 'session.list',
+      }),
+    }));
+    expect(sessionList).not.toHaveBeenCalled();
+  });
+
+  it('executes an approved blocking decision when no live waiter owns execution', async () => {
+    const approvalsGet = vi.fn(async () => createApprovalRequest('open', {
+      actionId: 'session.list',
+      actionArgs: {},
+      approval: { flow: 'blocking', result: 'required' },
+      summary: 'List sessions',
+      requestedSurface: 'mcp',
+    }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const approvalsResolveBlockingDecision = vi.fn(async () => ({ resolved: false }));
+    const sessionList = vi.fn(async () => ({ sessions: [{ id: 's1', title: 'One' }] }));
+
+    const executor = createExecutor({
+      approvalsGet,
+      approvalsUpdate,
+      approvalsResolveBlockingDecision,
+      sessionList,
+    } as any);
+
+    const res = await executor.execute('approval.request.decide' as any, {
+      artifactId: 'a1',
+      decision: 'approve',
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        status: 'executed',
+        execution: expect.objectContaining({
+          ok: true,
+          result: { sessions: [{ id: 's1', title: 'One' }] },
+        }),
+      },
+    });
+    expect(sessionList).toHaveBeenCalledTimes(1);
   });
 
   it('marks approvals as failed when the execution surface cannot be resolved (fails closed)', async () => {
@@ -824,10 +1129,12 @@ describe('createActionExecutor (approvals)', () => {
   });
 
   it('does not re-execute an approval on duplicate approve delivery', async () => {
-    const approvalsGet = vi.fn()
-      .mockResolvedValueOnce(createApprovalRequest('open'))
-      .mockResolvedValueOnce(createApprovalRequest('executed'));
-    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    let storedRequest = createApprovalRequest('open');
+    const approvalsGet = vi.fn(async () => storedRequest);
+    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
+      storedRequest = request;
+      return { ok: true as const };
+    });
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
 
     const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });

@@ -4,11 +4,21 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
+import {
+  createAccountAndReachConnectMachineState,
+  dismissSetupWizardIfVisible,
+  gotoDomContentLoadedWithPathFallback,
+  gotoDomContentLoadedWithRetries,
+  normalizeLoopbackBaseUrl,
+} from '../../src/testkit/uiE2e/pageNavigation';
+import { resolveTerminalConnectUrlForBrowser } from '../../src/testkit/uiE2e/resolveTerminalConnectUrlForBrowser';
+import { ensurePendingTerminalConnectReadyForApproval } from '../../src/testkit/uiE2e/terminalConnectApprovalFlow';
 import { clickScopedButtonByTestIdOrRole } from '../../src/testkit/uiE2e/clickScopedButtonByTestIdOrRole';
 import { createGitRepoForPartialStagingFixture } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
@@ -54,15 +64,69 @@ function rightPaneLocator(page: Page) {
 }
 
 async function enableScmWriteOperationsInSettings(page: Page, baseUrl: string) {
-  await page.goto(`${baseUrl}/settings/features`, { waitUntil: 'domcontentloaded' });
+  const targetUrl = `${baseUrl}/settings/features`;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await gotoDomContentLoadedWithPathFallback(page, targetUrl, '/settings/features', 180_000);
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 60_000) {
+      if ((await page.getByTestId('settings-feature-experiments-toggle').count()) > 0) {
+        const experimentsToggle = page.getByTestId('settings-feature-experiments-toggle');
+        await experimentsToggle.click();
+
+        const scmToggle = page.getByTestId('settings-feature-toggle-scm.writeOperations');
+        await expect(scmToggle).toHaveCount(1, { timeout: 60_000 });
+        await scmToggle.click();
+        return;
+      }
+
+      if ((await page.getByTestId('setupWizard.surface').count()) > 0) {
+        await dismissSetupWizardIfVisible({ page });
+        break;
+      }
+
+      if ((await page.getByTestId('welcome-create-account').count()) > 0) {
+        await createAccountAndReachConnectMachineState({ page });
+        await ensureAccountReadyForConnect({ page, timeoutMs: 120_000, clickCreateAccount: false });
+        break;
+      }
+
+      await page.waitForTimeout(250);
+    }
+  }
+
   await expect(page.getByTestId('settings-feature-experiments-toggle')).toHaveCount(1, { timeout: 60_000 });
+}
 
-  const experimentsToggle = page.getByTestId('settings-feature-experiments-toggle');
-  await experimentsToggle.click();
+async function openSessionRouteAndWaitForComposer(params: Readonly<{
+  page: Page;
+  uiBaseUrl: string;
+  sessionId: string;
+}>) {
+  const targetUrl = `${params.uiBaseUrl}/session/${params.sessionId}?right=git`;
+  const expectedPathname = `/session/${params.sessionId}`;
 
-  const scmToggle = page.getByTestId('settings-feature-toggle-scm.writeOperations');
-  await expect(scmToggle).toHaveCount(1, { timeout: 60_000 });
-  await scmToggle.click();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await gotoDomContentLoadedWithPathFallback(params.page, targetUrl, expectedPathname, 180_000);
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 60_000) {
+      if ((await params.page.getByTestId('session-composer-input').count()) > 0) {
+        return;
+      }
+      if ((await params.page.getByTestId('setupWizard.surface').count()) > 0) {
+        await dismissSetupWizardIfVisible({ page: params.page });
+        break;
+      }
+      if ((await params.page.getByTestId('welcome-create-account').count()) > 0) {
+        await createAccountAndReachConnectMachineState({ page: params.page });
+        break;
+      }
+      await params.page.waitForTimeout(250);
+    }
+  }
+
+  await expect(params.page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 60_000 });
 }
 
 test.describe('ui e2e: SCM partial staging + commit + discard', () => {
@@ -77,7 +141,18 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_SERVER_URL: '',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+      EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_READ_TIMEOUT_MS: '5000',
+      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS:
+        process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS
+        ?? process.env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_MIN_TIMEOUT_MS
+        ?? '900000',
+    };
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -93,15 +168,8 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       },
     });
 
-    ui = await startUiWeb({
-      testDir: suiteDir,
-      env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
-        EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
-      },
-    });
+    uiWebEnv.EXPO_PUBLIC_HAPPY_SERVER_URL = server.baseUrl;
+    ui = await startUiWeb({ testDir: suiteDir, env: uiWebEnv });
 
     uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
   });
@@ -123,9 +191,10 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
     let runDaemon: StartedDaemon | null = null;
     try {
       await page.setViewportSize({ width: 1440, height: 900 });
-      await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+      await gotoDomContentLoadedWithRetries(page, uiBaseUrl, 180_000);
 
       await createAccountAndReachConnectMachineState({ page });
+      await ensureAccountReadyForConnect({ page, timeoutMs: 120_000, clickCreateAccount: false });
 
       await mkdir(testDir, { recursive: true });
 
@@ -140,12 +209,29 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
           HAPPIER_VARIANT: 'dev',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         },
       });
 
-      await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-      await page.getByTestId('terminal-connect-approve').click();
+      const connectUrlForBrowser = resolveTerminalConnectUrlForBrowser({
+        connectUrl: cliLogin.connectUrl,
+        uiBaseUrl,
+        serverUrl: server.baseUrl,
+      });
+      await gotoDomContentLoadedWithRetries(page, connectUrlForBrowser, 180_000);
+      await ensurePendingTerminalConnectReadyForApproval({
+        page,
+        connectUrlForBrowser,
+        gotoConnectUrl: async (url) => {
+          await gotoDomContentLoadedWithRetries(page, url, 180_000);
+        },
+        restoreAccount: async () => {
+          await createAccountAndReachConnectMachineState({ page });
+          await ensureAccountReadyForConnect({ page, timeoutMs: 120_000, clickCreateAccount: false });
+        },
+        timeoutMs: 180_000,
+      });
+      await approveTerminalConnect({ page });
       await cliLogin.waitForSuccess();
 
       const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
@@ -154,6 +240,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       runDaemon = await startTestDaemon({
         testDir,
         happyHomeDir: cliHomeDir,
+        startupTimeoutMs: 180_000,
         env: {
           ...process.env,
           HOME: cliHomeDir,
@@ -163,6 +250,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
           HAPPIER_WEBAPP_URL: uiBaseUrl,
           HAPPIER_DISABLE_CAFFEINATE: '1',
           HAPPIER_VARIANT: 'dev',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           // Machine-scoped RPC must be allowed to read the repo fixture directory.
           HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
@@ -179,8 +267,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       await enableScmWriteOperationsInSettings(page, uiBaseUrl);
 
       const sessionId = await spawnSessionFromDaemon({ daemon: runDaemon, directory: repoDir });
-      await page.goto(`${uiBaseUrl}/session/${sessionId}?right=git`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
+      await openSessionRouteAndWaitForComposer({ page, uiBaseUrl, sessionId });
 
       // Ensure right pane is open and on Source control.
       if ((await rightPaneLocator(page).count()) === 0) {
@@ -203,30 +290,45 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       const twoHunksRow = rightPane.getByTestId(`scm-change-row-${toTestIdSafeValue(twoHunksPath)}`);
       await expect(twoHunksRow).toHaveCount(1, { timeout: 120_000 });
 
-      // Select both files for commit (atomic strategy uses a virtual selection model).
-      const twoHunksToggle = rightPane.getByTestId(`scm-commit-selection-toggle-${toTestIdSafeValue(twoHunksPath)}`);
-      await expect(twoHunksToggle).toHaveCount(1, { timeout: 60_000 });
-      await twoHunksToggle.click({ force: true });
-
+      // Select one whole file from the SCM list. The second file is selected
+      // partially from the details pane through explicit commit-selection mode.
       const wholeFileToggle = rightPane.getByTestId(`scm-commit-selection-toggle-${toTestIdSafeValue(wholeFilePath)}`);
       await expect(wholeFileToggle).toHaveCount(1, { timeout: 60_000 });
       await wholeFileToggle.click({ force: true });
+      await expect(rightPane.getByTestId('scm-commit-selection-summary')).toContainText(/^1\b/, { timeout: 60_000 });
 
-      // Open file details tab (pinned) and select a line from the first hunk.
+      // Open file details tab (pinned), enter explicit commit-selection mode,
+      // and select a line from the first hunk.
       await twoHunksRow.focus();
       await page.keyboard.press('Shift+Enter');
       await expect(page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${twoHunksPath}`)}`)).toHaveCount(1, { timeout: 60_000 });
 
       const fileDetailsScroll = detailsPaneLocator(page).getByTestId('file-details-scroll');
       await expect(fileDetailsScroll).toHaveCount(1, { timeout: 120_000 });
+      await expect(detailsPaneLocator(page).getByText('ADDED_HUNK1_A', { exact: true })).toHaveCount(1, { timeout: 120_000 });
+      const selectForCommitButton = detailsPaneLocator(page).getByTestId('file-details-stage-file');
+      await expect(selectForCommitButton).toHaveCount(1, { timeout: 60_000 });
+      await expect(selectForCommitButton).toBeVisible({ timeout: 60_000 });
+      await clickScopedButtonByTestIdOrRole({
+        scope: detailsPaneLocator(page),
+        testId: 'file-details-stage-file',
+        roleName: 'Select for commit',
+        timeoutMs: 60_000,
+      });
+      await expect(detailsPaneLocator(page).getByTestId('file-details-line-selection-active')).toHaveCount(1, { timeout: 60_000 });
 
-      // Select a single line from the first hunk (line-selection UI should appear).
       const firstHunkLine = detailsPaneLocator(page).getByText('ADDED_HUNK1_A', { exact: true }).first();
-      await expect(firstHunkLine).toHaveCount(1, { timeout: 120_000 });
-      await firstHunkLine.click({ force: true });
+      await expect(firstHunkLine).toHaveCount(1, { timeout: 60_000 });
+      const firstHunkDiffRow = detailsPaneLocator(page).locator('[data-line-type="change-addition"][data-line="3"]').first();
+      if (await firstHunkDiffRow.count()) {
+        await firstHunkDiffRow.click({ force: true });
+      } else {
+        await firstHunkLine.click({ force: true });
+      }
 
       await expect(detailsPaneLocator(page).getByTestId('file-details-apply-selected-lines')).toHaveCount(1, { timeout: 60_000 });
       await detailsPaneLocator(page).getByTestId('file-details-apply-selected-lines').click();
+      await expect(rightPane.getByTestId('scm-commit-selection-summary')).toContainText(/^2\b/, { timeout: 60_000 });
 
       // Commit selected changes.
       const commitMessage = page.getByTestId('scm-commit-message');
@@ -262,11 +364,19 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       await firstCommit.click();
       await expect(detailsPaneLocator(page).getByTestId('scm-commit-details-revert')).toHaveCount(1, { timeout: 120_000 });
     } catch (err) {
+      const lineSelectionActiveCount = await detailsPaneLocator(page).getByTestId('file-details-line-selection-active').count().catch(() => -1);
+      const lineSelectionAvailableCount = await detailsPaneLocator(page).getByTestId('file-details-line-selection-available').count().catch(() => -1);
+      const pierreFirstHunkRowCount = await detailsPaneLocator(page).locator('[data-line-type="change-addition"][data-line="3"]').count().catch(() => -1);
+      const applySelectedLinesCount = await detailsPaneLocator(page).getByTestId('file-details-apply-selected-lines').count().catch(() => -1);
       await test.info().attach('browser-diagnostics', {
-        body: browserDiagnostics(),
+        body: `${browserDiagnostics()}\n## SCM partial staging debug\n\n`
+          + `lineSelectionActiveCount=${lineSelectionActiveCount}\n`
+          + `lineSelectionAvailableCount=${lineSelectionAvailableCount}\n`
+          + `pierreFirstHunkRowCount=${pierreFirstHunkRowCount}\n`
+          + `applySelectedLinesCount=${applySelectedLinesCount}\n`,
         contentType: 'text/markdown',
       });
-      throw err;
+      throw new Error(`${err instanceof Error ? err.message : String(err)}\nSCM partial staging debug: lineSelectionActiveCount=${lineSelectionActiveCount}, lineSelectionAvailableCount=${lineSelectionAvailableCount}, pierreFirstHunkRowCount=${pierreFirstHunkRowCount}, applySelectedLinesCount=${applySelectedLinesCount}`);
     }
   });
 });

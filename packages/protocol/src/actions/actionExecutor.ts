@@ -6,6 +6,8 @@ import {
   searchSerializedActionSpecsForSurface,
   serializeActionFieldOptions,
 } from './actionCatalog.js';
+import { resolveActionApprovalFlow } from './actionApprovalMetadata.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { resolveRequestedSessionModeId } from './sessionModeIds.js';
 import { ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
@@ -255,6 +257,22 @@ export type ActionExecutorDeps = Readonly<{
   approvalsCreate?: (args: Readonly<{ request: ApprovalRequestV1; serverId?: string | null }>) => Promise<{ artifactId: string }>;
   approvalsGet?: (args: Readonly<{ artifactId: string; serverId?: string | null }>) => Promise<ApprovalRequestV1 | null>;
   approvalsUpdate?: (args: Readonly<{ artifactId: string; request: ApprovalRequestV1; serverId?: string | null }>) => Promise<{ ok: true } | { ok: false; errorCode: string; error: string }>;
+  approvalsResolveBlockingDecision?: (args: Readonly<{
+    artifactId: string;
+    decision: 'approve' | 'reject';
+    request: ApprovalRequestV1;
+    serverId?: string | null;
+  }>) => Promise<{ resolved: boolean }>;
+  approvalsWaitForDecision?: (args: Readonly<{
+    artifactId: string;
+    request: ApprovalRequestV1;
+    serverId?: string | null;
+    signal?: AbortSignal;
+  }>) => Promise<
+    | { decision: 'approve'; request: ApprovalRequestV1 }
+    | { decision: 'reject'; request: ApprovalRequestV1; reason?: string }
+    | { decision: 'canceled'; request: ApprovalRequestV1; reason?: string }
+  >;
 
   // Provider-neutral session subagent projections (optional until A.12-subagents host owner is wired).
   subagentsList?: (args: Readonly<{ parentSessionId?: string; groupId?: string | null; limit?: number }>) => Promise<unknown>;
@@ -360,6 +378,24 @@ function mapApprovalCreatedBySurface(surface: ActionExecutorContext['surface']):
 function buildApprovalSummary(spec: ActionSpec, sessionId: string | null): string {
   const base = String(spec.title ?? '').trim() || String(spec.id);
   return sessionId ? `${base} — ${sessionId}` : base;
+}
+
+function buildApprovalMetadata(spec: ActionSpec): NonNullable<ApprovalRequestV1['approval']> {
+  return {
+    flow: resolveActionApprovalFlow(spec.approval),
+    result: spec.approval.result,
+  };
+}
+
+function isApprovalActionId(actionId: ActionId): boolean {
+  return actionId === 'approval.request.list'
+    || actionId === 'approval.request.get'
+    || actionId === 'approval.request.create'
+    || actionId === 'approval.request.decide';
+}
+
+function isBlockingApprovalRequest(request: ApprovalRequestV1): boolean {
+  return request.approval?.flow === 'blocking';
 }
 
 function extractListedSessions(value: unknown): readonly Readonly<{ id: string; title: string }>[] {
@@ -638,6 +674,20 @@ function buildApprovalDecisionResult(request: ApprovalRequestV1): ActionExecuteR
   };
 }
 
+function buildActionExecuteResultFromRecordedApprovalExecution(request: ApprovalRequestV1): ActionExecuteResult | null {
+  if (!request.execution) return null;
+  if (request.execution.ok) {
+    return { ok: true, result: request.execution.result };
+  }
+  const errorCode = typeof request.execution.errorCode === 'string' && request.execution.errorCode.trim().length > 0
+    ? request.execution.errorCode
+    : 'approval_execution_failed';
+  const error = typeof request.execution.error === 'string' && request.execution.error.trim().length > 0
+    ? request.execution.error
+    : errorCode;
+  return { ok: false, errorCode, error };
+}
+
 function resolveApprovalRequestExecutionSurface(createdBySurface: ApprovalRequestV1['createdBy']['surface']): keyof ActionSurfaces | null {
   if (createdBySurface === 'session_agent') return 'session_agent';
   if (createdBySurface === 'mcp') return 'mcp';
@@ -701,15 +751,83 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   const isActionEnabledBySurface = (spec: ActionSpec, ctx: ActionExecutorContext) => isActionSpecSurfacedOn(spec, ctx.surface);
   const isActionEnabled = (spec: ActionSpec, ctx: ActionExecutorContext) => isActionEnabledBySurface(spec, ctx) && isActionEnabledByPolicy(spec, ctx);
 
+  async function executeApprovedActionForRequest(args: Readonly<{
+    artifactId: string;
+    request: ApprovalRequestV1;
+    effectiveServerId: string | null;
+    ctx: ActionExecutorContext;
+  }>): Promise<
+    | Readonly<{ ok: true; request: ApprovalRequestV1; exec: ActionExecuteResult }>
+    | Readonly<{ ok: false; errorCode: string; error: string }>
+  > {
+    if (!deps.approvalsUpdate) {
+      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
+    }
+
+    const latestRequest = deps.approvalsGet
+      ? await deps.approvalsGet({ artifactId: args.artifactId, serverId: args.effectiveServerId })
+      : null;
+    if (latestRequest) {
+      const recordedExecutionResult = buildActionExecuteResultFromRecordedApprovalExecution(latestRequest);
+      if (recordedExecutionResult) {
+        return { ok: true, request: latestRequest, exec: recordedExecutionResult };
+      }
+    }
+
+    const requestSurface = parseActionSurfaceKey((args.request as any).requestedSurface)
+      ?? resolveApprovalRequestExecutionSurface(args.request.createdBy.surface);
+    const requestDefaultSessionId = typeof args.request.createdBy.sessionId === 'string' ? args.request.createdBy.sessionId.trim() : '';
+    const exec = requestSurface
+      ? await execute(args.request.actionId, args.request.actionArgs, {
+          ...args.ctx,
+          ...(args.effectiveServerId ? { serverId: args.effectiveServerId } : {}),
+          ...(requestDefaultSessionId ? { defaultSessionId: requestDefaultSessionId } : {}),
+          surface: requestSurface,
+          placement: null,
+          bypassApprovals: true,
+        })
+      : { ok: false as const, errorCode: 'approval_execution_surface_invalid', error: 'approval_execution_surface_invalid' };
+    const executedAtMs = Date.now();
+    const nextExecuted: ApprovalRequestV1 = {
+      ...args.request,
+      status: exec.ok ? 'executed' : 'failed',
+      updatedAtMs: executedAtMs,
+      execution: exec.ok
+        ? { executedAtMs, ok: true, result: (exec as any).result }
+        : { executedAtMs, ok: false, errorCode: (exec as any).errorCode, error: (exec as any).error },
+    };
+
+    const updated = await deps.approvalsUpdate({ artifactId: args.artifactId, request: nextExecuted, serverId: args.effectiveServerId });
+    if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
+    return { ok: true, request: nextExecuted, exec };
+  }
+
+  async function resolveBlockingDecisionIfClaimed(args: Readonly<{
+    artifactId: string;
+    decision: 'approve' | 'reject';
+    request: ApprovalRequestV1;
+    serverId: string | null;
+  }>): Promise<boolean> {
+    const resolved = await deps.approvalsResolveBlockingDecision?.({
+      artifactId: args.artifactId,
+      decision: args.decision,
+      request: args.request,
+      serverId: args.serverId,
+    });
+    return resolved?.resolved === true;
+  }
+
   const execute = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult> => {
     const ctx: ActionExecutorContext = context ?? {};
 
     const spec = getActionSpec(actionId);
-    const approvalRequired = ctx.bypassApprovals ? false : deps.isActionApprovalRequired?.(actionId, ctx) === true;
-    const isApprovalAction = actionId === 'approval.request.list'
-      || actionId === 'approval.request.get'
-      || actionId === 'approval.request.create'
-      || actionId === 'approval.request.decide';
+    const approvalRouting = resolveActionApprovalRouting({
+      actionId,
+      spec,
+      context: ctx,
+      requiredByPolicy: ctx.bypassApprovals ? false : deps.isActionApprovalRequired?.(actionId, ctx) === true,
+    });
+    const isApprovalAction = isApprovalActionId(actionId);
     if (!isActionEnabled(spec, ctx)) {
       return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
     }
@@ -719,7 +837,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
 
     try {
-      if (approvalRequired && !isApprovalAction) {
+      if (approvalRouting.required && !isApprovalAction) {
         if (!deps.approvalsCreate) {
           return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
         }
@@ -739,6 +857,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           updatedAtMs: now,
           createdBy,
           ...(requestedSurface ? { requestedSurface } : {}),
+          approval: {
+            flow: approvalRouting.flow,
+            result: approvalRouting.result,
+          },
           actionId,
           actionArgs: parsed.data,
           summary: buildApprovalSummary(spec, sessionId),
@@ -747,11 +869,68 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         };
 
         const res = await deps.approvalsCreate({ request, serverId: normalizeId(ctx.serverId) || null });
+        const artifactId = normalizeId((res as any)?.artifactId);
+        if (approvalRouting.flow === 'blocking') {
+          if (!deps.approvalsWaitForDecision || !deps.approvalsUpdate) {
+            return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
+          }
+
+          const effectiveServerId = normalizeId(ctx.serverId) || null;
+          const decision = await deps.approvalsWaitForDecision({
+            artifactId,
+            request,
+            serverId: effectiveServerId,
+          });
+
+          if (decision.decision === 'reject' || decision.decision === 'canceled') {
+            const nowRejected = Date.now();
+            const nextRequest: ApprovalRequestV1 = {
+              ...decision.request,
+              status: decision.decision === 'reject' ? 'rejected' : 'canceled',
+              updatedAtMs: nowRejected,
+              ...(decision.decision === 'reject'
+                ? { decision: { kind: 'reject' as const, decidedAtMs: nowRejected } }
+                : {}),
+            };
+            if (decision.request.status === 'open') {
+              const updated = await deps.approvalsUpdate({ artifactId, request: nextRequest, serverId: effectiveServerId });
+              if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
+            }
+            const errorCode = decision.decision === 'reject' ? 'approval_rejected' : 'approval_canceled';
+            return { ok: false, errorCode, error: errorCode };
+          }
+
+          const recordedExecutionResult = buildActionExecuteResultFromRecordedApprovalExecution(decision.request);
+          if (recordedExecutionResult) return recordedExecutionResult;
+
+          const approvedRequest = decision.request.status === 'approved'
+            ? decision.request
+            : {
+                ...decision.request,
+                status: 'approved' as const,
+                updatedAtMs: Date.now(),
+                decision: { kind: 'approve' as const, decidedAtMs: Date.now() },
+              };
+          if (decision.request.status === 'open') {
+            const approved = await deps.approvalsUpdate({ artifactId, request: approvedRequest, serverId: effectiveServerId });
+            if ((approved as any)?.ok === false) {
+              return { ok: false, errorCode: (approved as any).errorCode, error: (approved as any).error };
+            }
+          }
+
+          const executed = await executeApprovedActionForRequest({
+            artifactId,
+            request: approvedRequest,
+            effectiveServerId,
+            ctx,
+          });
+          return executed.ok ? executed.exec : executed;
+        }
         return {
           ok: true,
           result: {
             kind: 'approval_request_created',
-            artifactId: (res as any)?.artifactId,
+            artifactId,
             actionId,
           },
         };
@@ -1870,20 +2049,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         const now = Date.now();
         const targetActionId = (parsed.data as any).actionId as ActionId;
-        if (targetActionId === 'approval.request.list'
-          || targetActionId === 'approval.request.get'
-          || targetActionId === 'approval.request.create'
-          || targetActionId === 'approval.request.decide') {
+        if (isApprovalActionId(targetActionId)) {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
 
         // Approvals eligibility is policy-driven (settings/surface), not safety-driven.
         // Safety metadata remains useful for UI copy and defaults, but it is not a hard gate here.
-        getActionSpec(targetActionId);
+        const targetSpec = getActionSpec(targetActionId);
+        const parsedTargetArgs = (targetSpec.inputSchema as any).safeParse((parsed.data as any).actionArgs ?? {});
+        if (!parsedTargetArgs.success) {
+          return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        }
 
         const rawCreatedBy = (parsed.data as any).createdBy as ApprovalRequestV1['createdBy'];
         const forcedSurface = mapApprovalCreatedBySurface(ctx.surface ?? null);
-        const actionArgsSessionId = normalizeId((parsed.data as any).actionArgs?.sessionId);
+        const actionArgsSessionId = normalizeId((parsedTargetArgs.data as any)?.sessionId);
         const ctxDefaultSessionId = normalizeId(ctx.defaultSessionId);
         const rawAgentId = rawCreatedBy && typeof rawCreatedBy === 'object' ? normalizeId((rawCreatedBy as any).agentId) : null;
         const requestedSurface = parseActionSurfaceKey(ctx.surface);
@@ -1903,8 +2083,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           updatedAtMs: now,
           createdBy,
           ...(requestedSurface ? { requestedSurface } : {}),
+          approval: buildApprovalMetadata(targetSpec),
           actionId: targetActionId,
-          actionArgs: (parsed.data as any).actionArgs,
+          actionArgs: parsedTargetArgs.data,
           summary,
           ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
           ...(Object.prototype.hasOwnProperty.call(parsed.data, 'preview') ? { preview: (parsed.data as any).preview } : {}),
@@ -1930,7 +2111,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const effectiveServerId = normalizeId(ctx.serverId) || normalizeId(existing.serverId) || null;
         const decision = (parsed.data as any).decision;
 
-        if (existing.actionId === 'approval.request.create' || existing.actionId === 'approval.request.decide') {
+        if (isApprovalActionId(existing.actionId)) {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
         const isRecoverableApproved = decision === 'approve'
@@ -1964,6 +2145,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           };
           const updated = await deps.approvalsUpdate({ artifactId, request: nextRejected, serverId: effectiveServerId });
           if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
+          if (isBlockingApprovalRequest(nextRejected)) {
+            await resolveBlockingDecisionIfClaimed({
+              artifactId,
+              decision: 'reject',
+              request: nextRejected,
+              serverId: effectiveServerId,
+            });
+          }
           return buildApprovalDecisionResult(nextRejected);
         }
 
@@ -1986,32 +2175,23 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
         }
 
-        const requestSurface = parseActionSurfaceKey((approvedRequest as any).requestedSurface)
-          ?? resolveApprovalRequestExecutionSurface(existing.createdBy.surface);
-        const requestDefaultSessionId = typeof existing.createdBy.sessionId === 'string' ? existing.createdBy.sessionId.trim() : '';
-        const exec = requestSurface
-          ? await execute(existing.actionId, existing.actionArgs, {
-              ...ctx,
-              ...(effectiveServerId ? { serverId: effectiveServerId } : {}),
-              ...(requestDefaultSessionId ? { defaultSessionId: requestDefaultSessionId } : {}),
-              surface: requestSurface,
-              placement: null,
-              bypassApprovals: true,
-            })
-          : { ok: false as const, errorCode: 'approval_execution_surface_invalid', error: 'approval_execution_surface_invalid' };
-        const executedAtMs = Date.now();
-        const nextExecuted: ApprovalRequestV1 = {
-          ...approvedRequest,
-          status: exec.ok ? 'executed' : 'failed',
-          updatedAtMs: executedAtMs,
-          execution: exec.ok
-            ? { executedAtMs, ok: true, result: (exec as any).result }
-            : { executedAtMs, ok: false, errorCode: (exec as any).errorCode, error: (exec as any).error },
-        };
+        if (isBlockingApprovalRequest(approvedRequest)) {
+          const claimed = await resolveBlockingDecisionIfClaimed({
+            artifactId,
+            decision: 'approve',
+            request: approvedRequest,
+            serverId: effectiveServerId,
+          });
+          if (claimed) return buildApprovalDecisionResult(approvedRequest);
+        }
 
-        const updated = await deps.approvalsUpdate({ artifactId, request: nextExecuted, serverId: effectiveServerId });
-        if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
-        return buildApprovalDecisionResult(nextExecuted);
+        const executed = await executeApprovedActionForRequest({
+          artifactId,
+          request: approvedRequest,
+          effectiveServerId,
+          ctx,
+        });
+        return executed.ok ? buildApprovalDecisionResult(executed.request) : executed;
       }
 
       return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };

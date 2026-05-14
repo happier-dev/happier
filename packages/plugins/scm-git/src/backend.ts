@@ -6,7 +6,7 @@ import type { PluginApiV1, ScmBackendRuntimeRegistration } from '@happier-dev/pl
 
 import { resolveScmBackendCapabilities } from './capabilities/resolveScmBackendCapabilities.js';
 import type { ScmBackend } from './types.js';
-import { detectGitRepo, getGitSnapshot } from './repository.js';
+import { detectGitRepo, getGitSnapshot, getGitWorktreesEnrichment } from './repository.js';
 import { GIT_SCM_BACKEND_CAPABILITIES } from './capabilities.js';
 import {
     assertPortableGitWorkspaceEntries,
@@ -86,8 +86,11 @@ export function createGitBackend(): ScmBackend {
                 })),
             };
         },
-        async statusSnapshot({ context }) {
-            return getGitSnapshot({ context });
+        async statusSnapshot({ context, request }) {
+            return getGitSnapshot({ context, request });
+        },
+        async worktreesEnrichment({ context, request }) {
+            return getGitWorktreesEnrichment({ context, request });
         },
         diffFile: gitDiffFile,
         diffCommit: gitDiffCommit,
@@ -172,6 +175,7 @@ export function createGitScmBackendRuntimeRegistration(): ScmBackendRuntimeRegis
             },
             read: {
                 statusSnapshot: backend.statusSnapshot,
+                worktreesEnrichment: backend.worktreesEnrichment,
                 diffFile: backend.diffFile,
                 diffCommit: backend.diffCommit,
                 logList: backend.logList,

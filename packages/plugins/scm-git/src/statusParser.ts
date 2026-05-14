@@ -31,6 +31,11 @@ export type ParsedNumStatSummary = {
     files: ParsedNumStatFile[];
 };
 
+export type ParsedGitStatusPorcelainShortZEntry = {
+    path: string;
+    isUntracked: boolean;
+};
+
 function parsePorcelainEntryWithFixedFields(
     token: string,
     prefix: '1 ' | '2 ' | 'u ',
@@ -182,4 +187,29 @@ export function parseNumStatZ(numStatOutput: string): ParsedNumStatSummary {
     }
 
     return { files };
+}
+
+export function parseGitStatusPorcelainShortZ(stdout: string): readonly ParsedGitStatusPorcelainShortZEntry[] {
+    if (!stdout) return [];
+    const tokens = stdout.split('\0');
+    const entries: ParsedGitStatusPorcelainShortZEntry[] = [];
+    let index = 0;
+    while (index < tokens.length) {
+        const token = tokens[index];
+        if (token === undefined || token.length === 0) {
+            index += 1;
+            continue;
+        }
+        if (token.length < 4) {
+            index += 1;
+            continue;
+        }
+        const xy = token.slice(0, 2);
+        entries.push({
+            path: token.slice(3),
+            isUntracked: xy === '??',
+        });
+        index += xy.includes('R') || xy.includes('C') ? 2 : 1;
+    }
+    return entries;
 }

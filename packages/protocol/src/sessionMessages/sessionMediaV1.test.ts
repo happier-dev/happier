@@ -141,7 +141,11 @@ describe('session media v1 schemas', () => {
 
   it('rejects transient or unsafe persisted shapes', () => {
     const schema = readSchema('SessionMediaItemV1Schema');
+    const unsafeBase64Id = 'aW1hZ2VCeXRlcw==';
     const invalidItems = [
+      { ...validMediaItem, id: unsafeBase64Id },
+      { ...validMediaItem, name: 'data:image/png;base64,iVBORw0KGgo=' },
+      { ...validMediaItem, name: 'https://provider.example/generated.png' },
       { ...validMediaItem, data: 'iVBORw0KGgo=' },
       { ...validMediaItem, url: 'https://provider.example/generated.png' },
       { ...validMediaItem, b64: 'iVBORw0KGgo=' },
@@ -153,6 +157,8 @@ describe('session media v1 schemas', () => {
       { ...validMediaItem, path: 'C:\\Users\\alice\\generated.png' },
       { ...validMediaItem, path: 'https://provider.example/generated.png' },
       { ...validMediaItem, path: 'data:image/png;base64,iVBORw0KGgo=' },
+      { ...validMediaItem, path: '$HOME/.codex/generated.png' },
+      { ...validMediaItem, path: '$CODEX_HOME/generated-images/generated.png' },
       { ...validMediaItem, path: '.happier/uploads/generated/../secret.png' },
       { ...validMediaItem, path: '.happier\\uploads\\generated\\message-1\\media.png' },
       { ...validMediaItem, mimeType: 'image/svg+xml' },
@@ -165,6 +171,34 @@ describe('session media v1 schemas', () => {
           backendId: 'codex',
         },
       },
+      {
+        ...validMediaItem,
+        origin: {
+          ...validMediaItem.origin,
+          agentId: 'file:///tmp/agent',
+        },
+      },
+      {
+        ...validMediaItem,
+        origin: {
+          ...validMediaItem.origin,
+          generationId: '/tmp/provider/generated.png',
+        },
+      },
+      {
+        ...validMediaItem,
+        origin: {
+          ...validMediaItem.origin,
+          providerEventId: 'https://provider.example/events/secret',
+        },
+      },
+      {
+        ...validMediaItem,
+        origin: {
+          ...validMediaItem.origin,
+          providerFileId: unsafeBase64Id,
+        },
+      },
     ];
 
     for (const item of invalidItems) {
@@ -174,11 +208,44 @@ describe('session media v1 schemas', () => {
 
   it('rejects unsafe persisted fields on the origin, payload, and envelope passthrough surfaces', () => {
     const schema = readSchema('SessionMediaMessageMetaV1Schema');
+    const inlineDataUri = 'data:image/png;base64,iVBORw0KGgo=';
+    const shortBase64Name = 'aW1hZ2VCeXRlcw==';
+    const shortBase64UrlName = 'aW1hZ2VCeXRlcw';
     const invalidEnvelopes = [
       {
         kind: 'session_media.v1',
         url: 'https://provider.example/image.png',
         payload: { media: [validMediaItem] },
+      },
+      {
+        kind: 'session_media.v1',
+        provider: 'codex',
+        payload: { media: [validMediaItem] },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          providerId: 'codex',
+          media: [validMediaItem],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          futureRendererHint: {
+            preview: inlineDataUri,
+          },
+          media: [validMediaItem],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          futureRendererHint: {
+            cachePath: '$CODEX_HOME/generated-images/generated-image.png',
+          },
+          media: [validMediaItem],
+        },
       },
       {
         kind: 'session_media.v1',
@@ -215,11 +282,174 @@ describe('session media v1 schemas', () => {
       {
         kind: 'session_media.v1',
         payload: {
+          media: [],
+          failures: [{
+            index: 0,
+            code: 'invalid_source_file',
+            role: 'output',
+            category: 'generated',
+            mediaKind: 'image',
+            name: inlineDataUri,
+            origin: { source: 'provider-generated' },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [],
+          failures: [{
+            index: 0,
+            code: 'invalid_source_file',
+            role: 'output',
+            category: 'generated',
+            mediaKind: 'image',
+            name: '/tmp/provider/generated-image.png',
+            origin: { source: 'provider-generated' },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [],
+          failures: [{
+            index: 0,
+            code: 'invalid_source_file',
+            role: 'output',
+            category: 'generated',
+            mediaKind: 'image',
+            name: shortBase64Name,
+            origin: { source: 'provider-generated' },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [],
+          failures: [{
+            index: 0,
+            code: 'invalid_source_file',
+            role: 'output',
+            category: 'generated',
+            mediaKind: 'image',
+            name: shortBase64UrlName,
+            origin: { source: 'provider-generated' },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [],
+          failures: [{
+            index: 0,
+            code: 'invalid_source_file',
+            role: 'output',
+            category: 'generated',
+            mediaKind: 'image',
+            name: 'generated-image.png',
+            path: '/tmp/provider/generated-image.png',
+            origin: { source: 'provider-generated' },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [],
+          failures: [{
+            index: 0,
+            code: 'invalid_source_file',
+            role: 'output',
+            category: 'generated',
+            mediaKind: 'image',
+            name: 'generated-image.png',
+            sourcePath: '/tmp/provider/generated-image.png',
+            origin: { source: 'provider-generated' },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [],
+          failures: [{
+            index: 0,
+            code: 'invalid_source_file',
+            role: 'output',
+            category: 'generated',
+            mediaKind: 'image',
+            name: 'generated-image.png',
+            futureProviderField: 'must not passthrough on failures',
+            origin: { source: 'provider-generated' },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [{
+            ...validMediaItem,
+            futureRendererHint: {
+              preview: inlineDataUri,
+            },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [{
+            ...validMediaItem,
+            futureRendererHint: {
+              cachePath: '/tmp/provider/generated-image.png',
+            },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [{
+            ...validMediaItem,
+            providerId: 'codex',
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
           media: [{
             ...validMediaItem,
             origin: {
               ...validMediaItem.origin,
               providerSummary: 'generated image',
+            },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [{
+            ...validMediaItem,
+            origin: {
+              ...validMediaItem.origin,
+              futureProviderHint: '/tmp/provider/generated-image.png',
+            },
+          }],
+        },
+      },
+      {
+        kind: 'session_media.v1',
+        payload: {
+          media: [{
+            ...validMediaItem,
+            origin: {
+              ...validMediaItem.origin,
+              providerId: 'codex',
             },
           }],
         },

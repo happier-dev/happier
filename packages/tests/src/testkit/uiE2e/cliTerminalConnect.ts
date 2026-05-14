@@ -12,6 +12,8 @@ import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess
 import { repoRootDir } from '../paths';
 import { waitForRegexInFile } from '../waitForRegexInFile';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { waitFor } from '../timing';
+import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
 
 function extractHttpUrls(text: string): string[] {
   const out: string[] = [];
@@ -103,6 +105,73 @@ function extractTerminalConnectUrl(text: string): string | null {
   return null;
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '[::1]' || normalized === '::1';
+}
+
+function normalizeTerminalConnectUrlForBrowser(params: Readonly<{
+  connectUrl: string;
+  webappUrl: string;
+}>): string {
+  try {
+    const parsedConnectUrl = new URL(params.connectUrl);
+    const parsedWebappUrl = new URL(params.webappUrl);
+    if (
+      isLoopbackHostname(parsedConnectUrl.hostname)
+      && isLoopbackHostname(parsedWebappUrl.hostname)
+      && parsedConnectUrl.hostname !== parsedWebappUrl.hostname
+    ) {
+      parsedConnectUrl.hostname = parsedWebappUrl.hostname;
+      return parsedConnectUrl.toString();
+    }
+  } catch {
+    return params.connectUrl;
+  }
+  return params.connectUrl;
+}
+
+function resolveTerminalConnectReadyTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const raw = String(env.HAPPIER_E2E_CLI_TERMINAL_CONNECT_READY_TIMEOUT_MS ?? '').trim();
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 90_000;
+}
+
+function listTerminalConnectUrlReadyCandidates(connectUrl: string): string[] {
+  return [...new Set([connectUrl, ...expandLoopbackBaseUrlCandidates(connectUrl)])];
+}
+
+async function waitForTerminalConnectUrlReady(connectUrl: string, env: NodeJS.ProcessEnv): Promise<string> {
+  let readyUrl: string | null = null;
+  const candidates = listTerminalConnectUrlReadyCandidates(connectUrl);
+
+  await waitFor(async () => {
+    let lastError: unknown = null;
+    for (const candidate of candidates) {
+      try {
+        const response = await fetch(candidate, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (response.ok) {
+          readyUrl = candidate;
+          return true;
+        }
+        lastError = new Error(`terminal connect URL responded with HTTP ${response.status}: ${candidate}`);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError) throw lastError;
+    return false;
+  }, {
+    timeoutMs: resolveTerminalConnectReadyTimeoutMs(env),
+    intervalMs: 250,
+    context: 'terminal connect URL readiness',
+  });
+
+  return readyUrl ?? connectUrl;
+}
+
 async function stdoutTail(path: string): Promise<string> {
   const raw = await readFile(path, 'utf8').catch(() => '');
   return raw.slice(Math.max(0, raw.length - 8_000));
@@ -147,6 +216,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   serverUrl: string;
   webappUrl: string;
   connectUrlTimeoutMs?: number;
+  waitForConnectUrlReady?: boolean;
   env: NodeJS.ProcessEnv;
 }>): Promise<StartedCliTerminalConnect> {
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
@@ -177,7 +247,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   const proc = spawnLoggedProcess({
     command: cliLaunchSpec.command,
     args: [...cliLaunchSpec.args, 'auth', 'login', '--force', '--no-open', '--method', 'web'],
-    cwd: repoRootDir(),
+    cwd: cliLaunchSpec.cwd ?? repoRootDir(),
     env: {
       ...params.env,
       ...(cliLaunchSpec.env ?? {}),
@@ -214,6 +284,13 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
       context: 'CLI terminal connect URL',
     });
     connectUrl = extractTerminalConnectUrl(match.input ?? '') ?? normalizeUrl(match[0] ?? '');
+    connectUrl = normalizeTerminalConnectUrlForBrowser({
+      connectUrl,
+      webappUrl: params.webappUrl,
+    });
+    if (params.waitForConnectUrlReady !== false) {
+      connectUrl = await waitForTerminalConnectUrlReady(connectUrl, params.env);
+    }
   } catch (e) {
     await proc.stop().catch(() => {});
     throw e;

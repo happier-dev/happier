@@ -73,6 +73,8 @@ import type {
     ScmStatusSnapshotResponse,
     ScmWorktreeCreateRequest,
     ScmWorktreeCreateResponse,
+    ScmWorktreesEnrichmentRequest,
+    ScmWorktreesEnrichmentResponse,
     ScmWorktreePruneRequest,
     ScmWorktreePruneResponse,
     ScmWorktreeRemoveRequest,
@@ -254,6 +256,9 @@ export type ScmBackendRuntimeHandlers = Readonly<{
         statusSnapshot?: (
             input: ScmBackendRuntimeHandlerInput<ScmStatusSnapshotRequest>
         ) => Promise<ScmStatusSnapshotResponse> | ScmStatusSnapshotResponse;
+        worktreesEnrichment?: (
+            input: ScmBackendRuntimeHandlerInput<ScmWorktreesEnrichmentRequest>
+        ) => Promise<ScmWorktreesEnrichmentResponse> | ScmWorktreesEnrichmentResponse;
         diffFile?: (
             input: ScmBackendRuntimeHandlerInput<ScmDiffFileRequest>
         ) => Promise<ScmDiffFileResponse> | ScmDiffFileResponse;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import * as scmContractModule from './scm.js';
 import {
+    SCM_WORKTREES_ENRICHMENT_MAX_PATHS,
     SCM_COMMIT_PATCH_MAX_COUNT,
     SCM_COMMIT_PATCH_MAX_LENGTH,
     SCM_OPERATION_ERROR_CODES,
@@ -13,6 +14,8 @@ import {
     parseScmPatchPaths,
     ScmStatusSnapshotRequestSchema,
     ScmStatusSnapshotResponseSchema,
+    ScmWorktreesEnrichmentRequestSchema,
+    ScmWorktreesEnrichmentResponseSchema,
     ScmWorkingSnapshotSchema,
 } from './scm.js';
 
@@ -112,6 +115,15 @@ describe('scm protocol contracts', () => {
         expect(parsed.backendPreference?.backendId).toBe('sapling');
     });
 
+    it('supports opt-in per-worktree status enrichment on status requests', () => {
+        const parsed = ScmStatusSnapshotRequestSchema.parse({
+            cwd: '.',
+            includeWorktreeStatus: true,
+        });
+
+        expect(parsed.includeWorktreeStatus).toBe(true);
+    });
+
     it('supports authored external SCM backend ids in backend contracts', () => {
         const statusRequest = ScmStatusSnapshotRequestSchema.parse({
             cwd: '.',
@@ -148,6 +160,8 @@ describe('scm protocol contracts', () => {
                         branch: 'main',
                         isCurrent: true,
                         isMain: true,
+                        changeCount: 2,
+                        lastActivityAt: 1710000000000,
                     },
                     {
                         id: 'gitwt_feature_auth',
@@ -244,6 +258,8 @@ describe('scm protocol contracts', () => {
         expect(response.snapshot?.repo.worktrees).toHaveLength(2);
         expect(response.snapshot?.repo.worktrees?.[1]?.branch).toBe('feature/auth');
         expect(response.snapshot?.repo.worktrees?.[0]?.isMain).toBe(true);
+        expect(response.snapshot?.repo.worktrees?.[0]?.changeCount).toBe(2);
+        expect(response.snapshot?.repo.worktrees?.[0]?.lastActivityAt).toBe(1710000000000);
         expect(response.snapshot?.repo.worktrees?.[1]?.isMain).toBe(false);
         expect(response.snapshot?.repo.worktrees?.[1]?.isPrunable).toBeUndefined();
         expect(response.snapshot?.repo).toMatchObject({
@@ -617,5 +633,43 @@ describe('scm protocol contracts', () => {
 
         expect(parsed.success).toBe(false);
         expect(parsed.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
+    });
+
+    describe('ScmWorktreesEnrichmentRequestSchema', () => {
+        it('accepts known worktree paths up to the protocol cap', () => {
+            const parsed = ScmWorktreesEnrichmentRequestSchema.parse({
+                cwd: '/repo',
+                worktreePaths: Array.from({ length: SCM_WORKTREES_ENRICHMENT_MAX_PATHS }, (_, index) => `/repo/wt-${index}`),
+            });
+
+            expect(parsed.worktreePaths).toHaveLength(SCM_WORKTREES_ENRICHMENT_MAX_PATHS);
+        });
+
+        it('rejects requests over the protocol cap', () => {
+            const result = ScmWorktreesEnrichmentRequestSchema.safeParse({
+                cwd: '/repo',
+                worktreePaths: Array.from({ length: SCM_WORKTREES_ENRICHMENT_MAX_PATHS + 1 }, (_, index) => `/repo/wt-${index}`),
+            });
+
+            expect(result.success).toBe(false);
+        });
+    });
+
+    describe('ScmWorktreesEnrichmentResponseSchema', () => {
+        it('parses per-worktree enrichment entries', () => {
+            const parsed = ScmWorktreesEnrichmentResponseSchema.parse({
+                success: true,
+                worktrees: [
+                    {
+                        path: '/repo',
+                        changeCount: 3,
+                        lastActivityAt: 1710000000000,
+                    },
+                ],
+            });
+
+            expect(parsed.worktrees?.[0]?.changeCount).toBe(3);
+            expect(parsed.worktrees?.[0]?.lastActivityAt).toBe(1710000000000);
+        });
     });
 });

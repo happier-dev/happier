@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
   ScmWorktreeCreateRequestSchema,
   ScmWorktreePruneRequestSchema,
   ScmWorktreeRemoveRequestSchema,
@@ -31,16 +32,21 @@ describe('scmWorktrees protocol contracts', () => {
     });
   });
 
-  it('requires a worktree path for remove requests', () => {
+  it('requires explicit authorization for remove requests', () => {
     expect(() => ScmWorktreeRemoveRequestSchema.parse({
       cwd: '/repo',
+      worktreePath: '/repo/.dev/worktree/feature-auth',
     })).toThrow();
 
     const parsed = ScmWorktreeRemoveRequestSchema.parse({
       cwd: '/repo',
       worktreePath: '/repo/.dev/worktree/feature-auth',
+      confirmed: true,
+      authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
     });
 
     expect(parsed.worktreePath).toBe('/repo/.dev/worktree/feature-auth');
+    expect(parsed.confirmed).toBe(true);
+    expect(parsed.authorizationToken).toBe(SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN);
   });
 });

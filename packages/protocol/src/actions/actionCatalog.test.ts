@@ -28,6 +28,7 @@ describe('actionCatalog action-definition adapter', () => {
       title: 'Get action spec',
       description: 'Read one action spec.',
       safety: 'safe',
+      approval: { result: 'required' },
       placements: [],
       slash: null,
       bindings: {
@@ -67,6 +68,7 @@ describe('actionCatalog action-definition adapter', () => {
       transport: 'host',
     }));
     expect(definition.sideEffectClass).toBe('read');
+    expect(definition.approval).toEqual({ result: 'required' });
     expect(definition.bindings).toEqual(expect.objectContaining({
       mcpToolName: 'action_spec_get',
       sdkMethod: 'actionSpecGet',

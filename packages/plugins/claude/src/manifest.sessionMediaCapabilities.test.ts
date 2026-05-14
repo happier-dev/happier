@@ -11,13 +11,13 @@ function capabilitiesForBackend(id: string) {
 }
 
 describe('Claude plugin session media capabilities', () => {
-  it('declares SDK image blocks without claiming native image generation', () => {
+  it('declares only tool-output SDK image blocks without claiming native image generation', () => {
     const capabilities = capabilitiesForBackend('claude');
 
     expect(capabilities.session.media.emitsSessionMedia).toMatchObject({
       supported: true,
       mediaKinds: ['image'],
-      sources: ['provider-generated', 'tool-output'],
+      sources: ['tool-output'],
       storage: 'session-media-file',
     });
     expect(capabilities.session.media.nativeImageGeneration.supported).toBe(false);

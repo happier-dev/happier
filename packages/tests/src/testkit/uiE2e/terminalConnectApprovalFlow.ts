@@ -1,8 +1,29 @@
 export type TerminalConnectApprovalReadyPage = Readonly<{
   locator: (selector: string) => Readonly<{ count: () => Promise<number> }>;
+  getByRole?: (role: 'button', options: Readonly<{ name: string; exact?: boolean }>) => Readonly<{ count: () => Promise<number> }>;
   waitForTimeout: (ms: number) => Promise<void>;
   waitForURL: (matcher: (url: URL) => boolean, options?: Readonly<{ timeout?: number }>) => Promise<void>;
+  url?: () => string;
 }>;
+
+function isCurrentTerminalRoute(page: TerminalConnectApprovalReadyPage): boolean {
+  if (typeof page.url !== 'function') return false;
+  try {
+    return new URL(page.url()).pathname.startsWith('/terminal');
+  } catch {
+    return false;
+  }
+}
+
+async function waitForTerminalRoute(page: TerminalConnectApprovalReadyPage, timeoutMs: number): Promise<void> {
+  if (isCurrentTerminalRoute(page)) {
+    return;
+  }
+
+  await page.waitForURL((url) => url.pathname.startsWith('/terminal'), {
+    timeout: timeoutMs,
+  });
+}
 
 export async function waitForTerminalConnectReadySurface(
   page: TerminalConnectApprovalReadyPage,
@@ -14,6 +35,9 @@ export async function waitForTerminalConnectReadySurface(
       return 'restore';
     }
     if ((await page.locator('[data-testid="terminal-connect-approve"]:visible').count()) > 0) {
+      return 'approve';
+    }
+    if ((await page.getByRole?.('button', { name: 'Accept Connection', exact: true }).count()) > 0) {
       return 'approve';
     }
     await page.waitForTimeout(250);
@@ -42,9 +66,7 @@ export async function ensurePendingTerminalConnectReadyForApproval(params: Reado
         throw error;
       }
       await params.gotoConnectUrl(params.connectUrlForBrowser);
-      await params.page.waitForURL((url) => url.pathname.startsWith('/terminal'), {
-        timeout: remainingTimeoutMs,
-      });
+      await waitForTerminalRoute(params.page, remainingTimeoutMs);
       continue;
     }
     if (readySurface === 'approve') {
@@ -53,8 +75,6 @@ export async function ensurePendingTerminalConnectReadyForApproval(params: Reado
 
     await params.restoreAccount();
     await params.gotoConnectUrl(params.connectUrlForBrowser);
-    await params.page.waitForURL((url) => url.pathname.startsWith('/terminal'), {
-      timeout: remainingTimeoutMs,
-    });
+    await waitForTerminalRoute(params.page, remainingTimeoutMs);
   }
 }

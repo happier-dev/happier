@@ -70,7 +70,7 @@ export const GIT_SCM_BACKEND_CAPABILITIES = {
     },
     hosting: {
         providerDetection: supportedCapability(),
-        repositoryPublishTargets: unsupportedCapability(),
+        repositoryPublishTargets: supportedCapability(),
         repositoryPublish: supportedCapability(),
         pullRequestRead: supportedCapability(),
         pullRequestStatus: supportedCapability(),
@@ -97,7 +97,7 @@ export const GIT_SCM_BACKEND_CAPABILITIES = {
     },
     tooling: {
         systemCliResolution: supportedCapability(),
-        managedCliResolution: supportedCapability(),
+        managedCliResolution: unsupportedCapability(),
         binarySafe: supportedCapability(),
     },
     freshness: {

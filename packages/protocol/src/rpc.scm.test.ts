@@ -21,6 +21,7 @@ describe('RPC_METHODS scm surface', () => {
         expect(RPC_METHODS.SCM_BRANCH_REBASE).toBe('scm.branch.rebase');
         expect(RPC_METHODS.SCM_BRANCH_OPERATION_CONTINUE).toBe('scm.branch.operation.continue');
         expect(RPC_METHODS.SCM_BRANCH_OPERATION_ABORT).toBe('scm.branch.operation.abort');
+        expect(RPC_METHODS.SCM_WORKTREES_ENRICHMENT).toBe('scm.worktrees.enrichment');
         expect(RPC_METHODS.SCM_REMOTE_ADD).toBe('scm.remote.add');
         expect(RPC_METHODS.SCM_REMOTE_SET_URL).toBe('scm.remote.setUrl');
         expect(RPC_METHODS.SCM_REMOTE_REMOVE).toBe('scm.remote.remove');

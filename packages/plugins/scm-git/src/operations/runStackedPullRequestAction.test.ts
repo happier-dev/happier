@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+    ScmBranchCreateResponse,
     ScmCommitCreateResponse,
     ScmPullRequestOpenOrReuseResponse,
+    ScmRemotePublishResponse,
     ScmRemoteResponse,
     ScmWorkingSnapshot,
 } from '@happier-dev/protocol';
@@ -336,6 +338,105 @@ describe('run stacked pull request action', () => {
         expect(commit).not.toHaveBeenCalled();
         expect(push).not.toHaveBeenCalled();
         expect(openOrReuse).not.toHaveBeenCalled();
+    });
+
+    it('creates and publishes a requested feature branch before committing from a default branch that requires feature branches', async () => {
+        const calls: string[] = [];
+        const branchCreate = vi.fn(async (): Promise<ScmBranchCreateResponse> => {
+            calls.push('branch');
+            return { success: true, stdout: '', stderr: '' };
+        });
+        const commit = vi.fn(async (): Promise<ScmCommitCreateResponse> => {
+            calls.push('commit');
+            return { success: true, commitSha: 'abc123' };
+        });
+        const publish = vi.fn(async (): Promise<ScmRemotePublishResponse> => {
+            calls.push('publish');
+            return { success: true, stdout: '', stderr: '' };
+        });
+        const push = vi.fn(async (): Promise<ScmRemoteResponse> => {
+            calls.push('push');
+            return { success: true, stdout: '', stderr: '' };
+        });
+        const openOrReuse = vi.fn(async (): Promise<ScmPullRequestOpenOrReuseResponse> => {
+            calls.push('pr');
+            return {
+                success: true,
+                pullRequest: null,
+                nextAction: { kind: 'none' },
+            };
+        });
+        const action = createGitRunStackedPullRequestAction({
+            branchCreate,
+            commitCreate: commit,
+            remotePush: push,
+            publishActiveBranch: publish,
+            pullRequestOpenOrReuse: openOrReuse,
+            readSnapshot: async () => ({
+                ...createSnapshot({ head: 'main', upstream: 'origin/main', ahead: 1 }),
+                capabilities: {
+                    capabilityScope: 'local-backend',
+                    defaultBranchPushPolicy: 'requires-feature-branch',
+                },
+            }),
+            now: () => 1234,
+        });
+
+        const response = await action.runStacked({
+            context,
+            request: {
+                cwd: '/repo',
+                action: 'commitPushAndOpenOrReuse',
+                base: 'main',
+                featureBranch: 'feature/generated',
+                commitMessage: 'Commit on generated feature branch',
+                title: 'Open generated feature branch',
+            },
+        });
+
+        expect(response).toMatchObject({
+            success: true,
+            branch: 'feature/generated',
+            commitSha: 'abc123',
+        });
+        expect(calls).toEqual(['branch', 'commit', 'publish', 'pr']);
+        expect(branchCreate).toHaveBeenCalledWith({
+            context,
+            request: {
+                cwd: '/repo',
+                name: 'feature/generated',
+                checkout: true,
+                startPoint: 'main',
+            },
+        });
+        expect(push).not.toHaveBeenCalled();
+        expect(publish).toHaveBeenCalledWith({
+            context,
+            request: { cwd: '/repo' },
+            headBranch: 'feature/generated',
+            reason: 'missing_upstream',
+        });
+        expect(openOrReuse).toHaveBeenCalledWith({
+            context,
+            request: {
+                cwd: '/repo',
+                base: 'main',
+                head: 'feature/generated',
+                title: 'Open generated feature branch',
+            },
+        });
+        expect(response.events.map((event) => `${event.kind}:${event.phase ?? 'action'}`)).toEqual([
+            'action_started:action',
+            'phase_started:branch',
+            'phase_finished:branch',
+            'phase_started:commit',
+            'phase_finished:commit',
+            'phase_started:push',
+            'phase_finished:push',
+            'phase_started:pr',
+            'phase_finished:pr',
+            'action_finished:action',
+        ]);
     });
 
     it('blocks requested feature-branch commits when the active branch cannot be verified', async () => {

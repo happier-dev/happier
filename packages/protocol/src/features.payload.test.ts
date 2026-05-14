@@ -56,6 +56,7 @@ describe('FeaturesResponseSchema', () => {
     expect(parsed.features.social.friends.enabled).toBe(false);
     expect(parsed.features.encryption.plaintextStorage.enabled).toBe(false);
     expect(parsed.features.encryption.accountOptOut.enabled).toBe(false);
+    expect(readOptionalPath(parsed, ['features', 'sessions', 'folders', 'enabled'])).toBe(false);
     expect((parsed as any).features.machines.transfer.directPeer.enabled).toBe(false);
     expect((parsed as any).features.machines.transfer.serverRouted.enabled).toBe(false);
     expect(parsed.features.auth.recovery.providerReset.enabled).toBe(false);

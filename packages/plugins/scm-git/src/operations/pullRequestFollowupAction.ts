@@ -27,6 +27,9 @@ export function createValidatedPullRequestFollowupAction(_input: Readonly<{
     } catch {
         return { kind: 'none' };
     }
+    if (target.username || target.password || base.username || base.password) {
+        return { kind: 'none' };
+    }
 
     const allowedSchemes = input.provider.urlSafety?.allowedSchemes?.length
         ? input.provider.urlSafety.allowedSchemes

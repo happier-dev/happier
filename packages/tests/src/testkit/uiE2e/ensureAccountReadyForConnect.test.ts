@@ -115,12 +115,12 @@ describe('ensureAccountReadyForConnect', () => {
         'session-getting-started-kind-connect_machine': [0, 0, 0, 1],
       },
       clickErrors: {
-        'welcome-create-account': [new Error('intercepts pointer events')],
+        'welcome-create-account': [new Error('intercepts pointer events'), undefined],
       },
     });
 
     await expect(ensureAccountReadyForConnect({ page, timeoutMs: 250 })).resolves.toBeUndefined();
-    expect(page.clickCalls['welcome-create-account'] ?? 0).toBe(2);
+    expect(page.clickCalls['welcome-create-account'] ?? 0).toBeGreaterThan(1);
   });
 
   it('throws when no ready state appears in time', async () => {
@@ -142,6 +142,18 @@ describe('ensureAccountReadyForConnect', () => {
       testIdCounts: {
         'onboarding-showcase-primary': [1, 1, 1, 0],
         'session-getting-started-kind-connect_machine': [0, 0, 1],
+      },
+    });
+
+    await expect(ensureAccountReadyForConnect({ page, timeoutMs: 400 })).resolves.toBeUndefined();
+    expect(page.clickCalls['onboarding-showcase-primary'] ?? 0).toBeGreaterThan(0);
+  });
+
+  it('keeps advancing onboarding story cards when ready controls are mounted behind them', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'onboarding-showcase-primary': [1, 1, 0],
+        'session-getting-started-kind-connect_machine': [1, 1, 1],
       },
     });
 

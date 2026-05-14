@@ -11,13 +11,13 @@ function capabilitiesForBackend(id: string) {
 }
 
 describe('Pi plugin session media capabilities', () => {
-  it('declares RPC image output without overclaiming native generation', () => {
+  it('declares only source-real tool-output media without overclaiming native generation', () => {
     const capabilities = capabilitiesForBackend('pi');
 
     expect(capabilities.session.media.emitsSessionMedia).toMatchObject({
       supported: true,
       mediaKinds: ['image'],
-      sources: ['provider-generated'],
+      sources: ['tool-output'],
       storage: 'session-media-file',
     });
     expect(capabilities.session.media.nativeImageGeneration.supported).toBe(false);

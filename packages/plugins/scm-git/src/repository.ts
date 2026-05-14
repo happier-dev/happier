@@ -1,14 +1,21 @@
 import type { ScmRepoDetection, ScmBackendContext } from './types.js';
-import type { ScmStatusSnapshotResponse } from '@happier-dev/protocol';
+import type {
+    ScmStatusSnapshotRequest,
+    ScmStatusSnapshotResponse,
+    ScmWorktreesEnrichmentRequest,
+    ScmWorktreesEnrichmentResponse,
+} from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import { runScmCommand } from './runtime.js';
 import { normalizeRepoRootRelativePath } from './runtime.js';
 import { buildGitSnapshot } from './statusSnapshot.js';
 import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
-import { readFile, stat } from 'node:fs/promises';
+import { enrichGitWorktreesWithStatus, readWorktreeStatusEnrichmentForPaths } from './worktreeStatusEnricher.js';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readGitBranchOperationState } from './operations/branchOperationState.js';
+import { parseGitWorktreeListPorcelain } from './worktreeListParser.js';
 
 const UNTRACKED_STATS_MAX_FILES = 512;
 const UNTRACKED_STATS_MAX_BYTES = 5_000_000;
@@ -103,8 +110,9 @@ export async function detectGitRepo(input: { cwd: string }): Promise<ScmRepoDete
 
 export async function getGitSnapshot(input: {
     context: ScmBackendContext;
+    request?: Pick<ScmStatusSnapshotRequest, 'includeWorktreeStatus'>;
 }): Promise<ScmStatusSnapshotResponse> {
-    const { context } = input;
+    const { context, request } = input;
     const repoRoot = context.detection.rootPath ?? context.cwd;
 
     const statusResult = await runScmCommand({
@@ -136,7 +144,7 @@ export async function getGitSnapshot(input: {
     const worktreesResult = await runScmCommand({
         bin: 'git',
         cwd: repoRoot,
-        args: ['worktree', 'list', '--porcelain'],
+        args: ['worktree', 'list', '--porcelain', '-z'],
         timeoutMs: 10_000,
     });
     const remotesResult = await runScmCommand({
@@ -160,23 +168,116 @@ export async function getGitSnapshot(input: {
     const hasUntrackedHint = /(?:^|\0)\?\s/.test(statusRaw);
     const untrackedStatsByPath = repoRoot && hasUntrackedHint ? await computeUntrackedStatsByPath(repoRoot) : {};
 
+    const snapshot = buildGitSnapshot({
+        projectKey: context.projectKey,
+        fetchedAt: Date.now(),
+        rootPath: context.detection.rootPath,
+        currentWorktreePath: context.cwd,
+        mainWorktreePath: resolveMainWorktreePathFromCheckoutIdentity(checkoutIdentity),
+        statusOutput: statusResult.stdout ?? '',
+        includedNumStatOutput: includedResult.success ? (includedResult.stdout ?? '') : '',
+        pendingNumStatOutput: pendingResult.success ? (pendingResult.stdout ?? '') : '',
+        untrackedStatsByPath,
+        worktreesOutput: worktreesResult.success ? (worktreesResult.stdout ?? '') : '',
+        remotesOutput: remotesResult.success ? (remotesResult.stdout ?? '') : '',
+        remoteHeadRefsOutput: remoteHeadRefsResult.success ? (remoteHeadRefsResult.stdout ?? '') : '',
+        operationState,
+        hostingProviderRegistry,
+    });
+
+    if (request?.includeWorktreeStatus === true && snapshot.repo.worktrees.length > 0) {
+        const worktrees = await enrichGitWorktreesWithStatus({
+            worktrees: snapshot.repo.worktrees,
+            includeWorktreeStatus: true,
+        });
+        return {
+            success: true,
+            snapshot: {
+                ...snapshot,
+                repo: {
+                    ...snapshot.repo,
+                    worktrees,
+                },
+            },
+        };
+    }
+
     return {
         success: true,
-        snapshot: buildGitSnapshot({
-            projectKey: context.projectKey,
-            fetchedAt: Date.now(),
-            rootPath: context.detection.rootPath,
-            currentWorktreePath: context.cwd,
-            mainWorktreePath: resolveMainWorktreePathFromCheckoutIdentity(checkoutIdentity),
-            statusOutput: statusResult.stdout ?? '',
-            includedNumStatOutput: includedResult.success ? (includedResult.stdout ?? '') : '',
-            pendingNumStatOutput: pendingResult.success ? (pendingResult.stdout ?? '') : '',
-            untrackedStatsByPath,
-            worktreesOutput: worktreesResult.success ? (worktreesResult.stdout ?? '') : '',
-            remotesOutput: remotesResult.success ? (remotesResult.stdout ?? '') : '',
-            remoteHeadRefsOutput: remoteHeadRefsResult.success ? (remoteHeadRefsResult.stdout ?? '') : '',
-            operationState,
-            hostingProviderRegistry,
+        snapshot,
+    };
+}
+
+async function canonicalizeWorktreePathForCompare(path: string): Promise<string> {
+    if (path.length === 0) return path;
+    const trimmed = path === '/' || path === '\\'
+        ? path
+        : (path.endsWith('/') || path.endsWith('\\') ? path.slice(0, -1) : path);
+    try {
+        return await realpath(trimmed);
+    } catch {
+        return trimmed;
+    }
+}
+
+export async function getGitWorktreesEnrichment(input: {
+    context: ScmBackendContext;
+    request: Pick<ScmWorktreesEnrichmentRequest, 'worktreePaths'>;
+}): Promise<ScmWorktreesEnrichmentResponse> {
+    const paths = input.request.worktreePaths ?? [];
+    if (paths.length === 0) {
+        return { success: true, worktrees: [] };
+    }
+
+    const repoRoot = input.context.detection.rootPath ?? input.context.cwd;
+    const worktreesList = await runScmCommand({
+        bin: 'git',
+        cwd: repoRoot,
+        args: ['worktree', 'list', '--porcelain', '-z'],
+        timeoutMs: 10_000,
+    });
+    if (!worktreesList.success) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+            error: worktreesList.stderr || 'Failed to list worktrees',
+        };
+    }
+
+    const knownWorktrees = parseGitWorktreeListPorcelain({
+        worktreesOutput: worktreesList.stdout ?? '',
+        currentWorktreePath: input.context.cwd,
+        mainWorktreePath: repoRoot,
+    });
+    const canonicalToRegisteredPath = new Map<string, string>();
+    const knownCanonicalEntries = await Promise.all(knownWorktrees.map(async (worktree) => ({
+        registered: worktree.path,
+        canonical: await canonicalizeWorktreePathForCompare(worktree.path),
+    })));
+    for (const { registered, canonical } of knownCanonicalEntries) {
+        if (!canonicalToRegisteredPath.has(canonical)) {
+            canonicalToRegisteredPath.set(canonical, registered);
+        }
+    }
+
+    const requestedCanonicals = await Promise.all(paths.map((path) => canonicalizeWorktreePathForCompare(path)));
+    const allowedPaths: string[] = [];
+    const seenAllowed = new Set<string>();
+    for (const canonical of requestedCanonicals) {
+        const registered = canonicalToRegisteredPath.get(canonical);
+        if (registered === undefined || seenAllowed.has(registered)) continue;
+        seenAllowed.add(registered);
+        allowedPaths.push(registered);
+    }
+
+    if (allowedPaths.length === 0) {
+        return { success: true, worktrees: [] };
+    }
+
+    return {
+        success: true,
+        worktrees: await readWorktreeStatusEnrichmentForPaths({
+            worktreePaths: allowedPaths,
         }),
     };
 }

@@ -196,6 +196,8 @@ export const ScmWorktreeSchema = z.object({
   isCurrent: z.boolean(),
   isMain: z.boolean().optional(),
   isPrunable: z.boolean().optional(),
+  changeCount: z.number().int().nonnegative().optional(),
+  lastActivityAt: z.number().int().nonnegative().optional(),
 });
 export type ScmWorktree = z.infer<typeof ScmWorktreeSchema>;
 
@@ -274,8 +276,35 @@ export const ScmBackendDescribeResponseSchema = z.object({
 });
 export type ScmBackendDescribeResponse = z.infer<typeof ScmBackendDescribeResponseSchema>;
 
-export const ScmStatusSnapshotRequestSchema = ScmRequestBaseSchema;
+export const ScmStatusSnapshotRequestSchema = ScmRequestBaseSchema.extend({
+  includeWorktreeStatus: z.boolean().optional(),
+});
 export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSchema>;
+
+export const SCM_WORKTREES_ENRICHMENT_MAX_PATHS = 64;
+
+export const ScmWorktreesEnrichmentRequestSchema = ScmRequestBaseSchema.extend({
+  worktreePaths: z
+    .array(z.string().min(1))
+    .min(0)
+    .max(SCM_WORKTREES_ENRICHMENT_MAX_PATHS),
+});
+export type ScmWorktreesEnrichmentRequest = z.infer<typeof ScmWorktreesEnrichmentRequestSchema>;
+
+export const ScmWorktreeEnrichmentEntrySchema = z.object({
+  path: z.string(),
+  changeCount: z.number().int().nonnegative().optional(),
+  lastActivityAt: z.number().int().nonnegative().optional(),
+});
+export type ScmWorktreeEnrichmentEntry = z.infer<typeof ScmWorktreeEnrichmentEntrySchema>;
+
+export const ScmWorktreesEnrichmentResponseSchema = z.object({
+  success: z.boolean(),
+  worktrees: z.array(ScmWorktreeEnrichmentEntrySchema).optional(),
+  error: z.string().optional(),
+  errorCode: ScmOperationErrorCodeSchema.optional(),
+});
+export type ScmWorktreesEnrichmentResponse = z.infer<typeof ScmWorktreesEnrichmentResponseSchema>;
 
 export const ScmStatusSnapshotResponseSchema = z.object({
   success: z.boolean(),

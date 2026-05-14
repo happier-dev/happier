@@ -9,6 +9,7 @@ import {
 type SurfaceCounts = Readonly<{
   restore?: readonly number[];
   approve?: readonly number[];
+  approveRole?: readonly number[];
 }>;
 
 function createPage(surfaceCounts: SurfaceCounts): TerminalConnectApprovalReadyPage {
@@ -28,6 +29,14 @@ function createPage(surfaceCounts: SurfaceCounts): TerminalConnectApprovalReadyP
         }
         if (selector === '[data-testid="terminal-connect-approve"]:visible') {
           return readCount('approve');
+        }
+        return 0;
+      },
+    }),
+    getByRole: (role: 'button', options: Readonly<{ name: string; exact?: boolean }>) => ({
+      count: async () => {
+        if (role === 'button' && options.name === 'Accept Connection') {
+          return readCount('approveRole');
         }
         return 0;
       },
@@ -61,6 +70,24 @@ describe('terminalConnectApprovalFlow', () => {
     expect(restoreAccount).not.toHaveBeenCalled();
     expect(gotoConnectUrl).not.toHaveBeenCalled();
     expect(page.waitForURL).not.toHaveBeenCalled();
+  });
+
+  it('returns the approval surface when only the accessible accept button is visible', async () => {
+    const page = createPage({ restore: [0], approve: [0], approveRole: [1] });
+    const gotoConnectUrl = vi.fn(async () => {});
+    const restoreAccount = vi.fn(async () => {});
+
+    await expect(
+      ensurePendingTerminalConnectReadyForApproval({
+        page,
+        connectUrlForBrowser: 'http://127.0.0.1:3000/terminal/connect#key=abc',
+        gotoConnectUrl,
+        restoreAccount,
+      }),
+    ).resolves.toBe('approve');
+
+    expect(restoreAccount).not.toHaveBeenCalled();
+    expect(gotoConnectUrl).not.toHaveBeenCalled();
   });
 
   it('revisits the pending connect URL after restore and waits for approval before returning', async () => {
@@ -123,6 +150,40 @@ describe('terminalConnectApprovalFlow', () => {
 
     expect(gotoConnectUrl).toHaveBeenCalledTimes(2);
     expect(restoreAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not wait for a future URL event when the current URL is already the terminal route', async () => {
+    let restored = false;
+    const page: TerminalConnectApprovalReadyPage & { url: () => string } = {
+      locator: (selector: string) => ({
+        count: async () => {
+          if (selector === '[data-testid="welcome-restore"]:visible') return restored ? 0 : 1;
+          if (selector === '[data-testid="terminal-connect-approve"]:visible') return restored ? 1 : 0;
+          return 0;
+        },
+      }),
+      getByRole: () => ({ count: async () => 0 }),
+      waitForTimeout: vi.fn(async () => {}),
+      waitForURL: vi.fn(async () => {
+        throw new Error('should not wait for a future navigation');
+      }),
+      url: () => 'http://127.0.0.1:3000/terminal/connect',
+    };
+    const gotoConnectUrl = vi.fn(async () => {});
+    const restoreAccount = vi.fn(async () => {
+      restored = true;
+    });
+
+    await expect(
+      ensurePendingTerminalConnectReadyForApproval({
+        page,
+        connectUrlForBrowser: 'http://127.0.0.1:3000/terminal/connect#key=abc',
+        gotoConnectUrl,
+        restoreAccount,
+      }),
+    ).resolves.toBe('approve');
+
+    expect(page.waitForURL).not.toHaveBeenCalled();
   });
 
   it('times out when neither restore nor approval surfaces appear', async () => {

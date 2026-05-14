@@ -118,6 +118,12 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).ModelPackManifestSchema?.safeParse).toBe('function');
     });
 
+    it('exports session folder schemas', () => {
+        expect(typeof (protocol as any).SessionFoldersV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionFolderWorkspaceRefV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SetSessionFolderAssignmentRequestSchema?.safeParse).toBe('function');
+    });
+
     it('exports pet package and daemon RPC schemas', () => {
         expect((protocol as any).PET_ATLAS_V1?.width).toBe(1536);
         expect(typeof (protocol as any).PetPackageManifestV1Schema?.safeParse).toBe('function');

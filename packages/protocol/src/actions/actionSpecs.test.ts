@@ -3,8 +3,144 @@ import { z } from 'zod';
 
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc.js';
 import { ExecutionRunIntentSchema } from '../executionRuns.js';
+import { serializeActionSpec } from './actionCatalog.js';
 import { ActionSpecSchema, ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
+
+const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
+  'action.spec.search',
+  'action.spec.get',
+  'action.options.resolve',
+  'sessions.subagents.list',
+  'sessions.subagents.get',
+  'sessions.subagents.watch',
+  'execution.run.list',
+  'execution.run.get',
+  'execution.run.stream.read',
+  'execution.run.wait',
+  'session.handoff.prepare_target_result.get',
+  'session.handoff.status.get',
+  'paths.list_recent',
+  'machines.list',
+  'servers.list',
+  'review.engines.list',
+  'agents.backends.list',
+  'agents.models.list',
+  'session.status.get',
+  'session.history.get',
+  'session.wait.idle',
+  'session.list',
+  'session.activity.get',
+  'session.messages.recent.get',
+  'memory.search',
+  'memory.get_window',
+  'memory.ensure_up_to_date',
+  'daemon.promptAssets.discover',
+  'daemon.promptRegistry.scanSource',
+  'daemon.filesystem.readFile',
+  'daemon.filesystem.listDirectory',
+  'daemon.filesystem.getDirectoryTree',
+  'daemon.filesystem.listRoots',
+  'daemon.filesystem.browseDirectory',
+  'bugreport.collectDiagnostics',
+  'bugreport.getLogTail',
+  'approval.request.list',
+  'approval.request.get',
+  'session.log.tail',
+  'transcript.page',
+  'transcript.readAfter',
+  'transcript.follow',
+  'transcript.search',
+  'sessions.external.candidates.list',
+  'sessions.external.status.get',
+  'sessions.external.transcript.page',
+  'sessions.external.transcript.readAfter',
+  'scm.pullRequest.list',
+  'scm.pullRequest.get',
+  'scm.pullRequest.openCompose',
+  'scm.hostingRepository.describePublishTargets',
+  'scm.diffSummary.generate',
+] as const;
+
+const RESULT_NONE_DEFERRED_ACTION_IDS = [
+  'session.stop',
+  'session.title.set',
+  'session.permission_mode.set',
+  'session.model.set',
+  'session.archive',
+  'session.unarchive',
+  'ui.voice_global.reset',
+  'ui.pet.choose',
+  'prompt_doc.update',
+  'prompt_bundle.update',
+  'prompt_asset.export',
+  'prompt_registry.install',
+  'approval.request.create',
+  'approval.request.decide',
+] as const;
+
+const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
+  'review.start',
+  'subagents.plan.start',
+  'subagents.delegate.start',
+  'voice_agent.start',
+  'sessions.subagents.upsert',
+  'sessions.subagents.updateStatus',
+  'sessions.subagents.complete',
+  'execution.run.start',
+  'execution.run.send',
+  'execution.run.ensure',
+  'execution.run.ensure_or_start',
+  'execution.run.stream.start',
+  'execution.run.stream.cancel',
+  'execution.run.stop',
+  'execution.run.action',
+  'session.open',
+  'session.fork',
+  'session.continue_with_replay',
+  'session.rollback',
+  'session.checkpoint_code_rollback',
+  'session.handoff',
+  'session.handoff.prepare_target',
+  'session.handoff.commit',
+  'session.handoff.abort',
+  'session.spawn_new',
+  'session.spawn_picker',
+  'session.message.send',
+  'session.permission.respond',
+  'session.user_action.answer',
+  'session.mode.set',
+  'session.target.primary.set',
+  'session.target.tracked.set',
+  'ui.voice_agent.teleport',
+  'daemon.promptAssets.delete',
+  'daemon.promptRegistry.install',
+  'daemon.filesystem.writeFile',
+  'bugreport.uploadArtifact',
+  'transcript.import',
+  'sessions.external.link.ensure',
+  'sessions.external.attach',
+  'sessions.external.detach',
+  'sessions.external.followPolicy.set',
+  'sessions.external.takeover',
+  'scm.pullRequest.openOrReuse',
+  'scm.pullRequest.checkout',
+  'scm.pullRequest.prepareWorktree',
+  'scm.pullRequest.runStacked',
+  'scm.repository.clone',
+  'scm.repository.init',
+  'scm.repository.removeIndexLock',
+  'scm.hostingRepository.publish',
+] as const;
+
+function sorted(values: readonly string[]): string[] {
+  return [...values].sort();
+}
+
+function resolveExpectedApprovalFlow(approval: { flow?: 'blocking' | 'deferred'; result: 'required' | 'optional' | 'none' }): 'blocking' | 'deferred' {
+  if (approval.flow) return approval.flow;
+  return approval.result === 'required' ? 'blocking' : 'deferred';
+}
 
 describe('Action Spec Registry', () => {
   it('supports broad final action surfaces and rejects implementation-specific surface keys', () => {
@@ -37,11 +173,109 @@ describe('Action Spec Registry', () => {
     }
   });
 
+  it('declares approval result metadata for every action spec', () => {
+    for (const spec of listActionSpecs()) {
+      expect(spec.approval?.result).toEqual(expect.stringMatching(/^(required|optional|none)$/));
+    }
+  });
+
+  it('classifies action approval result and flow contracts', () => {
+    const groups = {
+      requiredBlocking: [] as string[],
+      noneDeferred: [] as string[],
+      optionalDeferred: [] as string[],
+    };
+
+    for (const spec of listActionSpecs()) {
+      const approval = (spec as any).approval as { flow?: 'blocking' | 'deferred'; result: 'required' | 'optional' | 'none' };
+      const flow = resolveExpectedApprovalFlow(approval);
+      if (spec.approval.result === 'required' && flow === 'blocking') groups.requiredBlocking.push(spec.id);
+      if (spec.approval.result === 'none' && flow === 'deferred') groups.noneDeferred.push(spec.id);
+      if (spec.approval.result === 'optional' && flow === 'deferred') groups.optionalDeferred.push(spec.id);
+    }
+
+    expect(sorted(groups.requiredBlocking)).toEqual(sorted(RESULT_REQUIRED_BLOCKING_ACTION_IDS));
+    expect(sorted(groups.noneDeferred)).toEqual(sorted(RESULT_NONE_DEFERRED_ACTION_IDS));
+    expect(sorted(groups.optionalDeferred)).toEqual(sorted(RESULT_OPTIONAL_DEFERRED_ACTION_IDS));
+    expect(new Set([
+      ...groups.requiredBlocking,
+      ...groups.noneDeferred,
+      ...groups.optionalDeferred,
+    ]).size).toBe(listActionSpecs().length);
+  });
+
+  it('exports approval metadata schema helpers', async () => {
+    const module = await import('./actionSpecs.js') as Record<string, unknown>;
+
+    expect(module.ActionApprovalSchema).toBeDefined();
+    expect(module.resolveActionApprovalFlow).toEqual(expect.any(Function));
+  });
+
+  it('uses default blocking flow for result-required approval metadata', () => {
+    expect(getActionSpec('session.list').approval).toEqual({ result: 'required' });
+  });
+
+  it('uses default deferred flow for no-result approval metadata', () => {
+    expect(getActionSpec('session.title.set').approval).toEqual({ result: 'none' });
+  });
+
+  it('requires optional-result approval metadata to declare an explicit flow', () => {
+    const base = {
+      id: 'review.start',
+      title: 'Start review',
+      safety: 'safe',
+      placements: [],
+      surfaces: {
+        ui: true,
+        voice: true,
+        session_agent: false,
+        mcp: true,
+        cli: true,
+        rpc: false,
+        sdk: false,
+      },
+      bindings: { mcpToolName: 'review_start' },
+      outputSchema: z.unknown(),
+      inputSchema: z.object({}).strict(),
+    };
+
+    expect(() => ActionSpecSchema.parse({
+      ...base,
+      approval: { result: 'optional' },
+    })).toThrow(/flow/i);
+    expect(ActionSpecSchema.parse({
+      ...base,
+      approval: { result: 'optional', flow: 'deferred' },
+    }).approval).toEqual({
+      result: 'optional',
+      flow: 'deferred',
+    });
+  });
+
+  it('serializes approval metadata in action catalog entries', () => {
+    const serialized = serializeActionSpec(getActionSpec('session.list'));
+
+    expect(serialized.approval).toEqual({ result: 'required' });
+  });
+
+  it('does not reuse MCP tool bindings across action specs', () => {
+    const ownersByToolName = new Map<string, string>();
+
+    for (const spec of listActionSpecs()) {
+      const toolName = String(spec.bindings?.mcpToolName ?? '').trim();
+      if (!toolName) continue;
+      const existingOwner = ownersByToolName.get(toolName);
+      expect(existingOwner, `${toolName} is bound by both ${existingOwner} and ${spec.id}`).toBeUndefined();
+      ownersByToolName.set(toolName, spec.id);
+    }
+  });
+
   it('rejects UI placements when the broad UI surface is disabled', () => {
     const parsed = ActionSpecSchema.safeParse({
       id: 'session.list',
       title: 'List sessions',
       safety: 'safe',
+      approval: { result: 'required' },
       placements: ['command_palette'],
       surfaces: {
         ui: false,
@@ -887,6 +1121,7 @@ describe('Action Spec Registry', () => {
         id: 'review.start',
         title: 'Start review',
         safety: 'safe',
+        approval: { result: 'optional', flow: 'deferred' },
         placements: [],
         surfaces: {
           ui: true,
@@ -918,6 +1153,7 @@ describe('Action Spec Registry', () => {
       id: 'review.start',
       title: 'Start review',
       safety: 'safe',
+      approval: { result: 'optional', flow: 'deferred' },
       placements: [],
       surfaces: {
         ui: true,
@@ -958,6 +1194,7 @@ describe('Action Spec Registry', () => {
         id: 'review.start',
         title: 'Start review',
         safety: 'safe',
+        approval: { result: 'optional', flow: 'deferred' },
         placements: [],
         surfaces: {
           ui: true,
@@ -988,6 +1225,7 @@ describe('Action Spec Registry', () => {
         id: 'review.start',
         title: 'Start review',
         safety: 'safe',
+        approval: { result: 'optional', flow: 'deferred' },
         placements: [],
         surfaces: {
           ui: true,
@@ -1020,6 +1258,7 @@ describe('Action Spec Registry', () => {
         id: 'review.start',
         title: 'Start review',
         safety: 'safe',
+        approval: { result: 'optional', flow: 'deferred' },
         placements: [],
         surfaces: {
           ui: true,

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ActionUiPlacementSchema } from '../actions/actionUiPlacements.js';
+import { ActionApprovalSchema } from '../actions/actionApprovalMetadata.js';
 import { ActionInputHintsSchema, ActionSafetySchema, ActionSurfaceSchema } from '../actions/actionSpecs.js';
 import { LooseJsonObjectSchema, OptionalStringSchema } from './_shared.js';
 
@@ -83,6 +84,7 @@ export const ActionDefinitionSummaryV1Schema = z
     title: z.string().min(1),
     description: z.string().min(1).nullable(),
     safety: ActionSafetySchema,
+    approval: ActionApprovalSchema.optional(),
     placements: z.array(ActionUiPlacementSchema),
     slash: ActionDefinitionSlashV1Schema,
     bindings: ActionDefinitionBindingsV1Schema,

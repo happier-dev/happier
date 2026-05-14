@@ -1,10 +1,11 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { SCM_OPERATION_ERROR_CODES, type ScmWorktreeRemoveRequest } from '@happier-dev/protocol';
 
 import {
     runWithGitScmCommandRunner,
     type GitScmCommandRunner,
 } from '../testkit/scmRuntime.test-support.js';
-import { gitWorktreeCreate } from './worktreeOperations.js';
+import { gitWorktreeCreate, gitWorktreeRemove } from './worktreeOperations.js';
 
 const runScmCommandMock = vi.hoisted(() => vi.fn<GitScmCommandRunner>());
 const mkdirMock = vi.hoisted(() => vi.fn());
@@ -129,5 +130,28 @@ describe('git worktree operations', () => {
                 args: ['worktree', 'add', '--', '.dev/worktree/feature/auth', 'feature/auth'],
             }),
         );
+    });
+
+    it('rejects worktree removal without explicit authorization before invoking git', async () => {
+        runScmCommandMock.mockResolvedValue({ success: true, stdout: '', stderr: '' });
+        // This models a malformed RPC payload reaching the backend despite schema validation.
+        const unauthorizedRequest = {
+            cwd: '/repo',
+            worktreePath: '/repo/.dev/worktree/feature-auth',
+        } as unknown as ScmWorktreeRemoveRequest;
+
+        const response = await runWithGitScmCommandRunner(runScmCommandMock, () => gitWorktreeRemove({
+            context: {
+                cwd: '/repo',
+                projectKey: 'project',
+                detection: { isRepo: true, rootPath: '/repo', mode: '.git' },
+            },
+            request: unauthorizedRequest,
+        }));
+
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
+        expect(response.error).toContain('authorization');
+        expect(runScmCommandMock).not.toHaveBeenCalled();
     });
 });

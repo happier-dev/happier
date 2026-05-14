@@ -19,6 +19,47 @@ describe('ApprovalRequestV1Schema', () => {
     expect(parsed.actionId).toBe('review.start');
   });
 
+  it('parses optional approval routing metadata while preserving old artifacts', () => {
+    const oldArtifact = ApprovalRequestV1Schema.parse({
+      v: 1,
+      status: 'open',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      createdBy: { surface: 'system' },
+      actionId: 'review.start',
+      actionArgs: { sessionId: 's1', engineIds: ['x'], instructions: 'y' },
+      summary: 'Run review',
+    });
+    const newArtifact = ApprovalRequestV1Schema.parse({
+      v: 1,
+      status: 'open',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      createdBy: { surface: 'system' },
+      actionId: 'session.list',
+      actionArgs: {},
+      summary: 'List sessions',
+      approval: { flow: 'blocking', result: 'required' },
+    });
+
+    expect(oldArtifact.approval).toBeUndefined();
+    expect(newArtifact.approval).toEqual({ flow: 'blocking', result: 'required' });
+  });
+
+  it('rejects malformed approval routing metadata', () => {
+    expect(() => ApprovalRequestV1Schema.parse({
+      v: 1,
+      status: 'open',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      createdBy: { surface: 'system' },
+      actionId: 'session.list',
+      actionArgs: {},
+      summary: 'List sessions',
+      approval: { result: 'optional' },
+    })).toThrow(/flow/i);
+  });
+
   it('accepts createdBy.surface=cli for requests created from the CLI surface', () => {
     const parsed = ApprovalRequestV1Schema.parse({
       v: 1,
@@ -103,6 +144,70 @@ describe('ApprovalRequestV1Schema', () => {
         actionArgs: { sessionId: 's1', engineIds: ['x'], instructions: 'y' },
         summary: 'Run review',
         decision: { kind: 'approve', decidedAtMs: 2 },
+      })).toThrow(/execution/i);
+    }
+  });
+
+  it('rejects execution metadata before an approval reaches executed or failed', () => {
+    for (const status of ['approved', 'rejected', 'canceled'] as const) {
+      expect(() => ApprovalRequestV1Schema.parse({
+        v: 1,
+        status,
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        createdBy: { surface: 'system' },
+        actionId: 'review.start',
+        actionArgs: { sessionId: 's1', engineIds: ['x'], instructions: 'y' },
+        summary: 'Run review',
+        ...(status === 'canceled' ? {} : { decision: { kind: status === 'approved' ? 'approve' : 'reject', decidedAtMs: 2 } }),
+        execution: { executedAtMs: 3, ok: true, result: { ok: true } },
+      })).toThrow(/execution/i);
+    }
+  });
+
+  it('rejects decision kinds that do not match the approval status', () => {
+    const cases = [
+      { status: 'approved', decisionKind: 'reject' },
+      { status: 'rejected', decisionKind: 'approve' },
+      { status: 'executed', decisionKind: 'reject', execution: { executedAtMs: 3, ok: true } },
+      { status: 'failed', decisionKind: 'reject', execution: { executedAtMs: 3, ok: false } },
+      { status: 'canceled', decisionKind: 'reject' },
+    ] as const;
+
+    for (const entry of cases) {
+      expect(() => ApprovalRequestV1Schema.parse({
+        v: 1,
+        status: entry.status,
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        createdBy: { surface: 'system' },
+        actionId: 'review.start',
+        actionArgs: { sessionId: 's1', engineIds: ['x'], instructions: 'y' },
+        summary: 'Run review',
+        decision: { kind: entry.decisionKind, decidedAtMs: 2 },
+        ...(entry.execution ? { execution: entry.execution } : {}),
+      })).toThrow(/decision/i);
+    }
+  });
+
+  it('rejects execution outcomes that do not match the approval status', () => {
+    const cases = [
+      { status: 'executed', executionOk: false },
+      { status: 'failed', executionOk: true },
+    ] as const;
+
+    for (const entry of cases) {
+      expect(() => ApprovalRequestV1Schema.parse({
+        v: 1,
+        status: entry.status,
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        createdBy: { surface: 'system' },
+        actionId: 'review.start',
+        actionArgs: { sessionId: 's1', engineIds: ['x'], instructions: 'y' },
+        summary: 'Run review',
+        decision: { kind: 'approve', decidedAtMs: 2 },
+        execution: { executedAtMs: 3, ok: entry.executionOk },
       })).toThrow(/execution/i);
     }
   });

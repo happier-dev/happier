@@ -105,6 +105,17 @@ import {
 import { SessionContinueWithReplayRpcParamsSchema } from '../sessionContinueWithReplay.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
+import { ActionApprovalSchema, type ActionApproval } from './actionApprovalMetadata.js';
+
+export {
+  ActionApprovalFlowSchema,
+  ActionApprovalResultSchema,
+  ActionApprovalSchema,
+  resolveActionApprovalFlow,
+  type ActionApproval,
+  type ActionApprovalFlow,
+  type ActionApprovalResult,
+} from './actionApprovalMetadata.js';
 
 const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
@@ -220,6 +231,7 @@ export const ActionSpecSchema = z.object({
   title: z.string().min(1),
   description: z.string().min(1).optional(),
   safety: ActionSafetySchema,
+  approval: ActionApprovalSchema,
   // UI placements where the action can appear when the relevant surface is enabled.
   placements: z.array(ActionUiPlacementSchema).default([]),
   // Optional stable slash command token for UI slash-command placement.
@@ -320,7 +332,25 @@ export const ActionSpecSchema = z.object({
 });
 
 export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
+  placements: ActionUiPlacement[];
+}>;
+type ParsedActionSpec = z.infer<typeof ActionSpecSchema>;
+type ActionSpecWithoutApproval = Readonly<{
+  id: ParsedActionSpec['id'];
+  title: ParsedActionSpec['title'];
+  description?: ParsedActionSpec['description'];
+  safety: ParsedActionSpec['safety'];
   placements: readonly ActionUiPlacement[];
+  slash?: ParsedActionSpec['slash'];
+  bindings?: ParsedActionSpec['bindings'];
+  outputSchema?: ParsedActionSpec['outputSchema'];
+  execution?: ParsedActionSpec['execution'];
+  sideEffectClass?: ParsedActionSpec['sideEffectClass'];
+  examples?: ParsedActionSpec['examples'];
+  prompting?: ParsedActionSpec['prompting'];
+  surfaces: ParsedActionSpec['surfaces'];
+  inputSchema: ParsedActionSpec['inputSchema'];
+  inputHints?: ParsedActionSpec['inputHints'];
 }>;
 
 const DAEMON_ADMIN_RPC_SURFACES = Object.freeze({
@@ -933,7 +963,148 @@ const ExternalSessionTakeoverActionInputSchema = ExternalSessionTakeoverInputV1S
   machineId: z.string().min(1).optional(),
 }).passthrough();
 
-export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
+const APPROVAL_RESULT_REQUIRED: ActionApproval = Object.freeze({ result: 'required' });
+const APPROVAL_RESULT_NONE: ActionApproval = Object.freeze({ result: 'none' });
+const APPROVAL_RESULT_OPTIONAL_DEFERRED: ActionApproval = Object.freeze({ result: 'optional', flow: 'deferred' });
+
+const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
+  'action.spec.search',
+  'action.spec.get',
+  'action.options.resolve',
+  'sessions.subagents.list',
+  'sessions.subagents.get',
+  'sessions.subagents.watch',
+  'execution.run.list',
+  'execution.run.get',
+  'execution.run.stream.read',
+  'execution.run.wait',
+  'session.handoff.prepare_target_result.get',
+  'session.handoff.status.get',
+  'paths.list_recent',
+  'machines.list',
+  'servers.list',
+  'review.engines.list',
+  'agents.backends.list',
+  'agents.models.list',
+  'session.status.get',
+  'session.history.get',
+  'session.wait.idle',
+  'session.list',
+  'session.activity.get',
+  'session.messages.recent.get',
+  'memory.search',
+  'memory.get_window',
+  'memory.ensure_up_to_date',
+  'daemon.promptAssets.discover',
+  'daemon.promptRegistry.scanSource',
+  'daemon.filesystem.readFile',
+  'daemon.filesystem.listDirectory',
+  'daemon.filesystem.getDirectoryTree',
+  'daemon.filesystem.listRoots',
+  'daemon.filesystem.browseDirectory',
+  'bugreport.collectDiagnostics',
+  'bugreport.getLogTail',
+  'approval.request.list',
+  'approval.request.get',
+  'session.log.tail',
+  'transcript.page',
+  'transcript.readAfter',
+  'transcript.follow',
+  'transcript.search',
+  'sessions.external.candidates.list',
+  'sessions.external.status.get',
+  'sessions.external.transcript.page',
+  'sessions.external.transcript.readAfter',
+  'scm.pullRequest.list',
+  'scm.pullRequest.get',
+  'scm.pullRequest.openCompose',
+  'scm.hostingRepository.describePublishTargets',
+  'scm.diffSummary.generate',
+] as const satisfies readonly ActionId[];
+
+const RESULT_NONE_APPROVAL_ACTION_IDS = [
+  'session.stop',
+  'session.title.set',
+  'session.permission_mode.set',
+  'session.model.set',
+  'session.archive',
+  'session.unarchive',
+  'ui.voice_global.reset',
+  'ui.pet.choose',
+  'prompt_doc.update',
+  'prompt_bundle.update',
+  'prompt_asset.export',
+  'prompt_registry.install',
+  'approval.request.create',
+  'approval.request.decide',
+] as const satisfies readonly ActionId[];
+
+const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
+  'review.start',
+  'subagents.plan.start',
+  'subagents.delegate.start',
+  'voice_agent.start',
+  'sessions.subagents.upsert',
+  'sessions.subagents.updateStatus',
+  'sessions.subagents.complete',
+  'execution.run.start',
+  'execution.run.send',
+  'execution.run.ensure',
+  'execution.run.ensure_or_start',
+  'execution.run.stream.start',
+  'execution.run.stream.cancel',
+  'execution.run.stop',
+  'execution.run.action',
+  'session.open',
+  'session.fork',
+  'session.continue_with_replay',
+  'session.rollback',
+  'session.checkpoint_code_rollback',
+  'session.handoff',
+  'session.handoff.prepare_target',
+  'session.handoff.commit',
+  'session.handoff.abort',
+  'session.spawn_new',
+  'session.spawn_picker',
+  'session.message.send',
+  'session.permission.respond',
+  'session.user_action.answer',
+  'session.mode.set',
+  'session.target.primary.set',
+  'session.target.tracked.set',
+  'ui.voice_agent.teleport',
+  'daemon.promptAssets.delete',
+  'daemon.promptRegistry.install',
+  'daemon.filesystem.writeFile',
+  'bugreport.uploadArtifact',
+  'transcript.import',
+  'sessions.external.link.ensure',
+  'sessions.external.attach',
+  'sessions.external.detach',
+  'sessions.external.followPolicy.set',
+  'sessions.external.takeover',
+  'scm.pullRequest.openOrReuse',
+  'scm.pullRequest.checkout',
+  'scm.pullRequest.prepareWorktree',
+  'scm.pullRequest.runStacked',
+  'scm.repository.clone',
+  'scm.repository.init',
+  'scm.repository.removeIndexLock',
+  'scm.hostingRepository.publish',
+] as const satisfies readonly ActionId[];
+
+const RESULT_REQUIRED_APPROVAL_ACTION_ID_SET = new Set<ActionId>(RESULT_REQUIRED_APPROVAL_ACTION_IDS);
+const RESULT_NONE_APPROVAL_ACTION_ID_SET = new Set<ActionId>(RESULT_NONE_APPROVAL_ACTION_IDS);
+const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_ID_SET = new Set<ActionId>(RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS);
+
+function resolveApprovalMetadataForActionId(actionId: ActionId): ActionApproval {
+  if (RESULT_REQUIRED_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_REQUIRED;
+  if (RESULT_NONE_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_NONE;
+  if (RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_OPTIONAL_DEFERRED;
+  throw new Error(`Missing action approval metadata for ${actionId}`);
+}
+
+const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Object.freeze([
   {
     id: 'action.spec.search',
     title: 'Search action specs',
@@ -3229,7 +3400,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Import a skill bundle from a registry and optionally export it to an external skills location.',
     safety: 'danger',
     placements: [],
-    bindings: { mcpToolName: 'approval_request_create' },
     surfaces: {
       ui: true,
       voice: false,
@@ -4621,6 +4791,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     },
   },
 ]);
+
+export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze(
+  ACTION_SPECS_WITHOUT_APPROVAL.map((spec): ActionSpec => ({
+    ...spec,
+    placements: [...spec.placements],
+    approval: resolveApprovalMetadataForActionId(spec.id),
+  })),
+);
 
 export function listActionSpecs(): readonly ActionSpec[] {
   return ACTION_SPECS;

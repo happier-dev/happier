@@ -6,7 +6,7 @@ import type {
     ScmWorktreeRemoveRequest,
     ScmWorktreeRemoveResponse,
 } from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol';
 import { mkdir } from 'node:fs/promises';
 
 import type { ScmBackendContext } from '../types.js';
@@ -270,6 +270,14 @@ export async function gitWorktreeRemove(input: {
     context: ScmBackendContext;
     request: ScmWorktreeRemoveRequest;
 }): Promise<ScmWorktreeRemoveResponse> {
+    if (input.request.confirmed !== true || input.request.authorizationToken !== SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN) {
+        return {
+            success: false,
+            error: 'Worktree removal requires explicit authorization.',
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+        };
+    }
+
     const validatedPath = validateWorktreePath(input.request.worktreePath);
     if (!validatedPath.ok) {
         return {

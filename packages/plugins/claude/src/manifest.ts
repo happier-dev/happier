@@ -25,7 +25,7 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
               emitsSessionMedia: {
                 supported: true,
                 mediaKinds: ['image'],
-                sources: ['provider-generated', 'tool-output'],
+                sources: ['tool-output'],
                 storage: 'session-media-file',
               },
               nativeImageGeneration: { supported: false },

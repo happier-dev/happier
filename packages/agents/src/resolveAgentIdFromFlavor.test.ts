@@ -86,6 +86,15 @@ describe('inferAgentIdFromSessionMetadata', () => {
         linkedAtMs: 1,
       },
     })).toBe('opencode');
+    expect(inferAgentIdFromSessionMetadata({
+      externalSessionV1: {
+        v: 1,
+        providerId: 'codex',
+        machineId: 'm1',
+        remoteSessionId: 'codex-1',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+    })).toBe('codex');
   });
 
   it('does not let legacy customAcp flavor carriers override canonical runtime metadata', () => {

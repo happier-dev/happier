@@ -13,9 +13,17 @@ export {
   isActionEnabledByActionsSettings,
   type ActionsSettingsV1,
 } from './actionSettings.js';
-export { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+export {
+  isApprovalRequiredByActionsSettings,
+  resolveActionApprovalRouting,
+  type ActionApprovalRoutingDecision,
+  type ResolveActionApprovalRoutingArgs,
+} from './actionApprovalPolicy.js';
 export {
   ACTION_SPECS,
+  ActionApprovalFlowSchema,
+  ActionApprovalResultSchema,
+  ActionApprovalSchema,
   ActionSafetySchema,
   ActionSpecSchema,
   ActionSurfaceSchema,
@@ -32,6 +40,10 @@ export {
   listVoiceClientToolNames,
   listVoicePromptHotPathSpecs,
   listVoiceToolActionSpecs,
+  resolveActionApprovalFlow,
+  type ActionApproval,
+  type ActionApprovalFlow,
+  type ActionApprovalResult,
   type ActionSafety,
   type ActionInputFieldHint,
   type ActionInputHints,

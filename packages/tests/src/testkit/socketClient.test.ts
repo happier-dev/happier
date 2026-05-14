@@ -6,6 +6,7 @@ vi.mock('socket.io-client', () => ({
 }));
 
 import {
+  createMachineScopedSocketCollector,
   createSessionScopedSocketCollector,
   createUserScopedSocketCollector,
 } from './socketClient';
@@ -44,6 +45,25 @@ describe('socketClient collector construction', () => {
     expect(ioMock).toHaveBeenCalledWith(
       'http://127.0.0.1:3000',
       expect.objectContaining({
+        timeout: 65_000,
+      }),
+    );
+  });
+
+  it('constructs machine-scoped collectors with exact machine identity', () => {
+    createMachineScopedSocketCollector('http://127.0.0.1:3000', 'token-1', 'machine-1', {
+      transports: ['websocket'],
+      connectTimeoutMs: 65_000,
+    });
+
+    expect(ioMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:3000',
+      expect.objectContaining({
+        auth: {
+          token: 'token-1',
+          clientType: 'machine-scoped',
+          machineId: 'machine-1',
+        },
         timeout: 65_000,
       }),
     );

@@ -166,6 +166,20 @@ describe('resolveScmHostingProviderFollowupAllowedBaseUrl', () => {
     })).toBeNull();
   });
 
+  it('rejects provider-owned repository web bases containing credentials', () => {
+    expect(resolveScmHostingProviderFollowupAllowedBaseUrl({
+      provider: {
+        id: 'scm.github',
+        kind: 'github',
+        displayName: 'GitHub',
+        baseUrl: 'https://github.com',
+        nameWithOwner: 'acme/repo',
+        repositoryWebUrl: 'https://token@github.com/acme/repo',
+      },
+      allowedBaseUrl: 'https://github.com',
+    })).toBeNull();
+  });
+
   it('scopes Azure DevOps follow-up URLs to the detected repository path', () => {
     expect(resolveScmHostingProviderFollowupAllowedBaseUrl({
       provider: {

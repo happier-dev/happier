@@ -24,6 +24,7 @@ export type ScmHostingProviderResolvedRemote = Readonly<{
     kind: string;
     displayName: string;
     baseUrl: string;
+    repositoryWebUrl?: string;
     nameWithOwner?: string;
     remoteName?: string | null;
     urlSafety?: Readonly<{

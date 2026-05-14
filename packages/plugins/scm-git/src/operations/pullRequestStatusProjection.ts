@@ -24,14 +24,23 @@ function readRemoteUrl(remote: ScmWorkingSnapshot['repo']['remotes'][number]): s
     return remote.pushUrl ?? remote.fetchUrl ?? null;
 }
 
+function extractUpstreamRemoteName(upstreamRef: string | null | undefined): string | null {
+    if (!upstreamRef) return null;
+    const slashIndex = upstreamRef.indexOf('/');
+    if (slashIndex <= 0) return null;
+    return upstreamRef.slice(0, slashIndex).trim() || null;
+}
+
 function selectHostingProvider(
     snapshot: ScmWorkingSnapshot,
     registry: PullRequestStatusProjectionRegistry,
 ): ScmHostingProviderRef | null {
     const remotes = snapshot.repo.remotes;
+    const upstreamRemoteName = extractUpstreamRemoteName(snapshot.branch.upstream);
     const orderedRemotes = [
-        ...remotes.filter((remote) => remote.name === 'origin'),
-        ...remotes.filter((remote) => remote.name !== 'origin'),
+        ...remotes.filter((remote) => remote.name === upstreamRemoteName),
+        ...remotes.filter((remote) => remote.name === 'origin' && remote.name !== upstreamRemoteName),
+        ...remotes.filter((remote) => remote.name !== upstreamRemoteName && remote.name !== 'origin'),
     ];
     for (const remote of orderedRemotes) {
         const remoteUrl = readRemoteUrl(remote);

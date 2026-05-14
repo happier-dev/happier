@@ -72,6 +72,8 @@ import type {
   ScmStashShowResponse,
   ScmStatusSnapshotRequest,
   ScmStatusSnapshotResponse,
+  ScmWorktreesEnrichmentRequest,
+  ScmWorktreesEnrichmentResponse,
   ScmWorktreeCreateRequest,
   ScmWorktreeCreateResponse,
   ScmWorktreePruneRequest,
@@ -178,6 +180,10 @@ export interface ScmBackend {
     context: ScmBackendContext;
     request: ScmStatusSnapshotRequest;
   }): Promise<ScmStatusSnapshotResponse>;
+  worktreesEnrichment?(input: {
+    context: ScmBackendContext;
+    request: ScmWorktreesEnrichmentRequest;
+  }): Promise<ScmWorktreesEnrichmentResponse>;
   diffFile(input: {
     context: ScmBackendContext;
     request: ScmDiffFileRequest;

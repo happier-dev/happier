@@ -2,6 +2,7 @@ export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 
 export * from './ssh/tunnels.js';
 export * from './ssh/hostTrust.js';
+export * from './machines/index.js';
 export * from './pets/index.js';
 
 export type {
@@ -941,6 +942,36 @@ export {
 } from './workspaces/index.js';
 
 export {
+  WorkspaceAnchorResolutionStatusV1Schema,
+  WorkspaceAnchorResolutionV1Schema,
+  WorkspaceAnchorSnapshotV1Schema,
+  WorkspaceAnchorSourceV1Schema,
+  WorkspaceAnchorV1Schema,
+  WorkspaceAnchorsResolveRequestV1Schema,
+  WorkspaceAnchorsResolveResponseV1Schema,
+  computeLineContentHashV1,
+  isLineContentHashV1,
+  normalizeLineContentForHashV1,
+  type LineContentHashV1,
+  type WorkspaceAnchorResolutionStatusV1,
+  type WorkspaceAnchorResolutionV1,
+  type WorkspaceAnchorSnapshotV1,
+  type WorkspaceAnchorSourceV1,
+  type WorkspaceAnchorV1,
+  type WorkspaceAnchorsResolveRequestV1,
+  type WorkspaceAnchorsResolveResponseV1,
+} from './workspace/anchors/v1.js';
+
+export {
+  WorkspaceFaviconMimeTypeV1Schema,
+  WorkspaceFaviconResolveRequestV1Schema,
+  WorkspaceFaviconResolveResponseV1Schema,
+  type WorkspaceFaviconMimeTypeV1,
+  type WorkspaceFaviconResolveRequestV1,
+  type WorkspaceFaviconResolveResponseV1,
+} from './workspace/favicon/v1.js';
+
+export {
   SessionStoredMessageContentSchema,
   type SessionStoredMessageContent,
 } from './sessionMessages/sessionStoredMessageContent.js';
@@ -1498,6 +1529,45 @@ export {
 } from './sessionControl/readCursor.js';
 
 export {
+  DefaultSessionFoldersV1,
+  MoveSessionFolderAssignmentsRequestSchema,
+  MoveSessionFolderAssignmentsResponseSchema,
+  QuerySessionFolderSessionsRequestSchema,
+  QuerySessionFolderSessionsResponseSchema,
+  SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_FOLDER_IDS,
+  SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_LIMIT,
+  SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_SESSION_IDS,
+  SESSION_FOLDER_MAX_COUNT,
+  SESSION_FOLDER_MAX_DEPTH,
+  SESSION_FOLDER_MAX_ID_LENGTH,
+  SESSION_FOLDER_MAX_NAME_LENGTH,
+  SESSION_FOLDER_MAX_PATH_LENGTH,
+  SESSION_FOLDER_VISUAL_DEPTH_CAP,
+  SessionFolderAssignmentListRequestSchema,
+  SessionFolderAssignmentListResponseSchema,
+  SessionFolderAssignmentMutationResultSchema,
+  SessionFolderAssignmentSchema,
+  SessionFolderV1Schema,
+  SessionFolderWorkspaceRefV1Schema,
+  SessionFoldersV1Schema,
+  SetSessionFolderAssignmentRequestSchema,
+  SetSessionFolderAssignmentResponseSchema,
+  type MoveSessionFolderAssignmentsRequest,
+  type MoveSessionFolderAssignmentsResponse,
+  type QuerySessionFolderSessionsRequest,
+  type QuerySessionFolderSessionsResponse,
+  type SessionFolderAssignment,
+  type SessionFolderAssignmentListRequest,
+  type SessionFolderAssignmentListResponse,
+  type SessionFolderAssignmentMutationResult,
+  type SessionFolderV1,
+  type SessionFolderWorkspaceRefV1,
+  type SessionFoldersV1,
+  type SetSessionFolderAssignmentRequest,
+  type SetSessionFolderAssignmentResponse,
+} from './sessionFolders/index.js';
+
+export {
   AcpConfiguredBackendV1Schema,
   type AcpConfiguredBackendV1,
   createAcpConfiguredBackendV1Schema,
@@ -1762,6 +1832,7 @@ export {
   ScmRemoteResponseSchema,
   ScmRemoteSetUrlRequestSchema,
   ScmRemoteUrlSchema,
+  SCM_WORKTREES_ENRICHMENT_MAX_PATHS,
   classifyScmOperationErrorCode,
   evaluateScmRemoteMutationPolicy,
   hasAnyPendingScmChanges,
@@ -1779,7 +1850,10 @@ export {
   ScmRequestBaseSchema,
   ScmStatusSnapshotRequestSchema,
   ScmStatusSnapshotResponseSchema,
+  ScmWorktreeEnrichmentEntrySchema,
   ScmWorktreeSchema,
+  ScmWorktreesEnrichmentRequestSchema,
+  ScmWorktreesEnrichmentResponseSchema,
   ScmWorkingEntrySchema,
   ScmWorkingSnapshotSchema,
   type ScmBackendDescribeRequest,
@@ -1839,6 +1913,9 @@ export {
   type ScmStatusSnapshotRequest,
   type ScmStatusSnapshotResponse,
   type ScmWorktree,
+  type ScmWorktreeEnrichmentEntry,
+  type ScmWorktreesEnrichmentRequest,
+  type ScmWorktreesEnrichmentResponse,
   type ScmWorkingEntry,
   type ScmWorkingSnapshot,
 } from './scm.js';
@@ -2030,6 +2107,7 @@ export {
   type ScmRemotePublishResponse,
 } from './scmBranches.js';
 export {
+  SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
   ScmWorktreeCreateRequestSchema,
   ScmWorktreeCreateResponseSchema,
   ScmWorktreeCommandResponseSchema,

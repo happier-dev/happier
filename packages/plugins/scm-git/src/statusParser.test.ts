@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { deriveGitWorktreeId } from './deriveGitWorktreeId.js';
+import { parseGitStatusPorcelainShortZ } from './statusParser.js';
 import { buildGitSnapshot } from './statusSnapshot.js';
 
 type SnapshotEntry = Readonly<{
@@ -23,6 +24,20 @@ function findEntryByPath(entries: unknown[], path: string): SnapshotEntry | unde
 }
 
 describe('git status snapshot parser', () => {
+    it('parses short porcelain rename records without treating old paths as changes', () => {
+        expect(parseGitStatusPorcelainShortZ(
+            'M  tracked.ts\0'
+            + ' R unstaged-new.ts\0unstaged-old.ts\0'
+            + 'R  staged-new.ts\0staged-old.ts\0'
+            + '?? untracked.ts\0',
+        )).toEqual([
+            { path: 'tracked.ts', isUntracked: false },
+            { path: 'unstaged-new.ts', isUntracked: false },
+            { path: 'staged-new.ts', isUntracked: false },
+            { path: 'untracked.ts', isUntracked: true },
+        ]);
+    });
+
     it('parses porcelain-v2 -z status with rename, conflict, untracked, and numstat totals', () => {
         const statusOutput =
             '# branch.oid 1111111111111111111111111111111111111111\0' +

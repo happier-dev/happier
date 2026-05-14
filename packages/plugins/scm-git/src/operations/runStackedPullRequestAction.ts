@@ -1,4 +1,6 @@
 import type {
+    ScmBranchCreateRequest,
+    ScmBranchCreateResponse,
     ScmCommitCreateRequest,
     ScmCommitCreateResponse,
     ScmOperationErrorCode,
@@ -17,6 +19,7 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
+import { gitBranchCreate } from './branchOperations.js';
 import { gitCommitCreate } from './commitOperations.js';
 import { gitRemotePublish } from './publishOperations.js';
 import { gitRemotePush } from './remoteOperations.js';
@@ -32,6 +35,10 @@ export type GitRunStackedPullRequestAction = Readonly<{
 }>;
 
 type GitRunStackedPullRequestActionDeps = Readonly<{
+    branchCreate?: (input: Readonly<{
+        context: ScmBackendContext;
+        request: ScmBranchCreateRequest;
+    }>) => Promise<ScmBranchCreateResponse>;
     commitCreate?: (input: Readonly<{
         context: ScmBackendContext;
         request: ScmCommitCreateRequest;
@@ -98,6 +105,7 @@ function errorResponse(input: Readonly<{
 export function createGitRunStackedPullRequestAction(
     deps?: GitRunStackedPullRequestActionDeps,
 ): GitRunStackedPullRequestAction {
+    const branchCreate = deps?.branchCreate ?? gitBranchCreate;
     const commitCreate = deps?.commitCreate ?? gitCommitCreate;
     const remotePush = deps?.remotePush ?? gitRemotePush;
     const pullRequestOpenOrReuse = deps?.pullRequestOpenOrReuse ?? gitPullRequestOpenOrReuse;
@@ -136,6 +144,7 @@ export function createGitRunStackedPullRequestAction(
                 });
             }
             const requestedHeadBranch = requestedFeatureBranch ?? requestHeadBranch;
+            let effectiveHeadBranch = requestedHeadBranch;
             const workflowPhases = phasesForAction(request.action);
             const mutatesCurrentBranch = workflowPhases.includes('commit');
             if (requestedBaseBranch && requestedHeadBranch && requestedBaseBranch === requestedHeadBranch) {
@@ -151,9 +160,40 @@ export function createGitRunStackedPullRequestAction(
                 && workflowPhases.some((phase) => phase === 'commit' || phase === 'push' || phase === 'pr')
                 ? await readSnapshot({ context })
                 : null;
+            const canCreateRequestedFeatureBranch =
+                requestedBaseBranch
+                && requestedFeatureBranch
+                && preflightSnapshot?.branch.head === requestedBaseBranch
+                && (
+                    request.defaultBranchPushPolicy
+                    ?? preflightSnapshot.capabilities.defaultBranchPushPolicy
+                ) === 'requires-feature-branch';
+            if (canCreateRequestedFeatureBranch) {
+                append({ kind: 'phase_started', phase: 'branch', message: requestedFeatureBranch });
+                const branch = await branchCreate({
+                    context,
+                    request: {
+                        ...(request.cwd ? { cwd: request.cwd } : {}),
+                        name: requestedFeatureBranch,
+                        checkout: true,
+                        startPoint: requestedBaseBranch,
+                    },
+                });
+                if (!branch.success) {
+                    append({ kind: 'action_failed', phase: 'branch', message: branch.error });
+                    return errorResponse({
+                        error: branch.error ?? 'Feature branch creation failed',
+                        errorCode: branch.errorCode,
+                        events,
+                    });
+                }
+                effectiveHeadBranch = requestedFeatureBranch;
+                append({ kind: 'phase_finished', phase: 'branch' });
+            }
             if (
                 mutatesCurrentBranch
                 && requestedFeatureBranch
+                && !canCreateRequestedFeatureBranch
                 && preflightSnapshot?.branch.head !== requestedFeatureBranch
             ) {
                 const message = 'Checkout the requested feature branch before committing pull request changes';
@@ -170,7 +210,7 @@ export function createGitRunStackedPullRequestAction(
                     currentBranch: preflightSnapshot.branch.head,
                     baseBranch: requestedBaseBranch,
                     branchAhead: preflightSnapshot.branch.ahead,
-                    requestedHeadBranch,
+                    requestedHeadBranch: effectiveHeadBranch,
                 })
                 : null;
             if (preflightDefaultBranchPolicy?.kind === 'blocked') {
@@ -209,7 +249,7 @@ export function createGitRunStackedPullRequestAction(
 
                 if (phase === 'push') {
                     const baseBranch = request.base;
-                    const headBranch = requestedHeadBranch;
+                    const headBranch = effectiveHeadBranch;
                     const pushRequest = {
                         ...(request.cwd ? { cwd: request.cwd } : {}),
                         ...(headBranch ? { branch: headBranch } : {}),
@@ -235,7 +275,13 @@ export function createGitRunStackedPullRequestAction(
                             events,
                         });
                     }
-                    const publishPlan = !headBranch && snapshot?.branch.head && !snapshot.branch.detached && baseBranch
+                    const publishPlan = canCreateRequestedFeatureBranch && requestedFeatureBranch
+                        ? {
+                            kind: 'publish_active_branch' as const,
+                            branch: requestedFeatureBranch,
+                            reason: 'missing_upstream' as const,
+                        }
+                        : !headBranch && snapshot?.branch.head && !snapshot.branch.detached && baseBranch
                         ? resolvePullRequestBranchPublishPlan({
                             activeBranch: snapshot.branch.head,
                             baseBranch,
@@ -245,7 +291,9 @@ export function createGitRunStackedPullRequestAction(
                     const push = publishPlan?.kind === 'publish_active_branch'
                         ? await publishActiveBranch({
                             context,
-                            request: pushRequest,
+                            request: {
+                                ...(request.cwd ? { cwd: request.cwd } : {}),
+                            },
                             headBranch: publishPlan.branch,
                             reason: publishPlan.reason,
                         })
@@ -279,7 +327,7 @@ export function createGitRunStackedPullRequestAction(
                     request: {
                         ...(request.cwd ? { cwd: request.cwd } : {}),
                         base: request.base,
-                        ...(requestedHeadBranch ? { head: requestedHeadBranch } : {}),
+                        ...(effectiveHeadBranch ? { head: effectiveHeadBranch } : {}),
                         ...(request.title ? { title: request.title } : {}),
                         ...(request.body !== undefined ? { body: request.body } : {}),
                         ...(request.defaultBranchPushPolicy ? { defaultBranchPushPolicy: request.defaultBranchPushPolicy } : {}),
@@ -302,7 +350,7 @@ export function createGitRunStackedPullRequestAction(
                 success: true,
                 ...(openOrReuseResponse?.pullRequest !== undefined ? { pullRequest: openOrReuseResponse.pullRequest } : {}),
                 ...(openOrReuseResponse?.composeUrl ? { composeUrl: openOrReuseResponse.composeUrl } : {}),
-                branch: requestedHeadBranch,
+                branch: effectiveHeadBranch,
                 commitSha,
                 nextAction: openOrReuseResponse?.nextAction ?? { kind: 'none' },
                 events,
