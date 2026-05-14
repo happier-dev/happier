@@ -73,7 +73,9 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
     it("marks machine metadata changes and emits updates using the returned cursor", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
-        const socket = createFakeSocket();
+        const socket = createFakeSocket({
+            data: { clientType: "machine-scoped", machineId: "m1" },
+        });
         machineUpdateHandler("u1", socket as any);
         const handler = getSocketHandler(socket, "machine-update-metadata");
 
@@ -97,7 +99,9 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
     it("marks machine daemonState changes and emits updates using the returned cursor", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
-        const socket = createFakeSocket();
+        const socket = createFakeSocket({
+            data: { clientType: "machine-scoped", machineId: "m2" },
+        });
         machineUpdateHandler("u1", socket as any);
         const handler = getSocketHandler(socket, "machine-update-state");
 
@@ -131,7 +135,9 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
     it("publishes daemonState updates with active machine freshness for browser consumers", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
-        const socket = createFakeSocket();
+        const socket = createFakeSocket({
+            data: { clientType: "machine-scoped", machineId: "m3" },
+        });
         machineUpdateHandler("u1", socket as any);
         const handler = getSocketHandler(socket, "machine-update-state");
 
@@ -157,7 +163,9 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
 
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
-        const socket = createFakeSocket();
+        const socket = createFakeSocket({
+            data: { clientType: "machine-scoped", machineId: "m1" },
+        });
         machineUpdateHandler("u1", socket as any);
         const handler = getSocketHandler(socket, "machine-update-metadata");
 

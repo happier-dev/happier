@@ -118,8 +118,17 @@ describe("eventRouter payloads (protocol container)", () => {
                 daemonState: null,
                 daemonStateVersion: 1,
                 dataEncryptionKey: null,
+                installationId: "install-1",
+                installationPublicKey: new Uint8Array([1, 2, 3]),
+                contentPublicKeyFingerprint: "content-public-key-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                replacedByMachineId: "m-current",
+                replacedAt: new Date(2),
+                replacementReason: "reauth",
+                replacementSource: "automatic",
+                replacementActorUserId: null,
                 active: true,
                 lastActiveAt: new Date(1),
+                revokedAt: null,
                 createdAt: new Date(1),
                 updatedAt: new Date(1),
             },
@@ -128,6 +137,17 @@ describe("eventRouter payloads (protocol container)", () => {
         );
 
         expect(UpdateContainerSchema.safeParse(payload).success).toBe(true);
+        expect(payload.body).toEqual(expect.objectContaining({
+            installationId: "install-1",
+            installationPublicKey: Buffer.from([1, 2, 3]).toString("base64"),
+            contentPublicKeyFingerprint: "content-public-key-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            replacedByMachineId: "m-current",
+            replacedAt: new Date(2).getTime(),
+            replacementReason: "reauth",
+            replacementSource: "automatic",
+            replacementActorUserId: null,
+            revokedAt: null,
+        }));
     });
 
     it("sharing updates include sessionId + sid for compatibility", () => {

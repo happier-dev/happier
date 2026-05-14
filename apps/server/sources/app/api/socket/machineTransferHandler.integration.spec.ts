@@ -1,10 +1,27 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 import { createFakeSocket, getSocketHandler } from '../testkit/socketHarness';
 
+const machineFindFirst = vi.fn(async (): Promise<{ revokedAt: Date | null; replacedByMachineId: string | null }> => ({
+  revokedAt: null,
+  replacedByMachineId: null,
+}));
+vi.mock("@/storage/db", () => ({
+  db: {
+    machine: {
+      findFirst: machineFindFirst,
+    },
+  },
+}));
+
 describe('machineTransferHandler', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    machineFindFirst.mockResolvedValue({ revokedAt: null, replacedByMachineId: null });
+  });
+
   afterEach(() => {
     vi.resetModules();
   });
@@ -45,6 +62,84 @@ describe('machineTransferHandler', () => {
       },
     });
   }, 15000);
+
+  it('rejects server-routed transfer envelopes from replaced source machines', async () => {
+    const { machineTransferHandler } = await import('./machineTransferHandler');
+    machineFindFirst.mockResolvedValueOnce({ revokedAt: null, replacedByMachineId: 'machine-current' });
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const socketEmit = vi.fn();
+    const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' }) as any;
+    socket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+
+    machineTransferHandler('user-1', socket, { io: { to } as any });
+
+    const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+    await handler({
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_replaced',
+        kind: 'chunk',
+        sequence: 1,
+        payloadBase64: 'YQ==',
+      },
+    });
+
+    expect(machineFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { accountId: 'user-1', id: 'machine-source' },
+      select: { revokedAt: true, replacedByMachineId: true },
+    }));
+    expect(to).not.toHaveBeenCalled();
+    expect(socketEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+      type: 'machine-transfer',
+      error: 'Machine replaced',
+    });
+  });
+
+  it('rejects server-routed transfer envelopes to replaced target machines', async () => {
+    const { machineTransferHandler } = await import('./machineTransferHandler');
+    machineFindFirst
+      .mockResolvedValueOnce({ revokedAt: null, replacedByMachineId: null })
+      .mockResolvedValueOnce({ revokedAt: null, replacedByMachineId: 'machine-current' });
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const socketEmit = vi.fn();
+    const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' }) as any;
+    socket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+
+    machineTransferHandler('user-1', socket, { io: { to } as any });
+
+    const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+    await handler({
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_replaced_target',
+        kind: 'chunk',
+        sequence: 1,
+        payloadBase64: 'YQ==',
+      },
+    });
+
+    expect(machineFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { accountId: 'user-1', id: 'machine-source' },
+      select: { revokedAt: true, replacedByMachineId: true },
+    }));
+    expect(machineFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { accountId: 'user-1', id: 'machine-target' },
+      select: { revokedAt: true, replacedByMachineId: true },
+    }));
+    expect(to).not.toHaveBeenCalled();
+    expect(socketEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+      type: 'machine-transfer',
+      error: 'Machine replaced',
+    });
+  });
 
   it('rejects invalid machine transfer payloads', async () => {
     const { machineTransferHandler } = await import('./machineTransferHandler');

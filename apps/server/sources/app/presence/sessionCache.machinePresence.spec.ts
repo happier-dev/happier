@@ -23,6 +23,7 @@ vi.mock("@/app/share/accessControl", () => ({
 
 let machineLastActiveAtMs = 0;
 let machineRevokedAt: Date | null = null;
+let machineReplacedByMachineId: string | null = null;
 const dbMocks = createDbMocks({
     session: ["update"],
     machine: ["findUnique", "updateMany"],
@@ -49,6 +50,7 @@ describe("ActivityCache machine presence", () => {
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
         machineLastActiveAtMs = Date.now();
         machineRevokedAt = null;
+        machineReplacedByMachineId = null;
         dbMocks.reset();
         transactionMock.transaction.mockClear();
         dbMocks.db.machine.findUnique.mockImplementation(async () => ({
@@ -57,6 +59,7 @@ describe("ActivityCache machine presence", () => {
             lastActiveAt: new Date(machineLastActiveAtMs),
             active: false,
             revokedAt: machineRevokedAt,
+            replacedByMachineId: machineReplacedByMachineId,
         }));
         dbMocks.db.machine.updateMany.mockImplementation(async () => ({ count: 1 }));
     });
@@ -82,7 +85,7 @@ describe("ActivityCache machine presence", () => {
         expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(1);
         expect(dbMocks.db.machine.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: expect.objectContaining({ accountId: "u1", id: "m1", revokedAt: null }),
+                where: expect.objectContaining({ accountId: "u1", id: "m1", revokedAt: null, replacedByMachineId: null }),
                 data: expect.objectContaining({ active: true, lastActiveAt: expect.any(Date) }),
             }),
         );
@@ -93,6 +96,15 @@ describe("ActivityCache machine presence", () => {
 
     it("treats revoked machines as invalid", async () => {
         machineRevokedAt = new Date("2026-01-01T00:00:00.000Z");
+
+        ({ activityCache } = await import("./sessionCache"));
+
+        const ok = await activityCache.isMachineValid("m1", "u1");
+        expect(ok).toBe(false);
+    });
+
+    it("treats replaced machines as invalid", async () => {
+        machineReplacedByMachineId = "m2";
 
         ({ activityCache } = await import("./sessionCache"));
 

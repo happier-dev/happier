@@ -49,6 +49,11 @@ async function loadMachineTunnelFeatureModule(): Promise<Record<string, any> | n
     return import(modulePath).catch(() => null) as Promise<Record<string, any> | null>;
 }
 
+async function loadSessionFoldersFeatureModule(): Promise<Record<string, any> | null> {
+    const modulePath = "../sessionFoldersFeature";
+    return import(modulePath).catch(() => null) as Promise<Record<string, any> | null>;
+}
+
 describe("resolveServerFeaturePayload", () => {
     it("throws when resolvers list is empty", () => {
         expect(() => resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [])).toThrow(/resolvers/i);
@@ -178,6 +183,26 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.features.machines.transfer.directPeer.enabled).toBe(true);
         // Must be bounded even when env is unset (prevents implicit unlimited server-routed streaming).
         expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(2 * 1024 * 1024 * 1024);
+    });
+
+    it("enables session folders by default so the UI toggle can appear", async () => {
+        const mod = await loadSessionFoldersFeatureModule();
+        expect(mod?.resolveSessionFoldersFeature).toBeTypeOf("function");
+
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [mod!.resolveSessionFoldersFeature]);
+
+        expect(readOptionalPath(payload, ["features", "sessions", "folders", "enabled"])).toBe(true);
+    });
+
+    it("supports disabling session folders through the feature env", async () => {
+        const mod = await loadSessionFoldersFeatureModule();
+        expect(mod?.resolveSessionFoldersFeature).toBeTypeOf("function");
+
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_SESSIONS_FOLDERS__ENABLED: "0",
+        } as NodeJS.ProcessEnv, [mod!.resolveSessionFoldersFeature]);
+
+        expect(readOptionalPath(payload, ["features", "sessions", "folders", "enabled"])).toBe(false);
     });
 
     it("keeps server-routed tunnel relay disabled by default while advertising capped diagnostics", async () => {

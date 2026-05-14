@@ -1,5 +1,6 @@
 import type { Server } from "socket.io";
 
+import { readMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { recordSocketClusterFetchSockets } from "@/app/monitoring/metrics/index";
 import { log } from "@/utils/logging/log";
 
@@ -34,7 +35,20 @@ export async function discoverRpcTargets(params: Readonly<{
             durationMs: Date.now() - startedAt,
             result: "ok",
         });
-        return targets;
+        const availableTargets: RpcAckResponseEmitter[] = [];
+        for (const target of targets) {
+            const clientType = typeof target.data?.clientType === "string" ? target.data.clientType : "";
+            const machineId = typeof target.data?.machineId === "string" ? target.data.machineId : "";
+            if (clientType !== "machine-scoped" || !machineId) {
+                availableTargets.push(target);
+                continue;
+            }
+            const state = await readMachineAvailabilityState({ accountId: params.userId, machineId });
+            if (state === "available") {
+                availableTargets.push(target);
+            }
+        }
+        return availableTargets;
     } catch (error) {
         recordSocketClusterFetchSockets({
             durationMs: Date.now() - startedAt,

@@ -6,6 +6,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSocket, triggerSocketHandler } from "../../testkit/socketHarness";
 
 const resolveRpcCallTargetMock = vi.hoisted(() => vi.fn());
+const machineFindFirstMock = vi.hoisted(() => vi.fn(async (): Promise<{ revokedAt: Date | null; replacedByMachineId: string | null }> => ({
+    revokedAt: null,
+    replacedByMachineId: null,
+})));
+const accessKeyFindUniqueMock = vi.hoisted(() => vi.fn(async (): Promise<{ machineId: string; machine: { revokedAt: Date | null; replacedByMachineId: string | null } } | null> => ({
+    machineId: "machine-1",
+    machine: {
+        revokedAt: null,
+        replacedByMachineId: null,
+    },
+})));
 const rpcMetricsMocks = vi.hoisted(() => ({
     recordRpcRegistration: vi.fn(),
     recordRpcUnregistration: vi.fn(),
@@ -22,6 +33,13 @@ vi.mock("./resolveRpcCallTarget", () => ({
 }));
 
 vi.mock("@/app/monitoring/metrics/index", () => rpcMetricsMocks);
+
+vi.mock("@/storage/db", () => ({
+    db: {
+        machine: { findFirst: machineFindFirstMock },
+        accessKey: { findUnique: accessKeyFindUniqueMock },
+    },
+}));
 
 import { registerSocketRpcHandlers } from "./registerSocketRpcHandlers";
 
@@ -52,6 +70,16 @@ function createIo(params: { targetsByRoom?: Record<string, unknown[]> } = {}) {
 describe("registerSocketRpcHandlers", () => {
     beforeEach(() => {
         resolveRpcCallTargetMock.mockReset();
+        machineFindFirstMock.mockReset();
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null });
+        accessKeyFindUniqueMock.mockReset();
+        accessKeyFindUniqueMock.mockResolvedValue({
+            machineId: "machine-1",
+            machine: {
+                revokedAt: null,
+                replacedByMachineId: null,
+            },
+        });
         Object.values(rpcMetricsMocks).forEach((mock) => mock.mockReset());
     });
 
@@ -79,6 +107,38 @@ describe("registerSocketRpcHandlers", () => {
         expect(rpcMetricsMocks.recordRpcUnregistration).toHaveBeenCalledWith("agent.run");
     });
 
+    it("rejects RPC registration from a replaced machine-scoped socket", async () => {
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: "machine-current" });
+        const join = vi.fn().mockResolvedValue(undefined);
+        const socket = createFakeSocket({
+            id: "socket-1",
+            data: {
+                clientType: "machine-scoped",
+                machineId: "machine-old",
+            },
+            join,
+            leave: vi.fn().mockResolvedValue(undefined),
+        } as any);
+
+        registerSocketRpcHandlers({
+            userId: "user-1",
+            socket: socket as any,
+            io: {} as Server,
+        });
+
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "machine-old:spawn-happy-session" });
+
+        expect(machineFindFirstMock).toHaveBeenCalledWith(expect.objectContaining({
+            where: { accountId: "user-1", id: "machine-old" },
+            select: { revokedAt: true, replacedByMachineId: true },
+        }));
+        expect(join).not.toHaveBeenCalled();
+        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+            type: "register",
+            error: "Machine replaced",
+        });
+    });
+
     it("rejects session-scoped RPC registration without a machine access-key binding", async () => {
         const join = vi.fn().mockResolvedValue(undefined);
         const socket = createFakeSocket({
@@ -103,6 +163,57 @@ describe("registerSocketRpcHandlers", () => {
 
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "sess_1:execution.run.stream.start" });
 
+        expect(join).not.toHaveBeenCalled();
+        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+            type: "register",
+            error: "Forbidden",
+        });
+    });
+
+    it("rejects session-scoped RPC registration when a lingering access key points at a replaced machine", async () => {
+        accessKeyFindUniqueMock.mockResolvedValue({
+            machineId: "machine-old",
+            machine: {
+                revokedAt: null,
+                replacedByMachineId: "machine-current",
+            },
+        });
+        const join = vi.fn().mockResolvedValue(undefined);
+        const socket = createFakeSocket({
+            id: "session-socket",
+            data: {
+                clientType: "session-scoped",
+                sessionScopedBinding: {
+                    sessionId: "sess_1",
+                    machineId: "machine-old",
+                    proof: "machine-access-key",
+                },
+            },
+            join,
+            leave: vi.fn().mockResolvedValue(undefined),
+        } as any);
+
+        registerSocketRpcHandlers({
+            userId: "user-1",
+            socket: socket as any,
+            io: {} as Server,
+        });
+
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "sess_1:execution.run.stream.start" });
+
+        expect(accessKeyFindUniqueMock).toHaveBeenCalledWith(expect.objectContaining({
+            where: {
+                accountId_machineId_sessionId: {
+                    accountId: "user-1",
+                    machineId: "machine-old",
+                    sessionId: "sess_1",
+                },
+            },
+            select: {
+                machineId: true,
+                machine: { select: { revokedAt: true, replacedByMachineId: true } },
+            },
+        }));
         expect(join).not.toHaveBeenCalled();
         expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
             type: "register",
@@ -155,6 +266,61 @@ describe("registerSocketRpcHandlers", () => {
         expect(callback).toHaveBeenCalledWith({
             ok: true,
             result: { ok: true, value: 123 },
+        });
+    });
+
+    it("does not forward calls to replaced machine-scoped targets discovered from the RPC room", async () => {
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: "machine-current" });
+        const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true, value: 123 });
+        const target = {
+            id: "target-socket",
+            data: {
+                clientType: "machine-scoped",
+                machineId: "machine-old",
+            },
+            timeout: vi.fn(() => ({
+                emitWithAck: targetEmitWithAck,
+            })),
+        };
+        const { io } = createIo({
+            targetsByRoom: {
+                "rpc:user-1:machine-old:spawn-happy-session": [target],
+            },
+        });
+        const socket = createFakeSocket({
+            id: "caller-socket",
+            join: vi.fn().mockResolvedValue(undefined),
+            leave: vi.fn().mockResolvedValue(undefined),
+        } as any);
+        const callback = vi.fn();
+
+        resolveRpcCallTargetMock.mockResolvedValue({
+            type: "target",
+            targetUserId: "user-1",
+        });
+
+        registerSocketRpcHandlers({
+            userId: "user-1",
+            socket: socket as any,
+            io,
+        });
+
+        await triggerSocketHandler(
+            socket,
+            SOCKET_RPC_EVENTS.CALL,
+            { method: "machine-old:spawn-happy-session", params: {} },
+            callback,
+        );
+
+        expect(machineFindFirstMock).toHaveBeenCalledWith(expect.objectContaining({
+            where: { accountId: "user-1", id: "machine-old" },
+            select: { revokedAt: true, replacedByMachineId: true },
+        }));
+        expect(targetEmitWithAck).not.toHaveBeenCalled();
+        expect(callback).toHaveBeenCalledWith({
+            ok: false,
+            error: "RPC method not available",
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
         });
     });
 

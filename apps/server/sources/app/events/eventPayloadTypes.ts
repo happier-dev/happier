@@ -155,8 +155,17 @@ export type UpdateEvent = {
     daemonState: string | null;
     daemonStateVersion: number;
     dataEncryptionKey: string | null;
+    installationId?: string | null;
+    installationPublicKey?: string | null;
+    contentPublicKeyFingerprint?: string | null;
+    replacedByMachineId?: string | null;
+    replacedAt?: number | null;
+    replacementReason?: string | null;
+    replacementSource?: string | null;
+    replacementActorUserId?: string | null;
     active: boolean;
     activeAt: number;
+    revokedAt?: number | null;
     createdAt: number;
     updatedAt: number;
 } | {
@@ -173,6 +182,11 @@ export type UpdateEvent = {
     activeAt?: number;
     active?: boolean;
     revokedAt?: number | null;
+    replacedByMachineId?: string | null;
+    replacedAt?: number | null;
+    replacementReason?: string | null;
+    replacementSource?: string | null;
+    replacementActorUserId?: string | null;
 } | {
     type: 'new-artifact';
     artifactId: string;

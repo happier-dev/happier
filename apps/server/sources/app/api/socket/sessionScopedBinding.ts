@@ -27,6 +27,14 @@ type SessionScopedBindingResolution =
     | Readonly<{ ok: true; binding: SessionScopedSocketBinding; cacheWarmState: SessionScopedSocketBindingCacheWarmState }>
     | Readonly<{ ok: false; statusCode: number; error: "invalid-session" | "invalid-session-access-key" }>;
 
+type MachineAccessKeyAvailability = Readonly<{
+    machineId: string;
+    machine: Readonly<{
+        revokedAt: Date | null;
+        replacedByMachineId: string | null;
+    }>;
+}> | null;
+
 function normalizeNonEmptyString(value: unknown): string | null {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
@@ -102,11 +110,12 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
                         active: true,
                         lastActiveAt: true,
                         revokedAt: true,
+                        replacedByMachineId: true,
                     },
                 },
             },
         });
-    if (!accessKey) {
+    if (!accessKey || accessKey.machine.revokedAt || accessKey.machine.replacedByMachineId) {
         observeSessionScopedBindingStage({
             stage: "machine_access_key_lookup",
             result: "error",
@@ -132,12 +141,10 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
                 active: accessKey.session.active,
                 lastActiveAt: accessKey.session.lastActiveAt,
             },
-            machine: accessKey.machine.revokedAt
-                ? null
-                : {
-                    active: accessKey.machine.active,
-                    lastActiveAt: accessKey.machine.lastActiveAt,
-                },
+            machine: {
+                active: accessKey.machine.active,
+                lastActiveAt: accessKey.machine.lastActiveAt,
+            },
         },
     };
 }
@@ -160,10 +167,35 @@ export function readSessionScopedSocketBinding(socket: Socket): SessionScopedSoc
     };
 }
 
-export function canRegisterSessionScopedRpcMethod(params: Readonly<{
+async function readMachineAccessKeyAvailability(params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    machineId: string;
+}>): Promise<MachineAccessKeyAvailability> {
+    return await db.accessKey.findUnique({
+        where: {
+            accountId_machineId_sessionId: {
+                accountId: params.accountId,
+                machineId: params.machineId,
+                sessionId: params.sessionId,
+            },
+        },
+        select: {
+            machineId: true,
+            machine: { select: { revokedAt: true, replacedByMachineId: true } },
+        },
+    });
+}
+
+function isAvailableMachineAccessKey(accessKey: MachineAccessKeyAvailability): boolean {
+    return Boolean(accessKey && !accessKey.machine.revokedAt && !accessKey.machine.replacedByMachineId);
+}
+
+export async function canRegisterSessionScopedRpcMethod(params: Readonly<{
     socket: Socket;
+    accountId: string;
     method: string;
-}>): boolean {
+}>): Promise<boolean> {
     const clientType = (params.socket.data as { clientType?: unknown } | undefined)?.clientType;
     if (clientType !== "session-scoped") {
         return true;
@@ -178,7 +210,20 @@ export function canRegisterSessionScopedRpcMethod(params: Readonly<{
     if (lastColon <= 0) {
         return false;
     }
-    return params.method.slice(0, lastColon) === binding.sessionId;
+    if (params.method.slice(0, lastColon) !== binding.sessionId) {
+        return false;
+    }
+
+    const machineId = binding.machineId;
+    if (!machineId) {
+        return false;
+    }
+
+    return isAvailableMachineAccessKey(await readMachineAccessKeyAvailability({
+        accountId: params.accountId,
+        sessionId: binding.sessionId,
+        machineId,
+    }));
 }
 
 export async function canPublishFromSessionScopedSocket(params: Readonly<{
@@ -204,17 +249,12 @@ export async function canPublishFromSessionScopedSocket(params: Readonly<{
             return false;
         }
 
-        const accessKey = await db.accessKey.findUnique({
-            where: {
-                accountId_machineId_sessionId: {
-                    accountId: params.connection.userId,
-                    machineId,
-                    sessionId: binding.sessionId,
-                },
-            },
-            select: { machineId: true },
+        const accessKey = await readMachineAccessKeyAvailability({
+            accountId: params.connection.userId,
+            machineId,
+            sessionId: binding.sessionId,
         });
-        if (!accessKey) {
+        if (!isAvailableMachineAccessKey(accessKey)) {
             return false;
         }
     }

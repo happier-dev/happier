@@ -1,5 +1,6 @@
 import { MachineTransferSendEnvelopeSchema } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { readMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { Server, Socket } from 'socket.io';
 
 const MACHINE_TRANSFER_MAX_BYTES_ERROR = 'Server-routed machine transfer exceeds the configured max-bytes limit';
@@ -136,6 +137,24 @@ export function machineTransferHandler(
       socket.emit(SOCKET_RPC_EVENTS.ERROR, {
         type: 'machine-transfer',
         error: 'Invalid machine transfer payload',
+      });
+      return;
+    }
+
+    const sourceState = await readMachineAvailabilityState({ accountId: userId, machineId: sourceMachineId });
+    if (sourceState === 'revoked' || sourceState === 'replaced' || sourceState === 'missing') {
+      socket.emit(SOCKET_RPC_EVENTS.ERROR, {
+        type: 'machine-transfer',
+        error: sourceState === 'replaced' ? 'Machine replaced' : 'Machine unavailable',
+      });
+      return;
+    }
+
+    const targetState = await readMachineAvailabilityState({ accountId: userId, machineId: parsed.data.targetMachineId });
+    if (targetState === 'revoked' || targetState === 'replaced' || targetState === 'missing') {
+      socket.emit(SOCKET_RPC_EVENTS.ERROR, {
+        type: 'machine-transfer',
+        error: targetState === 'replaced' ? 'Machine replaced' : 'Machine unavailable',
       });
       return;
     }

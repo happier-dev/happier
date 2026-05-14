@@ -239,9 +239,13 @@ export function startSocket(app: Fastify) {
                 setHandshakeStage("machine-lookup");
                 const machine = await db.machine.findFirst({
                     where: { accountId: verified.userId, id: machineId },
-                    select: { id: true, active: true, lastActiveAt: true, revokedAt: true },
+                    select: { id: true, active: true, lastActiveAt: true, revokedAt: true, replacedByMachineId: true },
                 });
                 if (!machine) {
+                    observeHandshakeStage("error");
+                    return rejectHandshake({ statusCode: 403, error: 'invalid-machine' });
+                }
+                if (machine.revokedAt || machine.replacedByMachineId) {
                     observeHandshakeStage("error");
                     return rejectHandshake({ statusCode: 403, error: 'invalid-machine' });
                 }
@@ -268,14 +272,12 @@ export function startSocket(app: Fastify) {
                 }
                 observeHandshakeStage("ok");
 
-                if (!machine.revokedAt) {
-                    activityCache.seedMachineValidity({
-                        machineId: machine.id,
-                        userId: verified.userId,
-                        active: machine.active,
-                        lastActiveAt: machine.lastActiveAt,
-                    });
-                }
+                activityCache.seedMachineValidity({
+                    machineId: machine.id,
+                    userId: verified.userId,
+                    active: machine.active,
+                    lastActiveAt: machine.lastActiveAt,
+                });
             }
 
             if (clientType === 'session-scoped' && sessionId) {

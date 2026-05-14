@@ -16,6 +16,7 @@ import { resolveMachineTransferFeature } from '../machineTransferFeature';
 import { resolveMachineTunnelFeature } from '../machineTunnelFeature';
 import { resolveMachineLiveStreamFeature } from '../machineLiveStreamFeature';
 import { resolveMachineRpcFeature } from '../machineRpcFeature';
+import { resolveSessionFoldersFeature } from '../sessionFoldersFeature';
 import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
 import { resolveTerminalFeature } from '../terminalFeature';
 import { resolveEncryptionFeature } from '../encryptionFeature';
@@ -45,6 +46,7 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolveMachineTunnelFeature(env),
     (env) => resolveMachineLiveStreamFeature(env),
     (env) => resolveMachineRpcFeature(env),
+    (env) => resolveSessionFoldersFeature(env),
     (env) => resolveSessionHandoffFeature(env),
     (env) => resolveTerminalFeature(env),
     (env) => resolveFriendsFeature(env),

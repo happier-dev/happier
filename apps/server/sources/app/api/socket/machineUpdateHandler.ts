@@ -10,9 +10,36 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
 import { ExternalSessionTranscriptDeltaEphemeralSchema } from "@happier-dev/protocol";
 
+function readAuthenticatedMachineId(socket: Socket): string | null {
+    const clientType = typeof (socket.data as any)?.clientType === 'string'
+        ? (socket.data as any).clientType
+        : '';
+    const machineId = typeof (socket.data as any)?.machineId === 'string'
+        ? (socket.data as any).machineId
+        : '';
+    return clientType === 'machine-scoped' && machineId ? machineId : null;
+}
+
+function resolveMachineScopedPayloadMachineId(socket: Socket, payloadMachineId: unknown): string | null {
+    const authenticatedMachineId = readAuthenticatedMachineId(socket);
+    if (!authenticatedMachineId) return null;
+    if (typeof payloadMachineId === 'string' && payloadMachineId && payloadMachineId !== authenticatedMachineId) {
+        return null;
+    }
+    return authenticatedMachineId;
+}
+
+async function isMachineAvailableForSocket(accountId: string, machineId: string): Promise<boolean> {
+    const machine = await db.machine.findFirst({
+        where: { accountId, id: machineId },
+        select: { revokedAt: true, replacedByMachineId: true },
+    });
+    return Boolean(machine && !machine.revokedAt && !machine.replacedByMachineId);
+}
+
 export function machineUpdateHandler(userId: string, socket: Socket) {
     socket.on('machine-alive', async (data: {
-        machineId: string;
+        machineId?: string;
         time: number;
     }) => {
         try {
@@ -21,7 +48,11 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             machineAliveEventsCounter.inc();
 
             // Basic validation
-            if (!data || typeof data.time !== 'number' || !data.machineId) {
+            if (!data || typeof data.time !== 'number') {
+                return;
+            }
+            const machineId = resolveMachineScopedPayloadMachineId(socket, data.machineId);
+            if (!machineId) {
                 return;
             }
 
@@ -34,15 +65,19 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             }
 
             // Check machine validity using cache
-            const isValid = await activityCache.isMachineValid(data.machineId, userId);
+            const isValid = await activityCache.isMachineValid(machineId, userId);
             if (!isValid) {
+                return;
+            }
+            if (!(await isMachineAvailableForSocket(userId, machineId))) {
+                activityCache.invalidateMachine(machineId);
                 return;
             }
 
             // Queue database update (will only update if time difference is significant)
-            await recordMachineAlive({ accountId: userId, machineId: data.machineId, timestamp: t });
+            await recordMachineAlive({ accountId: userId, machineId, timestamp: t });
 
-            const machineActivity = buildMachineActivityEphemeral(data.machineId, true, t);
+            const machineActivity = buildMachineActivityEphemeral(machineId, true, t);
             eventRouter.emitEphemeral({
                 userId,
                 payload: machineActivity,
@@ -85,7 +120,8 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
     // Machine metadata update with optimistic concurrency control
     socket.on('machine-update-metadata', async (data: any, callback: (response: any) => void) => {
         try {
-            const { machineId, metadata, expectedVersion } = data;
+            const { metadata, expectedVersion } = data;
+            const machineId = resolveMachineScopedPayloadMachineId(socket, data?.machineId);
 
             // Validate input
             if (!machineId || typeof metadata !== 'string' || typeof expectedVersion !== 'number') {
@@ -98,7 +134,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
                     where: { accountId: userId, id: machineId },
-                    select: { metadataVersion: true, metadata: true, revokedAt: true },
+                    select: { metadataVersion: true, metadata: true, revokedAt: true, replacedByMachineId: true },
                 });
                 if (!machine) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
@@ -108,6 +144,10 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
                     return null;
                 }
+                if (machine.replacedByMachineId) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
+                    return null;
+                }
 
                 if (machine.metadataVersion !== expectedVersion) {
                     afterTx(tx, () => callback?.({ result: 'version-mismatch', version: machine.metadataVersion, metadata: machine.metadata }));
@@ -115,17 +155,21 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 }
 
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, metadataVersion: expectedVersion, revokedAt: null },
+                    where: { accountId: userId, id: machineId, metadataVersion: expectedVersion, revokedAt: null, replacedByMachineId: null },
                     data: { metadata, metadataVersion: expectedVersion + 1 },
                 });
 
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
                         where: { accountId: userId, id: machineId },
-                        select: { metadataVersion: true, metadata: true, revokedAt: true },
+                        select: { metadataVersion: true, metadata: true, revokedAt: true, replacedByMachineId: true },
                     });
                     if (fresh?.revokedAt) {
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
+                        return null;
+                    }
+                    if (fresh?.replacedByMachineId) {
+                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                         return null;
                     }
                     afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh?.metadataVersion ?? expectedVersion, metadata: fresh?.metadata }));
@@ -156,7 +200,8 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
     // Machine daemon state update with optimistic concurrency control
     socket.on('machine-update-state', async (data: any, callback: (response: any) => void) => {
         try {
-            const { machineId, daemonState, expectedVersion } = data;
+            const { daemonState, expectedVersion } = data;
+            const machineId = resolveMachineScopedPayloadMachineId(socket, data?.machineId);
 
             // Validate input
             if (!machineId || typeof daemonState !== 'string' || typeof expectedVersion !== 'number') {
@@ -169,7 +214,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
                     where: { accountId: userId, id: machineId },
-                    select: { daemonStateVersion: true, daemonState: true, revokedAt: true },
+                    select: { daemonStateVersion: true, daemonState: true, revokedAt: true, replacedByMachineId: true },
                 });
                 if (!machine) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
@@ -177,6 +222,10 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 }
                 if (machine.revokedAt) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
+                    return null;
+                }
+                if (machine.replacedByMachineId) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                     return null;
                 }
 
@@ -187,7 +236,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
 
                 const activeAt = Date.now();
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, daemonStateVersion: expectedVersion, revokedAt: null },
+                    where: { accountId: userId, id: machineId, daemonStateVersion: expectedVersion, revokedAt: null, replacedByMachineId: null },
                     data: {
                         daemonState,
                         daemonStateVersion: expectedVersion + 1,
@@ -199,10 +248,14 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
                         where: { accountId: userId, id: machineId },
-                        select: { daemonStateVersion: true, daemonState: true, revokedAt: true },
+                        select: { daemonStateVersion: true, daemonState: true, revokedAt: true, replacedByMachineId: true },
                     });
                     if (fresh?.revokedAt) {
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
+                        return null;
+                    }
+                    if (fresh?.replacedByMachineId) {
+                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                         return null;
                     }
                     afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh?.daemonStateVersion ?? expectedVersion, daemonState: fresh?.daemonState }));

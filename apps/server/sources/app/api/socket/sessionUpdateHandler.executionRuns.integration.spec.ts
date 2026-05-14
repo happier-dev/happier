@@ -59,7 +59,14 @@ vi.mock("@/app/share/sessionParticipants", () => ({
     getSessionParticipantUserIds,
 }));
 
-const accessKeyFindUnique = vi.hoisted(() => vi.fn(async (): Promise<{ machineId: string } | null> => ({ machineId: "m1" })));
+const activeAccessKey = vi.hoisted(() => ({
+    machineId: "m1",
+    machine: {
+        revokedAt: null,
+        replacedByMachineId: null,
+    },
+}));
+const accessKeyFindUnique = vi.hoisted(() => vi.fn(async (): Promise<typeof activeAccessKey | null> => activeAccessKey));
 vi.mock("@/storage/db", () => ({
     db: {
         accessKey: {
@@ -106,7 +113,7 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
         requireAccessLevel.mockReset();
         getSessionParticipantUserIds.mockReset();
         accessKeyFindUnique.mockReset();
-        accessKeyFindUnique.mockResolvedValue({ machineId: "m1" });
+        accessKeyFindUnique.mockResolvedValue(activeAccessKey);
         checkSessionAccess.mockImplementation(async (userId, sessionId) => ({
             userId,
             sessionId,
@@ -247,7 +254,10 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
                     sessionId: "s1",
                 },
             },
-            select: { machineId: true },
+            select: {
+                machineId: true,
+                machine: { select: { revokedAt: true, replacedByMachineId: true } },
+            },
         });
         expect(checkSessionAccess).not.toHaveBeenCalled();
         expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
@@ -524,7 +534,7 @@ describe("sessionUpdateHandler (transcript-stream-segment)", () => {
         requireAccessLevel.mockReset();
         getSessionParticipantUserIds.mockReset();
         accessKeyFindUnique.mockReset();
-        accessKeyFindUnique.mockResolvedValue({ machineId: "m1" });
+        accessKeyFindUnique.mockResolvedValue(activeAccessKey);
         checkSessionAccess.mockResolvedValue({
             userId: "u1",
             sessionId: "s1",

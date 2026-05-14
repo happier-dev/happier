@@ -289,8 +289,17 @@ export function buildNewMachineUpdate(machine: {
     daemonState: string | null;
     daemonStateVersion: number;
     dataEncryptionKey: Uint8Array | null;
+    installationId?: string | null;
+    installationPublicKey?: Uint8Array | null;
+    contentPublicKeyFingerprint?: string | null;
+    replacedByMachineId?: string | null;
+    replacedAt?: Date | null;
+    replacementReason?: string | null;
+    replacementSource?: string | null;
+    replacementActorUserId?: string | null;
     active: boolean;
     lastActiveAt: Date;
+    revokedAt?: Date | null;
     createdAt: Date;
     updatedAt: Date;
 }, updateSeq: number, updateId: string): UpdatePayload {
@@ -306,8 +315,17 @@ export function buildNewMachineUpdate(machine: {
             daemonState: machine.daemonState,
             daemonStateVersion: machine.daemonStateVersion,
             dataEncryptionKey: machine.dataEncryptionKey ? Buffer.from(machine.dataEncryptionKey).toString('base64') : null,
+            installationId: machine.installationId ?? null,
+            installationPublicKey: machine.installationPublicKey ? Buffer.from(machine.installationPublicKey).toString('base64') : null,
+            contentPublicKeyFingerprint: machine.contentPublicKeyFingerprint ?? null,
+            replacedByMachineId: machine.replacedByMachineId ?? null,
+            replacedAt: machine.replacedAt ? machine.replacedAt.getTime() : null,
+            replacementReason: machine.replacementReason ?? null,
+            replacementSource: machine.replacementSource ?? null,
+            replacementActorUserId: machine.replacementActorUserId ?? null,
             active: machine.active,
             activeAt: machine.lastActiveAt.getTime(),
+            revokedAt: machine.revokedAt ? machine.revokedAt.getTime() : null,
             createdAt: machine.createdAt.getTime(),
             updatedAt: machine.updatedAt.getTime()
         },
@@ -325,6 +343,11 @@ export function buildUpdateMachineUpdate(
         active?: boolean;
         activeAt?: number;
         revokedAt?: number | null;
+        replacedByMachineId?: string | null;
+        replacedAt?: number | null;
+        replacementReason?: string | null;
+        replacementSource?: string | null;
+        replacementActorUserId?: string | null;
     },
 ): UpdatePayload {
     return {

@@ -19,7 +19,10 @@ vi.mock("@/app/monitoring/metrics/sessionBindingMetrics", () => ({
     observeSessionScopedBindingStage: (...args: unknown[]) => observeSessionScopedBindingStageMock(...args),
 }));
 
-import { resolveSessionScopedSocketBinding } from "./sessionScopedBinding";
+import {
+    canPublishFromSessionScopedSocket,
+    resolveSessionScopedSocketBinding,
+} from "./sessionScopedBinding";
 
 describe("resolveSessionScopedSocketBinding", () => {
     beforeEach(() => {
@@ -32,11 +35,12 @@ describe("resolveSessionScopedSocketBinding", () => {
         });
         accessKeyFindUniqueMock.mockResolvedValueOnce({
             machineId: "m1",
-            machine: {
-                active: true,
-                lastActiveAt: new Date("2026-04-20T12:00:00.000Z"),
-                revokedAt: null,
-            },
+                machine: {
+                    active: true,
+                    lastActiveAt: new Date("2026-04-20T12:00:00.000Z"),
+                    revokedAt: null,
+                    replacedByMachineId: null,
+                },
             session: {
                 active: true,
                 lastActiveAt: new Date("2026-04-20T11:00:00.000Z"),
@@ -135,5 +139,66 @@ describe("resolveSessionScopedSocketBinding", () => {
                 durationMs: expect.any(Number),
             }),
         );
+    });
+
+    it("rejects a machine-bound binding when a lingering access key points at a replaced machine", async () => {
+        accessKeyFindUniqueMock.mockResolvedValueOnce({
+            machineId: "m1",
+            machine: {
+                active: true,
+                lastActiveAt: new Date("2026-04-20T12:00:00.000Z"),
+                revokedAt: null,
+                replacedByMachineId: "m2",
+            },
+            session: {
+                active: true,
+                lastActiveAt: new Date("2026-04-20T11:00:00.000Z"),
+            },
+        });
+
+        await expect(
+            resolveSessionScopedSocketBinding({
+                userId: "u1",
+                sessionId: "s1",
+                machineId: "m1",
+            }),
+        ).resolves.toEqual({
+            ok: false,
+            statusCode: 403,
+            error: "invalid-session-access-key",
+        });
+    });
+
+    it("rejects machine-bound publishes when a lingering access key points at a replaced machine", async () => {
+        accessKeyFindUniqueMock.mockResolvedValueOnce({
+            machineId: "m1",
+            machine: {
+                revokedAt: null,
+                replacedByMachineId: "m2",
+            },
+        });
+
+        await expect(
+            canPublishFromSessionScopedSocket({
+                socket: {
+                    data: {
+                        clientType: "session-scoped",
+                        sessionScopedBinding: {
+                            sessionId: "s1",
+                            machineId: "m1",
+                            proof: "machine-access-key",
+                        },
+                    },
+                } as any,
+                connection: {
+                    connectionType: "session-scoped",
+                    socket: {} as any,
+                    userId: "u1",
+                    sessionId: "s1",
+                },
+                sessionId: "s1",
+                requireMachineBinding: true,
+            }),
+        ).resolves.toBe(false);
     });
 });

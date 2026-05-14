@@ -252,6 +252,10 @@ class ActivityCache {
                     this.machineCache.delete(machineId);
                     return false;
                 }
+                if (machine.replacedByMachineId) {
+                    this.machineCache.delete(machineId);
+                    return false;
+                }
 
                 // Cache the result
                 this.machineCache.set(
@@ -473,6 +477,7 @@ class ActivityCache {
                             accountId: update.entry.userId,
                             id: update.machineId,
                             revokedAt: null,
+                            replacedByMachineId: null,
                         },
                         data: { lastActiveAt: new Date(update.timestamp), active: true }
                     });

@@ -3,6 +3,7 @@ import type { Server, Socket } from "socket.io";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 
 import { observeRpcCall, recordRpcCallFailure, recordRpcRegistration, recordRpcUnregistration } from "@/app/monitoring/metrics/index";
+import { readMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { log } from "@/utils/logging/log";
 
 import { canRegisterSessionScopedRpcMethod } from "../sessionScopedBinding";
@@ -34,9 +35,26 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Invalid method name" });
                 return;
             }
-            if (!canRegisterSessionScopedRpcMethod({ socket: params.socket, method })) {
+            if (!await canRegisterSessionScopedRpcMethod({ socket: params.socket, accountId: params.userId, method })) {
                 params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
                 return;
+            }
+            if ((params.socket.data as any)?.clientType === "machine-scoped") {
+                const machineId = typeof (params.socket.data as any)?.machineId === "string"
+                    ? (params.socket.data as any).machineId
+                    : "";
+                if (!machineId) {
+                    params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
+                    return;
+                }
+                const state = await readMachineAvailabilityState({ accountId: params.userId, machineId });
+                if (state !== "available") {
+                    params.socket.emit(SOCKET_RPC_EVENTS.ERROR, {
+                        type: "register",
+                        error: state === "replaced" ? "Machine replaced" : "Machine unavailable",
+                    });
+                    return;
+                }
             }
 
             await params.socket.join(buildRpcMethodRoom({ userId: params.userId, method }));

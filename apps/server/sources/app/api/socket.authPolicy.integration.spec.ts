@@ -289,6 +289,130 @@ describe("startSocket (auth policy enforcement)", () => {
         });
     }, 30_000);
 
+    it("disconnects a machine-scoped socket when the machine is revoked", async () => {
+        const account = await db.account.create({
+            data: { publicKey: `pk-revoked-${Date.now()}` },
+            select: { id: true },
+        });
+
+        await db.machine.create({
+            data: {
+                id: "m-revoked",
+                accountId: account.id,
+                metadata: "metadata",
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                active: false,
+                revokedAt: new Date("2026-05-12T00:00:00.000Z"),
+            },
+            select: { id: true },
+        });
+
+        const token = await auth.createToken(account.id);
+
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        const port = typeof address === "object" && address ? address.port : null;
+        if (!port) {
+            await app.close();
+            throw new Error("Failed to bind socket server");
+        }
+
+        const socket = ioClient(`http://127.0.0.1:${port}`, {
+            path: "/v1/updates",
+            transports: ["websocket"],
+            reconnection: false,
+            auth: { token, clientType: "machine-scoped", machineId: "m-revoked" },
+        });
+
+        let payload: ProviderRequiredErrorPayload;
+        try {
+            payload = await waitForConnectionFailure(socket);
+        } finally {
+            socket.close();
+            await app.close();
+        }
+
+        expect(payload.message).toBe("invalid-machine");
+        expect(payload.data).toEqual({
+            error: "invalid-machine",
+            provider: undefined,
+            statusCode: 403,
+            owner: undefined,
+        });
+    }, 30_000);
+
+    it("disconnects a machine-scoped socket when the machine is replaced", async () => {
+        const account = await db.account.create({
+            data: { publicKey: `pk-replaced-${Date.now()}` },
+            select: { id: true },
+        });
+
+        await db.machine.create({
+            data: {
+                id: "m-current",
+                accountId: account.id,
+                metadata: "metadata",
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                active: false,
+            },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "m-replaced",
+                accountId: account.id,
+                metadata: "metadata",
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                active: false,
+                replacedByMachineId: "m-current",
+            },
+            select: { id: true },
+        });
+
+        const token = await auth.createToken(account.id);
+
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        const port = typeof address === "object" && address ? address.port : null;
+        if (!port) {
+            await app.close();
+            throw new Error("Failed to bind socket server");
+        }
+
+        const socket = ioClient(`http://127.0.0.1:${port}`, {
+            path: "/v1/updates",
+            transports: ["websocket"],
+            reconnection: false,
+            auth: { token, clientType: "machine-scoped", machineId: "m-replaced" },
+        });
+
+        let payload: ProviderRequiredErrorPayload;
+        try {
+            payload = await waitForConnectionFailure(socket);
+        } finally {
+            socket.close();
+            await app.close();
+        }
+
+        expect(payload.message).toBe("invalid-machine");
+        expect(payload.data).toEqual({
+            error: "invalid-machine",
+            provider: undefined,
+            statusCode: 403,
+            owner: undefined,
+        });
+    }, 30_000);
+
     it("rejects a second machine-scoped socket when another live owner already holds the machine", async () => {
         const account = await db.account.create({
             data: { publicKey: `pk-${Date.now()}` },

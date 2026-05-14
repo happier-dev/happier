@@ -74,6 +74,10 @@ export type SessionHandoffFeatureEnv = Readonly<{
   handoffEnabled: boolean;
 }>;
 
+export type SessionFoldersFeatureEnv = Readonly<{
+  foldersEnabled: boolean;
+}>;
+
 export type MachineTransferFeatureEnv = Readonly<{
   directPeerEnabled: boolean;
   serverRoutedEnabled: boolean;
@@ -351,6 +355,12 @@ export function readPeerMediationFeatureEnv(env: NodeJS.ProcessEnv): PeerMediati
 export function readSessionHandoffFeatureEnv(env: NodeJS.ProcessEnv): SessionHandoffFeatureEnv {
   return {
     handoffEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsHandoffEnabled], true),
+  };
+}
+
+export function readSessionFoldersFeatureEnv(env: NodeJS.ProcessEnv): SessionFoldersFeatureEnv {
+  return {
+    foldersEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsFoldersEnabled], true),
   };
 }
 
