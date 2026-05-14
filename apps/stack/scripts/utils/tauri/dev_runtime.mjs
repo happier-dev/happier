@@ -27,6 +27,15 @@ function hasStackTauriOverride(env = {}) {
     || String(env?.TAURI_SIGNING_PRIVATE_KEY ?? '').trim() !== '';
 }
 
+function applyHtml5FileDragDropWindowPolicy(config) {
+  if (!Array.isArray(config?.app?.windows)) return config;
+  config.app.windows = config.app.windows.map((windowConfig) => ({
+    ...windowConfig,
+    dragDropEnabled: false,
+  }));
+  return config;
+}
+
 export function resolveStackTauriDevUrl({ runtimeState, defaultPort = 8081 } = {}) {
   const expo = runtimeState && typeof runtimeState === 'object' ? runtimeState.expo : null;
   const expoPort = Number(expo?.webPort ?? expo?.port ?? 0);
@@ -60,5 +69,5 @@ export function buildStackTauriDevConfig({ baseConfig, overlayConfig, devUrl, en
   if (hasStackTauriOverride(env)) {
     applyStackTauriOverrides({ tauriConfig: merged, env, baseProductName: 'Happier' });
   }
-  return merged;
+  return applyHtml5FileDragDropWindowPolicy(merged);
 }

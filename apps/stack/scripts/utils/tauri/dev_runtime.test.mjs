@@ -51,7 +51,7 @@ test('buildStackTauriDevConfig disables beforeDevCommand and points Tauri at the
         externalBin: ['binaries/hsetup'],
       },
       app: {
-        windows: [{ title: 'Happier' }],
+        windows: [{ title: 'Happier', dragDropEnabled: false }],
       },
     },
     overlayConfig: {
@@ -72,6 +72,7 @@ test('buildStackTauriDevConfig disables beforeDevCommand and points Tauri at the
   assert.equal(config.build.beforeBuildCommand, '');
   assert.deepEqual(config.bundle.externalBin, ['binaries/hsetup']);
   assert.equal(config.app.windows[0]?.title, 'Happier (dev)');
+  assert.equal(config.app.windows[0]?.dragDropEnabled, false);
 });
 
 test('buildStackTauriDevConfig applies explicit stack overrides after merging configs', () => {
