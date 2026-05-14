@@ -1,5 +1,6 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const { builtinModules } = require("node:module");
 const {
   getSentryExpoConfig
 } = require("@sentry/react-native/metro");
@@ -392,6 +393,8 @@ const nodeFsPromisesShim = path.resolve(__dirname, "sources/platform/nodeShims/n
 const nodeFsShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeFsShim.ts");
 const nodeUrlShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeUrlShim.ts");
 const nodeCryptoShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeCryptoShim.ts");
+const nodeOsShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeOsShim.ts");
+const nodeEmptyBuiltinShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeEmptyBuiltinShim.ts");
 const transformersStub = path.resolve(__dirname, "sources/platform/stubs/huggingfaceTransformersStub.ts");
 const fontFaceObserverWebShim = path.resolve(__dirname, "sources/platform/shims/fontFaceObserverWebShim.ts");
 const reactNativeWebShim = path.resolve(__dirname, "sources/platform/shims/reactNativeWebShim.ts");
@@ -400,6 +403,9 @@ const reactNativeDevToolsSettingsManagerWebStub = path.resolve(__dirname, "sourc
 const expoAsyncRequireSetupShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoAsyncRequireSetupShim.ts");
 const expoMessageSocketShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoMessageSocketShim.ts");
 const workspaceEntryPoint = path.resolve(__dirname, "index.ts");
+const nativeEmptyNodeBuiltins = new Set(
+  builtinModules.flatMap((moduleName) => [moduleName, `node:${moduleName}`]),
+);
 
 function isExpoModuleOrigin(originModulePath, suffixes) {
   const origin = String(originModulePath ?? "");
@@ -624,6 +630,12 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     // has to map the bare `node:crypto` specifier to an empty stub. The RN
     // runtime never reaches this — it uses expo-crypto via the sibling .ts.
     return { type: "sourceFile", filePath: nodeCryptoShim };
+  }
+  if (moduleName === "node:os" || moduleName === "os") {
+    return { type: "sourceFile", filePath: nodeOsShim };
+  }
+  if (platform !== "web" && nativeEmptyNodeBuiltins.has(moduleName)) {
+    return { type: "sourceFile", filePath: nodeEmptyBuiltinShim };
   }
 
   const canTryNodeResolveFallback =

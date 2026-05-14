@@ -4,6 +4,8 @@
     "private": true,
     "description": "Local Expo module for iOS hardware keyboard shortcuts.",
     "files": [
+        "android",
+        "app.plugin.js",
         "ios",
         "expo-module.config.json",
         "package.json"

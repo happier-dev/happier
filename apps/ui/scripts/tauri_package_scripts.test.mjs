@@ -58,6 +58,22 @@ test('apps/ui Tauri channel configs use the expected desktop product names', asy
   assert.equal(publicDev?.app?.windows?.[0]?.title, 'Happier (dev)');
 });
 
+test('apps/ui Tauri channel configs leave HTML5 file drag-and-drop available to the frontend', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+
+  for (const configName of ['tauri.conf.json', 'tauri.preview.conf.json', 'tauri.publicdev.conf.json']) {
+    const raw = await readFile(join(packageRoot, 'src-tauri', configName), 'utf-8');
+    const config = JSON.parse(raw);
+    const windows = Array.isArray(config?.app?.windows) ? config.app.windows : [];
+
+    assert.ok(windows.length > 0, `${configName} should declare at least one Tauri window`);
+    for (const windowConfig of windows) {
+      assert.equal(windowConfig?.dragDropEnabled, false, `${configName} should let HTML5 file drag-and-drop reach the web frontend`);
+    }
+  }
+});
+
 test('apps/ui Tauri config runs beforeBuildCommand/beforeDevCommand via node wrapper (works on Windows CI)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir);

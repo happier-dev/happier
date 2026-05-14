@@ -1,6 +1,9 @@
 {
     "name": "HappierHardwareKeyboardShortcuts",
-    "platforms": ["ios"],
+    "platforms": ["android", "ios"],
+    "android": {
+        "modules": ["dev.happier.hardwarekeyboardshortcuts.HappierHardwareKeyboardShortcutsModule"]
+    },
     "ios": {
         "modules": ["HappierHardwareKeyboardShortcutsModule"]
     }
