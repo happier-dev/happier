@@ -209,6 +209,48 @@ describe('createActionExecutor (approvals)', () => {
     expect((res as any).result?.artifactId).toBe('a1');
   });
 
+  it('records transcript tool-call origin metadata on policy-created approvals', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      sessionSendMessage,
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'session_agent',
+    } as any);
+
+    const res = await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'hello' },
+      {
+        surface: 'session_agent',
+        defaultSessionId: 's1',
+        approvalOrigin: {
+          kind: 'transcript_tool_call',
+          sessionId: 's1',
+          toolCallId: 'tool-1',
+          toolName: 'session_message_send',
+          toolInput: { sessionId: 's1', message: 'hello' },
+        },
+      } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        actionId: 'session.message.send',
+        origin: {
+          kind: 'transcript_tool_call',
+          sessionId: 's1',
+          toolCallId: 'tool-1',
+          toolName: 'session_message_send',
+          toolInput: { sessionId: 's1', message: 'hello' },
+        },
+      }),
+    }));
+  });
+
   it('records createdBy.surface=cli when approvals are created from the CLI surface', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
@@ -582,6 +624,44 @@ describe('createActionExecutor (approvals)', () => {
         status: 'open',
         actionId: 'session.message.send',
         summary: 'Send message',
+      }),
+    }));
+  });
+
+  it('inherits transcript tool-call origin metadata from context for approval.request.create', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    const executor = createExecutor({ approvalsCreate });
+
+    const res = await executor.execute('approval.request.create' as any, {
+      actionId: 'session.message.send',
+      actionArgs: { sessionId: 's1', message: 'hello' },
+      summary: 'Send message',
+      createdBy: { surface: 'system' },
+    }, {
+      surface: 'session_agent',
+      defaultSessionId: 's1',
+      approvalOrigin: {
+        kind: 'transcript_tool_call',
+        sessionId: 's1',
+        messageId: 'msg-context',
+        toolCallId: 'tool-context',
+        toolName: 'approval_request_create',
+        toolInput: { actionId: 'session.message.send' },
+      },
+    } as any);
+
+    expect(res.ok).toBe(true);
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        origin: {
+          kind: 'transcript_tool_call',
+          sessionId: 's1',
+          messageId: 'msg-context',
+          toolCallId: 'tool-context',
+          toolName: 'approval_request_create',
+          toolInput: { actionId: 'session.message.send' },
+        },
       }),
     }));
   });

@@ -82,6 +82,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.messages.recent.get',
   ],
   session_transcripts: [
+    'session.transcript.get',
+    'session.events.get',
     'session.log.tail',
     'transcript.page',
     'transcript.readAfter',

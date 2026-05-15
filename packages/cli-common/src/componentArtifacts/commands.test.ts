@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -173,6 +173,46 @@ describe('compileBunBinary', () => {
                 },
             ]);
         } finally {
+            rmSync(tempRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('retries and clears transient Bun executable extraction failures', async () => {
+        const tempRoot = mkdtempSync(join(tmpdir(), 'cli-common-bun-compile-retry-'));
+        const originalBunInstall = process.env.BUN_INSTALL;
+        try {
+            const entrypoint = join(tempRoot, 'index.mjs');
+            const outfile = join(tempRoot, 'happier.exe');
+            const cacheEntry = join(tempRoot, '.bun', 'install', 'cache', 'bun-windows-x64-baseline');
+            mkdirSync(cacheEntry, { recursive: true });
+            writeFileSync(entrypoint, 'console.log("ok");\n', 'utf8');
+            writeFileSync(join(cacheEntry, 'partial'), 'broken', 'utf8');
+            process.env.BUN_INSTALL = join(tempRoot, '.bun');
+
+            const calls: Array<{ cmd: string; args: string[]; cwd?: string }> = [];
+            await compileBunBinary({
+                entrypoint,
+                bunTarget: 'bun-windows-x64-baseline',
+                outfile,
+                bunCommand: 'bun',
+                maxAttempts: 2,
+                runCommand: (cmd, args, options) => {
+                    calls.push({ cmd, args, cwd: options?.cwd });
+                    if (calls.length === 1) {
+                        throw new Error("Failed to extract executable for 'bun-windows-x64-baseline': download may be incomplete");
+                    }
+                    writeFileSync(outfile, 'compiled', 'utf8');
+                },
+            });
+
+            expect(calls).toHaveLength(2);
+            expect(existsSync(cacheEntry)).toBe(false);
+        } finally {
+            if (typeof originalBunInstall === 'string') {
+                process.env.BUN_INSTALL = originalBunInstall;
+            } else {
+                delete process.env.BUN_INSTALL;
+            }
             rmSync(tempRoot, { recursive: true, force: true });
         }
     });

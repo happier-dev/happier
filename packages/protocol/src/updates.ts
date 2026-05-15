@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { ExternalSessionTranscriptRawMessageV1Schema } from './sessions/external/daemonRpcV1.js';
 import { ExecutionRunPublicStateSchema } from './executionRuns.js';
+import { SessionMessageRoleSchema } from './sessionMessages/sessionMessageRole.js';
 import { SessionStoredMessageContentSchema } from './sessionMessages/sessionStoredMessageContent.js';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from './sessions/control/runtimeIssueV1.js';
 
 const TimestampMsSchema = z.number().int().min(0);
 const Base64Schema = z.string();
+const SessionMessageRoleMetadataSchema = SessionMessageRoleSchema.nullable().optional();
 
 const VersionedNullableStringSchema = z.object({
   value: z.string().nullable(),
@@ -28,6 +30,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
         content: SessionStoredMessageContentSchema,
         localId: z.string().nullable(),
         sidechainId: z.string().nullable().optional(),
+        messageRole: SessionMessageRoleMetadataSchema,
         createdAt: TimestampMsSchema,
         updatedAt: TimestampMsSchema,
       })
@@ -43,6 +46,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
         content: SessionStoredMessageContentSchema,
         localId: z.string().nullable(),
         sidechainId: z.string().nullable().optional(),
+        messageRole: SessionMessageRoleMetadataSchema,
         createdAt: TimestampMsSchema,
         updatedAt: TimestampMsSchema,
       })
@@ -257,6 +261,7 @@ export const TranscriptStreamSegmentEphemeralMessageSchema = z.object({
   localId: z.string().min(1),
   sidechainId: z.string().nullable().optional(),
   content: SessionStoredMessageContentSchema,
+  messageRole: SessionMessageRoleMetadataSchema,
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
 }).passthrough();

@@ -143,9 +143,60 @@ function isAuthReady(auth: ScmHostingRepositoryAuthSummary | undefined): boolean
     return auth.state === 'authenticated' || auth.profileKind === 'no_auth';
 }
 
+function validateCloneTargetUrl(input: Readonly<{
+    provider: CloneProviderRef;
+    target: ScmRepositoryCloneTarget & { protocol: 'ssh' | 'https' };
+}>): { ok: true } | { ok: false; response: ScmRepositoryCloneOutput } {
+    if (input.target.url.includes('\0') || input.target.url.startsWith('-')) {
+        return {
+            ok: false,
+            response: errorResponse(
+                'Repository clone target URL is not safe to pass to Git.',
+                SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            ),
+        };
+    }
+
+    try {
+        const parsed = new URL(input.target.url);
+        const allowedSchemes = input.provider.urlSafety?.allowedSchemes?.length
+            ? input.provider.urlSafety.allowedSchemes
+            : ['https:'];
+        if (!allowedSchemes.includes(parsed.protocol)) {
+            return {
+                ok: false,
+                response: errorResponse(
+                    'Repository clone target URL uses a scheme that is not allowed by the hosting provider.',
+                    SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+                ),
+            };
+        }
+        if (parsed.password || (input.target.protocol !== 'ssh' && parsed.username)) {
+            return {
+                ok: false,
+                response: errorResponse(
+                    'Repository clone target URL must not contain embedded credentials.',
+                    SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+                ),
+            };
+        }
+        return { ok: true };
+    } catch {
+        if (input.target.protocol === 'ssh') return { ok: true };
+        return {
+            ok: false,
+            response: errorResponse(
+                'Repository clone target URL is invalid.',
+                SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            ),
+        };
+    }
+}
+
 function selectCloneTarget(
     description: ScmRepositoryCloneTargetDescription,
     protocol: SourceControlCloneProtocol,
+    provider: CloneProviderRef,
 ): CloneTargetSelectionResult {
     if (!isAuthReady(description.auth)) {
         return {
@@ -173,6 +224,9 @@ function selectCloneTarget(
             ),
         };
     }
+
+    const safety = validateCloneTargetUrl({ provider, target });
+    if (!safety.ok) return safety;
 
     return {
         ok: true,
@@ -235,7 +289,7 @@ async function describeCloneTargets(input: Readonly<{
             repository: sanitizeRepositorySelector(input.request.repository),
             runtimeServices: await readRuntimeServices(input.deps),
         });
-        return selectCloneTarget(description, input.request.protocol);
+        return selectCloneTarget(description, input.request.protocol, registeredProvider);
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Hosting provider clone target discovery failed.';
         const code = typeof error === 'object' && error !== null

@@ -1,52 +1,6 @@
-export type ParsedScmRemoteUrl = Readonly<{
-  host: string;
-  path: string;
-}>;
-
-function stripGitSuffix(path: string): string {
-  return path.endsWith('.git') ? path.slice(0, -4) : path;
-}
-
-function normalizeRemotePath(path: string): string {
-  return stripGitSuffix(path.replace(/^\/+/, '').replace(/\/+$/, ''));
-}
-
-function parseUrlLikeRemote(remoteUrl: string): ParsedScmRemoteUrl | null {
-  try {
-    const parsed = new URL(remoteUrl);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'ssh:') return null;
-    if (!parsed.hostname || !parsed.pathname) return null;
-    const path = normalizeRemotePath(decodeURIComponent(parsed.pathname));
-    if (!path) return null;
-    return {
-      host: parsed.hostname.toLowerCase(),
-      path,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function parseScpLikeRemote(remoteUrl: string): ParsedScmRemoteUrl | null {
-  if (/^[a-zA-Z]:[\\/]/.test(remoteUrl)) return null;
-  const match = /^(?:[^@\s]+@)?([^:\s]+):(.+)$/.exec(remoteUrl);
-  if (!match) return null;
-  const host = match[1]?.trim().toLowerCase();
-  const path = normalizeRemotePath(match[2]?.trim() ?? '');
-  if (!host || !path) return null;
-  return { host, path };
-}
-
-export function parseScmRemoteUrl(remoteUrl: string): ParsedScmRemoteUrl | null {
-  const trimmed = remoteUrl.trim();
-  if (!trimmed) return null;
-  return parseUrlLikeRemote(trimmed) ?? parseScpLikeRemote(trimmed);
-}
-
-export function encodeCompareRef(ref: string): string {
-  return encodeURIComponent(ref);
-}
-
-export function stripTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, '');
-}
+// Re-export the hardened shared parser from @happier-dev/plugin-sdk to keep
+// SCM hosting plugins on a single rejection policy (no port, no search/hash, no embedded
+// credentials on https). Local re-export preserves this file's public surface for
+// downstream importers of @happier-dev/plugins-scm-github.
+export { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from '@happier-dev/plugin-sdk';
+export type { ParsedScmRemoteUrl } from '@happier-dev/plugin-sdk';

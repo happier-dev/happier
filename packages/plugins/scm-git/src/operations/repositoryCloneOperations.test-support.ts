@@ -150,7 +150,7 @@ export function makeRequest(parent: string, remotePath: string, destinationDirec
             kind: 'github',
             displayName: 'GitHub',
             baseUrl: 'https://github.com',
-            urlSafety: { allowedSchemes: ['https:'] },
+            urlSafety: { allowedSchemes: ['https:', 'file:'] },
         },
         repository: {
             nameWithOwner: 'happier-dev/happier',
@@ -185,7 +185,7 @@ export function makeCloneTargetDescription(remotePath: string): ScmRepositoryClo
                 kind: 'github',
                 displayName: 'GitHub',
                 baseUrl: 'https://github.com',
-                urlSafety: { allowedSchemes: ['https:'] },
+                urlSafety: { allowedSchemes: ['https:', 'file:'] },
             },
             nameWithOwner: 'happier-dev/happier',
             webUrl: 'https://github.com/happier-dev/happier',

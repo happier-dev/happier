@@ -8,6 +8,27 @@ export type ApprovalRequestStatus = z.infer<typeof ApprovalRequestStatusSchema>;
 
 const ApprovalRequestedSurfaceSchema = z.string().min(1);
 
+export const ApprovalRequestOriginV1Schema = z.object({
+  kind: z.literal('transcript_tool_call'),
+  sessionId: z.string().min(1),
+  messageId: z.string().min(1).optional(),
+  parentMessageId: z.string().min(1).optional(),
+  toolCallId: z.string().min(1).optional(),
+  mcpRequestId: z.string().min(1).optional(),
+  toolName: z.string().min(1).optional(),
+  toolInput: z.unknown().optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.messageId || value.parentMessageId || value.toolCallId || value.toolName) {
+    return;
+  }
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ['origin'],
+    message: 'transcript tool-call approval origins require a messageId, parentMessageId, toolCallId, or toolName',
+  });
+});
+export type ApprovalRequestOriginV1 = z.infer<typeof ApprovalRequestOriginV1Schema>;
+
 export const ApprovalRequestCreatedBySchema = z.object({
   surface: z.enum(['voice', 'session_agent', 'mcp', 'cli', 'system']),
   agentId: z.string().min(1).optional(),
@@ -37,6 +58,7 @@ export const ApprovalRequestV1Schema = z.object({
   updatedAtMs: z.number().int().min(0),
   createdBy: ApprovalRequestCreatedBySchema,
   requestedSurface: ApprovalRequestedSurfaceSchema.optional(),
+  origin: ApprovalRequestOriginV1Schema.optional(),
   approval: ActionApprovalSchema.optional(),
   actionId: ActionIdSchema,
   actionArgs: z.unknown(),

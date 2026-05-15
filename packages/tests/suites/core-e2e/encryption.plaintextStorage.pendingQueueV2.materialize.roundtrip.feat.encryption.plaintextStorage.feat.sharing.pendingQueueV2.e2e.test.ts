@@ -68,6 +68,7 @@ describe('core e2e: plaintext pending queue v2 materialize-next', () => {
       },
       body: JSON.stringify({
         localId,
+        messageRole: 'user',
         content: {
           t: 'plain',
           v: { role: 'user', content: { type: 'text', text: 'hello pending plain' } },
@@ -78,6 +79,7 @@ describe('core e2e: plaintext pending queue v2 materialize-next', () => {
     expect(enqueue.status).toBe(200);
     expect(enqueue.data?.didWrite).toBe(true);
     expect(enqueue.data?.pending?.localId).toBe(localId);
+    expect(enqueue.data?.pending?.messageRole).toBe('user');
     expect(enqueue.data?.pending?.content?.t).toBe('plain');
 
     const list1 = await fetchJson<any>(`${server.baseUrl}/v2/sessions/${sessionId}/pending`, {
@@ -99,6 +101,7 @@ describe('core e2e: plaintext pending queue v2 materialize-next', () => {
     expect(materialize.data?.didMaterialize).toBe(true);
     expect(materialize.data?.didWriteMessage).toBe(true);
     expect(materialize.data?.message?.localId).toBe(localId);
+    expect(materialize.data?.message?.messageRole).toBe('user');
 
     const list2 = await fetchJson<any>(`${server.baseUrl}/v2/sessions/${sessionId}/pending`, {
       headers: { Authorization: `Bearer ${auth.token}` },
@@ -114,8 +117,15 @@ describe('core e2e: plaintext pending queue v2 materialize-next', () => {
     expect(messages.status).toBe(200);
     const first = messages.data?.messages?.[0];
     expect(first?.localId).toBe(localId);
+    expect(first?.messageRole).toBe('user');
     expect(first?.content?.t).toBe('plain');
     expect(first?.content?.v?.content?.text).toBe('hello pending plain');
+
+    const userMessages = await fetchJson<any>(`${server.baseUrl}/v1/sessions/${sessionId}/messages?role=user&limit=10`, {
+      headers: { Authorization: `Bearer ${auth.token}` },
+      timeoutMs: 15_000,
+    });
+    expect(userMessages.status).toBe(200);
+    expect(userMessages.data?.messages?.[0]?.localId).toBe(localId);
   }, 180_000);
 });
-

@@ -88,13 +88,6 @@ function errorResponse(error: string, errorCode: ScmOperationErrorCode, extra?: 
     };
 }
 
-function normalizeUpstreamBranch(upstream: string | null): string | null {
-    if (!upstream) return null;
-    const slashIndex = upstream.indexOf('/');
-    if (slashIndex < 0) return upstream;
-    return upstream.slice(slashIndex + 1) || null;
-}
-
 function resolveProvider(snapshot: ScmWorkingSnapshot, providerId?: string): ScmHostingProviderRef | null {
     const provider = snapshot.hostingProvider ?? snapshot.pullRequestStatus?.provider ?? null;
     if (!provider) return null;

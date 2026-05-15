@@ -46,6 +46,53 @@ describe('ApprovalRequestV1Schema', () => {
     expect(newArtifact.approval).toEqual({ flow: 'blocking', result: 'required' });
   });
 
+  it('parses transcript tool-call origin metadata', () => {
+    const parsed = ApprovalRequestV1Schema.parse({
+      v: 1,
+      status: 'open',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      createdBy: { surface: 'session_agent', sessionId: 's1' },
+      actionId: 'session.list',
+      actionArgs: {},
+      summary: 'List sessions',
+      origin: {
+        kind: 'transcript_tool_call',
+        sessionId: 's1',
+        messageId: 'msg-1',
+        toolCallId: 'tool-1',
+        toolName: 'session_list',
+        toolInput: { limit: 20 },
+      },
+    });
+
+    expect(parsed.origin).toEqual({
+      kind: 'transcript_tool_call',
+      sessionId: 's1',
+      messageId: 'msg-1',
+      toolCallId: 'tool-1',
+      toolName: 'session_list',
+      toolInput: { limit: 20 },
+    });
+  });
+
+  it('rejects malformed transcript tool-call origin metadata', () => {
+    expect(() => ApprovalRequestV1Schema.parse({
+      v: 1,
+      status: 'open',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      createdBy: { surface: 'session_agent', sessionId: 's1' },
+      actionId: 'session.list',
+      actionArgs: {},
+      summary: 'List sessions',
+      origin: {
+        kind: 'transcript_tool_call',
+        messageId: 'msg-1',
+      },
+    })).toThrow(/origin/i);
+  });
+
   it('rejects malformed approval routing metadata', () => {
     expect(() => ApprovalRequestV1Schema.parse({
       v: 1,

@@ -14,7 +14,12 @@ import type { ActionId } from './actionIds.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../memory/memoryWindow.js';
-import { ApprovalRequestV1Schema, type ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
+import {
+  ApprovalRequestOriginV1Schema,
+  ApprovalRequestV1Schema,
+  type ApprovalRequestOriginV1,
+  type ApprovalRequestV1,
+} from '../approvals/approvalRequestV1.js';
 import type { PromptRegistryConfiguredSourceV1 } from '../promptLibrary/promptRegistriesV1.js';
 import { BackendTargetKeySchema, buildBackendTargetKey, parseBackendTargetKey } from '../backendTargets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.js';
@@ -79,6 +84,14 @@ export type ActionExecutorContext = Readonly<{
    * on the same surface that originally required approvals.
    */
   bypassApprovals?: boolean;
+
+  /**
+   * Optional provenance for approvals created from an in-transcript tool call.
+   *
+   * The executor validates and session-scopes this before persisting it so
+   * unrelated surfaces cannot attach misleading transcript links.
+   */
+  approvalOrigin?: ApprovalRequestOriginV1 | null;
 }>;
 
 export type ApprovalQueueListItemV1 = Readonly<{
@@ -184,6 +197,41 @@ export type ActionExecutorDeps = Readonly<{
     includeStructuredPayload?: boolean;
     serverId?: string | null;
   }>) => Promise<unknown>;
+  sessionTranscriptGet?: (args: Readonly<{
+    sessionId: string;
+    limit?: number;
+    cursor?: string | null;
+    direction?: 'before' | 'after';
+    scope?: 'main' | 'sidechain' | 'all';
+    sidechainId?: string | null;
+    roles?: readonly ('user' | 'assistant')[];
+    includeTools?: boolean;
+    includeReasoning?: boolean;
+    includeEvents?: boolean;
+    includeMeta?: boolean;
+    includeStructuredPayload?: boolean;
+    includeRaw?: boolean;
+    maxCharsPerMessage?: number | null;
+    maxRawPayloadChars?: number | null;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  sessionEventsGet?: (args: Readonly<{
+    sessionId: string;
+    limit?: number;
+    cursor?: string | null;
+    direction?: 'before' | 'after';
+    scope?: 'main' | 'sidechain' | 'all';
+    sidechainId?: string | null;
+    roles?: readonly ('user' | 'agent' | 'event' | 'unknown')[];
+    kinds?: readonly string[];
+    format?: 'compact' | 'raw';
+    includeMeta?: boolean;
+    includeStructuredPayload?: boolean;
+    includeRaw?: boolean;
+    maxTextChars?: number;
+    maxPayloadChars?: number;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
   sessionWaitIdle?: (args: Readonly<{ sessionId: string; timeoutSeconds?: number; serverId?: string | null }>) => Promise<unknown>;
 
   // Permission response (session RPC, server-scoped)
@@ -221,6 +269,7 @@ export type ActionExecutorDeps = Readonly<{
     archivedOnly?: boolean;
     includeSystem?: boolean;
     resumableOnly?: boolean;
+    includeRows?: boolean;
   }>) => Promise<unknown>;
   sessionActivityGet: (args: Readonly<{ sessionId: string; windowSeconds?: number }>) => Promise<unknown>;
   sessionRecentMessagesGet: (args: Readonly<{
@@ -385,6 +434,16 @@ function buildApprovalMetadata(spec: ActionSpec): NonNullable<ApprovalRequestV1[
     flow: resolveActionApprovalFlow(spec.approval),
     result: spec.approval.result,
   };
+}
+
+function resolveApprovalOriginForRequest(
+  origin: unknown,
+  sessionId: string | null,
+): ApprovalRequestOriginV1 | null {
+  const parsed = ApprovalRequestOriginV1Schema.safeParse(origin);
+  if (!parsed.success) return null;
+  if (sessionId && parsed.data.sessionId !== sessionId) return null;
+  return parsed.data;
 }
 
 function isApprovalActionId(actionId: ActionId): boolean {
@@ -845,6 +904,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const now = Date.now();
         const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
         const requestedSurface = parseActionSurfaceKey(ctx.surface);
+        const approvalOrigin = resolveApprovalOriginForRequest(ctx.approvalOrigin, sessionId);
         const createdBy = {
           surface: mapApprovalCreatedBySurface(ctx.surface ?? null),
           ...(sessionId ? { sessionId } : {}),
@@ -857,6 +917,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           updatedAtMs: now,
           createdBy,
           ...(requestedSurface ? { requestedSurface } : {}),
+          ...(approvalOrigin ? { origin: approvalOrigin } : {}),
           approval: {
             flow: approvalRouting.flow,
             result: approvalRouting.result,
@@ -1671,20 +1732,76 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId === 'session.history.get') {
           const sessionId = normalizeId((parsed.data as any).sessionId);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          if (!deps.sessionHistoryGet) {
-            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.history.get' };
+          if (!deps.sessionEventsGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.events.get' };
           }
-          const limit = typeof (parsed.data as any).limit === 'number' ? (parsed.data as any).limit : 50;
+          const limit = typeof (parsed.data as any).limit === 'number' ? (parsed.data as any).limit : undefined;
           const format = (parsed.data as any).format === 'raw' ? 'raw' : 'compact';
           const includeMeta = (parsed.data as any).includeMeta === true;
           const includeStructuredPayload = (parsed.data as any).includeStructuredPayload === true;
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const res = await deps.sessionHistoryGet({
+          const res = await deps.sessionEventsGet({
             sessionId,
-            limit,
+            ...(typeof limit === 'number' ? { limit } : {}),
             format,
             includeMeta,
             includeStructuredPayload,
+            ...(format === 'raw' ? { includeRaw: includeStructuredPayload } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.transcript.get') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionTranscriptGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.transcript.get' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionTranscriptGet({
+            sessionId,
+            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'cursor') ? { cursor: (((parsed.data as any).cursor ?? null) as any) } : {}),
+            ...(typeof (parsed.data as any).direction === 'string' ? { direction: (parsed.data as any).direction } : {}),
+            ...(typeof (parsed.data as any).scope === 'string' ? { scope: (parsed.data as any).scope } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'sidechainId') ? { sidechainId: (((parsed.data as any).sidechainId ?? null) as any) } : {}),
+            ...(Array.isArray((parsed.data as any).roles) ? { roles: (parsed.data as any).roles } : {}),
+            ...(typeof (parsed.data as any).includeTools === 'boolean' ? { includeTools: (parsed.data as any).includeTools } : {}),
+            ...(typeof (parsed.data as any).includeReasoning === 'boolean' ? { includeReasoning: (parsed.data as any).includeReasoning } : {}),
+            ...(typeof (parsed.data as any).includeEvents === 'boolean' ? { includeEvents: (parsed.data as any).includeEvents } : {}),
+            ...(typeof (parsed.data as any).includeMeta === 'boolean' ? { includeMeta: (parsed.data as any).includeMeta } : {}),
+            ...(typeof (parsed.data as any).includeStructuredPayload === 'boolean' ? { includeStructuredPayload: (parsed.data as any).includeStructuredPayload } : {}),
+            ...(typeof (parsed.data as any).includeRaw === 'boolean' ? { includeRaw: (parsed.data as any).includeRaw } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'maxCharsPerMessage') ? { maxCharsPerMessage: (((parsed.data as any).maxCharsPerMessage ?? null) as any) } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'maxRawPayloadChars') ? { maxRawPayloadChars: (((parsed.data as any).maxRawPayloadChars ?? null) as any) } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.events.get') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionEventsGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.events.get' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionEventsGet({
+            sessionId,
+            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'cursor') ? { cursor: (((parsed.data as any).cursor ?? null) as any) } : {}),
+            ...(typeof (parsed.data as any).direction === 'string' ? { direction: (parsed.data as any).direction } : {}),
+            ...(typeof (parsed.data as any).scope === 'string' ? { scope: (parsed.data as any).scope } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'sidechainId') ? { sidechainId: (((parsed.data as any).sidechainId ?? null) as any) } : {}),
+            ...(Array.isArray((parsed.data as any).roles) ? { roles: (parsed.data as any).roles } : {}),
+            ...(Array.isArray((parsed.data as any).kinds) ? { kinds: (parsed.data as any).kinds } : {}),
+            ...(typeof (parsed.data as any).format === 'string' ? { format: (parsed.data as any).format } : {}),
+            ...(typeof (parsed.data as any).includeMeta === 'boolean' ? { includeMeta: (parsed.data as any).includeMeta } : {}),
+            ...(typeof (parsed.data as any).includeStructuredPayload === 'boolean' ? { includeStructuredPayload: (parsed.data as any).includeStructuredPayload } : {}),
+            ...(typeof (parsed.data as any).includeRaw === 'boolean' ? { includeRaw: (parsed.data as any).includeRaw } : {}),
+            ...(typeof (parsed.data as any).maxTextChars === 'number' ? { maxTextChars: (parsed.data as any).maxTextChars } : {}),
+            ...(typeof (parsed.data as any).maxPayloadChars === 'number' ? { maxPayloadChars: (parsed.data as any).maxPayloadChars } : {}),
             ...(serverId ? { serverId } : {}),
           });
           return { ok: true, result: res };
@@ -1792,6 +1909,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(typeof (parsed.data as any).archivedOnly === 'boolean' ? { archivedOnly: (parsed.data as any).archivedOnly } : {}),
             ...(typeof (parsed.data as any).includeSystem === 'boolean' ? { includeSystem: (parsed.data as any).includeSystem } : {}),
             ...(typeof (parsed.data as any).resumableOnly === 'boolean' ? { resumableOnly: (parsed.data as any).resumableOnly } : {}),
+            ...(typeof (parsed.data as any).includeRows === 'boolean' ? { includeRows: (parsed.data as any).includeRows } : {}),
           });
           return { ok: true, result: res };
         }
@@ -1809,13 +1927,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId === 'session.messages.recent.get') {
           const sessionId = normalizeId((parsed.data as any).sessionId);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          const res = await deps.sessionRecentMessagesGet({
+          if (!deps.sessionTranscriptGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.transcript.get' };
+          }
+          const includeUser = (parsed.data as any).includeUser !== false;
+          const includeAssistant = (parsed.data as any).includeAssistant !== false;
+          const roles: ('user' | 'assistant')[] = [];
+          if (includeUser) roles.push('user');
+          if (includeAssistant) roles.push('assistant');
+          const res = await deps.sessionTranscriptGet({
             sessionId,
-            defaultSessionId: normalizeId(ctx.defaultSessionId) || null,
             ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
             ...(Object.prototype.hasOwnProperty.call(parsed.data, 'cursor') ? { cursor: (((parsed.data as any).cursor ?? null) as any) } : {}),
-            ...(typeof (parsed.data as any).includeUser === 'boolean' ? { includeUser: (parsed.data as any).includeUser } : {}),
-            ...(typeof (parsed.data as any).includeAssistant === 'boolean' ? { includeAssistant: (parsed.data as any).includeAssistant } : {}),
+            roles,
             ...(Object.prototype.hasOwnProperty.call(parsed.data, 'maxCharsPerMessage') ? { maxCharsPerMessage: (((parsed.data as any).maxCharsPerMessage ?? null) as any) } : {}),
           });
           return { ok: true, result: res };
@@ -2065,12 +2189,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const forcedSurface = mapApprovalCreatedBySurface(ctx.surface ?? null);
         const actionArgsSessionId = normalizeId((parsedTargetArgs.data as any)?.sessionId);
         const ctxDefaultSessionId = normalizeId(ctx.defaultSessionId);
+        const requestSessionId = actionArgsSessionId || ctxDefaultSessionId || null;
+        const rawApprovalOrigin = Object.prototype.hasOwnProperty.call(parsed.data, 'origin')
+          ? (parsed.data as any).origin
+          : ctx.approvalOrigin;
+        const approvalOrigin = resolveApprovalOriginForRequest(rawApprovalOrigin, requestSessionId);
         const rawAgentId = rawCreatedBy && typeof rawCreatedBy === 'object' ? normalizeId((rawCreatedBy as any).agentId) : null;
         const requestedSurface = parseActionSurfaceKey(ctx.surface);
         const createdBy: ApprovalRequestV1['createdBy'] = {
           surface: forcedSurface,
           ...(rawAgentId ? { agentId: rawAgentId } : {}),
-          ...(actionArgsSessionId ? { sessionId: actionArgsSessionId } : ctxDefaultSessionId ? { sessionId: ctxDefaultSessionId } : {}),
+          ...(requestSessionId ? { sessionId: requestSessionId } : {}),
         };
 
         const summary = String((parsed.data as any).summary ?? '').trim();
@@ -2083,6 +2212,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           updatedAtMs: now,
           createdBy,
           ...(requestedSurface ? { requestedSurface } : {}),
+          ...(approvalOrigin ? { origin: approvalOrigin } : {}),
           approval: buildApprovalMetadata(targetSpec),
           actionId: targetActionId,
           actionArgs: parsedTargetArgs.data,

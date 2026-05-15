@@ -43,6 +43,28 @@ describe('fetchMessagesPage', () => {
     expect(url).toContain('sidechainId=sc_1');
   });
 
+  it('includes role query param when provided', async () => {
+    const fetchSpy = vi.fn(async (_url: string) => {
+      return createFakeResponse({ messages: [], hasMore: false, nextAfterSeq: null }, { status: 200 });
+    });
+    globalThis.fetch = fetchSpy as any;
+
+    await fetchMessagesPage({
+      baseUrl: 'http://localhost:1234',
+      token: 'token',
+      sessionId: 'ses_1',
+      afterSeq: 0,
+      limit: 25,
+      role: 'user',
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const firstCall = fetchSpy.mock.calls[0] as [string] | undefined;
+    expect(firstCall).toBeDefined();
+    const url = String(firstCall?.[0] ?? '');
+    expect(url).toContain('role=user');
+  });
+
   it('normalizes JSON-string message content envelopes returned by SQLite-backed servers', async () => {
     globalThis.fetch = vi.fn(async () => createFakeResponse({
       messages: [
@@ -50,6 +72,7 @@ describe('fetchMessagesPage', () => {
           id: 'msg_1',
           seq: 1,
           localId: 'local_1',
+          messageRole: 'user',
           content: JSON.stringify({ t: 'encrypted', c: 'ciphertext' }),
           createdAt: 10,
           updatedAt: 20,
@@ -70,6 +93,7 @@ describe('fetchMessagesPage', () => {
     expect(page.messages).toEqual([
       expect.objectContaining({
         id: 'msg_1',
+        messageRole: 'user',
         content: { t: 'encrypted', c: 'ciphertext' },
       }),
     ]);

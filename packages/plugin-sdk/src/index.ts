@@ -206,6 +206,12 @@ export {
     readCurrentScmHostingProviderRuntimeServices,
     runWithScmHostingProviderRuntimeServices,
 } from './scm/hostingProvider.js';
+export {
+    encodeCompareRef,
+    parseScmRemoteUrl,
+    stripTrailingSlash,
+} from './scm/remoteUrl.js';
+export type { ParsedScmRemoteUrl, ScmRemoteUrlScheme } from './scm/remoteUrl.js';
 export type {
     ScmBackendCommandRunResult,
     ScmBackendRuntimeContext,

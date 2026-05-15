@@ -5,7 +5,11 @@ import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlace
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { ActionInputPredicateSchema, type ActionInputPredicate } from './actionInputPredicates.js';
 import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
-import { ApprovalRequestCreatedBySchema, ApprovalRequestStatusSchema } from '../approvals/approvalRequestV1.js';
+import {
+  ApprovalRequestCreatedBySchema,
+  ApprovalRequestOriginV1Schema,
+  ApprovalRequestStatusSchema,
+} from '../approvals/approvalRequestV1.js';
 import {
   PromptRegistryConfiguredSourceV1Schema,
   PromptRegistryInstallRequestV1Schema,
@@ -427,6 +431,115 @@ const SessionHistoryGetInputSchema = z.object({
   includeStructuredPayload: z.boolean().optional(),
 }).passthrough();
 
+const SessionTranscriptRoleSchema = z.enum(['user', 'assistant']);
+const SessionStoredTranscriptRoleSchema = z.enum(['user', 'agent', 'event', 'unknown']);
+
+export const SessionTranscriptGetInputSchema = z.object({
+  sessionId: z.string().min(1),
+  limit: z.number().int().min(1).max(100).optional(),
+  cursor: z.string().min(1).nullable().optional(),
+  direction: z.enum(['before', 'after']).optional(),
+  scope: z.enum(['main', 'sidechain', 'all']).optional(),
+  sidechainId: z.string().min(1).nullable().optional(),
+  roles: z.array(SessionTranscriptRoleSchema).optional(),
+  includeTools: z.boolean().optional(),
+  includeReasoning: z.boolean().optional(),
+  includeEvents: z.boolean().optional(),
+  includeMeta: z.boolean().optional(),
+  includeStructuredPayload: z.boolean().optional(),
+  includeRaw: z.boolean().optional(),
+  maxCharsPerMessage: z.number().int().min(0).max(4000).nullable().optional(),
+  maxRawPayloadChars: z.number().int().min(1).max(32768).nullable().optional(),
+}).passthrough();
+export type SessionTranscriptGetInput = z.infer<typeof SessionTranscriptGetInputSchema>;
+export type SessionTranscriptGetItem = Readonly<{
+  id: string;
+  seq?: number;
+  createdAt: number;
+  role: 'user' | 'assistant' | 'tool' | 'event' | 'reasoning' | 'unknown';
+  kind: string;
+  text?: string;
+  summary?: string;
+  toolName?: string;
+  callId?: string;
+  raw?: unknown;
+  truncated?: boolean;
+  rawTruncated?: boolean;
+}>;
+export type SessionTranscriptGetOutput =
+  | Readonly<{
+      ok: true;
+      sessionId: string;
+      items: readonly SessionTranscriptGetItem[];
+      nextCursor: string | null;
+      hasMore: boolean;
+      diagnostics?: Readonly<{
+        rawRowsScanned: number;
+        pagesFetched: number;
+        scanLimitReached: boolean;
+      }>;
+    }>
+  | Readonly<{
+      ok: false;
+      errorCode: string;
+      errorMessage: string;
+      candidates?: readonly string[];
+    }>;
+
+export const SessionEventsGetInputSchema = z.object({
+  sessionId: z.string().min(1),
+  limit: z.number().int().min(1).max(200).optional(),
+  cursor: z.string().min(1).nullable().optional(),
+  direction: z.enum(['before', 'after']).optional(),
+  scope: z.enum(['main', 'sidechain', 'all']).optional(),
+  sidechainId: z.string().min(1).nullable().optional(),
+  roles: z.array(SessionStoredTranscriptRoleSchema).optional(),
+  kinds: z.array(z.string().min(1)).optional(),
+  format: z.enum(['compact', 'raw']).optional(),
+  includeMeta: z.boolean().optional(),
+  includeStructuredPayload: z.boolean().optional(),
+  includeRaw: z.boolean().optional(),
+  maxTextChars: z.number().int().min(0).max(4000).optional(),
+  maxPayloadChars: z.number().int().min(1).max(32768).optional(),
+}).passthrough();
+export type SessionEventsGetInput = z.infer<typeof SessionEventsGetInputSchema>;
+export type SessionEventsGetItem = Readonly<{
+  id: string;
+  seq?: number;
+  createdAt: number;
+  storedMessageRole?: 'user' | 'agent' | 'event' | 'unknown';
+  semanticRole: 'user' | 'assistant' | 'tool' | 'event' | 'reasoning' | 'unknown';
+  kind: string;
+  provider?: string;
+  text?: string;
+  summary?: string;
+  toolName?: string;
+  callId?: string;
+  raw?: unknown;
+  truncated?: boolean;
+  rawTruncated?: boolean;
+}>;
+export type SessionEventsGetOutput =
+  | Readonly<{
+      ok: true;
+      sessionId: string;
+      items: readonly SessionEventsGetItem[];
+      nextCursor: string | null;
+      hasMore: boolean;
+      diagnostics?: Readonly<{
+        rawRowsScanned: number;
+        pagesFetched: number;
+        scanLimitReached: boolean;
+        payloadTruncations: number;
+      }>;
+    }>
+  | Readonly<{
+      ok: false;
+      errorCode: string;
+      errorMessage: string;
+      candidates?: readonly string[];
+    }>;
+
 const SessionWaitIdleInputSchema = z.object({
   sessionId: z.string().min(1),
   timeoutSeconds: z.number().int().min(1).max(3600).optional(),
@@ -735,6 +848,7 @@ const SessionListInputSchema = z.object({
   archivedOnly: z.boolean().optional(),
   includeSystem: z.boolean().optional(),
   resumableOnly: z.boolean().optional(),
+  includeRows: z.boolean().optional(),
 }).passthrough();
 
 const SessionActivityInputSchema = z.object({
@@ -889,6 +1003,7 @@ const ApprovalRequestCreateInputSchema = z.object({
   actionArgs: z.unknown(),
   summary: z.string().min(1),
   createdBy: ApprovalRequestCreatedBySchema,
+  origin: ApprovalRequestOriginV1Schema.optional(),
   preview: z.unknown().optional(),
 }).passthrough();
 
@@ -988,6 +1103,8 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'agents.models.list',
   'session.status.get',
   'session.history.get',
+  'session.transcript.get',
+  'session.events.get',
   'session.wait.idle',
   'session.list',
   'session.activity.get',
@@ -1275,7 +1392,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     },
     surfaces: {
       ui: true,
-      voice: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
@@ -2724,7 +2841,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.history.get',
     title: 'Get session history',
-    description: 'Fetch a slice of session history/transcript records.',
+    description: 'DEPRECATED: use session_events_get. Returns diagnostic session events with cleaner pagination.',
     safety: 'safe',
     placements: [],
     bindings: { mcpToolName: 'session_history_get' },
@@ -2760,6 +2877,67 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     },
     outputSchema: z.unknown(),
     inputSchema: SessionHistoryGetInputSchema,
+  },
+  {
+    id: 'session.transcript.get',
+    title: 'Get session transcript',
+    description: 'Read the semantic transcript for a session as clean user/assistant messages with optional tool/reasoning/event flags.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'getSessionTranscript', mcpToolName: 'session_transcript_get' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"]}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"]}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: true,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'Get session transcript',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'limit', title: 'Limit', widget: 'text' },
+        { path: 'cursor', title: 'Cursor', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionTranscriptGetInputSchema,
+  },
+  {
+    id: 'session.events.get',
+    title: 'Get session events',
+    description: 'Inspect raw session events (tool calls, tool results, token counts, lifecycle, permission, stream, session events) for diagnostics. Use session_transcript_get for normal transcript reading.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_events_get' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","limit":50,"kinds":["tool_call","tool_result"]}' },
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'Get session events',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'limit', title: 'Limit', widget: 'text' },
+        { path: 'cursor', title: 'Cursor', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionEventsGetInputSchema,
   },
   {
     id: 'session.wait.idle',
@@ -3008,7 +3186,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'listSessions', mcpToolName: 'session_list' },
     examples: {
-      voice: { argsExample: '{"limit":20,"cursor":null,"includeLastMessagePreview":true}' },
+      voice: { argsExample: '{"limit":20,"cursor":null}' },
     },
     surfaces: {
       ui: true,
@@ -3062,16 +3240,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.messages.recent.get',
     title: 'Get recent messages',
-    description: 'Get a small slice of recent messages for a session (privacy guarded).',
+    description: 'DEPRECATED: use session_transcript_get. Returns semantic transcript items with cleaner pagination.',
     safety: 'safe',
-    placements: ['voice_panel'],
+    placements: [],
     bindings: { voiceClientToolName: 'getSessionRecentMessages', mcpToolName: 'session_messages_recent_get' },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","limit":3,"cursor":null}' },
-    },
+      },
     surfaces: {
       ui: true,
-      voice: true,
+      voice: false,
       session_agent: true,
       mcp: true,
       cli: true,

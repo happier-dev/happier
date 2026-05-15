@@ -52,6 +52,18 @@ describe('PromptInvocationsV1Schema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts insert-on-send behavior for delayed prompt insertion', () => {
+    const parsed = PromptInvocationEntryV1Schema.parse({
+      id: 'i1',
+      token: '/foo',
+      title: 'Foo',
+      target: { kind: 'doc', artifactId: 'a1' },
+      behavior: 'insert_on_send',
+    });
+
+    expect(parsed.behavior).toBe('insert_on_send');
+  });
+
   it('rejects tokens that look like paths (nested slashes)', () => {
     expect(
       PromptInvocationEntryV1Schema.safeParse({

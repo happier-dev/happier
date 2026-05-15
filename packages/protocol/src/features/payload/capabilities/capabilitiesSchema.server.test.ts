@@ -144,6 +144,34 @@ describe('CapabilitiesSchema (server capabilities)', () => {
     expect(parsed.pets.sync.maxCanonicalPackageBytes).toBe(parsed.pets.limits.maxCanonicalPackageBytes);
   });
 
+  it('parses session message role capabilities while preserving session state capabilities', () => {
+    const parsed = CapabilitiesSchema.parse({
+      session: {
+        state: {
+          identity: {
+            runtimeDescriptor: {
+              supported: true,
+              happierToProvider: { supported: true, transport: 'runtime-hook' },
+            },
+          },
+        },
+        messages: {
+          role: true,
+        },
+      },
+    });
+
+    expect(parsed.session.messages.role).toBe(true);
+    expect(parsed.session.state.identity?.runtimeDescriptor?.supported).toBe(true);
+  });
+
+  it('defaults session message role capabilities to unsupported', () => {
+    const parsed = CapabilitiesSchema.parse({});
+
+    expect(parsed.session.messages.role).toBe(false);
+    expect(parsed.session.state).toEqual({});
+  });
+
   it('keeps usage analytics capability optional so newer clients remain compatible with older servers', () => {
     const parsed = CapabilitiesSchema.parse({
       server: {

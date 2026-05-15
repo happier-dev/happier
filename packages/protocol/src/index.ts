@@ -972,6 +972,11 @@ export {
 } from './workspace/favicon/v1.js';
 
 export {
+  SESSION_MESSAGE_ROLES,
+  SessionMessageRoleSchema,
+  type SessionMessageRole,
+} from './sessionMessages/sessionMessageRole.js';
+export {
   SessionStoredMessageContentSchema,
   type SessionStoredMessageContent,
 } from './sessionMessages/sessionStoredMessageContent.js';
@@ -2823,8 +2828,10 @@ export {
 // Approvals (global inbox approvals queue)
 export {
   ApprovalRequestCreatedBySchema,
+  ApprovalRequestOriginV1Schema,
   ApprovalRequestV1Schema,
   type ApprovalRequestCreatedBy,
+  type ApprovalRequestOriginV1,
   type ApprovalRequestV1,
 } from './approvals/approvalRequestV1.js';
 
@@ -3123,6 +3130,8 @@ export {
   DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES,
   DEFAULT_PETS_CAPABILITIES,
   DEFAULT_PETS_PACKAGE_LIMITS_CAPABILITIES,
+  DEFAULT_SESSION_CAPABILITIES,
+  DEFAULT_SESSION_MESSAGES_CAPABILITIES,
   CapabilitiesSchema,
   FeatureGateSchema,
   FeatureGatesSchema,
@@ -3143,6 +3152,8 @@ export {
   OAuthProviderStatusSchema,
   PetsCapabilitiesSchema,
   PetsPackageLimitsCapabilitiesSchema,
+  SessionCapabilitiesSchema,
+  SessionMessagesCapabilitiesSchema,
   coerceBugReportsCapabilitiesFromFeaturesPayload,
   readMachineLiveStreamRelayCaps,
   normalizeMachineTransferServerRoutedMaxBytes,
@@ -3165,6 +3176,8 @@ export {
   type OAuthProviderStatus,
   type PetsCapabilities,
   type PetsPackageLimitsCapabilities,
+  type SessionCapabilities,
+  type SessionMessagesCapabilities,
 } from './features.js';
 export {
   FEATURE_CATALOG,

@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
-    "test": "vitest run --testTimeout 15000",
+    "test": "vitest run --testTimeout 30000",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {

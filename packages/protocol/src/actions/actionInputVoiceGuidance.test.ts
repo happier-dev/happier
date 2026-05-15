@@ -30,4 +30,17 @@ describe('actionInputVoiceGuidance', () => {
     expect(backendTargetKeyNotes).toContain('acpBackend:');
     expect(agentIdNotes).toContain('listAgentBackends');
   });
+
+  it('guides transcript-reading requests to the semantic transcript action', () => {
+    const activityNotes = getActionVoiceWorkflowNotes('session.activity.get').join(' ');
+    const recentNotes = getActionVoiceWorkflowNotes('session.messages.recent.get').join(' ');
+    const transcriptNotes = getActionInputFieldVoiceNotes(
+      { id: 'session.transcript.get' },
+      { path: 'sessionId' } as any,
+    ).join(' ');
+
+    expect(activityNotes).toContain('getSessionTranscript');
+    expect(recentNotes).toContain('getSessionTranscript');
+    expect(transcriptNotes).toContain('listSessions');
+  });
 });

@@ -28,6 +28,8 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'agents.models.list',
   'session.status.get',
   'session.history.get',
+  'session.transcript.get',
+  'session.events.get',
   'session.wait.idle',
   'session.list',
   'session.activity.get',
@@ -314,6 +316,8 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.target.tracked.set').surfaces.mcp).toBe(true);
     expect(getActionSpec('session.list').surfaces.mcp).toBe(true);
     expect(getActionSpec('session.activity.get').surfaces.mcp).toBe(true);
+    expect(getActionSpec('session.transcript.get' as ActionId).bindings?.mcpToolName).toBe('session_transcript_get');
+    expect(getActionSpec('session.events.get' as ActionId).bindings?.mcpToolName).toBe('session_events_get');
     expect(getActionSpec('session.messages.recent.get').surfaces.mcp).toBe(true);
   });
 
@@ -329,6 +333,7 @@ describe('Action Spec Registry', () => {
         archivedOnly: false,
         includeSystem: true,
         resumableOnly: true,
+        includeRows: true,
       }),
     ).toEqual({
       limit: 200,
@@ -338,7 +343,19 @@ describe('Action Spec Registry', () => {
       archivedOnly: false,
       includeSystem: true,
       resumableOnly: true,
+      includeRows: true,
     });
+  });
+
+  it('marks old transcript/session-history actions as deprecated aliases', () => {
+    expect(getActionSpec('session.messages.recent.get').description).toContain('DEPRECATED: use session_transcript_get');
+    expect(getActionSpec('session.history.get').description).toContain('DEPRECATED: use session_events_get');
+  });
+
+  it('declares session events MCP examples with provider event kind filters', () => {
+    expect(getActionSpec('session.events.get' as ActionId).examples?.mcp?.argsExample).toBe(
+      '{"sessionId":"{{sessionId}}","limit":50,"kinds":["tool_call","tool_result"]}',
+    );
   });
 
   it('surfaces approval actions on external mcp and cli (power user/internal)', () => {
@@ -1393,7 +1410,8 @@ describe('Action Spec Registry', () => {
     expect(byVoiceToolName.has('setTrackedSessions')).toBe(true);
     expect(byVoiceToolName.has('listSessions')).toBe(true);
     expect(byVoiceToolName.has('getSessionActivity')).toBe(true);
-    expect(byVoiceToolName.has('getSessionRecentMessages')).toBe(true);
+    expect(byVoiceToolName.has('getSessionTranscript')).toBe(true);
+    expect(byVoiceToolName.has('getSessionRecentMessages')).toBe(false);
     expect(byVoiceToolName.has('teleportVoiceAgentToSessionRoot')).toBe(true);
 
     // Inventory + discovery tools (safe by default; may be gated by user settings in the UI).

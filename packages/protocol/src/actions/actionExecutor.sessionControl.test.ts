@@ -189,10 +189,10 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionStatusGet).toHaveBeenCalledWith({ sessionId: 's1', live: true, serverId: 'server-a' });
   });
 
-  it('executes session.history.get via deps.sessionHistoryGet', async () => {
-    const sessionHistoryGet = vi.fn(async () => ({ ok: true }));
+  it('routes deprecated session.history.get to deps.sessionEventsGet', async () => {
+    const sessionEventsGet = vi.fn(async () => ({ ok: true }));
     const executor = createExecutor({
-      sessionHistoryGet,
+      sessionEventsGet,
       resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
     });
 
@@ -203,13 +203,80 @@ describe('createActionExecutor (session control)', () => {
     );
 
     expect(res).toEqual({ ok: true, result: { ok: true } });
-    expect(sessionHistoryGet).toHaveBeenCalledWith({
+    expect(sessionEventsGet).toHaveBeenCalledWith({
       sessionId: 's1',
       limit: 25,
       format: 'compact',
       includeMeta: false,
       includeStructuredPayload: false,
       serverId: 'server-a',
+    });
+  });
+
+  it('executes session.transcript.get via deps.sessionTranscriptGet', async () => {
+    const sessionTranscriptGet = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({
+      sessionTranscriptGet,
+      resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
+    } as any);
+
+    const res = await executor.execute(
+      'session.transcript.get' as any,
+      { sessionId: 's1', limit: 25, roles: ['user', 'assistant'], includeTools: true },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionTranscriptGet).toHaveBeenCalledWith({
+      sessionId: 's1',
+      limit: 25,
+      roles: ['user', 'assistant'],
+      includeTools: true,
+      serverId: 'server-a',
+    });
+  });
+
+  it('executes session.events.get via deps.sessionEventsGet', async () => {
+    const sessionEventsGet = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({
+      sessionEventsGet,
+      resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
+    } as any);
+
+    const res = await executor.execute(
+      'session.events.get' as any,
+      { sessionId: 's1', limit: 10, format: 'raw', roles: ['event'], includeRaw: true },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionEventsGet).toHaveBeenCalledWith({
+      sessionId: 's1',
+      limit: 10,
+      format: 'raw',
+      roles: ['event'],
+      includeRaw: true,
+      serverId: 'server-a',
+    });
+  });
+
+  it('routes deprecated session.messages.recent.get to deps.sessionTranscriptGet', async () => {
+    const sessionTranscriptGet = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionTranscriptGet });
+
+    const res = await executor.execute(
+      'session.messages.recent.get' as any,
+      { sessionId: 's1', limit: 3, cursor: 'cursor-1', includeUser: true, includeAssistant: false, maxCharsPerMessage: 80 },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionTranscriptGet).toHaveBeenCalledWith({
+      sessionId: 's1',
+      limit: 3,
+      cursor: 'cursor-1',
+      roles: ['user'],
+      maxCharsPerMessage: 80,
     });
   });
 

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { stat } from 'node:fs/promises';
+import { rm, stat } from 'node:fs/promises';
 import { accessSync, constants as fsConstants } from 'node:fs';
 
 import { commandExistsOnPath } from '../process/index.js';
@@ -17,7 +17,10 @@ export type RunCommand = (
     input?: string;
     timeoutMs?: number;
   },
-) => void;
+) => Promise<void> | void;
+
+const DEFAULT_BUN_COMPILE_ATTEMPTS = 3;
+const MAX_BUN_COMPILE_ATTEMPTS = 5;
 
 export function execOrThrow(
   cmd: string,
@@ -134,6 +137,45 @@ export async function ensureFileExists(path: string): Promise<void> {
   }
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error ?? '');
+}
+
+function isTransientBunExecutableExtractionFailure(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return message.includes('Failed to extract executable')
+    && message.includes('download may be incomplete');
+}
+
+function extractBunRuntimeCacheEntry(error: unknown): string | null {
+  const match = getErrorMessage(error).match(/Failed to extract executable for '([^']+)'/);
+  return match?.[1] ?? null;
+}
+
+function resolveBunCompileMaxAttempts(rawValue: string | undefined, override: number | undefined): number {
+  const value = override ?? Number.parseInt(String(rawValue ?? ''), 10);
+  if (!Number.isFinite(value)) return DEFAULT_BUN_COMPILE_ATTEMPTS;
+  return Math.min(MAX_BUN_COMPILE_ATTEMPTS, Math.max(1, Math.trunc(value)));
+}
+
+async function clearTransientBunCompileArtifacts(error: unknown, outfile: string): Promise<void> {
+  await rm(outfile, { force: true }).catch(() => undefined);
+
+  const cacheEntry = extractBunRuntimeCacheEntry(error);
+  if (!cacheEntry) return;
+
+  const candidateCacheDirs = [
+    String(process.env.BUN_INSTALL ?? '').trim() ? join(String(process.env.BUN_INSTALL).trim(), 'install', 'cache') : '',
+    String(process.env.HOME ?? '').trim() ? join(String(process.env.HOME).trim(), '.bun', 'install', 'cache') : '',
+    String(process.env.USERPROFILE ?? '').trim() ? join(String(process.env.USERPROFILE).trim(), '.bun', 'install', 'cache') : '',
+  ].filter(Boolean);
+
+  await Promise.all([...new Set(candidateCacheDirs)].map((cacheDir) => (
+    rm(join(cacheDir, cacheEntry), { recursive: true, force: true }).catch(() => undefined)
+  )));
+}
+
 export async function compileBunBinary({
   entrypoint,
   bunTarget,
@@ -142,6 +184,7 @@ export async function compileBunBinary({
   externals = [],
   bunCommand,
   runCommand = execOrThrow,
+  maxAttempts,
 }: {
   entrypoint: string;
   bunTarget: string;
@@ -150,6 +193,7 @@ export async function compileBunBinary({
   externals?: string[];
   bunCommand?: string;
   runCommand?: RunCommand;
+  maxAttempts?: number;
 }): Promise<void> {
   const resolvedBunCommand = (() => {
     const candidate = String(bunCommand ?? '').trim();
@@ -164,7 +208,18 @@ export async function compileBunBinary({
     if (!value) continue;
     args.push('--external', value);
   }
-  runCommand(resolvedBunCommand, args, { cwd });
+  const attempts = resolveBunCompileMaxAttempts(process.env.HAPPIER_BUN_COMPILE_ATTEMPTS, maxAttempts);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await runCommand(resolvedBunCommand, args, { cwd });
+      break;
+    } catch (error) {
+      if (attempt >= attempts || !isTransientBunExecutableExtractionFailure(error)) {
+        throw error;
+      }
+      await clearTransientBunCompileArtifacts(error, outfile);
+    }
+  }
   const startedAt = Date.now();
   const timeoutMs = 5_000;
   while (Date.now() - startedAt < timeoutMs) {

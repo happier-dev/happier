@@ -147,6 +147,12 @@ const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<strin
   'session.activity.get': {
     sessionId: [{ text: 'Use listSessions to discover sessions by title before choosing sessionId internally', requiresActionIds: ['session.list'] }],
   },
+  'session.transcript.get': {
+    sessionId: [{ text: 'Use listSessions to discover sessions by title before choosing sessionId internally', requiresActionIds: ['session.list'] }],
+  },
+  'session.events.get': {
+    sessionId: [{ text: 'Use listSessions to discover sessions by title before choosing sessionId internally', requiresActionIds: ['session.list'] }],
+  },
   'session.messages.recent.get': {
     sessionId: [{ text: 'Use listSessions to discover sessions by title before choosing sessionId internally', requiresActionIds: ['session.list'] }],
   },
@@ -210,10 +216,16 @@ const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanc
     { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
   ],
   'session.activity.get': [
+    { text: 'Use getSessionTranscript instead when the user asks what was said, asks to read transcript/messages, or needs conversation text; keep getSessionActivity for a lightweight status or activity digest', requiresActionIds: ['session.transcript.get'] },
+    { text: 'Use listSessions before choosing sessionId internally', requiresActionIds: ['session.list'] },
+    { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
+  ],
+  'session.transcript.get': [
     { text: 'Use listSessions before choosing sessionId internally', requiresActionIds: ['session.list'] },
     { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
   ],
   'session.messages.recent.get': [
+    { text: 'Use getSessionTranscript instead; session.messages.recent.get is a deprecated compatibility alias', requiresActionIds: ['session.transcript.get'] },
     { text: 'Use listSessions before choosing sessionId internally', requiresActionIds: ['session.list'] },
     { text: 'If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker', requiresActionIds: ['session.list'] },
   ],

@@ -62,6 +62,11 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).ExecutionRunTurnStreamCancelRequestSchema).toBe('object');
     });
 
+    it('exports session transcript and events action input schemas', () => {
+        expect(typeof (protocol as any).SessionTranscriptGetInputSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionEventsGetInputSchema?.safeParse).toBe('function');
+    });
+
     it('exports review triage overlay schemas for execution-run consumers', () => {
         expect(typeof (protocol as any).ReviewTriageOverlaySchema?.safeParse).toBe('function');
         const parsed = (protocol as any).ReviewTriageOverlaySchema.safeParse({

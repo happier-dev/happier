@@ -87,6 +87,15 @@ export {
   type MachineLiveStreamServerRoutedCapabilities,
 } from './features/payload/capabilities/machineLiveStreamCapabilities.js';
 
+export {
+  DEFAULT_SESSION_CAPABILITIES,
+  DEFAULT_SESSION_MESSAGES_CAPABILITIES,
+  SessionCapabilitiesSchema,
+  SessionMessagesCapabilitiesSchema,
+  type SessionCapabilities,
+  type SessionMessagesCapabilities,
+} from './features/payload/capabilities/sessionCapabilities.js';
+
 export { CapabilitiesSchema, type Capabilities } from './features/payload/capabilities/capabilitiesSchema.js';
 export { FeatureGatesSchema, type FeatureGates } from './features/payload/featureGatesSchema.js';
 export { FeaturesResponseSchema, type FeaturesResponse } from './features/payload/featuresResponseSchema.js';

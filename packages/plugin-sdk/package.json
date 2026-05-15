@@ -29,6 +29,10 @@
     "./scm/hostingProvider": {
       "types": "./dist/scm/hostingProvider.d.ts",
       "default": "./dist/scm/hostingProvider.js"
+    },
+    "./scm/remoteUrl": {
+      "types": "./dist/scm/remoteUrl.d.ts",
+      "default": "./dist/scm/remoteUrl.js"
     }
   },
   "files": [

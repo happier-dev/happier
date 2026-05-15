@@ -221,9 +221,8 @@ describe('git repository clone operation', () => {
         expect(clonedUrls).not.toContain('https://attacker.example/happier-dev/happier.git');
     });
 
-    it('passes clone targets after an option terminator', async () => {
+    it('rejects clone targets that look like Git options before running clone', async () => {
         const parent = createWorkspace();
-        const destination = resolve(parent, 'happier');
         const cloneArgs: string[][] = [];
         const repositoryClone = getRepositoryCloneOperation({
             registry: makeProviderRegistry({
@@ -232,6 +231,119 @@ describe('git repository clone operation', () => {
                     {
                         protocol: 'https',
                         url: '--upload-pack=malicious-helper',
+                        isDefault: true,
+                    },
+                ],
+            }),
+            runCommand: async (request) => {
+                cloneArgs.push([...request.args]);
+                return { success: true, stdout: '', stderr: '', exitCode: 0 };
+            },
+        });
+
+        const response = await cloneWithRealGitRuntime(repositoryClone, {
+            context: makeContext(parent),
+            request: makeRequest(parent, '/tmp/unused.git'),
+        });
+
+        expect(response).toMatchObject({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+        });
+        expect(cloneArgs).toEqual([]);
+    });
+
+    it('rejects provider clone targets that violate registered URL safety before running clone', async () => {
+        const parent = createWorkspace();
+        const cloneAttempts: string[][] = [];
+        const description = makeCloneTargetDescription('/tmp/unused.git');
+        const repositoryClone = getRepositoryCloneOperation({
+            registry: makeProviderRegistry({
+                ...description,
+                repository: {
+                    ...description.repository,
+                    provider: {
+                        ...description.repository.provider,
+                        urlSafety: { allowedSchemes: ['https:'] },
+                    },
+                },
+                targets: [
+                    {
+                        protocol: 'https',
+                        url: 'file:///tmp/untrusted.git',
+                        isDefault: true,
+                    },
+                ],
+            }),
+            runCommand: async (request) => {
+                cloneAttempts.push([...request.args]);
+                return { success: true, stdout: '', stderr: '', exitCode: 0 };
+            },
+        });
+
+        const response = await cloneWithRealGitRuntime(repositoryClone, {
+            context: makeContext(parent),
+            request: makeRequest(parent, '/tmp/unused.git'),
+        });
+
+        expect(response).toMatchObject({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+        });
+        expect(cloneAttempts).toEqual([]);
+    });
+
+    it('rejects provider clone targets with embedded URL credentials before running clone', async () => {
+        const parent = createWorkspace();
+        const cloneAttempts: string[][] = [];
+        const repositoryClone = getRepositoryCloneOperation({
+            registry: makeProviderRegistry({
+                ...makeCloneTargetDescription('/tmp/unused.git'),
+                targets: [
+                    {
+                        protocol: 'https',
+                        url: 'https://token@github.com/happier-dev/happier.git',
+                        isDefault: true,
+                    },
+                ],
+            }),
+            runCommand: async (request) => {
+                cloneAttempts.push([...request.args]);
+                return { success: true, stdout: '', stderr: '', exitCode: 0 };
+            },
+        });
+
+        const response = await cloneWithRealGitRuntime(repositoryClone, {
+            context: makeContext(parent),
+            request: makeRequest(parent, '/tmp/unused.git'),
+        });
+
+        expect(response).toMatchObject({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+        });
+        expect(cloneAttempts).toEqual([]);
+    });
+
+    it('allows SSH clone targets with a URL username', async () => {
+        const parent = createWorkspace();
+        const destination = resolve(parent, 'happier');
+        const cloneArgs: string[][] = [];
+        const description = makeCloneTargetDescription('/tmp/unused.git');
+        const repositoryClone = getRepositoryCloneOperation({
+            registry: makeProviderRegistry({
+                ...description,
+                repository: {
+                    ...description.repository,
+                    provider: {
+                        ...description.repository.provider,
+                        urlSafety: { allowedSchemes: ['ssh:'] },
+                    },
+                },
+                targets: [
+                    {
+                        protocol: 'ssh',
+                        url: 'ssh://git@github.com/happier-dev/happier.git',
                         isDefault: true,
                     },
                 ],
@@ -251,13 +363,18 @@ describe('git repository clone operation', () => {
 
         const response = await cloneWithRealGitRuntime(repositoryClone, {
             context: makeContext(parent),
-            request: makeRequest(parent, '/tmp/unused.git'),
+            request: {
+                ...makeRequest(parent, '/tmp/unused.git'),
+                protocol: 'ssh',
+            },
         });
 
-        expect(response.success).toBe(true);
+        expect(response).toMatchObject({
+            success: true,
+            cloneProtocol: 'ssh',
+            cloneUrl: 'ssh://git@github.com/happier-dev/happier.git',
+        });
         expect(cloneArgs).toHaveLength(1);
-        expect(cloneArgs[0]?.slice(0, 3)).toEqual(['clone', '--', '--upload-pack=malicious-helper']);
-        expect(cloneArgs[0]?.[3]).not.toBe(destination);
     });
 
 });

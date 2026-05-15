@@ -108,6 +108,8 @@ describe('ActionIdSchema', () => {
         'session.messages.recent.get',
       ],
       session_transcripts: [
+        'session.transcript.get',
+        'session.events.get',
         'session.log.tail',
         'transcript.page',
         'transcript.readAfter',
@@ -253,6 +255,8 @@ describe('ActionIdSchema', () => {
       'session.list',
       'session.activity.get',
       'session.messages.recent.get',
+      'session.transcript.get',
+      'session.events.get',
       'session.log.tail',
       'transcript.page',
       'transcript.readAfter',

@@ -10,7 +10,7 @@ const PromptInvocationTokenV1Schema = z
 
 export type PromptInvocationTokenV1 = z.infer<typeof PromptInvocationTokenV1Schema>;
 
-export const PromptInvocationBehaviorV1Schema = z.enum(['insert', 'insert_and_send']);
+export const PromptInvocationBehaviorV1Schema = z.enum(['insert', 'insert_on_send', 'insert_and_send']);
 export type PromptInvocationBehaviorV1 = z.infer<typeof PromptInvocationBehaviorV1Schema>;
 
 export const PromptInvocationAvailabilityV1Schema = z.enum(['global', 'session_only']);
