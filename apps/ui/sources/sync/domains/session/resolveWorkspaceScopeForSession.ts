@@ -1,4 +1,3 @@
-import * as React from 'react';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
@@ -12,21 +11,22 @@ export function resolveWorkspaceScopeForSession(sessionId: string): WorkspaceSco
 
 export function useWorkspaceScopeForSession(sessionId: string | null | undefined): WorkspaceScopeBase | null {
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-    const selector = useShallow((state: StorageState) => ({
-        sessions: state.sessions,
-        sessionListRenderables: state.sessionListRenderables,
-        machines: state.machines,
-        sessionListIndexByServerId: state.sessionListIndexByServerId,
-        getProjectForSession: state.getProjectForSession,
-    }));
+    const selector = useShallow((state: StorageState): WorkspaceScopeBase | null => {
+        if (!normalizedSessionId) return null;
+        return resolveWorkspaceTargetForSessionFromState({
+            sessions: state.sessions,
+            sessionListRenderables: state.sessionListRenderables,
+            machines: state.machines,
+            sessionListIndexByServerId: state.sessionListIndexByServerId,
+            getProjectForSession: state.getProjectForSession,
+        }, normalizedSessionId);
+    });
     const workspaceState = typeof storage === 'function'
         ? storage(selector)
         : (
-            (storage as unknown as { getState?: () => StorageState }).getState?.() ?? null
+            (storage as unknown as { getState?: () => StorageState }).getState
+                ? selector((storage as unknown as { getState: () => StorageState }).getState())
+                : null
         );
-
-    return React.useMemo(() => {
-        if (!workspaceState || !normalizedSessionId) return null;
-        return resolveWorkspaceTargetForSessionFromState(workspaceState, normalizedSessionId);
-    }, [normalizedSessionId, workspaceState]);
+    return workspaceState;
 }

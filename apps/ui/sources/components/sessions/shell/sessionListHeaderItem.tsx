@@ -1,22 +1,31 @@
 import * as React from 'react';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
-import type { SharedValue } from 'react-native-reanimated';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { t } from '@/text';
+import type { TreeDropResult, TreeInstructionVisual } from '@/components/ui/treeDragDrop';
 
 import type { SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
 import { CollapsibleSectionHeader, FolderGroupHeader, ProjectGroupHeader } from './sessionListChrome';
 import type { RegisterSessionFolderDropTarget } from './useSessionListViewState';
+import {
+    SessionListHeaderFrame,
+    type RegisterSessionListTreeRowBounds,
+    type UnregisterSessionListTreeRowBounds,
+} from './SessionListHeaderFrame';
 import { resolveSessionListHeaderViewState } from './resolveSessionListHeaderViewState';
 import {
     resolveSessionListHeaderActionHandlers,
     type CreateSessionFromWorkspaceScopeHandler,
 } from './resolveSessionListHeaderActionHandlers';
-import { useSessionInlineDrag, type SessionInlineDragEndContext } from './useSessionInlineDrag';
-
-const FOLDER_HEADER_DRAG_ROW_HEIGHT = 28;
+import {
+    useSessionInlineDrag,
+    type SessionInlineDragVisualSharedValues,
+    type UseSessionInlineDragDropResultEvent,
+    type UseSessionInlineDragResolveDropResultEvent,
+} from './useSessionInlineDrag';
+import { treeRowId } from './drop-resolution/treeRowId';
 
 type SessionListHeaderItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'header' }>;
@@ -41,27 +50,29 @@ type SessionListHeaderItemProps = Readonly<{
     onAddSubfolder?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void | Promise<void>;
     onRenameFolder?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void | Promise<void>;
     onDeleteFolder?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void | Promise<void>;
+    onMoveFolder?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
+    onMoveFolderToWorkspaceRoot?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
+    onMoveFolderUp?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
+    onMoveFolderDown?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
     onRegisterSessionFolderDropTarget?: RegisterSessionFolderDropTarget;
     workspaceFaviconsEnabled?: boolean;
     workspaceMachineSubtitlesEnabled?: boolean;
     dataIndex?: number;
-    totalItemCount?: number;
-    dropIndicatorIdx?: SharedValue<number>;
-    dropIndicatorEdge?: SharedValue<number>;
+    dropVisual?: SessionInlineDragVisualSharedValues;
+    activeDropVisual?: TreeInstructionVisual;
+    onRegisterTreeRowBounds?: RegisterSessionListTreeRowBounds;
+    onUnregisterTreeRowBounds?: UnregisterSessionListTreeRowBounds;
     onFolderDragStart?: (sessionKey: string) => void;
-    onFolderDragUpdate?: (event: Readonly<{ sessionKey: string; absoluteX: number; absoluteY: number }>) => void;
-    onFolderDragEnd?: (
-        sessionKey: string,
-        groupKey: string,
-        positionDelta: number,
-        context?: SessionInlineDragEndContext,
-    ) => void;
+    resolveDropResult?: (event: UseSessionInlineDragResolveDropResultEvent) => TreeDropResult;
+    onFolderDragUpdate?: (event: UseSessionInlineDragDropResultEvent) => void;
+    onFolderDropResult?: (event: UseSessionInlineDragDropResultEvent) => void;
     activeFolderDropTargetId?: string | null;
 }>;
 
 export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemProps) => {
     if (props.item.headerKind === 'folder') {
         const collapseKey = props.item.groupKey ?? `folder:${props.item.folderId ?? props.item.title}`;
+        const rowId = props.item.folderId ? treeRowId.folder(props.item.folderId) : null;
         const folderHeader = (
             <FolderGroupHeader
                 title={props.item.title}
@@ -73,27 +84,40 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
                 onAddSubfolder={() => props.onAddSubfolder?.(props.item)}
                 onRename={() => props.onRenameFolder?.(props.item)}
                 onDelete={() => props.onDeleteFolder?.(props.item)}
+                onMove={() => props.onMoveFolder?.(props.item)}
+                onMoveToWorkspaceRoot={() => props.onMoveFolderToWorkspaceRoot?.(props.item)}
+                onMoveUp={() => props.onMoveFolderUp?.(props.item)}
+                onMoveDown={() => props.onMoveFolderDown?.(props.item)}
                 item={props.item}
                 onRegisterDropTarget={props.onRegisterSessionFolderDropTarget}
                 activeDropTargetId={props.activeFolderDropTargetId}
             />
         );
-        if (!props.item.folderId || !props.dropIndicatorIdx || !props.dropIndicatorEdge) {
-            return folderHeader;
+        const framedFolderHeader = rowId && props.activeDropVisual && props.onRegisterTreeRowBounds && props.onUnregisterTreeRowBounds ? (
+            <SessionListHeaderFrame
+                treeRowId={rowId}
+                activeDropVisual={props.activeDropVisual}
+                onRegisterTreeRowBounds={props.onRegisterTreeRowBounds}
+                onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
+            >
+                {folderHeader}
+            </SessionListHeaderFrame>
+        ) : folderHeader;
+        if (!props.item.folderId || !props.dropVisual || !props.resolveDropResult || !props.onFolderDropResult) {
+            return framedFolderHeader;
         }
         return (
             <DraggableFolderHeaderFrame
                 sessionKey={`folder:${props.item.folderId}`}
                 groupKey={props.item.groupKey ?? `folder:${props.item.folderId}`}
                 dataIndex={props.dataIndex ?? 0}
-                totalItemCount={props.totalItemCount ?? 0}
-                dropIndicatorIdx={props.dropIndicatorIdx}
-                dropIndicatorEdge={props.dropIndicatorEdge}
+                dropVisual={props.dropVisual}
                 onDragStart={props.onFolderDragStart}
                 onDragUpdate={props.onFolderDragUpdate}
-                onDragEnd={props.onFolderDragEnd}
+                resolveDropResult={props.resolveDropResult}
+                onDropResult={props.onFolderDropResult}
             >
-                {folderHeader}
+                {framedFolderHeader}
             </DraggableFolderHeaderFrame>
         );
     }
@@ -118,7 +142,8 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
     }
 
     if (headerViewState.kind === 'project') {
-        return (
+        const rowId = treeRowId.workspaceRoot(props.item.groupKey ?? props.item.workspaceKey ?? headerViewState.displayTitle);
+        const projectHeader = (
             <ProjectGroupHeader
                 item={props.item}
                 hasMultipleMachines={props.hasMultipleMachines}
@@ -138,6 +163,19 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
                 activeDropTargetId={props.activeFolderDropTargetId}
             />
         );
+        if (!props.activeDropVisual || !props.onRegisterTreeRowBounds || !props.onUnregisterTreeRowBounds) {
+            return projectHeader;
+        }
+        return (
+            <SessionListHeaderFrame
+                treeRowId={rowId}
+                activeDropVisual={props.activeDropVisual}
+                onRegisterTreeRowBounds={props.onRegisterTreeRowBounds}
+                onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
+            >
+                {projectHeader}
+            </SessionListHeaderFrame>
+        );
     }
 
     return (
@@ -154,39 +192,24 @@ const DraggableFolderHeaderFrame = React.memo(function DraggableFolderHeaderFram
     sessionKey: string;
     groupKey: string;
     dataIndex: number;
-    totalItemCount: number;
-    dropIndicatorIdx: SharedValue<number>;
-    dropIndicatorEdge: SharedValue<number>;
+    dropVisual: SessionInlineDragVisualSharedValues;
     onDragStart?: (sessionKey: string) => void;
-    onDragUpdate?: (event: Readonly<{
-        sessionKey: string;
-        groupKey: string;
-        positionDelta: number;
-        dataIndex: number;
-        absoluteX: number;
-        absoluteY: number;
-    }>) => void;
-    onDragEnd?: (
-        sessionKey: string,
-        groupKey: string,
-        positionDelta: number,
-        context?: SessionInlineDragEndContext,
-    ) => void;
+    onDragUpdate?: (event: UseSessionInlineDragDropResultEvent) => void;
+    resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => TreeDropResult;
+    onDropResult: (event: UseSessionInlineDragDropResultEvent) => void;
     children: React.ReactNode;
 }>) {
-    const enabled = Boolean(props.onDragEnd);
+    const enabled = Boolean(props.onDropResult);
     const { gesture, animatedStyle } = useSessionInlineDrag({
         enabled,
         sessionKey: props.sessionKey,
         groupKey: props.groupKey,
-        rowHeight: FOLDER_HEADER_DRAG_ROW_HEIGHT,
         dataIndex: props.dataIndex,
-        totalItemCount: props.totalItemCount,
-        dropIndicatorIdx: props.dropIndicatorIdx,
-        dropIndicatorEdge: props.dropIndicatorEdge,
+        dropVisual: props.dropVisual,
         onDragStart: props.onDragStart ?? (() => {}),
         onDragUpdate: props.onDragUpdate,
-        onDragEnd: props.onDragEnd ?? (() => {}),
+        resolveDropResult: props.resolveDropResult,
+        onDropResult: props.onDropResult,
     });
     const content = (
         <Animated.View style={animatedStyle}>

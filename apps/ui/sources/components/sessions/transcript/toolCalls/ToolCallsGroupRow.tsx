@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { useMessagesByIds } from '@/sync/domains/state/storage';
 
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
@@ -20,6 +21,7 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
     toolMessageIds: readonly string[];
     metadata: Metadata | null;
     forcePermissionPromptsInTranscript?: boolean;
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
     getMessageById?: (messageId: string) => Message | null;
     expanded: boolean;
     onSetExpanded: (params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => void;
@@ -92,6 +94,7 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
                             metadata={props.metadata}
                             sessionId={props.sessionId}
                             forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
+                            approvalRequests={props.approvalRequests}
                             expanded={props.expanded}
                             setExpanded={setExpanded}
                             interaction={props.interaction}

@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   historyMoveUp: vi.fn(),
   historyMoveDown: vi.fn(),
   historyReset: vi.fn(),
+  historyWarmup: vi.fn(),
+  historyIsBrowsing: vi.fn(),
+  historyHasRetainedSession: vi.fn(),
+  historyPause: vi.fn(),
 
   suggestionMoveUp: vi.fn(),
   suggestionMoveDown: vi.fn(),
@@ -106,6 +110,10 @@ vi.mock('@/hooks/session/useUserMessageHistory', () => ({
     moveUp: (...args: any[]) => mocks.historyMoveUp(...args),
     moveDown: (...args: any[]) => mocks.historyMoveDown(...args),
     reset: (...args: any[]) => mocks.historyReset(...args),
+    warmup: (...args: any[]) => mocks.historyWarmup(...args),
+    isBrowsing: (...args: any[]) => mocks.historyIsBrowsing(...args),
+    hasRetainedSession: (...args: any[]) => mocks.historyHasRetainedSession(...args),
+    pause: (...args: any[]) => mocks.historyPause(...args),
   }),
 }));
 
@@ -136,9 +144,32 @@ vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
   describeEffectivePermissionMode: () => ({ effectiveMode: 'default', notes: [] }),
 }));
 
-vi.mock('@/components/ui/forms/MultiTextInput', () => ({
-  MultiTextInput: (props: Record<string, unknown>) => React.createElement('MultiTextInput', props, null),
-}));
+type MockMultiTextInputSelection = Readonly<{ start: number; end: number }>;
+type MockMultiTextInputProps = Record<string, unknown> & Readonly<{
+  onChangeText?: (text: string) => void;
+  onStateChange?: (state: Readonly<{ text: string; selection: MockMultiTextInputSelection }>) => void;
+  onSelectionChange?: (selection: MockMultiTextInputSelection) => void;
+}>;
+
+vi.mock('@/components/ui/forms/MultiTextInput', () => {
+  const MultiTextInput = React.forwardRef((props: MockMultiTextInputProps, ref) => {
+    React.useImperativeHandle(ref, () => ({
+      setTextAndSelection: (text: string, selection: { start: number; end: number }) => {
+        props.onChangeText?.(text);
+        props.onStateChange?.({ text, selection });
+        props.onStateChange?.({ text, selection });
+        props.onSelectionChange?.(selection);
+      },
+      focus: () => {},
+      blur: () => {},
+    }));
+
+    return React.createElement('MultiTextInput', props, null);
+  });
+  MultiTextInput.displayName = 'MockMultiTextInput';
+
+  return { MultiTextInput };
+});
 
 vi.mock('@/components/ui/forms/Switch', () => ({
   Switch: (props: Record<string, unknown>) => React.createElement('Switch', props, null),
@@ -212,6 +243,8 @@ function findMultiTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
 describe('AgentInput (history navigation)', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    mocks.historyIsBrowsing.mockReturnValue(false);
+    mocks.historyHasRetainedSession.mockReturnValue(false);
     localSettingState.values = {
       uiBackdropBlurEnabled: 1,
       keyboardShortcutsV2Enabled: true,
@@ -247,6 +280,7 @@ describe('AgentInput (history navigation)', () => {
 
     expect(handled).toBe(true);
     expect(mocks.onSend).toHaveBeenCalledTimes(1);
+    expect(mocks.historyReset).toHaveBeenCalledTimes(1);
   });
 
   it('does not send on Enter when sending is disabled', async () => {
@@ -474,6 +508,126 @@ describe('AgentInput (history navigation)', () => {
     expect(mocks.onChangeText).toHaveBeenCalledWith('previous message');
   });
 
+  it('uses live key event selection so ArrowUp at the real input start enters history immediately', async () => {
+    mocks.historyMoveUp.mockReturnValue('previous message');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="draft"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'draft', selection: { start: 5, end: 5 } });
+    });
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({
+        key: 'ArrowUp',
+        shiftKey: false,
+        inputState: { text: 'draft', selection: { start: 0, end: 0 } },
+      });
+    });
+
+    expect(handled).toBe(true);
+    expect(mocks.historyMoveUp).toHaveBeenCalledWith('draft');
+    expect(mocks.onChangeText).toHaveBeenCalledWith('previous message');
+  });
+
+  it('does not enter history when live key event selection is mid-text even if stale state says start', async () => {
+    mocks.historyMoveUp.mockReturnValue('previous message');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="draft"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'draft', selection: { start: 0, end: 0 } });
+    });
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({
+        key: 'ArrowUp',
+        shiftKey: false,
+        inputState: { text: 'draft', selection: { start: 2, end: 2 } },
+      });
+    });
+
+    expect(handled).toBe(false);
+    expect(mocks.historyMoveUp).not.toHaveBeenCalled();
+    expect(mocks.onChangeText).not.toHaveBeenCalled();
+  });
+
+  it('uses the controlled value after the parent clears the composer before history navigation', async () => {
+    mocks.historyMoveUp.mockReturnValue('previous message');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="draft"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    let input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'draft', selection: { start: 5, end: 5 } });
+    });
+
+    await act(async () => {
+      screen.tree.update(<AgentInput
+          value=""
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+    });
+
+    input = findMultiTextInput(screen);
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'ArrowUp', shiftKey: false });
+    });
+
+    expect(handled).toBe(true);
+    expect(mocks.historyMoveUp).toHaveBeenCalledWith('');
+    expect(mocks.onChangeText).toHaveBeenCalledWith('previous message');
+  });
+
   it('does not intercept ArrowUp when cursor is mid-text', async () => {
     mocks.historyMoveUp.mockReturnValue('previous message');
 
@@ -504,5 +658,225 @@ describe('AgentInput (history navigation)', () => {
     expect(handled).toBe(false);
     expect(mocks.historyMoveUp).not.toHaveBeenCalled();
     expect(mocks.onChangeText).not.toHaveBeenCalled();
+  });
+
+  it('continues ArrowUp history navigation while browsing even when the cursor is at the end', async () => {
+    mocks.historyIsBrowsing.mockReturnValue(true);
+    mocks.historyMoveUp.mockReturnValue('older message');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="previous message"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'previous message', selection: { start: 16, end: 16 } });
+    });
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'ArrowUp', shiftKey: false });
+    });
+
+    expect(handled).toBe(true);
+    expect(mocks.historyMoveUp).toHaveBeenCalledWith('previous message');
+    expect(mocks.onChangeText).toHaveBeenCalledWith('older message');
+  });
+
+  it('does not enter history browsing from idle ArrowDown at the end of the input', async () => {
+    mocks.historyIsBrowsing.mockReturnValue(false);
+    mocks.historyMoveDown.mockReturnValue('should not be used');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="draft"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'draft', selection: { start: 5, end: 5 } });
+    });
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'ArrowDown', shiftKey: false });
+    });
+
+    expect(handled).toBe(false);
+    expect(mocks.historyMoveDown).not.toHaveBeenCalled();
+  });
+
+  it('passes the current edited history text to ArrowDown while browsing', async () => {
+    mocks.historyIsBrowsing.mockReturnValue(true);
+    mocks.historyMoveDown.mockReturnValue('draft');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="previous message"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({
+        key: 'ArrowDown',
+        shiftKey: false,
+        inputState: {
+          text: 'edited recalled message',
+          selection: { start: 23, end: 23 },
+        },
+      });
+    });
+
+    expect(handled).toBe(true);
+    expect(mocks.historyMoveDown).toHaveBeenCalledWith('edited recalled message');
+    expect(mocks.onChangeText).toHaveBeenCalledWith('draft');
+  });
+
+  it('resumes a paused retained history session from ArrowDown at the input end', async () => {
+    mocks.historyIsBrowsing.mockReturnValue(false);
+    mocks.historyHasRetainedSession.mockReturnValue(true);
+    mocks.historyMoveDown.mockReturnValue('draft');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="edited recalled message"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({
+        key: 'ArrowDown',
+        shiftKey: false,
+        inputState: {
+          text: 'edited recalled message',
+          selection: { start: 23, end: 23 },
+        },
+      });
+    });
+
+    expect(handled).toBe(true);
+    expect(mocks.historyMoveDown).toHaveBeenCalledWith('edited recalled message');
+    expect(mocks.onChangeText).toHaveBeenCalledWith('draft');
+  });
+
+  it('pauses retained history browsing when the user moves the cursor', async () => {
+    mocks.historyIsBrowsing.mockReturnValue(true);
+    mocks.historyHasRetainedSession.mockReturnValue(true);
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="previous message"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'previous message', selection: { start: 4, end: 4 } });
+    });
+
+    expect(mocks.historyPause).toHaveBeenCalledWith('previous message');
+    expect(mocks.historyReset).not.toHaveBeenCalled();
+  });
+
+  it('does not exit history browsing for the state change caused by applying a history entry', async () => {
+    mocks.historyIsBrowsing.mockReturnValue(true);
+    mocks.historyMoveUp.mockReturnValue('older message');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="previous message"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'previous message', selection: { start: 0, end: 0 } });
+    });
+    mocks.historyReset.mockClear();
+
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'ArrowUp', shiftKey: false });
+    });
+
+    expect(mocks.historyReset).not.toHaveBeenCalled();
+  });
+
+  it('warms session history when the composer receives focus', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value=""
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onFocus?.();
+    });
+
+    expect(mocks.historyWarmup).toHaveBeenCalledTimes(1);
   });
 });

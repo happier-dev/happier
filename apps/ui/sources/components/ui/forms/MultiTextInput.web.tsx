@@ -6,12 +6,10 @@ import { Typography } from '@/constants/Typography';
 import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import { useLocalSetting } from '@/sync/store/hooks';
 import { extractWebAttachmentFilesFromDataTransfer } from '@/utils/files/webAttachmentDataTransfer';
-import { normalizeKeyboardKeyPressEvent, type KeyPressEvent } from '@/keyboard/events';
+import { normalizeKeyboardKeyPressEvent, type KeyPressEvent as KeyboardKeyPressEvent } from '@/keyboard/events';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from './multiTextInputTypography';
 
-export type { KeyPressEvent, SupportedKey } from '@/keyboard/events';
-
-export type OnKeyPressCallback = (event: KeyPressEvent) => boolean;
+export type { SupportedKey } from '@/keyboard/events';
 
 export interface TextInputState {
     text: string;
@@ -20,6 +18,12 @@ export interface TextInputState {
         end: number;
     };
 }
+
+export type KeyPressEvent = KeyboardKeyPressEvent & Readonly<{
+    inputState?: TextInputState;
+}>;
+
+export type OnKeyPressCallback = (event: KeyPressEvent) => boolean;
 
 export interface MultiTextInputHandle {
     setTextAndSelection: (text: string, selection: { start: number; end: number }) => void;
@@ -133,7 +137,16 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         });
         if (!keyEvent) return;
 
-        const handled = onKeyPress(keyEvent);
+        const handled = onKeyPress({
+            ...keyEvent,
+            inputState: {
+                text: e.currentTarget.value,
+                selection: {
+                    start: e.currentTarget.selectionStart,
+                    end: e.currentTarget.selectionEnd,
+                },
+            },
+        });
         if (handled) {
             e.preventDefault();
         }

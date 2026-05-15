@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,6 +13,8 @@ const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() => vi.fn(() => 
 let hasUnreadMessagesValue = false;
 let platformOs: 'ios' | 'android' | 'web' = 'web';
 let workingIndicatorStyle: 'spinner' | 'pulse' = 'spinner';
+let sessionListIdentityDisplay: 'avatar' | 'agentLogo' | 'none' = 'avatar';
+let sessionListActiveColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive' = 'activityAndAttention';
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -69,7 +72,12 @@ installSessionShellCommonModuleMocks({
             useSessionListRenderableWithServerScope: useSessionListRenderableWithServerScopeSpy,
             useSessionListActivityTimeLabel: () => '1m',
             useSessionListMeaningfulActivityAt: () => 60_000,
-            useSetting: (key: string) => key === 'sessionListNarrowWorkingIndicatorStyle' ? workingIndicatorStyle : undefined,
+            useSetting: (key: string) => {
+                if (key === 'sessionListNarrowWorkingIndicatorStyle') return workingIndicatorStyle;
+                if (key === 'sessionListIdentityDisplay') return sessionListIdentityDisplay;
+                if (key === 'sessionListActiveColorModeV1') return sessionListActiveColorMode;
+                return undefined;
+            },
         });
     },
 });
@@ -80,6 +88,15 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: (props: any) => React.createElement('Avatar', props),
+}));
+
+vi.mock('@/agents/registry/AgentIcon', () => ({
+    AgentIcon: (props: any) => React.createElement('AgentIcon', props),
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+    DEFAULT_AGENT_ID: 'codex',
+    resolveAgentIdFromFlavor: (flavor: string | null | undefined) => flavor === 'claude' ? 'claude' : null,
 }));
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
@@ -170,22 +187,46 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return style as Record<string, unknown>;
 }
 
-function createSession(id: string) {
+function createSession(
+    id: string,
+    metadata: ReturnType<typeof createSessionFixture>['metadata'] = null,
+) {
     return createSessionFixture({
         id,
         active: true,
         activeAt: 1,
         createdAt: 1,
         updatedAt: 1,
-        metadata: null,
+        metadata,
         presence: 'online',
     });
+}
+
+function findRowContentStyle(screen: Awaited<ReturnType<typeof renderScreen>>, sessionId: string): Record<string, unknown> {
+    const row = screen.findByTestId(`session-list-item-${sessionId}`);
+    const children = row?.children ?? [];
+    const content = children.find((child: unknown) => {
+        if (!child || typeof child !== 'object' || !('props' in child)) return false;
+        const style = flattenStyle((child as { props: { style?: unknown } }).props.style);
+        return style.flex === 1;
+    }) as { props: { style?: unknown } } | undefined;
+    return flattenStyle(content?.props.style);
+}
+
+function findSessionTitleText(screen: Awaited<ReturnType<typeof renderScreen>>, title: string) {
+    return screen.findAllByType('Text').find((node) => node.props.children === title);
+}
+
+function styleEntries(style: unknown): unknown[] {
+    return Array.isArray(style) ? style : [style];
 }
 
 describe('SessionItem activity time', () => {
     beforeEach(() => {
         hasUnreadMessagesValue = false;
         workingIndicatorStyle = 'spinner';
+        sessionListIdentityDisplay = 'avatar';
+        sessionListActiveColorMode = 'activityAndAttention';
         platformOs = 'web';
         mockSessionStatus = {
             ...defaultSessionStatus,
@@ -300,6 +341,228 @@ describe('SessionItem activity time', () => {
         const titleStyle = flattenStyle(title?.props.style);
         expect(titleStyle.fontSize).toBe(14);
         expect(titleStyle.lineHeight).toBe(18);
+    });
+
+    it('renders an 18px micro avatar in very compact web rows with title spacing', async () => {
+        platformOs = 'web';
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_compact_avatar_web')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+
+        expect(screen.findByType('Avatar' as any)?.props).toMatchObject({
+            id: 'avatar',
+            size: 18,
+        });
+        expect(findRowContentStyle(screen, 'sess_compact_avatar_web').marginLeft).toBe(8);
+    });
+
+    it('uses a 20px micro avatar for very compact native phone rows', async () => {
+        platformOs = 'ios';
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_compact_avatar_phone')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+
+        expect(screen.findByType('Avatar' as any)?.props.size).toBe(20);
+        expect(findRowContentStyle(screen, 'sess_compact_avatar_phone').marginLeft).toBe(8);
+    });
+
+    it('renders the selected agent logo in the same narrow identity slot', async () => {
+        sessionListIdentityDisplay = 'agentLogo';
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_agent_logo_narrow', { flavor: 'claude' } as any)}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+
+        expect(screen.findAllByType('Avatar' as any)).toHaveLength(0);
+        expect(screen.findByType('AgentIcon' as any)?.props).toMatchObject({
+            agentId: 'claude',
+            size: 14,
+            testID: 'session-list-agent-logo-sess_agent_logo_narrow',
+        });
+        expect(findRowContentStyle(screen, 'sess_agent_logo_narrow').marginLeft).toBe(8);
+    });
+
+    it('passes the resolved title color to agent logos for active rows without attention', async () => {
+        sessionListIdentityDisplay = 'agentLogo';
+        mockSessionStatus = {
+            state: 'waiting',
+            isConnected: true,
+            statusText: 'online',
+            shouldShowStatus: false,
+            statusColor: '#34C759',
+            statusDotColor: '#34C759',
+            isPulsing: false,
+        };
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_agent_logo_idle', { flavor: 'claude' } as any)}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+
+        const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
+        const titleStyleEntries = styleEntries(findSessionTitleText(screen, 'Session')?.props.style);
+        const explicitTitleColorStyle = titleStyleEntries[titleStyleEntries.length - 1] as { color?: unknown } | undefined;
+        expect(titleStyle.color).toBe(lightTheme.colors.text.secondary);
+        expect(explicitTitleColorStyle).toMatchObject({ color: titleStyle.color });
+        expect(screen.findByType('AgentIcon' as any)?.props.color).toBe(explicitTitleColorStyle?.color);
+    });
+
+    it('can use the active title color for all active connected session rows', async () => {
+        sessionListIdentityDisplay = 'agentLogo';
+        sessionListActiveColorMode = 'allActive';
+        mockSessionStatus = {
+            state: 'waiting',
+            isConnected: true,
+            statusText: 'online',
+            shouldShowStatus: false,
+            statusColor: '#34C759',
+            statusDotColor: '#34C759',
+            isPulsing: false,
+        };
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_agent_logo_all_active', { flavor: 'claude' } as any)}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+
+        const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
+        expect(titleStyle.color).toBe(lightTheme.colors.text.primary);
+        expect(screen.findByType('AgentIcon' as any)?.props.color).toBe(titleStyle.color);
+    });
+
+    it('can keep working rows secondary when only attention rows use active color', async () => {
+        sessionListIdentityDisplay = 'agentLogo';
+        sessionListActiveColorMode = 'attentionOnly';
+        mockSessionStatus = {
+            state: 'thinking',
+            isConnected: true,
+            statusText: 'Working on it',
+            shouldShowStatus: true,
+            statusColor: '#07f',
+            statusDotColor: '#0f0',
+            isPulsing: true,
+        };
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_agent_logo_attention_only', { flavor: 'claude' } as any)}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+
+        const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
+        expect(titleStyle.color).toBe(lightTheme.colors.text.secondary);
+        expect(screen.findByType('AgentIcon' as any)?.props.color).toBe(titleStyle.color);
+    });
+
+    it('hides the session list identity slot across row densities when identity display is none', async () => {
+        sessionListIdentityDisplay = 'none';
+        const { SessionItem } = await import('./SessionItem');
+
+        const detailed = await renderScreen(
+            <SessionItem
+                session={createSession('sess_identity_none_detailed')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+        expect(detailed.findAllByType('Avatar' as any)).toHaveLength(0);
+        expect(detailed.findAllByType('AgentIcon' as any)).toHaveLength(0);
+
+        standardCleanup();
+
+        const narrow = await renderScreen(
+            <SessionItem
+                session={createSession('sess_identity_none_narrow')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+        expect(narrow.findAllByType('Avatar' as any)).toHaveLength(0);
+        expect(narrow.findAllByType('AgentIcon' as any)).toHaveLength(0);
+        expect(findRowContentStyle(narrow, 'sess_identity_none_narrow').marginLeft).toBe(0);
     });
 
     it('replaces trailing time with a spinner in very compact mode when the session is working', async () => {

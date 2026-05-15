@@ -212,7 +212,16 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+    getStorage: () => Object.assign(
+        (selector: any) => selector({ sessionMessages: {} }),
+        {
+            getState: () => ({
+                localSettings: {
+                    uiContentWidthMode: 'comfortable',
+                },
+            }),
+        },
+    ),
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -220,6 +229,7 @@ vi.mock('@/sync/store/hooks', () => ({
         if (key === 'uiBackdropBlurEnabled') return backdropBlurEnabled;
         return 1;
     },
+    useSessionServerId: () => null,
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -307,6 +317,8 @@ describe('AgentInput (attachments drag overlay)', () => {
 
             const overlay = rendered.container.querySelector('[data-testid="agent-input-drop-overlay"]');
             expect(overlay).not.toBeNull();
+            expect((overlay as HTMLElement).style.backdropFilter).toBe('blur(2px)');
+            expect(((overlay as HTMLElement).style as CSSStyleDeclaration & { WebkitBackdropFilter?: string }).WebkitBackdropFilter).toBe('blur(2px)');
         } finally {
             await act(async () => {
                 rendered.root.unmount();

@@ -619,6 +619,26 @@ export default function RootLayout() {
                     options={rootStackRouteOptions.hiddenHeader}
                 />
                 <Stack.Screen
+                    name="projects/index"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="projects/[workspaceRefId]/index"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="projects/[workspaceRefId]/files"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="projects/[workspaceRefId]/git"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
+                    name="projects/[workspaceRefId]/details"
+                    options={rootStackRouteOptions.hiddenHeader}
+                />
+                <Stack.Screen
                     name="session/[id]/index"
                     options={rootStackRouteOptions.hiddenHeader}
                 />

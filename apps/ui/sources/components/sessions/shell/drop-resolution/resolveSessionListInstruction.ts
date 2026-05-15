@@ -1,0 +1,69 @@
+import { resolveTreeInstruction, type TreeDropResult, type WindowPointer } from '@/components/ui/treeDragDrop';
+import { resolveSessionListIndexFolderDragEligibility } from '@/sync/domains/sessionList/sessionListIndex';
+import { SESSION_FOLDER_MAX_DEPTH } from '@/sync/domains/session/folders/constants';
+
+import type {
+    SessionListInstructionBlockReason,
+    SessionListTreeDragSource,
+    SessionListTreeDropResult,
+    SessionListTreeModel,
+} from './sessionListTreeTypes';
+
+function blocked(reason: SessionListInstructionBlockReason): SessionListTreeDropResult {
+    return {
+        instruction: { kind: 'blocked', reason: 'workspace-scope-mismatch' },
+        visual: { kind: 'none' },
+        sessionListBlockReason: reason,
+    };
+}
+
+function resolveEligibilityBlock(params: Readonly<{
+    source: SessionListTreeDragSource;
+    foldersFeatureEnabled: boolean;
+}>): SessionListInstructionBlockReason | null {
+    const eligibility = resolveSessionListIndexFolderDragEligibility(params.source.metadata.item, {
+        foldersFeatureEnabled: params.foldersFeatureEnabled,
+    });
+    if (eligibility.reason === 'eligible') return null;
+    if (eligibility.reason === 'feature-disabled') return 'feature-disabled';
+    if (eligibility.reason === 'direct-session') return 'direct-session';
+    return 'unsupported-item';
+}
+
+export function resolveSessionListInstruction(params: Readonly<{
+    tree: SessionListTreeModel;
+    source: SessionListTreeDragSource;
+    pointer: WindowPointer | null;
+    foldersFeatureEnabled: boolean;
+    maxDepth?: number;
+}>): SessionListTreeDropResult {
+    const eligibilityBlock = resolveEligibilityBlock({
+        source: params.source,
+        foldersFeatureEnabled: params.foldersFeatureEnabled,
+    });
+    if (eligibilityBlock) return blocked(eligibilityBlock);
+
+    const resolved: TreeDropResult = resolveTreeInstruction({
+        rows: params.tree.rows,
+        dropZones: params.tree.dropZones,
+        source: params.source,
+        pointer: params.pointer,
+        rules: {
+            maxDepth: params.maxDepth ?? SESSION_FOLDER_MAX_DEPTH,
+            canMoveToRoot: (_source, zone) => zone.rootId === params.source.metadata.rootId,
+            canNestInto: (_source, targetId) => {
+                const target = params.tree.rowMetadataById.get(targetId);
+                if (!target) return false;
+                if (target.kind === 'session') return false;
+                return target.rootId === params.source.metadata.rootId;
+            },
+            canReorderAround: (_source, target) => {
+                const targetMetadata = params.tree.rowMetadataById.get(target.id);
+                if (!targetMetadata) return false;
+                return targetMetadata.rootId === params.source.metadata.rootId;
+            },
+        },
+    });
+
+    return resolved;
+}

@@ -128,6 +128,7 @@ import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultI
 import { cancelRunningTools } from "./helpers/cancelRunningApprovedTools";
 import type { OrphanToolResultBucket } from "./helpers/orphanToolResults";
 import { isDebugFlagEnabled } from "./helpers/debugFlags";
+import type { ClaudeTaskListTodo } from "./helpers/claudeTaskListTodos";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -227,6 +228,9 @@ export type ReducerState = {
      * even when providers emit interleaved keepalive chunks or the reducer processes messages in separate invocations.
      */
     sidechainThinkingMergeCursors: Map<string, string>;
+    claudeTaskToolTodos: Map<string, ClaudeTaskListTodo>;
+    claudeTaskCreateToolUseIdToTodoId: Map<string, string>;
+    claudeTaskListToolUseIds: Set<string>;
     latestTodos?: {
         todos: Array<{
             content: string;
@@ -261,6 +265,9 @@ export function createReducer(): ReducerState {
         thinkingMergeCursor: null,
         thinkingSegmentKeyToMessageId: new Map(),
         sidechainThinkingMergeCursors: new Map(),
+        claudeTaskToolTodos: new Map(),
+        claudeTaskCreateToolUseIdToTodoId: new Map(),
+        claudeTaskListToolUseIds: new Set(),
     };
 }
 

@@ -34,9 +34,9 @@ const sunsetDarkSeed = {
     'state.active.background': 'rgba(208,106,73,0.11)',
     'state.active.border': 'rgba(208,106,73,0.26)',
     'state.active.foreground': '#D06A49',
-    'state.success.foreground': '#8CB89A',
-    'state.success.background': 'rgba(140,184,154,0.11)',
-    'state.success.border': 'rgba(140,184,154,0.24)',
+    'state.success.foreground': '#66DC7E',
+    'state.success.background': 'rgba(102,220,126,0.11)',
+    'state.success.border': 'rgba(102,220,126,0.24)',
     'state.warning.foreground': '#E0B65A',
     'state.warning.background': 'rgba(224,182,90,0.10)',
     'state.warning.border': 'rgba(224,182,90,0.22)',
@@ -70,11 +70,36 @@ const sunsetDarkSeed = {
     'message.user.background': '#221C1C',
     'message.event.foreground': '#8A817C',
     'syntax.keyword': '#D06A49',
-    'syntax.string': '#8CB89A',
+    'syntax.string': '#66DC7E',
     'syntax.comment': '#6C625D',
     'syntax.number': '#E0B65A',
     'syntax.function': '#E9A06C',
     'overlay.scrim': 'rgba(19,17,17,0.72)',
+};
+
+const classicDarkSeed = {
+    'background.canvas': '#181818',
+    'surface.base': '#202020',
+    'surface.inset': '#171717',
+    'surface.elevated': '#292929',
+    'surface.selected': '#2C2C2C',
+    'surface.pressed': '#2C2C2C',
+    'text.primary': '#ffffff',
+    'text.secondary': '#99999d',
+    'text.link': '#2BACCC',
+    'text.destructive': '#FF453A',
+    'state.active.foreground': '#0A84FF',
+    'state.success.foreground': '#32D74B',
+    'state.warning.foreground': '#FF9F0A',
+    'state.danger.foreground': '#FF453A',
+    'control.segmentedControl.trackBackground': '#292929',
+    'control.button.primary.background': '#1b1b1b',
+    'control.input.background': '#303030',
+    'message.user.background': '#2C2C2C',
+    'syntax.keyword': '#569CD6',
+    'versionControl.added.foreground': '#34C759',
+    'permission.acceptEdits': '#0A84FF',
+    'overlay.scrim': 'rgba(0, 0, 0, 0.45)',
 };
 
 const tokyoNightSeed = {
@@ -374,6 +399,7 @@ describe('built-in theme profiles', () => {
             'sunsetDark',
             'tokyoNight',
             'nightDark',
+            'classicDark',
             'catppuccinMocha',
             'catppuccinMacchiato',
             'catppuccinFrappe',
@@ -391,6 +417,7 @@ describe('built-in theme profiles', () => {
         expect(getBuiltInThemeProfileDefinition('premiumLight')).toMatchObject({ cloneable: true, editable: false, deletable: false, preferredMode: 'light' });
         expect(getBuiltInThemeProfileDefinition('nightDark')).toMatchObject({ cloneable: true, editable: false, deletable: false, preferredMode: 'dark' });
         expect(getBuiltInThemeProfileDefinition('sunsetDark')).toMatchObject({ cloneable: true, editable: false, deletable: false, preferredMode: 'dark' });
+        expect(getBuiltInThemeProfileDefinition('classicDark')).toMatchObject({ cloneable: true, editable: false, deletable: false, preferredMode: 'dark' });
         expect(getBuiltInThemeProfileDefinition('catppuccinLatte')).toMatchObject({ cloneable: true, editable: false, deletable: false, preferredMode: 'light' });
         expect(getBuiltInThemeProfileDefinition('catppuccinFrappe')).toMatchObject({ cloneable: true, editable: false, deletable: false, preferredMode: 'dark' });
         expect(getBuiltInThemeProfileDefinition('catppuccinMacchiato')).toMatchObject({ cloneable: true, editable: false, deletable: false, preferredMode: 'dark' });
@@ -406,6 +433,8 @@ describe('built-in theme profiles', () => {
         expect(Object.keys(BUILT_IN_THEME_PROFILES.find((definition) => definition.presetId === 'pitchDark')?.profile.overrides.dark ?? {}).length).toBeGreaterThan(20);
         expect(BUILT_IN_THEME_PROFILES.find((definition) => definition.presetId === 'sunsetDark')?.profile.overrides.dark).toMatchObject(sunsetDarkSeed);
         expect(Object.keys(BUILT_IN_THEME_PROFILES.find((definition) => definition.presetId === 'sunsetDark')?.profile.overrides.dark ?? {}).length).toBeGreaterThan(20);
+        expect(BUILT_IN_THEME_PROFILES.find((definition) => definition.presetId === 'classicDark')?.profile.overrides.dark).toMatchObject(classicDarkSeed);
+        expect(Object.keys(BUILT_IN_THEME_PROFILES.find((definition) => definition.presetId === 'classicDark')?.profile.overrides.dark ?? {}).length).toBeGreaterThan(50);
         expect(BUILT_IN_THEME_PROFILES.find((definition) => definition.presetId === 'tokyoNight')?.profile.overrides.dark).toMatchObject(tokyoNightSeed);
         expect(Object.keys(BUILT_IN_THEME_PROFILES.find((definition) => definition.presetId === 'tokyoNight')?.profile.overrides.dark ?? {}).length).toBeGreaterThan(20);
         expect(getBuiltInThemeProfileDefinition('premiumLight')?.profile.overrides.light).toEqual(premiumLightSeed);
@@ -500,6 +529,6 @@ describe('built-in theme profiles', () => {
         const clone = createThemeProfileDraft({ id: 'clone', name: 'My Crisp Dark', now: '2026-05-11T00:00:00.000Z', sourceProfile: builtIn });
         const reset = resetThemeProfileDraftToken(clone, 'dark', 'background.canvas', '2026-05-11T00:01:00.000Z');
 
-        expect(resolveThemeProfile({ mode: 'dark', profile: reset }).colors.background.canvas).toBe('#181818');
+        expect(resolveThemeProfile({ mode: 'dark', profile: reset }).colors.background.canvas).toBe('#131111');
     });
 });

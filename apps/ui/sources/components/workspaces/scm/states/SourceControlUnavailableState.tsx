@@ -8,6 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
+import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode } from '@happier-dev/protocol';
 
 function sanitizeDetails(details: string | null): string | null {
     if (!details) return null;
@@ -25,13 +26,34 @@ function sanitizeDetails(details: string | null): string | null {
     return trimmed.length > 220 ? `${trimmed.slice(0, 220)}…` : trimmed;
 }
 
+/**
+ * Map the snapshot/RPC error onto a user-facing body string.
+ *
+ * Branch on the structured errorCode first (single source of truth) and only fall back to the
+ * raw `details` string for legacy callers that don't pass an errorCode. The previous behavior
+ * matched the literal `RPC method not available` string, which mislabelled the "session has no
+ * machine binding" case (sessionScm bail-out) as "daemon unreachable".
+ */
+function resolveBodyKey(errorCode: string | undefined, rawDetails: string): 'errors.sourceControlUnavailableForSession' | 'errors.daemonUnavailableBody' | 'errors.tryAgain' {
+    if (errorCode === SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE) {
+        return 'errors.sourceControlUnavailableForSession';
+    }
+    // Legacy: pre-errorCode callers — match the raw string only as a fallback.
+    if (rawDetails === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE) {
+        return 'errors.daemonUnavailableBody';
+    }
+    return 'errors.tryAgain';
+}
+
 export function SourceControlUnavailableState(props: {
     details?: string | null;
+    errorCode?: ScmOperationErrorCode | string | null;
     onRetry?: () => void;
 }): React.ReactElement {
     const { theme } = useUnistyles();
     const trimmedDetails = typeof props.details === 'string' ? props.details.trim() : '';
-    const isDaemonUnavailable = trimmedDetails === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE;
+    const errorCode = typeof props.errorCode === 'string' && props.errorCode.length > 0 ? props.errorCode : undefined;
+    const bodyKey = resolveBodyKey(errorCode, trimmedDetails);
     const details = sanitizeDetails(props.details ?? null);
 
     return (
@@ -66,7 +88,7 @@ export function SourceControlUnavailableState(props: {
                     ...Typography.default(),
                 }}
             >
-                {isDaemonUnavailable ? t('errors.daemonUnavailableBody') : t('errors.tryAgain')}
+                {t(bodyKey)}
             </Text>
 
             {details && (

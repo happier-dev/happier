@@ -19,6 +19,11 @@ describe('extractWorkspaceFileMentions', () => {
         expect(extractWorkspaceFileMentions('Install @scope/package before editing @src/api.ts')).toEqual(['src/api.ts']);
     });
 
+    it('ignores package version references in command text', () => {
+        expect(extractWorkspaceFileMentions('Run npx --yes eas-cli@18.0.1 update')).toEqual([]);
+        expect(extractWorkspaceFileMentions('Install react@19.0.0-rc.0 before editing @src/api.ts')).toEqual(['src/api.ts']);
+    });
+
     it('ignores non-path mentions', () => {
         expect(extractWorkspaceFileMentions('Thanks @bob for the help')).toEqual([]);
     });

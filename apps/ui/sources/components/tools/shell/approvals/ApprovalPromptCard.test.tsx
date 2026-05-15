@@ -10,6 +10,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 const executeAction = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
 const sessionAllow = vi.hoisted(() => vi.fn(async () => {}));
 const sessionDeny = vi.hoisted(() => vi.fn(async () => {}));
+const routerPush = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -32,6 +33,10 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
+}));
+
+vi.mock('expo-router', () => ({
+    useRouter: () => ({ push: routerPush }),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -166,6 +171,28 @@ describe('ApprovalPromptCard', () => {
         );
 
         expect(screen.getTextContent()).toContain('Recent sessions will be listed.');
+    });
+
+    it('opens the originating transcript tool when a location is available', async () => {
+        const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
+        routerPush.mockClear();
+
+        const screen = await renderScreen(
+            <ApprovalPromptCard
+                artifact={approvalArtifact()}
+                approval={approvalRequest()}
+                sessionId="s1"
+                metadata={null}
+                canApprovePermissions={true}
+                location={{ kind: 'top', messageId: 'tool:tool-1', seq: 10 }}
+            />,
+        );
+
+        const viewTool = screen.findByTestId('approval-prompt-view-tool');
+        expect(viewTool).toBeTruthy();
+        await pressTestInstanceAsync(viewTool, 'approval-prompt-view-tool');
+
+        expect(routerPush).toHaveBeenCalledWith('/session/s1?jumpSeq=10');
     });
 
     it('renders a disabled explanation instead of decision controls when approval is not allowed', async () => {

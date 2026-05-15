@@ -7,6 +7,17 @@ vi.mock('@/sync/domains/input/suggestionFile', () => ({
 vi.mock('@/sync/domains/input/suggestionCommands', () => ({
     searchCommands: vi.fn(async () => [
         { command: 'goal', description: 'Set or inspect the session goal' },
+        {
+            command: 'qa',
+            description: 'QA prompt',
+            promptInvocation: {
+                invocationId: 'tmpl_1',
+                token: '/qa',
+                targetArtifactId: 'artifact_prompt_1',
+                behavior: 'insert',
+                allowArgs: false,
+            },
+        },
     ]),
 }));
 
@@ -22,6 +33,24 @@ describe('autocomplete suggestions', () => {
             label: '/goal',
             description: 'Set or inspect the session goal',
             rowHeight: 52,
+        });
+    });
+
+    it('carries prompt invocation metadata on slash command suggestions', async () => {
+        const { getCommandSuggestions } = await import('./suggestions');
+
+        const suggestions = await getCommandSuggestions('s1', '/qa');
+
+        expect(suggestions.find((suggestion) => suggestion.key === 'cmd-qa')).toMatchObject({
+            key: 'cmd-qa',
+            text: '/qa',
+            promptInvocation: {
+                invocationId: 'tmpl_1',
+                token: '/qa',
+                targetArtifactId: 'artifact_prompt_1',
+                behavior: 'insert',
+                allowArgs: false,
+            },
         });
     });
 });

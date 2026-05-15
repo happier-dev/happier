@@ -76,6 +76,11 @@ export function createStorageModuleStub<TOverrides extends object>(
         useAllSessionListAttentionRows: () => allSessionListAttentionRows,
         useMachine: (machineId: string) => store.getState().machines[machineId] ?? null,
         useSession: () => null,
+        useSessionWorkspacePath: () => null,
+        useSessionRpcAvailabilityState: () => ({
+            sessionExists: false,
+            sessionRpcAvailable: false,
+        }),
         useProjectForSession: (sessionId: string | null) => {
             if (typeof sessionId !== 'string' || sessionId.trim().length === 0) {
                 return null;

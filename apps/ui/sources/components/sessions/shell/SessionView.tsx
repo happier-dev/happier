@@ -1,4 +1,4 @@
-import { AgentInput } from '@/components/sessions/agentInput';
+import { AgentInput, type AgentInputAutocompleteSelectionHandler } from '@/components/sessions/agentInput';
 import type { AgentInputAttachment } from '@/components/sessions/agentInput/agentInputContracts';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
@@ -22,7 +22,7 @@ import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import { Modal } from '@/modal';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
-import { storage, useArtifacts, useAutomations, useEndpointConnectivity, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionPendingMessages, useSessionSubagentSourceMessages, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings, useSyncError, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { storage, useArtifacts, useAutomations, useEndpointConnectivity, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionSubagentSourceMessages, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings, useSyncError, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
@@ -39,6 +39,8 @@ import { filterReviewCommentDraftsIncludedInPrompt } from '@/sync/domains/input/
 import { buildReviewCommentsOutboundMessage } from '@/sync/domains/input/reviewComments/buildReviewCommentsOutboundMessage';
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
+import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
+import { resolvePromptInvocationAutocompleteSelection } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
 import {
     supportsSessionModeOverrides, } from '@/sync/domains/sessionControl/sessionModeControl';
@@ -78,7 +80,7 @@ import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions'
 import { Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import * as React from 'react';
-import { Platform, Pressable, View, useWindowDimensions } from 'react-native';
+import { Keyboard, Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useUnistyles } from 'react-native-unistyles';
 import { sessionSwitch } from '@/sync/ops';
@@ -398,6 +400,9 @@ export const SessionView = React.memo((props: {
         }
         const workspaceModeToggleActionId = resolveMobileWorkspaceExperienceToggleActionId(mobileWorkspaceExperience);
         if (actionId === workspaceModeToggleActionId && showWorkspaceExperienceToggle) {
+            if (actionId === 'header.openMobileWorkspaceCockpit') {
+                Keyboard.dismiss();
+            }
             if (mobileWorkspaceExperience === 'cockpit' && pathname === `/session/${sessionId}`) {
                 routerRef.current.replace(buildCurrentSessionHref() as any);
             }
@@ -623,6 +628,15 @@ function SessionViewLoaded({
     const [message, setMessage] = React.useState('');
     const realtimeStatus = useRealtimeStatus();
     const isLoaded = committedMessagesLoaded;
+    const { messages: committedMessages } = useSessionMessages(sessionId);
+    const pendingPermissionRequests = React.useMemo(
+        () => listPendingPermissionRequests(session, committedMessages),
+        [committedMessages, session],
+    );
+    const pendingUserActionRequests = React.useMemo(
+        () => listPendingUserActionRequests(session, committedMessages),
+        [committedMessages, session],
+    );
     const openToTranscriptTelemetryRef = React.useRef<{
         recorded: boolean;
         sessionId: string;
@@ -1254,6 +1268,7 @@ function SessionViewLoaded({
                       onRequestSwitchToRemote={isHiddenSystemSessionSession || !canRequestRemoteControl ? undefined : handleRequestSwitchToRemote}
                       directControlFooter={directControlFooter}
                       jumpToSeq={jumpToSeq}
+                      approvalRequests={approvalRequests}
                       onViewportChange={handleTranscriptViewportChange}
                   />
               ) : null}
@@ -1376,6 +1391,19 @@ function SessionViewLoaded({
         pane.setRightTab('files');
     }, [multiPaneDeviceType, multiPaneEnabled, pane, pathname, router, sessionId, windowWidth]);
 
+    const getAutocompleteSuggestions = React.useCallback((query: string) => {
+        return getSuggestions(sessionId, query);
+    }, [sessionId]);
+
+    const handleAutocompleteSuggestionSelect = React.useCallback<AgentInputAutocompleteSelectionHandler>(async (args) => {
+        try {
+            return await resolvePromptInvocationAutocompleteSelection(args);
+        } catch (error) {
+            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage'));
+            return { handled: true };
+        }
+    }, []);
+
     const input = shouldShowInput ? (
         <View>
             {voiceEnabled && voiceProviderId !== 'off' && !isHiddenSystemSessionSession ? <VoiceSurface variant="session" sessionId={sessionId} /> : null}
@@ -1449,9 +1477,9 @@ function SessionViewLoaded({
                 attachments={attachmentsUploadsEnabled ? agentInputAttachments : undefined}
                 onAttachmentsAdded={attachmentsUploadsEnabled ? addAttachments : undefined}
                 hasSendableAttachments={hasIncludedReviewCommentDrafts || (attachmentsUploadsEnabled && attachmentDrafts.length > 0)}
-                permissionRequests={listPendingPermissionRequests(session)}
+                permissionRequests={pendingPermissionRequests}
                 approvalRequests={approvalRequests}
-                userActionRequests={listPendingUserActionRequests(session)}
+                userActionRequests={pendingUserActionRequests}
                 canApprovePermissions={transcriptInteraction.canApprovePermissions}
                 permissionDisabledReason={transcriptInteraction.permissionDisabledReason}
                 permissionMode={permissionMode}
@@ -1529,7 +1557,6 @@ function SessionViewLoaded({
 
                         if (hasAttachments) {
                             fireAndForget((async () => {
-                                markComposerSent();
                                 try {
                                     const readyForSend = await externalSessionTakeover.ensureReadyForSend();
                                     if (!readyForSend) {
@@ -1594,6 +1621,7 @@ function SessionViewLoaded({
                                         clearSentReviewCommentDrafts();
                                     }
                                     attachmentDraftManager.clearDrafts();
+                                    markComposerSent();
                                 } catch (e) {
                                     setMessage(previousMessage);
                                     Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
@@ -1830,7 +1858,7 @@ function SessionViewLoaded({
                                     argsText: resolved.rest,
                                 });
 
-                                if (resolved.behavior === 'insert') {
+                                if (resolvePromptInvocationComposerSendAction(resolved.behavior) === 'insert') {
                                     setMessage(expanded);
                                     return;
                                 }
@@ -1888,7 +1916,8 @@ function SessionViewLoaded({
                 onFileViewerPress={openFileViewer}
                 // Autocomplete configuration
                 autocompletePrefixes={['@', '/']}
-                autocompleteSuggestions={(query) => getSuggestions(sessionId, query)}
+                autocompleteSuggestions={getAutocompleteSuggestions}
+                onAutocompleteSuggestionSelect={handleAutocompleteSuggestionSelect}
                 disabled={isReadOnly}
                 usageData={sessionUsageWithContextWindowTokens ? {
                     inputTokens: sessionUsageWithContextWindowTokens.inputTokens,

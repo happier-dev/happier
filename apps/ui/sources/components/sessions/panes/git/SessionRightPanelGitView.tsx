@@ -646,9 +646,12 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         (request: { name: string; checkout: true; startPoint?: string }) => sessionScmBranchCreate(props.sessionId, request),
         [props.sessionId],
     );
+    const publishProviderKind = effectiveScmSnapshot?.hostingProvider?.kind ?? null;
     const describePublishTargets = React.useCallback(
-        () => sessionScmHostingRepositoryDescribePublishTargets(props.sessionId, { providerKind: 'github' }),
-        [props.sessionId],
+        () => sessionScmHostingRepositoryDescribePublishTargets(props.sessionId, {
+            ...(publishProviderKind ? { providerKind: publishProviderKind } : {}),
+        }),
+        [props.sessionId, publishProviderKind],
     );
     const publishRepository = React.useCallback(
         (request: Parameters<typeof sessionScmHostingRepositoryPublish>[1]) => sessionScmHostingRepositoryPublish(props.sessionId, request),

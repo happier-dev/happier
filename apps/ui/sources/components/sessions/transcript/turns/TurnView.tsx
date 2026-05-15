@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { useMessage } from '@/sync/domains/state/storage';
 
 import { MessageView } from '@/components/sessions/transcript/MessageView';
@@ -19,6 +20,7 @@ const TurnMessageRow = React.memo(function TurnMessageRow(props: {
     messageId: string;
     metadata: Metadata | null;
     forcePermissionPromptsInTranscript?: boolean;
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
     activeThinkingMessageId: string | null;
     getMessageById?: (messageId: string) => Message | null;
     resolveThinkingExpanded?: (messageId: string) => boolean;
@@ -52,6 +54,7 @@ const TurnMessageRow = React.memo(function TurnMessageRow(props: {
                         metadata={props.metadata}
                         sessionId={props.sessionId}
                         forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
+                        approvalRequests={props.approvalRequests}
                         activeThinkingMessageId={props.activeThinkingMessageId}
                         thinkingExpanded={controlledThinking ? resolveThinkingExpanded(message.id) : undefined}
                         onThinkingExpandedChange={controlledThinking ? (next) => setThinkingExpanded(message.id, next) : undefined}
@@ -70,6 +73,7 @@ export const TurnView = React.memo((props: {
     metadata: Metadata | null;
     sessionId: string;
     forcePermissionPromptsInTranscript?: boolean;
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
     activeThinkingMessageId: string | null;
     getMessageById?: (messageId: string) => Message | null;
     expandedToolCallsAnchorMessageIds: ReadonlySet<string>;
@@ -88,6 +92,7 @@ export const TurnView = React.memo((props: {
                     messageId={props.turn.userMessageId}
                     metadata={props.metadata}
                     forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
+                    approvalRequests={props.approvalRequests}
                     activeThinkingMessageId={props.activeThinkingMessageId}
                     getMessageById={props.getMessageById}
                     resolveThinkingExpanded={props.resolveThinkingExpanded}
@@ -106,6 +111,7 @@ export const TurnView = React.memo((props: {
                             messageId={c.messageId}
                             metadata={props.metadata}
                             forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
+                            approvalRequests={props.approvalRequests}
                             activeThinkingMessageId={props.activeThinkingMessageId}
                             getMessageById={props.getMessageById}
                             resolveThinkingExpanded={props.resolveThinkingExpanded}
@@ -124,6 +130,7 @@ export const TurnView = React.memo((props: {
                         toolMessageIds={c.toolMessageIds}
                         metadata={props.metadata}
                         forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
+                        approvalRequests={props.approvalRequests}
                         getMessageById={props.getMessageById}
                         expanded={c.toolMessageIds.some((id) => props.expandedToolCallsAnchorMessageIds.has(id))}
                         onSetExpanded={props.setToolCallsGroupExpanded}

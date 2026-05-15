@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createNativeThemePreferenceTransitionController } from './nativeThemePreferenceTransitionController';
 
 describe('native theme preference transition controller', () => {
-    it('captures the current surface before applying the theme and revealing the new surface', async () => {
+    it('captures the current surface before applying the theme and mounts the overlay afterward', async () => {
         const events: string[] = [];
         const controller = createNativeThemePreferenceTransitionController({
             animateOverlay: vi.fn(async () => {
@@ -22,6 +22,9 @@ describe('native theme preference transition controller', () => {
             waitForFrame: vi.fn(async () => {
                 events.push('frame');
             }),
+            recordBreadcrumb: (breadcrumb) => {
+                events.push(`breadcrumb:${breadcrumb.phase}`);
+            },
         });
 
         await controller.run(() => {
@@ -30,8 +33,10 @@ describe('native theme preference transition controller', () => {
 
         expect(events).toEqual([
             'capture',
-            'show:file://theme-before.png',
+            'breadcrumb:mutation-before-overlay',
             'mutate',
+            'breadcrumb:overlay-shown',
+            'show:file://theme-before.png',
             'frame',
             'animate',
             'hide',

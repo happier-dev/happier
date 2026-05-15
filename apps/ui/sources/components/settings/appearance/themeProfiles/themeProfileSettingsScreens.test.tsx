@@ -241,6 +241,7 @@ describe('Theme profile settings screen', () => {
             'sunsetDark',
             'tokyoNight',
             'nightDark',
+            'classicDark',
             'catppuccinMocha',
             'catppuccinMacchiato',
             'catppuccinFrappe',

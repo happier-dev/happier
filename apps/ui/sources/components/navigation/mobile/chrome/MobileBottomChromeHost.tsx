@@ -3,10 +3,9 @@ import { Animated, Platform, View } from 'react-native';
 import { useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useAuth } from '@/auth/context/AuthContext';
-import { useLocalSetting, useLocalSettingMutable, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useLocalSetting, useLocalSettingMutable, useSetting } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { isMobileWorkspaceCockpitEnabled } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
 import {
@@ -16,7 +15,6 @@ import {
     resolveSessionRoutePathForSurface,
     type SessionMobileSurface,
 } from '@/components/workspaceCockpit/session/sessionCockpitState';
-import { SessionCockpitModeSwipeGesture } from '@/components/workspaceCockpit/session/SessionCockpitModeSwipeGesture';
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 
@@ -75,7 +73,6 @@ export const MobileBottomChromeHost = React.memo(() => {
     }>();
     const auth = useAuth();
     const deviceType = useDeviceType();
-    const keyboardHeight = useKeyboardHeight();
     const reduceMotion = useReducedMotionPreference();
     const { activeTab, setActiveTab } = useMainAppTabState();
     const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
@@ -84,11 +81,9 @@ export const MobileBottomChromeHost = React.memo(() => {
     const projectLastMobileSurfaceByWorkspaceRefId = useLocalSetting('projectLastMobileSurfaceByWorkspaceRefId');
     const [, setSessionLastMobileSurfaceBySessionId] = useLocalSettingMutable('sessionLastMobileSurfaceBySessionId');
     const [, setProjectLastMobileSurfaceByWorkspaceRefId] = useLocalSettingMutable('projectLastMobileSurfaceByWorkspaceRefId');
-    const [, setMobileWorkspaceExperience] = useSettingMutable('mobileWorkspaceExperienceV1');
     const cockpitRegistration = useSessionCockpitChromeRegistration();
     const explicitMobileSurfaceHint = normalizeRouteParam(params.mobileSurface);
     const routeServerId = normalizeRouteParam(params.serverId);
-    const softwareKeyboardVisible = deviceType === 'phone' && keyboardHeight > 0;
 
     const model = resolveMobileBottomChromeModel({
         isAuthenticated: auth.isAuthenticated,
@@ -128,23 +123,7 @@ export const MobileBottomChromeHost = React.memo(() => {
         router.replace(resolveSessionRoutePathForSurface(sessionId, surface, { serverId: routeServerId }));
     }, [cockpitRegistration, persistSessionSurface, routeServerId, router]);
 
-    const handleCloseMobileWorkspaceCockpit = React.useCallback((sessionId: string) => {
-        const matchingRegistration =
-            cockpitRegistration?.sessionId === sessionId
-                ? cockpitRegistration
-                : null;
-        if (matchingRegistration) {
-            matchingRegistration.closeCockpit();
-            return;
-        }
-        setMobileWorkspaceExperience('classic');
-    }, [cockpitRegistration, setMobileWorkspaceExperience]);
-
     const resolvedChrome = React.useMemo((): BottomChromeItem | null => {
-        if (softwareKeyboardVisible) {
-            return null;
-        }
-
         if (model.kind === 'mainAppTabs') {
             if (deviceType !== 'phone') {
                 return null;
@@ -179,19 +158,12 @@ export const MobileBottomChromeHost = React.memo(() => {
                 key: `session:${model.sessionId}`,
                 signature: `session:${model.sessionId}:${activeSurface}:${terminalTabAvailable ? 'terminal' : 'no-terminal'}:${routeServerId ?? 'default-server'}`,
                 node: (
-                    <SessionCockpitModeSwipeGesture
-                        direction="close"
-                        enabled={deviceType === 'phone'}
-                        onIntent={() => handleCloseMobileWorkspaceCockpit(model.sessionId)}
-                        testID={`session-cockpit-close-swipe-${model.sessionId}`}
-                    >
-                        <SessionCockpitTabBar
-                            sessionId={model.sessionId}
-                            activeSurface={activeSurface}
-                            terminalTabAvailable={terminalTabAvailable}
-                            onSurfacePress={(surface) => handleSessionCockpitSurfacePress(model.sessionId, surface)}
-                        />
-                    </SessionCockpitModeSwipeGesture>
+                    <SessionCockpitTabBar
+                        sessionId={model.sessionId}
+                        activeSurface={activeSurface}
+                        terminalTabAvailable={terminalTabAvailable}
+                        onSurfacePress={(surface) => handleSessionCockpitSurfacePress(model.sessionId, surface)}
+                    />
                 ),
             };
         }
@@ -236,7 +208,6 @@ export const MobileBottomChromeHost = React.memo(() => {
         activeTab,
         cockpitRegistration,
         deviceType,
-        handleCloseMobileWorkspaceCockpit,
         handleSessionCockpitSurfacePress,
         mobileWorkspaceExperience,
         model,
@@ -248,7 +219,6 @@ export const MobileBottomChromeHost = React.memo(() => {
         setProjectLastMobileSurfaceByWorkspaceRefId,
         projectLastMobileSurfaceByWorkspaceRefId,
         handleMainAppTabPress,
-        softwareKeyboardVisible,
     ]);
     const [renderedChrome, setRenderedChrome] = React.useState<Readonly<{
         current: BottomChromeItem | null;

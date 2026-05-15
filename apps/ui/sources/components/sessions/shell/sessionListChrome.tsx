@@ -500,6 +500,10 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
     onAddSubfolder: () => void | Promise<void>;
     onRename: () => void | Promise<void>;
     onDelete: () => void | Promise<void>;
+    onMove?: () => void;
+    onMoveToWorkspaceRoot?: () => void;
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
     item: Extract<SessionListIndexItem, { type: 'header' }>;
     onRegisterDropTarget?: RegisterSessionFolderDropTarget;
     activeDropTargetId?: string | null;
@@ -530,8 +534,8 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
         onRegister: props.onRegisterDropTarget,
     });
     const isActiveDropTarget = dropTarget ? props.activeDropTargetId === `folder:${dropTarget.folderId}` : false;
-    const menuItems = React.useMemo((): DropdownMenuItem[] => [
-        {
+    const menuItems = React.useMemo((): DropdownMenuItem[] => {
+        const items: DropdownMenuItem[] = [{
             id: 'new-session',
             title: t('sessionsList.newSessionInFolder'),
             icon: <Ionicons name="add-circle-outline" size={16} color={iconColor} />,
@@ -542,8 +546,16 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
             title: t('sessionsList.addSubfolder'),
             icon: <Ionicons name="folder-open-outline" size={16} color={iconColor} />,
             disabled: props.disabled,
-        },
-        {
+        }];
+        if (typeof props.onMove === 'function') {
+            items.push({
+                id: 'move',
+                title: t('sessionsList.moveToFolder'),
+                icon: <Ionicons name="move-outline" size={16} color={iconColor} />,
+                disabled: props.disabled,
+            });
+        }
+        items.push({
             id: 'rename',
             title: t('sessionsList.renameFolder'),
             icon: <Ionicons name="pencil-outline" size={16} color={iconColor} />,
@@ -554,18 +566,56 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
             title: t('sessionsList.deleteFolder'),
             icon: <Ionicons name="trash-outline" size={16} color={iconColor} />,
             disabled: props.disabled,
-        },
-    ], [iconColor, props.disabled]);
+        });
+        return items;
+    }, [iconColor, props.disabled, props.onMove]);
     const handleMenuSelect = React.useCallback(async (itemId: string) => {
         if (props.disabled) return;
         if (itemId === 'new-session') {
             props.onNewSession();
         } else if (itemId === 'add-subfolder') {
             await props.onAddSubfolder();
+        } else if (itemId === 'move') {
+            props.onMove?.();
         } else if (itemId === 'rename') {
             await props.onRename();
         } else if (itemId === 'delete') {
             await props.onDelete();
+        }
+    }, [props]);
+    const folderAccessibilityActions = React.useMemo(() => {
+        const actions: Array<{ name: string; label: string }> = [];
+        if (typeof props.onMoveUp === 'function') {
+            actions.push({ name: 'moveUp', label: t('common.moveUp') });
+        }
+        if (typeof props.onMoveDown === 'function') {
+            actions.push({ name: 'moveDown', label: t('common.moveDown') });
+        }
+        if (typeof props.onMove === 'function') {
+            actions.push({ name: 'moveToFolder', label: t('sessionsList.moveToFolder') });
+        }
+        if (typeof props.onMoveToWorkspaceRoot === 'function') {
+            actions.push({ name: 'moveToWorkspaceRoot', label: t('sessionsList.moveToWorkspaceRoot') });
+        }
+        return actions;
+    }, [props.onMove, props.onMoveDown, props.onMoveToWorkspaceRoot, props.onMoveUp]);
+    const handleFolderAccessibilityAction = React.useCallback((event: { nativeEvent?: { actionName?: string } }) => {
+        if (props.disabled) return;
+        switch (event.nativeEvent?.actionName) {
+            case 'moveUp':
+                props.onMoveUp?.();
+                break;
+            case 'moveDown':
+                props.onMoveDown?.();
+                break;
+            case 'moveToFolder':
+                props.onMove?.();
+                break;
+            case 'moveToWorkspaceRoot':
+                props.onMoveToWorkspaceRoot?.();
+                break;
+            default:
+                break;
         }
     }, [props]);
     const headerTestId = `session-folder-header-${props.item.folderId ?? props.title}`;
@@ -608,6 +658,8 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
                     onPress={props.disabled ? undefined : props.onPress}
                     accessibilityRole="button"
                     accessibilityLabel={props.title}
+                    accessibilityActions={folderAccessibilityActions}
+                    onAccessibilityAction={folderAccessibilityActions.length > 0 ? handleFolderAccessibilityAction : undefined}
                     disabled={props.disabled}
                 >
                     <Ionicons name="folder-outline" size={14} color={iconColor} />

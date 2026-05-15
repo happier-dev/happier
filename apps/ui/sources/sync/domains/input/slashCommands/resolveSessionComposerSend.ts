@@ -1,5 +1,5 @@
 import { parseSessionSlashCommand } from './parseSessionSlashCommand';
-import type { ActionId, PromptInvocationsV1 } from '@happier-dev/protocol';
+import type { ActionId, PromptInvocationBehaviorV1, PromptInvocationsV1 } from '@happier-dev/protocol';
 import { normalizePromptInvocationTokenV1 } from '@happier-dev/protocol';
 import { findBuiltInPrompt } from './builtInPrompts';
 import { renderPromptTemplateTextV1 } from './renderPromptTemplateTextV1';
@@ -14,7 +14,7 @@ export type SessionComposerSendResolution =
         token: string;
         title: string;
         targetArtifactId: string;
-        behavior: 'insert' | 'insert_and_send';
+        behavior: PromptInvocationBehaviorV1;
         allowArgs: boolean;
         rest: string;
     };
@@ -99,7 +99,10 @@ export function resolveSessionComposerSend(args: {
 
                     const invocationId = typeof (entry as any).id === 'string' ? String((entry as any).id) : '';
                     const title = typeof (entry as any).title === 'string' ? String((entry as any).title) : token;
-                    const behavior = (entry as any).behavior === 'insert_and_send' ? 'insert_and_send' : 'insert';
+                    const rawBehavior = typeof (entry as any).behavior === 'string' ? String((entry as any).behavior) : '';
+                    const behavior = rawBehavior === 'insert_and_send' || rawBehavior === 'insert_on_send'
+                        ? rawBehavior
+                        : 'insert';
                     const targetArtifactId = typeof (entry as any).target?.artifactId === 'string'
                         ? String((entry as any).target.artifactId)
                         : '';

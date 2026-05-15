@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { installSourceControlStateCommonModuleMocks } from './sourceControlStateTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,6 +31,7 @@ describe('SourceControlUnavailableState', () => {
 
     const textNodes = screen.findAllByType('Text');
     expect(textNodes.some((node) => node.props.children === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE)).toBe(false);
+    // No errorCode → legacy fallback path renders daemon-unavailable body
     expect(textNodes.some((node) => node.props.children === 'errors.daemonUnavailableBody')).toBe(true);
   });
 
@@ -41,5 +43,29 @@ describe('SourceControlUnavailableState', () => {
 
     const textNodes = screen.findAllByType('Text');
     expect(textNodes.some((node) => node.props.children === RPC_ERROR_MESSAGES.METHOD_NOT_FOUND)).toBe(false);
+  });
+
+  it('renders session-scoped body when errorCode is BACKEND_UNAVAILABLE', async () => {
+    const { SourceControlUnavailableState } = await import('./SourceControlUnavailableState');
+    const screen = await renderScreen(
+      <SourceControlUnavailableState
+        details={RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE}
+        errorCode={SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE}
+      />
+    );
+
+    const textNodes = screen.findAllByType('Text');
+    // Must NOT misleadingly say the daemon is unavailable when the real cause is a missing session→machine binding.
+    expect(textNodes.some((node) => node.props.children === 'errors.daemonUnavailableBody')).toBe(false);
+    expect(textNodes.some((node) => node.props.children === 'errors.sourceControlUnavailableForSession')).toBe(true);
+  });
+
+  it('falls back to try-again body when no errorCode and no recognizable details', async () => {
+    const { SourceControlUnavailableState } = await import('./SourceControlUnavailableState');
+    const screen = await renderScreen(<SourceControlUnavailableState details="something else" />);
+
+    const textNodes = screen.findAllByType('Text');
+    expect(textNodes.some((node) => node.props.children === 'errors.tryAgain')).toBe(true);
+    expect(textNodes.some((node) => node.props.children === 'errors.daemonUnavailableBody')).toBe(false);
   });
 });

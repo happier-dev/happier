@@ -995,10 +995,19 @@ describe('ChangedFilesReview', () => {
 
     const theme = {
         colors: {
-            surface: '#111',
+            surface: {
+                base: '#111',
+                inset: '#181818',
+            },
             surfaceHigh: '#222',
+            border: {
+                default: '#333',
+            },
             divider: '#333',
-            text: '#eee',
+            text: {
+                primary: '#eee',
+                secondary: '#aaa',
+            },
             textSecondary: '#aaa',
             textLink: '#08f',
             warning: '#f80',
@@ -1031,6 +1040,57 @@ describe('ChangedFilesReview', () => {
     const fileA = { fileName: 'a.ts', filePath: 'src', fullPath: 'src/a.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
     const fileB = { fileName: 'b.ts', filePath: 'src', fullPath: 'src/b.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
     const fileC = { fileName: 'c.ts', filePath: 'src', fullPath: 'src/c.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
+
+    function makeReviewTheme(overrides: Readonly<{ secondaryText?: string }> = {}) {
+        return {
+            colors: {
+                surface: {
+                    inset: '#181818',
+                },
+                border: {
+                    default: '#333',
+                },
+                text: {
+                    secondary: overrides.secondaryText ?? '#aaa',
+                },
+            },
+        };
+    }
+
+    it('treats equivalent theme token objects as stable for memoized review props', async () => {
+        const { areChangedFilesReviewPropsEqual } = await import('./ChangedFilesReview');
+        expect(areChangedFilesReviewPropsEqual).toBeTypeOf('function');
+
+        const baseProps = {
+            theme: makeReviewTheme(),
+            sessionId: 's1',
+            snapshot: null,
+            changedFilesViewMode: 'repository',
+            attributionReliability: 'high',
+            allRepositoryChangedFiles: [],
+            sessionAttributedFiles: [],
+            repositoryOnlyFiles: [],
+            suppressedInferredCount: 0,
+            maxFiles: 25,
+            maxChangedLines: 1_000,
+            onFilePress: () => {},
+        };
+
+        expect(areChangedFilesReviewPropsEqual(baseProps as any, {
+            ...baseProps,
+            theme: makeReviewTheme(),
+        } as any)).toBe(true);
+
+        expect(areChangedFilesReviewPropsEqual(baseProps as any, {
+            ...baseProps,
+            theme: makeReviewTheme({ secondaryText: '#bbb' }),
+        } as any)).toBe(false);
+
+        expect(areChangedFilesReviewPropsEqual(baseProps as any, {
+            ...baseProps,
+            onFilePress: () => {},
+        } as any)).toBe(false);
+    });
 
     async function renderChangedFilesReview(overrides: Record<string, unknown> = {}) {
         const { ChangedFilesReview } = await import('./ChangedFilesReview');

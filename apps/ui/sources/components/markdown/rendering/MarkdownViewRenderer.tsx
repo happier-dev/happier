@@ -35,11 +35,17 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
         markdown: props.markdown,
         mode: props.streamingMode,
     });
+    const sourceRangeInteractionsActive = Boolean(
+        props.onPressSourceRange ||
+        props.renderAfterSourceRange ||
+        props.highlightSourceRange,
+    );
     const segments = React.useMemo(() => splitMarkdownRenderSegments({
         markdown: preparedMarkdown,
         streamingMode: props.streamingMode,
         streamingRepair: 'prepared',
-    }), [preparedMarkdown, props.streamingMode]);
+        splitEnrichedSourceRanges: sourceRangeInteractionsActive,
+    }), [preparedMarkdown, props.streamingMode, sourceRangeInteractionsActive]);
     const streamingReveal = props.streamingMode === 'streaming' && props.streamingAnimated === true;
     const staticRenderPlaceholder = useDelayedStaticMarkdownRenderPlaceholder({
         enabled:

@@ -11,6 +11,7 @@ import { resolveStatusBarStyleForThemePreference } from '@/components/ui/layout/
 import {
     runThemePreferenceChange as defaultRunThemePreferenceChange,
     type ThemePreferenceChangeInput,
+    type ThemeTransitionPlatform,
 } from '@/components/settings/appearance/themePreferenceTransition';
 import {
     loadLocalSettings as defaultLoadLocalSettings,
@@ -19,6 +20,7 @@ import {
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { applyLocalSettings, localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { addBreadcrumbIfEnabled } from '@/utils/system/sentry';
 import { findThemeProfileById } from './themeProfilePersistence';
 import { resolveThemeProfile } from './resolveThemeProfile';
 import type { ThemeProfilesLocalStateV1 } from './themeProfileTypes';
@@ -38,9 +40,21 @@ type ApplyThemeRuntimeSelectionInput = Readonly<{
     themePreference: ThemePreference;
     themeProfiles: ThemeProfilesLocalStateV1;
     systemTheme?: AppThemeName | null;
+    platform?: string;
     unistylesRuntime?: ThemeRuntimeUnistylesAdapter;
     setSystemBackgroundColor?: (color: string) => Promise<unknown> | void;
     resolveThemes?: (themeProfiles: ThemeProfilesLocalStateV1) => ThemeRuntimeThemes;
+    recordBreadcrumb?: (breadcrumb: ThemeRuntimeBreadcrumb) => void;
+}>;
+
+type ThemeRuntimeBreadcrumb = Readonly<{
+    phase: 'resolved' | 'update-all-themes' | 'update-visual-theme' | 'set-adaptive-themes' | 'set-theme' | 'root-background';
+    themePreference: ThemePreference;
+    platform: string;
+    activeProfileId: string | null;
+    systemTheme: AppThemeName | null;
+    visualTheme?: AppThemeName;
+    themeName?: AppThemeName;
 }>;
 
 type ResolveThemeRuntimeStartupThemesInput = Readonly<{
@@ -61,7 +75,7 @@ type ActivateThemeProfileInput = Readonly<{
     forceAnimate?: boolean;
     reduceMotion?: boolean;
     systemTheme?: AppThemeName | null;
-    platform?: string;
+    platform?: ThemeTransitionPlatform;
     loadLocalSettings?: () => Pick<LocalSettings, 'themePreference' | 'themeProfiles'>;
     saveLocalSettings?: (settings: LocalSettings) => void;
     runThemePreferenceChange?: (input: ThemePreferenceChangeInput) => Promise<void>;
@@ -167,26 +181,80 @@ export const resolveThemeRuntimeStartupThemes = (
 
 const getSystemTheme = (): AppThemeName => (Appearance.getColorScheme() === 'dark' ? 'dark' : 'light');
 
+const resolveRuntimePlatform = (input: ApplyThemeRuntimeSelectionInput): string => input.platform ?? Platform.OS;
+
+const isNativeRuntimePlatform = (platform: string): boolean => platform !== 'web';
+
+const recordThemeRuntimeBreadcrumb = (
+    input: ApplyThemeRuntimeSelectionInput,
+    breadcrumb: Omit<ThemeRuntimeBreadcrumb, 'themePreference' | 'platform' | 'activeProfileId' | 'systemTheme'> & Readonly<{
+        platform: string;
+        systemTheme: AppThemeName | null;
+    }>,
+): void => {
+    const data: ThemeRuntimeBreadcrumb = {
+        ...breadcrumb,
+        themePreference: input.themePreference,
+        activeProfileId: input.themeProfiles.activeProfileId ?? null,
+    };
+    const record = input.recordBreadcrumb ?? ((nextBreadcrumb: ThemeRuntimeBreadcrumb) => {
+        addBreadcrumbIfEnabled({
+            category: 'theme.runtime',
+            level: 'info',
+            data: nextBreadcrumb,
+        });
+    });
+
+    record(data);
+};
+
 const applyThemesToUnistyles = (
     themes: ThemeRuntimeThemes,
     input: ApplyThemeRuntimeSelectionInput,
 ): void => {
     const runtime = input.unistylesRuntime ?? defaultUnistylesRuntimeAdapter;
-    runtime.updateTheme('light', () => themes.light);
-    runtime.updateTheme('dark', () => themes.dark);
+    const platform = resolveRuntimePlatform(input);
+    const systemTheme = input.systemTheme ?? getSystemTheme();
+    const visualTheme = resolveThemeRuntimeVisualTheme(input.themePreference, systemTheme);
+
+    recordThemeRuntimeBreadcrumb(input, { phase: 'resolved', platform, systemTheme, visualTheme });
+
+    if (isNativeRuntimePlatform(platform)) {
+        recordThemeRuntimeBreadcrumb(input, {
+            phase: 'update-visual-theme',
+            platform,
+            systemTheme,
+            visualTheme,
+            themeName: visualTheme,
+        });
+        runtime.updateTheme(visualTheme, () => themes[visualTheme]);
+    } else {
+        recordThemeRuntimeBreadcrumb(input, { phase: 'update-all-themes', platform, systemTheme, visualTheme });
+        runtime.updateTheme('light', () => themes.light);
+        runtime.updateTheme('dark', () => themes.dark);
+    }
 
     if (input.themePreference === 'adaptive') {
+        recordThemeRuntimeBreadcrumb(input, { phase: 'set-adaptive-themes', platform, systemTheme, visualTheme });
         runtime.setAdaptiveThemes(true);
     } else {
         runtime.setAdaptiveThemes(false);
+        recordThemeRuntimeBreadcrumb(input, {
+            phase: 'set-theme',
+            platform,
+            systemTheme,
+            visualTheme,
+            themeName: input.themePreference,
+        });
         runtime.setTheme(input.themePreference);
     }
 
     const background = resolveEffectiveThemeRuntimeBackground({
         themes,
         themePreference: input.themePreference,
-        systemTheme: input.systemTheme ?? getSystemTheme(),
+        systemTheme,
     });
+    recordThemeRuntimeBreadcrumb(input, { phase: 'root-background', platform, systemTheme, visualTheme });
     runtime.setRootViewBackgroundColor(background);
     const setSystemBackgroundColor = input.setSystemBackgroundColor ?? SystemUI.setBackgroundColorAsync;
     fireAndForget(Promise.resolve(setSystemBackgroundColor(background)), { tag: 'themeProfileRuntime.setSystemBackgroundColor' });

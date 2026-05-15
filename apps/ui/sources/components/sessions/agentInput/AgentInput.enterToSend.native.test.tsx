@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
     inputBlur: vi.fn(),
     suggestionMoveUp: vi.fn(),
     suggestionMoveDown: vi.fn(),
+    activeSuggestions: [] as Array<{ key: string; text: string; label?: string }>,
+    activeSuggestionIndex: -1,
 }));
 
 const settingState = vi.hoisted(() => ({
@@ -87,6 +89,7 @@ installAgentInputCommonModuleMocks({
 
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
+    useSessionServerId: () => null,
 }));
 
 vi.mock('expo-image', () => ({
@@ -160,7 +163,7 @@ vi.mock('@/components/autocomplete/useActiveWord', () => ({
 }));
 
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
-    useActiveSuggestions: () => [[], -1, mocks.suggestionMoveUp, mocks.suggestionMoveDown],
+    useActiveSuggestions: () => [mocks.activeSuggestions, mocks.activeSuggestionIndex, mocks.suggestionMoveUp, mocks.suggestionMoveDown],
 }));
 
 vi.mock('@/components/autocomplete/applySuggestion', () => ({
@@ -234,6 +237,8 @@ describe('AgentInput (enter to send on native)', () => {
         settingState.webEnterToSend = true;
         settingState.nativeEnterToSend = false;
         hardwareShiftEnterState.listener = null;
+        mocks.activeSuggestions = [];
+        mocks.activeSuggestionIndex = -1;
         vi.clearAllMocks();
     });
 
@@ -269,6 +274,49 @@ describe('AgentInput (enter to send on native)', () => {
 
         expect(flattenStyle(findNativeTextInput(existingSessionScreen).props.style).fontSize).toBe(16);
         expect(flattenStyle(findNativeTextInput(newSessionScreen).props.style).fontSize).toBe(16);
+    });
+
+    it('lets owners handle autocomplete suggestion selection before default insertion', async () => {
+        mocks.activeSuggestions = [{ key: 'cmd-qa', text: '/qa', label: '/qa' }];
+        mocks.activeSuggestionIndex = 0;
+        const onAutocompleteSuggestionSelect = vi.fn(async () => ({
+            handled: true,
+            text: 'Expanded QA prompt',
+            cursorPosition: 'Expanded QA prompt'.length,
+        }));
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                sessionId="session-1"
+                value="/qa"
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={['/']}
+                autocompleteSuggestions={async () => mocks.activeSuggestions as any}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+                onAutocompleteSuggestionSelect={onAutocompleteSuggestionSelect as any}
+            />
+        );
+
+        const input = findNativeTextInput(screen);
+
+        await act(async () => {
+            input.props.onKeyPress?.({
+                nativeEvent: { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false },
+                preventDefault: vi.fn(),
+            });
+        });
+
+        expect(onAutocompleteSuggestionSelect).toHaveBeenCalledWith(expect.objectContaining({
+            suggestion: expect.objectContaining({ key: 'cmd-qa', text: '/qa' }),
+            input: '/qa',
+            selection: { start: 3, end: 3 },
+        }));
+        expect(mocks.onChangeText).toHaveBeenCalledWith('Expanded QA prompt');
+        expect(mocks.onSend).not.toHaveBeenCalled();
     });
 
     it('does not submit from the native composer when only the web enter-to-send setting is enabled', async () => {

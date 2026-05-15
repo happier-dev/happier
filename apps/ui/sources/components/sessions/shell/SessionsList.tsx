@@ -46,6 +46,7 @@ function SessionsListViewContent(props: Readonly<{
                     rowHeight={viewState.rowHeight}
                     safeAreaBottom={safeArea.bottom}
                     renderItem={viewState.renderVirtualizedItem}
+                    rowExtraData={viewState.virtualizedRowExtraData}
                     onStopScrollEventPropagationOnWeb={(event: any) => {
                         // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
                         // that `preventDefault()` wheel/touch scroll, which breaks scrolling inside nested scroll views.

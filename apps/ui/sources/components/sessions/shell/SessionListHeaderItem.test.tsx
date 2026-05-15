@@ -2,20 +2,30 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { findGestureByKind, renderScreen } from '@/dev/testkit';
 
 import { SessionListHeaderItem } from './sessionListHeaderItem';
 
-const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((_: any) => ({ gesture: undefined, animatedStyle: {} })));
+vi.mock('react-native-gesture-handler', async () => {
+    const { createGestureHandlerMock } = await import('@/dev/testkit/mocks/gestureHandler');
+    return createGestureHandlerMock();
+});
+
+vi.mock('react-native-reanimated', () => ({
+    default: { View: (props: any) => React.createElement('Animated.View', props) },
+    useSharedValue: (initial: unknown) => ({ value: initial }),
+    useAnimatedStyle: (fn: () => unknown) => fn(),
+    withSpring: (value: unknown) => value,
+}));
+
+vi.mock('react-native-worklets', () => ({
+    scheduleOnRN: (fn: (...args: unknown[]) => void, ...args: unknown[]) => fn(...args),
+}));
 
 vi.mock('./sessionListChrome', () => ({
     ProjectGroupHeader: (props: any) => React.createElement('ProjectGroupHeader', props),
     FolderGroupHeader: (props: any) => React.createElement('FolderGroupHeader', props),
     CollapsibleSectionHeader: (props: any) => React.createElement('CollapsibleSectionHeader', props),
-}));
-
-vi.mock('./useSessionInlineDrag', () => ({
-    useSessionInlineDrag: (params: any) => useSessionInlineDragSpy(params),
 }));
 
 describe('SessionListHeaderItem', () => {
@@ -162,14 +172,22 @@ describe('SessionListHeaderItem', () => {
         expect(activeScreen.findByType('CollapsibleSectionHeader').props.showOrderingMenu).toBe(false);
     });
 
-    it('wires folder headers into the shared inline drag hook', async () => {
-        const dropIndicatorIdx = { value: -1 } as any;
-        const dropIndicatorEdge = { value: 0 } as any;
+    it('wires folder headers into the shared inline drag gesture', async () => {
+        const dropVisual = {
+            visualKind: { value: 0 as const },
+            visualTargetId: { value: null as string | null },
+            visualEdge: { value: null as 'top' | 'bottom' | null },
+            visualDepth: { value: 0 },
+        };
         const onFolderDragStart = vi.fn();
-        const onFolderDragEnd = vi.fn();
+        const onFolderDropResult = vi.fn();
         const onFolderDragUpdate = vi.fn();
+        const resolveDropResult = vi.fn(() => ({
+            instruction: { kind: 'idle' },
+            visual: { kind: 'none' },
+        } as const));
 
-        await renderScreen(
+        const screen = await renderScreen(
             <SessionListHeaderItem
                 item={{
                     type: 'header',
@@ -191,28 +209,21 @@ describe('SessionListHeaderItem', () => {
                 onResetWorkspaceName={vi.fn()}
                 onToggleCollapse={vi.fn()}
                 dataIndex={3}
-                totalItemCount={8}
-                dropIndicatorIdx={dropIndicatorIdx}
-                dropIndicatorEdge={dropIndicatorEdge}
+                dropVisual={dropVisual}
+                activeDropVisual={{ kind: 'none' }}
                 onFolderDragStart={onFolderDragStart}
-                onFolderDragEnd={onFolderDragEnd}
+                onFolderDropResult={onFolderDropResult}
                 onFolderDragUpdate={onFolderDragUpdate}
+                resolveDropResult={resolveDropResult}
                 activeFolderDropTargetId="folder:target"
             />,
         );
 
-        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({
-            enabled: true,
-            sessionKey: 'folder:folder_planning',
-            groupKey: 'folder:folder_planning',
-            rowHeight: 28,
-            dataIndex: 3,
-            totalItemCount: 8,
-            dropIndicatorIdx,
-            dropIndicatorEdge,
-            onDragStart: onFolderDragStart,
-            onDragUpdate: onFolderDragUpdate,
-        }));
-        expect(onFolderDragEnd).not.toHaveBeenCalled();
+        const panGesture = screen.root
+            .findAll((node) => String(node.type) === 'GestureDetector')
+            .map((node) => findGestureByKind(node.props.gesture, 'pan'))
+            .find(Boolean);
+        expect(panGesture).toBeTruthy();
+        expect(onFolderDropResult).not.toHaveBeenCalled();
     });
 });

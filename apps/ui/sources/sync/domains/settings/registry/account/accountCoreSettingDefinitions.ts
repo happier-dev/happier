@@ -5,11 +5,13 @@ import {
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 import { SessionFolderViewModeV1Schema } from '@/sync/domains/session/folders';
+import { SESSION_LIST_ATTENTION_PLACEMENT_MODE_VALUES } from '@/sync/domains/session/listing/sessionListAttentionPlacementTypes';
 
 export const SessionListDensitySchema = z.preprocess((raw) => {
     if (raw === 'compact') return 'cozy';
     return raw;
 }, z.enum(['detailed', 'cozy', 'narrow']));
+export const SessionListIdentityDisplaySchema = z.enum(['avatar', 'agentLogo', 'none']);
 
 export const SessionMessageSendModeSchema = z.enum(['agent_queue', 'interrupt', 'server_pending']);
 export const SessionBusySteerSendPolicySchema = z.enum(['steer_immediately', 'server_pending']);
@@ -142,7 +144,7 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
     },
     sessionListDensity: {
         schema: SessionListDensitySchema,
-        default: 'cozy',
+        default: 'narrow',
         description: 'Session list density: detailed (full), cozy (smaller), narrow (minimal)',
         storageScope: 'account',
         analytics: {
@@ -161,10 +163,24 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
             }),
         },
     },
+    sessionListIdentityDisplay: {
+        schema: SessionListIdentityDisplaySchema,
+        default: 'agentLogo',
+        description: 'Session list identity marker: generated avatar, agent logo, or none',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
     sessionListOrderingModeV1: {
         schema: z.enum(['custom', 'created', 'updated']),
         default: 'custom',
         description: 'Default session list ordering mode: custom manual order, created timestamp, or updated timestamp',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionListAttentionPromotionModeV1: {
+        schema: z.enum(SESSION_LIST_ATTENTION_PLACEMENT_MODE_VALUES),
+        default: 'off',
+        description: 'Session list attention placement mode: off, global section, or within current groups',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
@@ -249,6 +265,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: z.enum(['project', 'date']),
         default: 'date',
         description: 'How to group inactive sessions in the session list',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionListActiveColorModeV1: {
+        schema: z.enum(['activityAndAttention', 'attentionOnly', 'allActive']),
+        default: 'activityAndAttention',
+        description: 'Which session rows use the active title color in the session list',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },

@@ -12,6 +12,7 @@ import {
 } from '@/dev/testkit';
 import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import type { Theme } from '@/theme';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -925,7 +926,7 @@ describe('ChangedFilesReview', () => {
         standardCleanup();
     });
 
-    const theme = createThemeFixture();
+    const theme = createThemeFixture() as unknown as Theme;
 
     const snapshot = {
         projectKey: 'p',

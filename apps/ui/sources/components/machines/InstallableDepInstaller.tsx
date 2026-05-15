@@ -79,6 +79,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
     const installButtonLabel = props.depStatus?.installed
         ? (updateAvailable ? props.installLabels.update : props.installLabels.reinstall)
         : props.installLabels.install;
+    const installActionDisabled = isInstalling || props.capabilitiesStatus !== 'loaded';
 
     const runInstall = async () => {
         const isInstalled = props.depStatus?.installed === true;
@@ -146,8 +147,9 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 title={installButtonLabel}
                 subtitle={props.installModal.description}
                 icon={<Ionicons name="download-outline" size={22} color={theme.colors.text.secondary} />}
-                disabled={isInstalling || props.capabilitiesStatus === 'loading'}
+                disabled={installActionDisabled}
                 onPress={async () => {
+                    if (installActionDisabled) return;
                     const alertTitle = props.depStatus?.installed
                         ? (updateAvailable ? props.installModal.updateTitle : props.installModal.reinstallTitle)
                         : props.installModal.installTitle;

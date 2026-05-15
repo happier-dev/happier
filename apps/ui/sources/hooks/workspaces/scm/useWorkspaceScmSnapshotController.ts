@@ -7,10 +7,15 @@ import {
     type WorkspaceScopeBase,
 } from '@/sync/domains/workspaces/workspaceScope';
 
+export type WorkspaceScmSnapshotControllerError = Readonly<{
+    message: string;
+    errorCode: string | null;
+}>;
+
 export type UseWorkspaceScmSnapshotControllerResult = Readonly<{
     snapshot: ReturnType<typeof useWorkspaceScmSnapshot>;
     loading: boolean;
-    error: Error | null;
+    error: WorkspaceScmSnapshotControllerError | null;
     refresh: () => Promise<void>;
 }>;
 
@@ -29,11 +34,20 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
     const snapshotError = useWorkspaceScmSnapshotError(normalizedScope);
 
     const [loading, setLoading] = React.useState(false);
-    const error = React.useMemo(() => {
+    const error = React.useMemo<WorkspaceScmSnapshotControllerError | null>(() => {
         if (!snapshotError) return null;
-        const e = new Error(snapshotError.message);
-        return e;
-    }, [snapshotError?.message]);
+        const code =
+            typeof snapshotError === 'object'
+            && snapshotError !== null
+            && 'errorCode' in snapshotError
+            && typeof (snapshotError as { errorCode?: unknown }).errorCode === 'string'
+                ? ((snapshotError as { errorCode: string }).errorCode)
+                : null;
+        return {
+            message: snapshotError.message,
+            errorCode: code,
+        };
+    }, [snapshotError?.message, (snapshotError as { errorCode?: unknown } | null | undefined)?.errorCode]);
 
     const refresh = React.useCallback(async () => {
         if (!normalizedScope) return;

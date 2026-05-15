@@ -247,6 +247,60 @@ describe('DropdownMenu', () => {
         expect(onOpenChange).not.toHaveBeenCalledWith(false);
     });
 
+    it('opens submenu items without selecting the parent row', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const onOpenChange = vi.fn();
+        const onSelect = vi.fn();
+        const submenuAnchorRef = {
+            current: {
+                getBoundingClientRect: () => ({ width: 4, height: 48 }),
+            },
+        };
+
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: true,
+            onOpenChange,
+            items: [{
+                id: 'move-to-folder',
+                title: 'Move to folder',
+                submenu: {
+                    items: [
+                        { id: 'folder-root', title: 'Workspace root' },
+                        { id: 'folder-planning', title: 'Planning' },
+                    ],
+                },
+            }],
+            onSelect,
+            trigger: React.createElement('View'),
+        }));
+
+        const rootResults = screen.findByType('SelectableMenuResults' as any);
+        expect(typeof rootResults?.props?.onOpenSubmenu).toBe('function');
+
+        act(() => {
+            rootResults?.props?.onOpenSubmenu?.('move-to-folder', submenuAnchorRef);
+        });
+
+        expect(onSelect).not.toHaveBeenCalled();
+
+        const popovers = screen.findAllByType('Popover' as any);
+        expect(popovers).toHaveLength(2);
+        expect(popovers[1]?.props?.anchorRef).toBe(submenuAnchorRef);
+        expect(popovers[1]?.props?.placement).toBe('auto-horizontal');
+        expect(popovers[1]?.props?.boundaryRef).toBe(null);
+        expect(popovers[1]?.props?.portal?.web).toMatchObject({ target: 'body' });
+
+        const results = screen.findAllByType('SelectableMenuResults' as any);
+        expect(results).toHaveLength(2);
+
+        act(() => {
+            results[1]?.props?.onPressItem?.({ id: 'folder-planning' });
+        });
+
+        expect(onSelect).toHaveBeenCalledWith('folder-planning');
+        expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
     it('supports a static trigger node and keeps popover unmounted when closed', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const { Text } = await import('react-native');

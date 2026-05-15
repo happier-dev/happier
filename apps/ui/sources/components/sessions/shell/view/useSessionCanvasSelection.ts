@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
 
-import { resolveSelectedSessionIdForList } from '../resolveSelectedSessionIdForList';
+import { resolveSelectedSessionIdForList } from '@/sync/domains/session/listing/resolveSelectedSessionIdForList';
 
 export function useSessionCanvasSelection(params: Readonly<{
     selectable: boolean;

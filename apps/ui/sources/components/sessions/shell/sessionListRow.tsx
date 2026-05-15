@@ -1,67 +1,71 @@
 import React from 'react';
 import { View, Platform } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
 
 import { SessionItem } from './SessionItem';
-import { sessionListStyles } from './sessionListStyles';
-import { useSessionInlineDrag, type SessionInlineDragEndContext } from './useSessionInlineDrag';
+import {
+    useSessionInlineDrag,
+    type SessionInlineDragVisualSharedValues,
+    type UseSessionInlineDragDropResultEvent,
+    type UseSessionInlineDragResolveDropResultEvent,
+} from './useSessionInlineDrag';
+import type {
+    TreeDropResult,
+    TreeInstructionVisual,
+} from '@/components/ui/treeDragDrop';
+import type {
+    RegisterSessionListTreeRowBounds,
+    UnregisterSessionListTreeRowBounds,
+} from './SessionListHeaderFrame';
+import { SessionListDropIndicator } from './SessionListDropIndicator';
 
 export type SessionListRowProps = Readonly<
     Omit<React.ComponentProps<typeof SessionItem>, 'onTogglePinned' | 'onSetTags' | 'onNativeContextMenuOpenChange'> & {
         sessionKey: string | null;
+        treeRowId: string;
         groupKey: string;
-        rowHeight: number;
         reorderEnabled: boolean;
         onDragStart: (sessionKey: string) => void;
-        onDragEnd: (
-            sessionKey: string,
-            groupKey: string,
-            positionDelta: number,
-            context?: SessionInlineDragEndContext,
-        ) => void | Promise<void>;
-        onDragUpdate?: (event: Readonly<{
-            sessionKey: string;
-            groupKey: string;
-            positionDelta: number;
-            dataIndex: number;
-            absoluteX: number;
-            absoluteY: number;
-        }>) => void;
+        resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => TreeDropResult;
+        onDropResult: (event: UseSessionInlineDragDropResultEvent) => void | Promise<void>;
+        onDragUpdate?: (event: UseSessionInlineDragDropResultEvent) => void;
         onTogglePinnedSessionKey: ((sessionKey: string) => void) | null;
         onSetTagsSessionKey: ((sessionKey: string, newTags: string[]) => void) | null;
         onNativeContextMenuOpenChangeSessionKey: ((sessionKey: string, next: boolean) => void) | null;
         isDragActive: boolean;
         isBeingDragged: boolean;
         dataIndex: number;
-        totalItemCount: number;
-        dropIndicatorIdx: SharedValue<number>;
-        dropIndicatorEdge: SharedValue<number>;
+        dropVisual: SessionInlineDragVisualSharedValues;
+        activeDropVisual: TreeInstructionVisual;
+        onRegisterTreeRowBounds: RegisterSessionListTreeRowBounds;
+        onUnregisterTreeRowBounds: UnregisterSessionListTreeRowBounds;
     }
 >;
 
 export const SessionListRow = React.memo(function SessionListRow(props: SessionListRowProps) {
     const {
         sessionKey,
+        treeRowId,
         groupKey,
-        rowHeight,
         reorderEnabled,
         onDragStart,
-        onDragEnd,
+        onDropResult,
         onDragUpdate,
+        resolveDropResult,
         onTogglePinnedSessionKey,
         onSetTagsSessionKey,
         onNativeContextMenuOpenChangeSessionKey,
         isDragActive,
         isBeingDragged,
         dataIndex,
-        totalItemCount,
-        dropIndicatorIdx,
-        dropIndicatorEdge,
+        dropVisual,
+        activeDropVisual,
+        onRegisterTreeRowBounds,
+        onUnregisterTreeRowBounds,
         ...itemProps
     } = props;
 
-    const styles = sessionListStyles;
     const wrapperRef = React.useRef<View>(null);
 
     const getCellWrapper = React.useCallback((): HTMLElement | null => {
@@ -96,30 +100,34 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         onDragStart(nextSessionKey);
     }, [getCellWrapper, handleNativeContextMenuOpenChange, onDragStart]);
 
-    const handleInlineDragEnd = React.useCallback((nextSessionKey: string, nextGroupKey: string, delta: number, context?: SessionInlineDragEndContext) => {
+    const handleInlineDropResult = React.useCallback((event: UseSessionInlineDragDropResultEvent) => {
         const cellWrapper = getCellWrapper();
         if (cellWrapper) {
             cellWrapper.style.zIndex = '';
             cellWrapper.style.overflow = '';
         }
-        void onDragEnd(nextSessionKey, nextGroupKey, delta, context);
-    }, [getCellWrapper, onDragEnd]);
+        void onDropResult(event);
+    }, [getCellWrapper, onDropResult]);
 
     const isWeb = Platform.OS === 'web';
     const isIos = Platform.OS === 'ios';
-    const rowReorderEnabled = reorderEnabled && Platform.OS !== 'android';
+    const inlineDragEnabled = reorderEnabled && (isWeb || isIos);
+    const handleInlineLongPressActivated = React.useCallback(() => {
+        if (isWeb || isDragActive) return;
+        handleNativeContextMenuOpenChange(true);
+    }, [handleNativeContextMenuOpenChange, isDragActive, isWeb]);
+
     const { gesture, animatedStyle } = useSessionInlineDrag({
-        enabled: rowReorderEnabled,
+        enabled: inlineDragEnabled,
         sessionKey,
         groupKey,
-        rowHeight,
         onDragStart: handleInlineDragStart,
-        onDragEnd: handleInlineDragEnd,
+        onDropResult: handleInlineDropResult,
         onDragUpdate,
+        resolveDropResult,
+        onLongPressActivated: isIos ? handleInlineLongPressActivated : undefined,
         dataIndex,
-        totalItemCount,
-        dropIndicatorIdx,
-        dropIndicatorEdge,
+        dropVisual,
         activateAfterLongPressMs: isWeb ? undefined : 350,
     });
 
@@ -140,16 +148,13 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         ? 'none' as const
         : 'auto' as const;
 
-    const indicatorAnimatedStyle = useAnimatedStyle(() => {
-        const isTarget = dropIndicatorIdx.value === dataIndex;
-        const atBottom = dropIndicatorEdge.value === 1;
-        return {
-            opacity: isTarget ? 1 : 0,
-            top: atBottom ? undefined : 0,
-            bottom: atBottom ? 0 : undefined,
+    React.useEffect(() => {
+        return () => {
+            onUnregisterTreeRowBounds(treeRowId);
         };
-    });
-    const reorderGesture = rowReorderEnabled ? gesture : undefined;
+    }, [onUnregisterTreeRowBounds, treeRowId]);
+
+    const reorderGesture = inlineDragEnabled ? gesture : undefined;
 
     const sessionItem = (
         <SessionItem
@@ -157,19 +162,34 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
             onTogglePinned={onTogglePinnedSessionKey ? handleTogglePinned : null}
             onSetTags={onSetTagsSessionKey && sessionKey ? handleSetTags : null}
             onNativeContextMenuOpenChange={onNativeContextMenuOpenChangeSessionKey && sessionKey ? handleNativeContextMenuOpenChange : undefined}
-            reorderHandleGesture={isIos ? undefined : reorderGesture}
+            reorderHandleGesture={isWeb ? reorderGesture : undefined}
             isBeingDragged={isBeingDragged}
         />
     );
 
-    return (
-        <Animated.View ref={wrapperRef} style={animatedStyle} pointerEvents={rowPointerEvents}>
-            <Animated.View style={[styles.dropIndicator, indicatorAnimatedStyle]} pointerEvents="none" />
-            {isIos && reorderGesture ? (
-                <GestureDetector gesture={reorderGesture}>
-                    {sessionItem}
-                </GestureDetector>
-            ) : sessionItem}
+    const rowNode = (
+        <Animated.View
+            ref={wrapperRef}
+            collapsable={false}
+            style={animatedStyle}
+            pointerEvents={rowPointerEvents}
+            onLayout={() => onRegisterTreeRowBounds(treeRowId, wrapperRef.current)}
+        >
+            <SessionListDropIndicator
+                targetId={treeRowId}
+                visual={activeDropVisual}
+            />
+            {sessionItem}
         </Animated.View>
     );
+
+    if (isIos && reorderGesture) {
+        return (
+            <GestureDetector gesture={reorderGesture}>
+                {rowNode}
+            </GestureDetector>
+        );
+    }
+
+    return rowNode;
 });

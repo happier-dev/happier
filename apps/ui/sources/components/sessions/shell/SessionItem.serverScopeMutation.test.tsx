@@ -646,27 +646,46 @@ describe('SessionItem server-scoped mutations', () => {
                         depth: 0,
                         disabled: false,
                     },
+                    {
+                        id: 'session-folder-move-planning-review',
+                        folderId: 'planning-review',
+                        title: 'Review',
+                        depth: 1,
+                        disabled: false,
+                    },
                 ]}
                 onMoveToSessionFolder={moveToFolder}
             />,
         );
 
         const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
-            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session-folder-move-planning'),
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session.move-to-folder'),
         );
         expect(contextMenu).toBeTruthy();
-        expect(contextMenu!.props.items).toEqual(expect.arrayContaining([
+        expect(contextMenu!.props.items.some((item: any) => item?.id === 'session-folder-move-planning')).toBe(false);
+
+        const moveToFolderItem = contextMenu!.props.items.find((item: any) => item?.id === 'session.move-to-folder');
+        expect(moveToFolderItem).toEqual(expect.objectContaining({
+            id: 'session.move-to-folder',
+            title: 'sessionsList.moveToFolder',
+        }));
+        expect(moveToFolderItem.submenu.items).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 id: 'session-folder-move-root',
                 title: 'Workspace root',
-                category: 'sessionsList.moveToFolder',
             }),
             expect.objectContaining({
                 id: 'session-folder-move-planning',
                 title: 'Planning',
-                category: 'sessionsList.moveToFolder',
+            }),
+            expect.objectContaining({
+                id: 'session-folder-move-planning-review',
+                title: 'Review',
+                rowContainerStyle: expect.objectContaining({ paddingLeft: expect.any(Number) }),
             }),
         ]));
+        const rootMoveItem = moveToFolderItem.submenu.items.find((item: any) => item.id === 'session-folder-move-root');
+        expect(rootMoveItem.rowContainerStyle).toBeUndefined();
 
         await act(async () => {
             contextMenu!.props.onSelect('session-folder-move-planning');
@@ -677,6 +696,90 @@ describe('SessionItem server-scoped mutations', () => {
             contextMenu!.props.onSelect('session-folder-move-root');
         });
         expect(moveToFolder).toHaveBeenCalledWith(null);
+    });
+
+    it('routes the move-to-folder menu item and accessibility actions through the accessible move callbacks', async () => {
+        const onMoveToFolder = vi.fn();
+        const onMoveToWorkspaceRoot = vi.fn();
+        const onMoveUp = vi.fn();
+        const onMoveDown = vi.fn();
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_accessible_move',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'offline',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_folder"
+                serverName="Server Folder"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                folderMoveTargets={[
+                    {
+                        id: 'session-folder-move-root',
+                        folderId: null,
+                        title: 'Workspace root',
+                        depth: 0,
+                        disabled: false,
+                    },
+                ]}
+                onMoveToFolder={onMoveToFolder}
+                onMoveToWorkspaceRoot={onMoveToWorkspaceRoot}
+                onMoveUp={onMoveUp}
+                onMoveDown={onMoveDown}
+            />,
+        );
+
+        const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session.move-to-folder'),
+        );
+        expect(contextMenu).toBeTruthy();
+        const moveToFolderItem = contextMenu!.props.items.find((item: any) => item?.id === 'session.move-to-folder');
+        expect(moveToFolderItem.submenu).toBeUndefined();
+
+        await act(async () => {
+            contextMenu!.props.onSelect('session.move-to-folder');
+        });
+        expect(onMoveToFolder).toHaveBeenCalledTimes(1);
+
+        const row = screen.findByProps({ testID: 'session-list-item-sess_accessible_move' });
+        expect(row.props.accessibilityActions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'moveUp' }),
+            expect.objectContaining({ name: 'moveDown' }),
+            expect.objectContaining({ name: 'moveToFolder' }),
+            expect.objectContaining({ name: 'moveToWorkspaceRoot' }),
+        ]));
+
+        await act(async () => {
+            row.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveUp' } });
+            row.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveDown' } });
+            row.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveToFolder' } });
+            row.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveToWorkspaceRoot' } });
+        });
+
+        expect(onMoveUp).toHaveBeenCalledTimes(1);
+        expect(onMoveDown).toHaveBeenCalledTimes(1);
+        expect(onMoveToFolder).toHaveBeenCalledTimes(2);
+        expect(onMoveToWorkspaceRoot).toHaveBeenCalledTimes(1);
     });
 
     it('hides manual read-state actions for archived sessions', async () => {

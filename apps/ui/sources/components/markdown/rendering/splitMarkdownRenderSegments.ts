@@ -133,12 +133,25 @@ function writeStaticSegmentCache(markdown: string, segments: MarkdownRenderSegme
     }
 }
 
+function buildEnrichedSegment(markdown: string, source: LocatedMarkdownBlockSource, nextSegmentKey: () => string): DraftMarkdownRenderSegment {
+    return {
+        type: 'enriched-markdown',
+        key: nextSegmentKey(),
+        sourceStart: source.sourceStart,
+        sourceLength: source.sourceLength,
+        sourceHash: source.sourceHash,
+        sourceRange: resolveSourceRange(markdown, source.sourceStart, source.sourceLength),
+        markdown: source.source,
+    };
+}
+
 export function splitMarkdownRenderSegments(params: Readonly<{
     markdown: string;
     streamingMode: 'static' | 'streaming';
     streamingRepair?: 'sync' | 'prepared';
+    splitEnrichedSourceRanges?: boolean;
 }>): MarkdownRenderSegment[] {
-    if (params.streamingMode === 'static') {
+    if (params.streamingMode === 'static' && params.splitEnrichedSourceRanges !== true) {
         const cached = readStaticSegmentCache(params.markdown);
         if (cached) return cached;
     }
@@ -176,6 +189,11 @@ export function splitMarkdownRenderSegments(params: Readonly<{
     for (const source of locatedSources) {
         const blocks = parseMarkdownBlockSource(source);
         if (!isSpecialSource(source, blocks)) {
+            if (params.splitEnrichedSourceRanges === true) {
+                flushPendingEnrichedSources();
+                segments.push(buildEnrichedSegment(renderMarkdown, source, nextSegmentKey));
+                continue;
+            }
             pendingEnrichedSources.push(source);
             continue;
         }
@@ -195,7 +213,7 @@ export function splitMarkdownRenderSegments(params: Readonly<{
 
     flushPendingEnrichedSources();
     const result = applyFirstLast(segments);
-    if (params.streamingMode === 'static') {
+    if (params.streamingMode === 'static' && params.splitEnrichedSourceRanges !== true) {
         writeStaticSegmentCache(params.markdown, result);
     }
     return result;

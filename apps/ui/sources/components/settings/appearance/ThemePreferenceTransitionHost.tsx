@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { captureRef } from 'react-native-view-shot';
 
+import { addBreadcrumbIfEnabled } from '@/utils/system/sentry';
 import { createNativeThemePreferenceTransitionController } from './nativeThemePreferenceTransitionController';
 import { registerNativeThemePreferenceTransitionController } from './themePreferenceTransition';
 import {
@@ -25,6 +26,14 @@ function waitForFrame(): Promise<void> {
                 resolve();
             });
         });
+    });
+}
+
+function recordNativeThemeTransitionBreadcrumb(data: Readonly<{ phase: string }>): void {
+    addBreadcrumbIfEnabled({
+        category: 'theme.nativeTransition',
+        level: 'info',
+        data,
     });
 }
 
@@ -83,6 +92,7 @@ export function ThemePreferenceTransitionHost(props: Readonly<{ children: React.
                     revealProgress.value = 0;
                     setOverlayUri(uri);
                 },
+                recordBreadcrumb: recordNativeThemeTransitionBreadcrumb,
                 waitForFrame,
             }),
         );

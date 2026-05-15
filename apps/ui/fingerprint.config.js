@@ -184,13 +184,32 @@ const config = {
     // sources and include them in the fingerprint (causing EAS/runtimeVersion mismatches).
     //
     // Keep these globs aligned with Expo's own guidance (expo-updates uses `android/**/*` / `ios/**/*`).
+    'android',
     'android/**/*',
+    'ios',
     'ios/**/*',
 
     // Ignore libsodium build outputs which can vary by environment and should not affect the
     // native compatibility signal (the underlying package sources are still hashed).
+    'node_modules/@more-tech/react-native-libsodium/libsodium/build',
     'node_modules/@more-tech/react-native-libsodium/libsodium/build/**/*',
+    '**/node_modules/@more-tech/react-native-libsodium/libsodium/build',
     '**/node_modules/@more-tech/react-native-libsodium/libsodium/build/**/*',
+
+    // Ignore generated codegen/Nitro output. The package versions and native source files remain
+    // fingerprinted, while local postinstall/build artifacts stop invalidating OTA compatibility.
+    'node_modules/react-native-enriched-markdown/android/generated',
+    'node_modules/react-native-enriched-markdown/android/generated/**/*',
+    'node_modules/react-native-enriched-markdown/ios/generated',
+    'node_modules/react-native-enriched-markdown/ios/generated/**/*',
+    '**/node_modules/react-native-enriched-markdown/android/generated',
+    '**/node_modules/react-native-enriched-markdown/android/generated/**/*',
+    '**/node_modules/react-native-enriched-markdown/ios/generated',
+    '**/node_modules/react-native-enriched-markdown/ios/generated/**/*',
+    'node_modules/react-native-unistyles/nitrogen/generated',
+    'node_modules/react-native-unistyles/nitrogen/generated/**/*',
+    '**/node_modules/react-native-unistyles/nitrogen/generated',
+    '**/node_modules/react-native-unistyles/nitrogen/generated/**/*',
   ],
   fileHookTransform: (source, chunk, isEndOfFile) => {
     const src = /** @type {FingerprintSource} */ (source ?? {});

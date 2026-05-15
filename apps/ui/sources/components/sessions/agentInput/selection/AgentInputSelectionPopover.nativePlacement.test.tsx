@@ -68,4 +68,26 @@ describe('AgentInputSelectionPopover (native placement)', () => {
         expect(capturedPopoverProps.current?.placement).toBe('auto-vertical');
         expect(capturedPopoverProps.current?.keyboardBottomInset).toBe(320);
     });
+
+    it('keeps the native keyboard inset while an open composer popover sees a passive height drop', async () => {
+        mockKeyboardHeight = 320;
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const anchorRef = { current: { nodeType: 'View' } } as any;
+        const renderPopover = () => (
+            <AgentInputSelectionPopover open anchorRef={anchorRef} onRequestClose={() => {}}>
+                {() => <React.Fragment />}
+            </AgentInputSelectionPopover>
+        );
+
+        const screen = await renderScreen(renderPopover());
+
+        expect(capturedPopoverProps.current?.placement).toBe('auto-vertical');
+        expect(capturedPopoverProps.current?.keyboardBottomInset).toBe(320);
+
+        mockKeyboardHeight = 0;
+        await screen.update(renderPopover());
+
+        expect(capturedPopoverProps.current?.placement).toBe('auto-vertical');
+        expect(capturedPopoverProps.current?.keyboardBottomInset).toBe(320);
+    });
 });

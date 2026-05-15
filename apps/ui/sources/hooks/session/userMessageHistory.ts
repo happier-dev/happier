@@ -51,45 +51,158 @@ export function collectUserMessageHistoryEntries(opts: {
 }
 
 export type UserMessageHistoryNavigator = {
-    moveUp: (draft: string) => string | null;
-    moveDown: () => string | null;
+    moveUp: (currentText: string) => string | null;
+    moveDown: (currentText: string) => string | null;
+    pause: (currentText: string) => void;
     reset: () => void;
+    warmup: () => void;
+    isBrowsing: () => boolean;
+    hasRetainedSession: () => boolean;
 };
 
-export function createUserMessageHistoryNavigator(entries: ReadonlyArray<string>): UserMessageHistoryNavigator {
-    let index: number | null = null;
-    let draft: string = '';
+export type UserMessageHistoryMoveState = Readonly<{
+    index: number;
+    entriesLength: number;
+}>;
 
-    function reset() {
-        index = null;
-        draft = '';
-    }
+export type UserMessageHistoryNavigatorOptions = Readonly<{
+    onMoveUp?: (state: UserMessageHistoryMoveState) => void;
+    onWarmup?: () => void;
+}>;
 
-    function moveUp(nextDraft: string): string | null {
-        if (entries.length === 0) return null;
-        if (index === null) {
-            draft = nextDraft;
-            index = 0;
-            return entries[index] ?? null;
-        }
+type UserMessageHistoryEntriesSource = ReadonlyArray<string> | (() => ReadonlyArray<string>);
 
-        index = Math.min(index + 1, entries.length - 1);
-        return entries[index] ?? null;
-    }
-
-    function moveDown(): string | null {
-        if (index === null) return null;
-
-        if (index === 0) {
-            const res = draft;
-            reset();
-            return res;
-        }
-
-        index = Math.max(0, index - 1);
-        return entries[index] ?? null;
-    }
-
-    return { moveUp, moveDown, reset };
+function readHistoryEntries(source: UserMessageHistoryEntriesSource): ReadonlyArray<string> {
+    return typeof source === 'function' ? source() : source;
 }
 
+type HistorySlot =
+    | Readonly<{ kind: 'draft' }>
+    | Readonly<{ kind: 'history'; index: number }>;
+
+type HistoryEntrySnapshot = Readonly<{
+    originalText: string;
+    editedText: string;
+}>;
+
+type HistoryNavigationSession = {
+    draftText: string;
+    currentSlot: HistorySlot;
+    historyEditsByIndex: Map<number, HistoryEntrySnapshot>;
+    activeBrowsing: boolean;
+    lastAppliedText: string | null;
+};
+
+export function createUserMessageHistoryNavigator(
+    entriesSource: UserMessageHistoryEntriesSource,
+    options: UserMessageHistoryNavigatorOptions = {},
+): UserMessageHistoryNavigator {
+    let session: HistoryNavigationSession | null = null;
+
+    function reset() {
+        session = null;
+    }
+
+    function warmup() {
+        options.onWarmup?.();
+    }
+
+    function isBrowsing() {
+        return session?.activeBrowsing === true;
+    }
+
+    function hasRetainedSession() {
+        return session !== null;
+    }
+
+    function captureCurrentSlotText(currentText: string, entries: ReadonlyArray<string>) {
+        if (!session) return;
+
+        if (session.currentSlot.kind === 'draft') {
+            session.draftText = currentText;
+            session.lastAppliedText = currentText;
+            return;
+        }
+
+        const index = session.currentSlot.index;
+        const previousSnapshot = session.historyEditsByIndex.get(index);
+        const originalText = entries[index]
+            ?? previousSnapshot?.originalText
+            ?? session.lastAppliedText
+            ?? currentText;
+        session.historyEditsByIndex.set(index, {
+            originalText,
+            editedText: currentText,
+        });
+    }
+
+    function readHistorySlotText(index: number, entries: ReadonlyArray<string>): string | null {
+        if (index < 0 || index >= entries.length) return null;
+        return session?.historyEditsByIndex.get(index)?.editedText ?? entries[index] ?? null;
+    }
+
+    function moveUp(currentText: string): string | null {
+        const entries = readHistoryEntries(entriesSource);
+        if (entries.length === 0) {
+            warmup();
+            return null;
+        }
+
+        if (!session) {
+            session = {
+                draftText: currentText,
+                currentSlot: { kind: 'draft' },
+                historyEditsByIndex: new Map(),
+                activeBrowsing: true,
+                lastAppliedText: currentText,
+            };
+        } else {
+            captureCurrentSlotText(currentText, entries);
+        }
+
+        const nextIndex = session.currentSlot.kind === 'draft'
+            ? 0
+            : Math.min(session.currentSlot.index + 1, entries.length - 1);
+        const entry = readHistorySlotText(nextIndex, entries);
+        if (entry === null) return null;
+
+        session.currentSlot = { kind: 'history', index: nextIndex };
+        session.activeBrowsing = true;
+        session.lastAppliedText = entry;
+        options.onMoveUp?.({ index: nextIndex, entriesLength: entries.length });
+        return entry;
+    }
+
+    function moveDown(currentText: string): string | null {
+        if (!session || session.currentSlot.kind === 'draft') return null;
+
+        const entries = readHistoryEntries(entriesSource);
+        captureCurrentSlotText(currentText, entries);
+
+        const currentIndex = session.currentSlot.index;
+        if (currentIndex <= 0 || entries.length === 0) {
+            const draftText = session.draftText;
+            session.currentSlot = { kind: 'draft' };
+            session.activeBrowsing = false;
+            session.lastAppliedText = draftText;
+            return draftText;
+        }
+
+        const nextIndex = Math.min(currentIndex - 1, entries.length - 1);
+        const entry = readHistorySlotText(nextIndex, entries);
+        if (entry === null) return null;
+
+        session.currentSlot = { kind: 'history', index: nextIndex };
+        session.activeBrowsing = true;
+        session.lastAppliedText = entry;
+        return entry;
+    }
+
+    function pause(currentText: string) {
+        if (!session) return;
+        captureCurrentSlotText(currentText, readHistoryEntries(entriesSource));
+        session.activeBrowsing = false;
+    }
+
+    return { moveUp, moveDown, pause, reset, warmup, isBrowsing, hasRetainedSession };
+}

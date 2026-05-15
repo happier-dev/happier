@@ -87,6 +87,7 @@ describe('themeProfilePresetOptions', () => {
         expect(options.find((option) => option.id === 'sunsetDark')?.preferredMode).toBe('dark');
         expect(options.find((option) => option.id === 'tokyoNight')?.preferredMode).toBe('dark');
         expect(options.find((option) => option.id === 'nightDark')?.preferredMode).toBe('dark');
+        expect(options.find((option) => option.id === 'classicDark')?.preferredMode).toBe('dark');
         expect(options.find((option) => option.id === 'graphiteDark')?.preferredMode).toBe('dark');
         expect(options.find((option) => option.id === 'catppuccinMocha')?.preferredMode).toBe('dark');
         expect(options.find((option) => option.id === 'catppuccinMacchiato')?.preferredMode).toBe('dark');

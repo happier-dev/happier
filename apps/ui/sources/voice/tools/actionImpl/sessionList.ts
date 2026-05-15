@@ -25,7 +25,7 @@ export async function listSessionsForVoiceTool(params: Readonly<{
     typeof params.limit === 'number' && Number.isFinite(params.limit)
       ? Math.max(1, Math.min(100, Math.floor(params.limit)))
       : 100;
-  const includeLastMessagePreview = params.includeLastMessagePreview !== false;
+  const includeLastMessagePreview = params.includeLastMessagePreview === true;
   const cursorKey = parseCursorKey(params.cursor ?? null);
 
   const visibleSessionRows = collectVoiceSessionRows(state);

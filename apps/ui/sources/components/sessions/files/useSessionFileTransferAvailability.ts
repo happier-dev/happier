@@ -2,8 +2,7 @@ import * as React from 'react';
 
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
-import { useSession } from '@/sync/domains/state/storage';
-import { useMachine, useServerScopedMachine } from '@/sync/domains/state/storage';
+import { useMachine, useServerScopedMachine, useSessionRpcAvailabilityState } from '@/sync/domains/state/storage';
 import {
     readCachedMachineRpcDirectRoute,
 } from '@/sync/domains/transfers/runtime/transferRouteCache';
@@ -15,7 +14,7 @@ import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
 export function useSessionFileTransferAvailabilityState(sessionId: string): ResolveSessionFileTransferAvailabilityResult {
-    const session = useSession(sessionId);
+    const { sessionExists } = useSessionRpcAvailabilityState(sessionId);
     const { machineRpcTargetAvailable } = useSessionMachineReachability(sessionId);
     const serverId = usePreferredServerIdForSession(sessionId);
     const serverSnapshot = useServerFeaturesSnapshotForServerId(serverId, {
@@ -33,7 +32,7 @@ export function useSessionFileTransferAvailabilityState(sessionId: string): Reso
         : null;
 
     return resolveSessionFileTransferAvailability({
-        sessionAvailable: Boolean(session),
+        sessionAvailable: sessionExists,
         machineTargetAvailable: machineRpcTargetAvailable,
         serverFeatures: serverSnapshot.status === 'ready' ? serverSnapshot.features : null,
         machineDaemonState: machine?.daemonState ?? null,

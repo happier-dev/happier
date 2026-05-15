@@ -1,19 +1,25 @@
 import React, { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
+import { createPartialStorageModuleMock, findGestureByKind, renderScreen } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { buildSessionListIndexFromViewData } from '@/sync/domains/sessionList/sessionListIndex';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-gesture-handler', () => ({
-    Swipeable: 'Swipeable',
-}));
+vi.mock('react-native-gesture-handler', async () => {
+    const { createGestureHandlerMock } = await import('@/dev/testkit/mocks/gestureHandler');
+    return createGestureHandlerMock();
+});
 
 vi.mock('react-native-reanimated', () => ({
     default: { View: (props: any) => React.createElement('Animated.View', props) },
     useSharedValue: (init: any) => ({ value: init }),
     useAnimatedStyle: (fn: () => any) => fn(),
+    withSpring: (value: any) => value,
+}));
+
+vi.mock('react-native-worklets', () => ({
+    scheduleOnRN: (fn: (...args: any[]) => void, ...args: any[]) => fn(...args),
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -218,12 +224,10 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     formatPathRelativeToHome: (path: string) => path,
 }));
 
-const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((params: any) => ({
-    gesture: params?.enabled === false ? undefined : { kind: 'mock-gesture' },
-    animatedStyle: params ? {} : {},
-})));
-
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
+    useEffectiveServerSelection: () => ({
+        serverIds: ['server_a'],
+    }),
     useResolvedActiveServerSelection: () => ({
         enabled: true,
         presentation: 'grouped',
@@ -264,10 +268,6 @@ vi.mock('@/utils/system/requestReview', () => ({
     requestReview: requestReviewSpy,
 }));
 
-vi.mock('./useSessionInlineDrag', () => ({
-    useSessionInlineDrag: (params: any) => useSessionInlineDragSpy(params),
-}));
-
 vi.mock('./SessionItem', () => ({
     SessionItem: (props: any) => React.createElement('SessionItem', props),
 }));
@@ -281,7 +281,6 @@ describe('SessionsList (inline reorder)', () => {
         sessionFoldersV1 = { v: 1, folders: [] };
         dropdownMenuCaptures.length = 0;
         requestReviewSpy.mockClear();
-        useSessionInlineDragSpy.mockClear();
         setSessionListActiveGroupingV1.mockClear();
         setSessionListInactiveGroupingV1.mockClear();
         setHideInactiveSessions.mockClear();
@@ -309,8 +308,6 @@ describe('SessionsList (inline reorder)', () => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
-        useSessionInlineDragSpy.mockClear();
-
         const { SessionsList } = await import('./SessionsList');
 
         const screen = await renderScreen(<SessionsList />);
@@ -320,9 +317,9 @@ describe('SessionsList (inline reorder)', () => {
         // reorderHandleGesture is passed from SessionListRow.
         // reorderDragStyle is no longer passed (Animated.View is in SessionListRow).
         expect(items[0].props).toHaveProperty('reorderHandleGesture');
+        expect(findGestureByKind(items[0].props.reorderHandleGesture, 'pan')).toBeTruthy();
         // isBeingDragged is passed from SessionListRow
         expect(items[0].props.isBeingDragged).toBe(false);
-        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({ rowHeight: 84 }));
     });
 
     it('hides reorder drag props when ordering mode is created or updated', async () => {
@@ -334,29 +331,18 @@ describe('SessionsList (inline reorder)', () => {
         const items = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(items.length).toBe(2);
         expect(items[0].props.reorderHandleGesture).toBeUndefined();
-        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ rowHeight: 84, enabled: false }),
-        );
-        expect(useSessionInlineDragSpy).not.toHaveBeenCalledWith(
-            expect.objectContaining({ rowHeight: 84, enabled: true }),
-        );
     });
 
     it('keeps drag-end persistence disabled when ordering mode is not custom', async () => {
         sessionListOrderingModeV1 = 'updated';
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
-        useSessionInlineDragSpy.mockClear();
 
         const { SessionsList } = await import('./SessionsList');
-        await renderScreen(<SessionsList />);
+        const screen = await renderScreen(<SessionsList />);
 
-        const firstRowDragCall = useSessionInlineDragSpy.mock.calls.find((call) => call[0]?.sessionKey === 'server_a:sess_a');
-        expect(firstRowDragCall).toBeTruthy();
-        await act(async () => {
-            firstRowDragCall?.[0]?.onDragEnd?.('server_a:sess_a', groupKey, 1);
-        });
-
+        const firstRow = screen.findAll((node) => String(node.type) === 'SessionItem')[0];
+        expect(firstRow.props.reorderHandleGesture).toBeUndefined();
         expect(setSessionListGroupOrderV1).toHaveBeenCalledTimes(0);
     });
 
@@ -365,21 +351,17 @@ describe('SessionsList (inline reorder)', () => {
         const { SessionsList } = await import('./SessionsList');
 
         const screen = await renderScreen(<SessionsList />);
-        const disabledDragCall = useSessionInlineDragSpy.mock.calls.find((call) => call[0]?.sessionKey === 'server_a:sess_a');
-        expect(disabledDragCall?.[0]).toMatchObject({ sessionKey: 'server_a:sess_a', enabled: false });
+        const disabledItems = screen.findAll((node) => String(node.type) === 'SessionItem');
+        expect(disabledItems[0].props.reorderHandleGesture).toBeUndefined();
 
-        useSessionInlineDragSpy.mockClear();
         setSessionListOrderingModeV1.mockClear();
         sessionListOrderingModeV1 = 'custom';
         const updatedScreen = await renderScreen(<SessionsList />);
-        const enabledDragCall = [...useSessionInlineDragSpy.mock.calls]
-            .reverse()
-            .find((call) => call[0]?.sessionKey === 'server_a:sess_a');
-        expect(enabledDragCall?.[0]).toMatchObject({ sessionKey: 'server_a:sess_a', enabled: true });
 
         const reorderedItems = updatedScreen.findAll((node) => String(node.type) === 'SessionItem');
         expect(reorderedItems.length).toBe(2);
         expect(reorderedItems[0].props).toHaveProperty('reorderHandleGesture');
+        expect(findGestureByKind(reorderedItems[0].props.reorderHandleGesture, 'pan')).toBeTruthy();
     });
 
     it('exposes quick-access ordering, grouping, and visibility controls and writes canonical settings on select', async () => {
@@ -455,6 +437,13 @@ describe('SessionsList (inline reorder)', () => {
                 name: 'Planning',
                 createdAt: 1,
                 updatedAt: 1,
+            }, {
+                id: 'folder-a-child',
+                workspace: workspaceA,
+                parentId: 'folder-a',
+                name: 'Review',
+                createdAt: 2,
+                updatedAt: 2,
             }],
         };
         const { SessionsList } = await import('./SessionsList');
@@ -464,6 +453,7 @@ describe('SessionsList (inline reorder)', () => {
         expect(items[0].props.folderMoveTargets).toEqual(expect.arrayContaining([
             expect.objectContaining({ folderId: null, title: 'sessionsList.workspaceRoot' }),
             expect.objectContaining({ folderId: 'folder-a', title: 'Planning' }),
+            expect.objectContaining({ folderId: 'folder-a-child', title: 'Review', depth: 1 }),
         ]));
 
         await act(async () => {

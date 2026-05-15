@@ -24,6 +24,7 @@ export type SelectableMenuItem = Readonly<{
     /** Optional left/right visuals (icon, shortcut chip, checkmark, etc). */
     left?: React.ReactNode;
     right?: React.ReactNode;
+    hasSubmenu?: boolean;
     disabled?: boolean;
 }>;
 

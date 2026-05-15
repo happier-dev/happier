@@ -6,6 +6,7 @@ import { useCallback } from 'react';
 import { MessageView } from './MessageView';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { Metadata, Session } from '@/sync/domains/state/storageTypes';
+import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { ChatFooter, type ChatFooterDirectControlState } from './ChatFooter';
 import { getSessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
 import { buildChatListItems, buildChatListItemsCached, type ChatListItem, type ChatListItemsBuildCache } from '@/components/sessions/chatListItems';
@@ -176,6 +177,7 @@ export const ChatList = React.memo((props: {
     onRequestSwitchToRemote?: () => void;
     directControlFooter?: ChatFooterDirectControlState;
     jumpToSeq?: number | null;
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
     onViewportChange?: (state: { isPinned: boolean; offsetY: number }) => void;
 }) => {
     React.useEffect(() => {
@@ -411,6 +413,7 @@ export const ChatList = React.memo((props: {
             latestCommittedActivityKey={latestCommittedActivityKey}
             latestVisibleTailActivityKey={latestVisibleTailActivityKey}
             activeThinkingMessageId={activeThinkingMessageId}
+            approvalRequests={props.approvalRequests}
             rollbackRanges={rollbackRanges}
             rollbackActionsByMessageId={rollbackActionsByMessageId}
             isLoaded={isLoaded}
@@ -473,6 +476,7 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
     isReadOnlyContext?: boolean;
     metadata: Metadata | null;
     activeThinkingMessageId: string | null;
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
     resolveThinkingExpanded: (messageId: string) => boolean;
     setThinkingExpanded: (messageId: string, expanded: boolean) => void;
     interaction: TranscriptInteraction;
@@ -503,6 +507,7 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
                     metadata={props.metadata}
                     sessionId={originSessionId}
                     activeThinkingMessageId={props.activeThinkingMessageId}
+                    approvalRequests={props.approvalRequests}
                     thinkingExpanded={isThinking ? props.resolveThinkingExpanded(message.id) : undefined}
                     onThinkingExpandedChange={isThinking ? (next) => props.setThinkingExpanded(message.id, next) : undefined}
                     interaction={readOnlyInteraction}
@@ -525,6 +530,7 @@ const ChatListInternal = React.memo((props: {
     latestCommittedActivityKey: string | null,
     latestVisibleTailActivityKey: string | null,
     activeThinkingMessageId: string | null,
+    approvalRequests?: readonly OpenApprovalArtifactForSession[],
     rollbackRanges: readonly SessionRollbackRangeV1[],
     rollbackActionsByMessageId: Readonly<Record<string, TranscriptRollbackAction>>,
     isLoaded: boolean,
@@ -1170,6 +1176,7 @@ const ChatListInternal = React.memo((props: {
                     expanded={item.toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id))}
                     onSetExpanded={setToolCallsGroupExpanded}
                     interaction={props.interaction}
+                    approvalRequests={props.approvalRequests}
                 />
             ));
         }
@@ -1192,6 +1199,7 @@ const ChatListInternal = React.memo((props: {
                            sessionId={props.sessionId}
                            interaction={props.interaction}
                            activeThinkingMessageId={props.activeThinkingMessageId}
+                           approvalRequests={props.approvalRequests}
                            getMessageById={getTurnMessageById}
                            rollbackRanges={props.rollbackRanges}
                            resolveRollbackAction={resolveRollbackActionForMessage}
@@ -1225,6 +1233,7 @@ const ChatListInternal = React.memo((props: {
                             isReadOnlyContext={item.isReadOnlyContext}
                             metadata={props.metadata}
                             activeThinkingMessageId={props.activeThinkingMessageId}
+                            approvalRequests={props.approvalRequests}
                             resolveThinkingExpanded={resolveThinkingExpanded}
                             setThinkingExpanded={setThinkingExpanded}
                             interaction={props.interaction}
@@ -1236,7 +1245,7 @@ const ChatListInternal = React.memo((props: {
             ));
         }
         return null;
-      }, [expandedToolCallsAnchorMessageIds, getTurnMessageById, listImplementation, props.activeThinkingMessageId, props.interaction, props.metadata, props.rollbackRanges, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveRollbackActionForMessage, resolveThinkingExpanded, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode, wrapTranscriptItemForAnchor]);
+      }, [expandedToolCallsAnchorMessageIds, getTurnMessageById, listImplementation, props.activeThinkingMessageId, props.approvalRequests, props.interaction, props.metadata, props.rollbackRanges, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveRollbackActionForMessage, resolveThinkingExpanded, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode, wrapTranscriptItemForAnchor]);
     const renderTranscriptItemAtIndex = React.useCallback((item: ChatTranscriptListItem, index: number) => {
         return renderItem({ item, index });
     }, [renderItem]);

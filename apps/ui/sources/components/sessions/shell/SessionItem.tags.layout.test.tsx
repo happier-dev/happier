@@ -47,6 +47,13 @@ installSessionShellCommonModuleMocks({
             importOriginal,
             overrides: {
                 useHasUnreadMessages: () => false,
+                useSessionListActivityTimeLabel: () => '1m',
+                useSetting: (key: string) => {
+                    if (key === 'sessionListIdentityDisplay') return 'avatar';
+                    if (key === 'sessionListActiveColorModeV1') return 'activityAndAttention';
+                    if (key === 'sessionListNarrowWorkingIndicatorStyle') return 'spinner';
+                    return undefined;
+                },
                 useProfile: () => ({
                     id: 'u1',
                     timestamp: 0,
@@ -102,6 +109,15 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
+}));
+
+vi.mock('@/agents/registry/AgentIcon', () => ({
+    AgentIcon: 'AgentIcon',
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+    DEFAULT_AGENT_ID: 'codex',
+    resolveAgentIdFromFlavor: () => null,
 }));
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
@@ -225,6 +241,32 @@ describe('SessionItem tags (layout)', () => {
         expect(screen.getTextContent()).toContain('tag-a');
     });
 
+    it('places a short compact tag in the trailing metadata cluster', async () => {
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession()}
+                serverId="server_a"
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                tagsEnabled={true}
+                tags={['v2']}
+                allKnownTags={['v2']}
+                onSetTags={vi.fn()}
+            />,
+        );
+
+        const rightArea = screen.findByTestId('session-item-right-area');
+        const rightAreaText = rightArea?.findAllByType('Text').map((node) => node.props.children).join(' ');
+        expect(rightAreaText).toContain('v2');
+        expect(screen.findByTestId('session-item-tags-below-sess_1')).toBeNull();
+    });
+
     it('reuses the same tag dropdown items when rerendered with absent tag inputs', async () => {
         const { SessionItem } = await import('./SessionItem');
         const onSetTags = vi.fn();
@@ -297,4 +339,5 @@ describe('SessionItem tags (layout)', () => {
 
         expect(nextTagDropdown.props.items).toBe(firstItems);
     });
+
 });

@@ -1,5 +1,6 @@
 import { ValueSync } from '@/utils/sessions/sync';
 import * as React from 'react';
+import type { PromptInvocationSuggestionMetadata } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
 
 type AutocompleteSuggestion = {
     key: string;
@@ -8,6 +9,7 @@ type AutocompleteSuggestion = {
     description?: string;
     component?: React.ElementType;
     rowHeight?: number;
+    promptInvocation?: PromptInvocationSuggestionMetadata;
 };
 
 interface SuggestionOptions {

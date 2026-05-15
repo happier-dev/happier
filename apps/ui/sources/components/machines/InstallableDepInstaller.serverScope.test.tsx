@@ -213,4 +213,29 @@ describe('InstallableDepInstaller', () => {
         await screen.unmount();
         toLocaleStringSpy.mockRestore();
     });
+
+    it('disables install actions when machine capability invocation is unavailable', async () => {
+        const screen = await renderInstaller({
+            capabilitiesStatus: 'not-supported',
+            depStatus: {
+                installed: false,
+                installedVersion: null,
+                sourceKind: 'github_release_binary',
+                lastInstallLogPath: null,
+                lastBackgroundUpdateCheckAtMs: null,
+            },
+        });
+
+        const installAction = screen.findRowByTitle(installLabels.install);
+        expect(installAction?.props.disabled).toBe(true);
+
+        await act(async () => {
+            screen.pressRowByTitle(installLabels.install);
+        });
+
+        expect(alertMock).not.toHaveBeenCalled();
+        expect(machineCapabilitiesInvokeMock).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
 });

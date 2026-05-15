@@ -5,9 +5,11 @@ import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionLis
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 type SessionListOrderingModeV1 = 'custom' | 'created' | 'updated';
+type SessionListAttentionPromotionModeV1 = 'off' | 'global' | 'withinGroups';
 
 const viewState = vi.hoisted(() => ({
     orderingMode: 'updated' as SessionListOrderingModeV1,
+    attentionPromotionMode: 'off' as SessionListAttentionPromotionModeV1,
     hideInactiveSessions: false,
     selection: {
         enabled: true,
@@ -29,6 +31,8 @@ const viewState = vi.hoisted(() => ({
     sessionFoldersFeatureEnabled: true,
     focusedSessionFolder: null as any,
     sessionFolderAssignmentsBySessionKey: {} as Record<string, string | null>,
+    pathname: '/session/none',
+    focusedSessionId: null as string | null,
 }));
 
 function makeSessionRow(id: string, partial?: Partial<SessionListRenderableSession>): SessionListRenderableSession {
@@ -81,6 +85,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                     viewState.observedOrderingMode.push(viewState.orderingMode);
                     return viewState.orderingMode;
                 }
+                if (key === 'sessionListAttentionPromotionModeV1') return viewState.attentionPromotionMode;
                 if (key === 'sessionFoldersV1') return viewState.sessionFolders;
                 if (key === 'sessionFolderViewModeV1') return viewState.sessionFolderViewMode;
                 return null;
@@ -106,6 +111,14 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
         : true,
 }));
 
+vi.mock('expo-router', () => ({
+    usePathname: () => viewState.pathname,
+}));
+
+vi.mock('@/sync/domains/session/sessionSurfaceVisibility', () => ({
+    useFocusedSessionId: () => viewState.focusedSessionId,
+}));
+
 vi.mock('./useVisibleSessionListSourceState', () => ({
     useVisibleSessionListSourceState: () => ({
         selection: viewState.selection,
@@ -119,6 +132,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
     afterEach(() => {
         standardCleanup();
         viewState.orderingMode = 'updated';
+        viewState.attentionPromotionMode = 'off';
         viewState.source = null;
         viewState.selection = {
             enabled: true,
@@ -140,6 +154,8 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         viewState.sessionFoldersFeatureEnabled = true;
         viewState.focusedSessionFolder = null;
         viewState.sessionFolderAssignmentsBySessionKey = {};
+        viewState.pathname = '/session/none';
+        viewState.focusedSessionId = null;
     });
 
     it('keeps dormant manual group order data untouched when ordering mode is updated', async () => {
@@ -182,6 +198,153 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
 
         expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([]);
         expect(hook.getCurrent()?.hasHiddenInactiveSessions).toBe(true);
+    });
+
+    it('uses the attention promotion setting while preserving the canonical index pipeline', async () => {
+        viewState.orderingMode = 'custom';
+        viewState.attentionPromotionMode = 'global';
+        viewState.selection = {
+            enabled: false,
+            presentation: 'grouped',
+            activeServerId: 's1',
+            allowedServerIds: ['s1'],
+            explicit: false,
+            activeTarget: { kind: 'server', id: 's1', serverId: 's1' },
+        };
+        viewState.source = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: 'server:s1:day:2026-02-17' },
+            { type: 'session', sessionId: 'done', serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+            { type: 'session', sessionId: 'quiet', serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+        ];
+        viewState.rowsByServerId = {
+            s1: {
+                done: makeSessionRow('done', {
+                    seq: 3,
+                    latestTurnStatus: 'completed',
+                    lastTurnCompletedAt: 300,
+                    lastViewedSessionSeq: 2,
+                    updatedAt: 300,
+                }),
+                quiet: makeSessionRow('quiet', { seq: 1, updatedAt: 100 }),
+            },
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const hook = await renderHook(() => useVisibleSessionListViewState('all'));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'attention' }),
+            expect.objectContaining({ type: 'session', sessionId: 'done', groupKind: 'attention' }),
+            expect.objectContaining({ type: 'header', headerKind: 'date' }),
+            expect.objectContaining({ type: 'session', sessionId: 'quiet', groupKind: 'date' }),
+        ]);
+    });
+
+    it('does not promote a quiet selected session through retention', async () => {
+        viewState.orderingMode = 'custom';
+        viewState.attentionPromotionMode = 'global';
+        viewState.pathname = '/session/quiet';
+        viewState.selection = {
+            enabled: false,
+            presentation: 'grouped',
+            activeServerId: 's1',
+            allowedServerIds: ['s1'],
+            explicit: false,
+            activeTarget: { kind: 'server', id: 's1', serverId: 's1' },
+        };
+        viewState.source = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: 'server:s1:day:2026-02-17' },
+            { type: 'session', sessionId: 'done', serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+            { type: 'session', sessionId: 'quiet', serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+        ];
+        viewState.rowsByServerId = {
+            s1: {
+                done: makeSessionRow('done', {
+                    seq: 3,
+                    latestTurnStatus: 'completed',
+                    lastTurnCompletedAt: 300,
+                    lastViewedSessionSeq: 2,
+                    updatedAt: 300,
+                }),
+                quiet: makeSessionRow('quiet', { seq: 1, updatedAt: 100 }),
+            },
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const hook = await renderHook(() => useVisibleSessionListViewState('all'));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'attention' }),
+            expect.objectContaining({ type: 'session', sessionId: 'done', groupKind: 'attention' }),
+            expect.objectContaining({ type: 'header', headerKind: 'date' }),
+            expect.objectContaining({ type: 'session', sessionId: 'quiet', groupKind: 'date' }),
+        ]);
+    });
+
+    it('retains the selected attention session after acknowledgement catches up', async () => {
+        viewState.orderingMode = 'custom';
+        viewState.attentionPromotionMode = 'global';
+        viewState.pathname = '/session/done';
+        viewState.selection = {
+            enabled: false,
+            presentation: 'grouped',
+            activeServerId: 's1',
+            allowedServerIds: ['s1'],
+            explicit: false,
+            activeTarget: { kind: 'server', id: 's1', serverId: 's1' },
+        };
+        viewState.source = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: 'server:s1:day:2026-02-17' },
+            { type: 'session', sessionId: 'done', serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+            { type: 'session', sessionId: 'quiet', serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+        ];
+        viewState.rowsByServerId = {
+            s1: {
+                done: makeSessionRow('done', {
+                    seq: 3,
+                    latestTurnStatus: 'completed',
+                    lastTurnCompletedAt: 300,
+                    lastViewedSessionSeq: 2,
+                    updatedAt: 300,
+                }),
+                quiet: makeSessionRow('quiet', { seq: 1, updatedAt: 100 }),
+            },
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const hook = await renderHook(() => useVisibleSessionListViewState('all'));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'attention' }),
+            expect.objectContaining({ type: 'session', sessionId: 'done', groupKind: 'attention' }),
+            expect.objectContaining({ type: 'header', headerKind: 'date' }),
+            expect.objectContaining({ type: 'session', sessionId: 'quiet', groupKind: 'date' }),
+        ]);
+
+        viewState.rowsByServerId = {
+            s1: {
+                done: makeSessionRow('done', {
+                    seq: 3,
+                    latestTurnStatus: 'completed',
+                    lastTurnCompletedAt: 300,
+                    lastViewedSessionSeq: 3,
+                    updatedAt: 300,
+                }),
+                quiet: makeSessionRow('quiet', { seq: 1, updatedAt: 100 }),
+            },
+        };
+        await hook.rerender();
+        await flushHookEffects();
+
+        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'attention' }),
+            expect.objectContaining({ type: 'session', sessionId: 'done', groupKind: 'attention' }),
+            expect.objectContaining({ type: 'header', headerKind: 'date' }),
+            expect.objectContaining({ type: 'session', sessionId: 'quiet', groupKind: 'date' }),
+        ]);
     });
 
     it('builds a folder tree from durable workspace refs and scopes focused folders', async () => {

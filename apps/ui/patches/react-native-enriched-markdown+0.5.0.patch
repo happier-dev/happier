@@ -365,7 +365,7 @@ index e3630fb..4175787 100644
 
  - (void)cleanupEntries
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/index.web.js b/node_modules/react-native-enriched-markdown/lib/module/index.web.js
-index d8308e6..02a8cb1 100644
+index d8308e6..98e32e6 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/index.web.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/index.web.js
 @@ -1,4 +1,5 @@
@@ -374,8 +374,9 @@ index d8308e6..02a8cb1 100644
  export { EnrichedMarkdownText, default } from "./web/EnrichedMarkdownText.js";
 +export { preloadMarkdownRuntime } from "./web/parseMarkdown.js";
  //# sourceMappingURL=index.web.js.map
+\ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js b/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
-index c6c73b0..0204467 100644
+index c6c73b0..b114e15 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
 @@ -1,13 +1,16 @@
@@ -493,7 +494,7 @@ index c6c73b0..0204467 100644
    const lastIdx = children.length - 1;
    return /*#__PURE__*/_jsx("div", {
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-index 7604c13..b4fe152 100644
+index 7604c13..d6b2719 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 @@ -3,18 +3,46 @@
@@ -584,6 +585,38 @@ index 7604c13..b4fe152 100644
 +  return JSON.parse(JSON.stringify(ast));
  }
  //# sourceMappingURL=parseMarkdown.js.map
+\ No newline at end of file
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
+index 5bdaee9..463c0a0 100644
+--- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
++++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
+@@ -8,6 +8,9 @@ function ParagraphRenderer({
+   node,
+   styles,
+   parentType,
++  parentAttributes,
++  childIndex,
++  siblingCount,
+   renderChildren
+ }) {
+   const isImageOnly = node.children?.length === 1 && node.children[0]?.type === 'Image';
+@@ -21,7 +24,15 @@ function ParagraphRenderer({
+     });
+   }
+   if (parentType === 'ListItem') {
+-    return /*#__PURE__*/_jsx("span", {
++    if (parentAttributes?.isTask === 'true') {
++      return /*#__PURE__*/_jsx("span", {
++        children: renderChildren(node)
++      });
++    }
++    const isLastListItemChild = childIndex !== undefined && siblingCount !== undefined ? childIndex >= siblingCount - 1 : false;
++    const paragraphStyle = isLastListItemChild ? styles.paragraphInLastListItemChild : styles.paragraphInListItem;
++    return /*#__PURE__*/_jsx("p", {
++      style: paragraphStyle,
+       children: renderChildren(node)
+     });
+   }
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/InlineRenderers.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/InlineRenderers.js
 index 7c31c2b..5bc65a7 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/InlineRenderers.js
@@ -628,6 +661,67 @@ index 7c31c2b..5bc65a7 100644
    });
  }
  function LinkRenderer({
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/ListRenderers.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/ListRenderers.js
+index 9433b81..0e012c0 100644
+--- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/ListRenderers.js
++++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/ListRenderers.js
+@@ -70,11 +70,17 @@ function ListItemRenderer({
+     ...node,
+     children: node.children?.filter(isNestedList)
+   } : null;
++  if (!isTask) {
++    return /*#__PURE__*/_jsxs("li", {
++      style: listItemStyle(false),
++      children: [renderChildren(inlineNode), nestedNode && renderChildren(nestedNode)]
++    });
++  }
+   return /*#__PURE__*/_jsxs("li", {
+-    style: listItemStyle(isTask),
++    style: listItemStyle(true),
+     children: [/*#__PURE__*/_jsxs("span", {
+       style: checkedStyle,
+-      children: [isTask && /*#__PURE__*/_jsx("input", {
++      children: [/*#__PURE__*/_jsx("input", {
+         type: "checkbox",
+         checked: isChecked,
+         onChange: handleChange,
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/index.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/index.js
+index 17a8464..cbc0766 100644
+--- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/index.js
++++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/index.js
+@@ -24,7 +24,10 @@ export function RenderNode({
+   styles,
+   callbacks,
+   capabilities,
+-  parentType
++  parentType,
++  parentAttributes,
++  childIndex,
++  siblingCount
+ }) {
+   const Renderer = RENDERERS[node.type];
+   if (!Renderer) return null;
+@@ -34,13 +37,19 @@ export function RenderNode({
+     styles: styles,
+     callbacks: callbacks,
+     capabilities: capabilities,
+-    parentType: childNode.type
++    parentType: childNode.type,
++    parentAttributes: childNode.attributes,
++    childIndex: index,
++    siblingCount: childNode.children?.length ?? 0
+   }, nodeKey(child, index))) ?? null;
+   return /*#__PURE__*/_jsx(Renderer, {
+     node: node,
+     style: style,
+     styles: styles,
+     parentType: parentType,
++    parentAttributes: parentAttributes,
++    childIndex: childIndex,
++    siblingCount: siblingCount,
+     callbacks: callbacks,
+     capabilities: capabilities,
+     renderChildren: renderChildren
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js b/node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js
 new file mode 100644
 index 0000000..ea71e63
@@ -751,8 +845,40 @@ index 0000000..ea71e63
 +  return rendered;
 +}
 +//# sourceMappingURL=streamingReveal.js.map
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/styles.js b/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
+index 1c5a293..f5df948 100644
+--- a/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
++++ b/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
+@@ -101,6 +101,18 @@ function paragraphInBlockquoteStyle(style) {
+     marginBottom: 0
+   };
+ }
++function paragraphInListItemStyle(style) {
++  return {
++    ...baseBlock(style.paragraph),
++    marginTop: 0
++  };
++}
++function paragraphInLastListItemChildStyle(style) {
++  return {
++    ...paragraphInListItemStyle(style),
++    marginBottom: 0
++  };
++}
+ function headingStyle(style, level) {
+   return baseBlock(style[toHeadingLevel(level)]);
+ }
+@@ -341,6 +353,8 @@ export function buildStyles(style) {
+   const result = {
+     paragraph: paragraphStyle(style),
+     paragraphInBlockquote: paragraphInBlockquoteStyle(style),
++    paragraphInListItem: paragraphInListItemStyle(style),
++    paragraphInLastListItemChild: paragraphInLastListItemChildStyle(style),
+     h1: headingStyle(style, '1'),
+     h2: headingStyle(style, '2'),
+     h3: headingStyle(style, '3'),
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/index.web.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/index.web.d.ts
-index 3513fc6..4fccdde 100644
+index 3513fc6..cc06a72 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/index.web.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/index.web.d.ts
 @@ -1,4 +1,5 @@
@@ -781,7 +907,7 @@ index 609252d..1b0181d 100644
       * When false (default), removes trailing margin from the last element to
       * eliminate bottom spacing.
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts
-index 4643d20..ebf26b1 100644
+index 4643d20..01878dd 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts
 @@ -1,4 +1,5 @@
@@ -790,6 +916,7 @@ index 4643d20..ebf26b1 100644
 +export declare function preloadMarkdownRuntime(): Promise<void>;
  export declare function parseMarkdown(markdown: string, { underline, latexMath }?: Md4cFlags): Promise<ASTNode>;
  //# sourceMappingURL=parseMarkdown.d.ts.map
+\ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/streamingReveal.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/streamingReveal.d.ts
 new file mode 100644
 index 0000000..1249338
@@ -829,8 +956,21 @@ index 0000000..1249338
 +    revealable: boolean;
 +    startOffset: number;
 +}>): ReactNode;
+diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/styles.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/styles.d.ts
+index d5629f6..90621d0 100644
+--- a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/styles.d.ts
++++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/styles.d.ts
+@@ -10,6 +10,8 @@ export declare const parseErrorFallbackStyle: CSSProperties;
+ export interface Styles {
+     paragraph: CSSProperties;
+     paragraphInBlockquote: CSSProperties;
++    paragraphInListItem: CSSProperties;
++    paragraphInLastListItemChild: CSSProperties;
+     h1: CSSProperties;
+     h2: CSSProperties;
+     h3: CSSProperties;
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/types.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/types.d.ts
-index 5bf4501..4af39be 100644
+index 5bf4501..21ff3cb 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/types.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/types.d.ts
 @@ -3,6 +3,7 @@ import type { MarkdownStyleInternal } from '../types/MarkdownStyleInternal';
@@ -850,7 +990,7 @@ index 5bf4501..4af39be 100644
  }
  export interface RendererCallbacks {
      onLinkPress?: (event: LinkPressEvent) => void;
-@@ -37,6 +40,7 @@ export interface RendererCallbacks {
+@@ -37,12 +40,16 @@ export interface RendererCallbacks {
  }
  export interface RenderCapabilities {
      katex: KaTeXInstance | null;
@@ -858,6 +998,15 @@ index 5bf4501..4af39be 100644
  }
  export interface RendererProps {
      node: ASTNode;
+     style: MarkdownStyleInternal;
+     styles: Styles;
+     parentType?: NodeType;
++    parentAttributes?: NodeAttributes;
++    childIndex?: number;
++    siblingCount?: number;
+     callbacks: RendererCallbacks;
+     capabilities: RenderCapabilities;
+     renderChildren: (node: ASTNode) => ReactNode;
 diff --git a/node_modules/react-native-enriched-markdown/src/index.web.tsx b/node_modules/react-native-enriched-markdown/src/index.web.tsx
 index 4b4305c..c6aa6a4 100644
 --- a/node_modules/react-native-enriched-markdown/src/index.web.tsx
@@ -1164,6 +1313,41 @@ index 911e3f1..c299992 100644
 +function cloneAst(ast: ASTNode): ASTNode {
 +  return JSON.parse(JSON.stringify(ast)) as ASTNode;
  }
+diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx
+index 28c5386..f620023 100644
+--- a/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx
++++ b/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx
+@@ -7,6 +7,9 @@ function ParagraphRenderer({
+   node,
+   styles,
+   parentType,
++  parentAttributes,
++  childIndex,
++  siblingCount,
+   renderChildren,
+ }: RendererProps) {
+   const isImageOnly =
+@@ -18,7 +21,19 @@ function ParagraphRenderer({
+   }
+
+   if (parentType === 'ListItem') {
+-    return <span>{renderChildren(node)}</span>;
++    if (parentAttributes?.isTask === 'true') {
++      return <span>{renderChildren(node)}</span>;
++    }
++
++    const isLastListItemChild =
++      childIndex !== undefined && siblingCount !== undefined
++        ? childIndex >= siblingCount - 1
++        : false;
++    const paragraphStyle = isLastListItemChild
++      ? styles.paragraphInLastListItemChild
++      : styles.paragraphInListItem;
++
++    return <p style={paragraphStyle}>{renderChildren(node)}</p>;
+   }
+
+   return <p style={styles.paragraph}>{renderChildren(node)}</p>;
 diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx
 index f25cb2a..b6c021e 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx
@@ -1207,6 +1391,80 @@ index f25cb2a..b6c021e 100644
    );
  }
 
+diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx
+index dfe69cb..4d4e7c2 100644
+--- a/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx
++++ b/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx
+@@ -84,18 +84,25 @@ function ListItemRenderer({
+     ? { ...node, children: node.children?.filter(isNestedList) }
+     : null;
+
++  if (!isTask) {
++    return (
++      <li style={listItemStyle(false)}>
++        {renderChildren(inlineNode)}
++        {nestedNode && renderChildren(nestedNode)}
++      </li>
++    );
++  }
++
+   return (
+-    <li style={listItemStyle(isTask)}>
++    <li style={listItemStyle(true)}>
+       <span style={checkedStyle}>
+-        {isTask && (
+-          <input
+-            type="checkbox"
+-            checked={isChecked}
+-            onChange={handleChange}
+-            style={styles.taskCheckbox}
+-            aria-label={`Task: ${taskText}`}
+-          />
+-        )}
++        <input
++          type="checkbox"
++          checked={isChecked}
++          onChange={handleChange}
++          style={styles.taskCheckbox}
++          aria-label={`Task: ${taskText}`}
++        />
+         {renderChildren(inlineNode)}
+       </span>
+       {nestedNode && renderChildren(nestedNode)}
+diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/index.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/index.tsx
+index dca24cf..e6662ba 100644
+--- a/node_modules/react-native-enriched-markdown/src/web/renderers/index.tsx
++++ b/node_modules/react-native-enriched-markdown/src/web/renderers/index.tsx
+@@ -44,6 +44,9 @@ export function RenderNode({
+   callbacks,
+   capabilities,
+   parentType,
++  parentAttributes,
++  childIndex,
++  siblingCount,
+ }: RenderNodeProps): ReactNode {
+   const Renderer = RENDERERS[node.type];
+   if (!Renderer) return null;
+@@ -58,6 +61,9 @@ export function RenderNode({
+         callbacks={callbacks}
+         capabilities={capabilities}
+         parentType={childNode.type}
++        parentAttributes={childNode.attributes}
++        childIndex={index}
++        siblingCount={childNode.children?.length ?? 0}
+       />
+     )) ?? null;
+
+@@ -67,6 +73,9 @@ export function RenderNode({
+       style={style}
+       styles={styles}
+       parentType={parentType}
++      parentAttributes={parentAttributes}
++      childIndex={childIndex}
++      siblingCount={siblingCount}
+       callbacks={callbacks}
+       capabilities={capabilities}
+       renderChildren={renderChildren}
 diff --git a/node_modules/react-native-enriched-markdown/src/web/streamingReveal.ts b/node_modules/react-native-enriched-markdown/src/web/streamingReveal.ts
 new file mode 100644
 index 0000000..94d3d26
@@ -1418,8 +1676,47 @@ index 0000000..94d3d26
 +
 +  return rendered;
 +}
+diff --git a/node_modules/react-native-enriched-markdown/src/web/styles.ts b/node_modules/react-native-enriched-markdown/src/web/styles.ts
+index 4d0ff8e..10b7315 100644
+--- a/node_modules/react-native-enriched-markdown/src/web/styles.ts
++++ b/node_modules/react-native-enriched-markdown/src/web/styles.ts
+@@ -106,6 +106,16 @@ function paragraphInBlockquoteStyle(
+   return { ...baseBlock(style.paragraph), marginTop: 0, marginBottom: 0 };
+ }
+
++function paragraphInListItemStyle(style: MarkdownStyleInternal): CSSProperties {
++  return { ...baseBlock(style.paragraph), marginTop: 0 };
++}
++
++function paragraphInLastListItemChildStyle(
++  style: MarkdownStyleInternal
++): CSSProperties {
++  return { ...paragraphInListItemStyle(style), marginBottom: 0 };
++}
++
+ function headingStyle(
+   style: MarkdownStyleInternal,
+   level: string
+@@ -382,6 +392,8 @@ export const parseErrorFallbackStyle: CSSProperties = {
+ export interface Styles {
+   paragraph: CSSProperties;
+   paragraphInBlockquote: CSSProperties;
++  paragraphInListItem: CSSProperties;
++  paragraphInLastListItemChild: CSSProperties;
+   h1: CSSProperties;
+   h2: CSSProperties;
+   h3: CSSProperties;
+@@ -424,6 +436,8 @@ export function buildStyles(style: MarkdownStyleInternal): Styles {
+   const result: Styles = {
+     paragraph: paragraphStyle(style),
+     paragraphInBlockquote: paragraphInBlockquoteStyle(style),
++    paragraphInListItem: paragraphInListItemStyle(style),
++    paragraphInLastListItemChild: paragraphInLastListItemChildStyle(style),
+     h1: headingStyle(style, '1'),
+     h2: headingStyle(style, '2'),
+     h3: headingStyle(style, '3'),
 diff --git a/node_modules/react-native-enriched-markdown/src/web/types.ts b/node_modules/react-native-enriched-markdown/src/web/types.ts
-index 3a297c5..d03472e 100644
+index 3a297c5..95da4b2 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/types.ts
 +++ b/node_modules/react-native-enriched-markdown/src/web/types.ts
 @@ -7,6 +7,7 @@ import type {
@@ -1447,3 +1744,13 @@ index 3a297c5..d03472e 100644
  }
 
  export interface RendererProps {
+@@ -79,6 +83,9 @@ export interface RendererProps {
+   style: MarkdownStyleInternal;
+   styles: Styles;
+   parentType?: NodeType;
++  parentAttributes?: NodeAttributes;
++  childIndex?: number;
++  siblingCount?: number;
+   callbacks: RendererCallbacks;
+   capabilities: RenderCapabilities;
+   renderChildren: (node: ASTNode) => ReactNode;

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    createThemeFixture,
     flushHookEffects,
     renderScreen,
     standardCleanup,
@@ -9,6 +10,7 @@ import {
 import {
     installFilesContentCommonModuleMocks,
 } from './filesContentTestHelpers';
+import type { Theme } from '@/theme';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,7 +18,7 @@ function toTestIdSafeValue(value: string) {
     return String(value ?? '').trim().replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
-const theme = {
+const theme = createThemeFixture({
     colors: {
         surface: {
             inset: '#222',
@@ -28,8 +30,7 @@ const theme = {
             secondary: '#aaa',
         },
     },
-    dark: false,
-} as const;
+}) as unknown as Theme;
 
 const sessionScmDiffFileSpy: any = vi.fn(async (_sessionId: string, req: any) => ({
     success: true,

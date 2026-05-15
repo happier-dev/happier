@@ -4,7 +4,12 @@ export type NativeThemePreferenceTransitionControllerDependencies = {
     hideOverlay: () => void;
     showOverlay: (uri: string) => void;
     waitForFrame: () => Promise<void> | void;
+    recordBreadcrumb?: (breadcrumb: NativeThemePreferenceTransitionBreadcrumb) => void;
 };
+
+export type NativeThemePreferenceTransitionBreadcrumb = Readonly<{
+    phase: 'mutation-before-overlay' | 'overlay-shown';
+}>;
 
 export function createNativeThemePreferenceTransitionController(
     dependencies: NativeThemePreferenceTransitionControllerDependencies,
@@ -16,8 +21,10 @@ export function createNativeThemePreferenceTransitionController(
                 mutation();
                 return;
             }
-            dependencies.showOverlay(uri);
+            dependencies.recordBreadcrumb?.({ phase: 'mutation-before-overlay' });
             mutation();
+            dependencies.recordBreadcrumb?.({ phase: 'overlay-shown' });
+            dependencies.showOverlay(uri);
             await dependencies.waitForFrame();
             await dependencies.animateOverlay();
             dependencies.hideOverlay();

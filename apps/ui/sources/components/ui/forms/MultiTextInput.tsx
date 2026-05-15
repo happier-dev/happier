@@ -3,13 +3,11 @@ import { View, NativeSyntheticEvent, TextInputKeyPressEventData, TextInputSelect
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { TextInput } from '@/components/ui/text/Text';
-import { normalizeKeyboardKeyPressEvent, type KeyPressEvent } from '@/keyboard/events';
+import { normalizeKeyboardKeyPressEvent, type KeyPressEvent as KeyboardKeyPressEvent } from '@/keyboard/events';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from './multiTextInputTypography';
 
 
-export type { KeyPressEvent, SupportedKey } from '@/keyboard/events';
-
-export type OnKeyPressCallback = (event: KeyPressEvent) => boolean;
+export type { SupportedKey } from '@/keyboard/events';
 
 export interface TextInputState {
     text: string;
@@ -18,6 +16,12 @@ export interface TextInputState {
         end: number;
     };
 }
+
+export type KeyPressEvent = KeyboardKeyPressEvent & Readonly<{
+    inputState?: TextInputState;
+}>;
+
+export type OnKeyPressCallback = (event: KeyPressEvent) => boolean;
 
 export interface MultiTextInputHandle {
     setTextAndSelection: (text: string, selection: { start: number; end: number }) => void;
@@ -77,15 +81,21 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const handleKeyPress = React.useCallback((e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
         if (!onKeyPress) return;
 
-        const nativeEvent = e.nativeEvent as TextInputKeyPressEventData & Partial<KeyPressEvent>;
+        const nativeEvent = e.nativeEvent as TextInputKeyPressEventData & Partial<KeyboardKeyPressEvent>;
         const keyEvent = normalizeKeyboardKeyPressEvent(nativeEvent);
         if (!keyEvent) return;
 
-        const handled = onKeyPress(keyEvent);
+        const handled = onKeyPress({
+            ...keyEvent,
+            inputState: {
+                text: value,
+                selection: { ...selectionRef.current },
+            },
+        });
         if (handled) {
             e.preventDefault();
         }
-    }, [onKeyPress]);
+    }, [onKeyPress, value]);
 
     const handleTextChange = React.useCallback((text: string) => {
         // When text changes, assume cursor moves to end

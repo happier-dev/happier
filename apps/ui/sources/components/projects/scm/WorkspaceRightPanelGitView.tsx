@@ -387,12 +387,13 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         }),
         [scope.machineId, scope.rootPath],
     );
+    const publishProviderKind = snapshot?.hostingProvider?.kind ?? null;
     const describePublishTargets = React.useCallback(
         () => machineScmHostingRepositoryDescribePublishTargets(scope.machineId, {
             cwd: scope.rootPath,
-            providerKind: 'github',
+            ...(publishProviderKind ? { providerKind: publishProviderKind } : {}),
         }),
-        [scope.machineId, scope.rootPath],
+        [publishProviderKind, scope.machineId, scope.rootPath],
     );
     const publishRepository = React.useCallback(
         (request: Parameters<typeof machineScmHostingRepositoryPublish>[1]) => machineScmHostingRepositoryPublish(scope.machineId, {
@@ -412,6 +413,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         return (
             <SourceControlUnavailableState
                 details={error.message}
+                errorCode={error.errorCode}
                 onRetry={() => {
                     void refresh();
                 }}

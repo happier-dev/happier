@@ -7,6 +7,7 @@ import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { t } from '@/text';
 import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage } from "@/sync/domains/messages/messageTypes";
 import { Metadata } from "@/sync/domains/state/storageTypes";
+import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { layout } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
@@ -96,6 +97,7 @@ export const MessageView = (props: {
   sessionId: string;
   layoutContext?: 'transcript' | 'tool_calls_group';
   forcePermissionPromptsInTranscript?: boolean;
+  approvalRequests?: readonly OpenApprovalArtifactForSession[];
   activeThinkingMessageId?: string | null;
   thinkingExpanded?: boolean;
   onThinkingExpandedChange?: (next: boolean) => void;
@@ -119,6 +121,7 @@ export const MessageView = (props: {
           sessionId={props.sessionId}
           layoutContext={props.layoutContext ?? 'transcript'}
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
+          approvalRequests={props.approvalRequests}
           activeThinkingMessageId={props.activeThinkingMessageId ?? null}
           thinkingExpanded={props.thinkingExpanded}
           onThinkingExpandedChange={props.onThinkingExpandedChange}
@@ -139,6 +142,7 @@ function RenderBlock(props: {
   sessionId: string;
   layoutContext: 'transcript' | 'tool_calls_group';
   forcePermissionPromptsInTranscript?: boolean;
+  approvalRequests?: readonly OpenApprovalArtifactForSession[];
   activeThinkingMessageId: string | null;
   thinkingExpanded?: boolean;
   onThinkingExpandedChange?: (next: boolean) => void;
@@ -187,6 +191,7 @@ function RenderBlock(props: {
         sessionId={props.sessionId}
         layoutContext={props.layoutContext}
         forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
+        approvalRequests={props.approvalRequests}
         activeThinkingMessageId={props.activeThinkingMessageId}
         getMessageById={props.getMessageById}
         interaction={props.interaction}
@@ -1407,6 +1412,7 @@ function ToolCallBlock(props: {
   sessionId: string;
   layoutContext: 'transcript' | 'tool_calls_group';
   forcePermissionPromptsInTranscript?: boolean;
+  approvalRequests?: readonly OpenApprovalArtifactForSession[];
   activeThinkingMessageId: string | null;
   getMessageById?: (id: string) => Message | null;
   interaction?: {
@@ -1483,6 +1489,7 @@ function ToolCallBlock(props: {
           messages={props.message.children}
           sessionId={props.sessionId}
           messageId={toolRouteMessageId}
+          approvalRequests={props.approvalRequests}
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           interaction={props.interaction}
         />
@@ -1493,6 +1500,7 @@ function ToolCallBlock(props: {
           messages={props.message.children}
           sessionId={props.sessionId}
           messageId={toolRouteMessageId}
+          approvalRequests={props.approvalRequests}
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           interaction={props.interaction}
         />

@@ -1,6 +1,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 
@@ -77,6 +78,12 @@ function findPermissionFooterButton(
     const button = findTestInstanceByTypeContainingText(screen.tree, 'TouchableOpacity', label);
     expect(button).toBeTruthy();
     return button!;
+}
+
+function getTextStyleFragments(button: ReturnType<typeof findPermissionFooterButton>) {
+    const textNode = button.findByType('Text' as any);
+    const style = textNode.props.style;
+    return (Array.isArray(style) ? style : [style]).filter(Boolean) as Array<Record<string, unknown>>;
 }
 
 describe('PermissionFooter (Claude permission updates)', () => {
@@ -196,5 +203,34 @@ describe('PermissionFooter (Claude permission updates)', () => {
                 ],
             }),
         );
+    });
+
+    it('uses permission foreground tokens for pending action labels', async () => {
+        const { PermissionFooter } = await import('../permissions/PermissionFooter');
+
+        const editScreen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: { id: 'p1', status: 'pending' },
+            sessionId: 's1',
+            toolName: 'Edit',
+            toolInput: { file_path: 'a.ts' },
+            metadata: { flavor: 'opencode' },
+        }));
+
+        const allowAllEditsButton = findPermissionFooterButton(editScreen, 'claude.permissions.yesAllowAllEdits');
+        const allowAllEditsTextStyle = getTextStyleFragments(allowAllEditsButton);
+
+        expect(allowAllEditsTextStyle.some((style) => style.color === lightTheme.colors.permissionButton.allowAll.text)).toBe(true);
+
+        const shellScreen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: { id: 'p2', status: 'pending' },
+            sessionId: 's2',
+            toolName: 'Bash',
+            toolInput: { command: 'pwd' },
+            metadata: { flavor: 'opencode' },
+        }));
+        const allowForToolButton = findPermissionFooterButton(shellScreen, 'claude.permissions.yesForTool');
+        const allowForToolTextStyle = getTextStyleFragments(allowForToolButton);
+
+        expect(allowForToolTextStyle.some((style) => style.color === lightTheme.colors.permissionButton.allow.text)).toBe(true);
     });
 });

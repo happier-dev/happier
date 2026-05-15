@@ -26,17 +26,13 @@ function RegisteringBridge(props: Readonly<{
     const switchSurface = React.useCallback((surface: SessionMobileSurface) => {
         props.calls.push(`${props.callbackVersion}:switch:${surface}`);
     }, [props.callbackVersion, props.calls]);
-    const closeCockpit = React.useCallback(() => {
-        props.calls.push(`${props.callbackVersion}:close`);
-    }, [props.callbackVersion, props.calls]);
 
     React.useEffect(() => register({
         sessionId: 'session-1',
         activeSurface: 'chat',
         terminalTabAvailable: true,
         switchSurface,
-        closeCockpit,
-    }), [closeCockpit, register, switchSurface]);
+    }), [register, switchSurface]);
 
     return null;
 }
@@ -83,12 +79,10 @@ describe('SessionCockpitChromeRegistry', () => {
 
         await act(async () => {
             firstRegistration.switchSurface('tabs');
-            firstRegistration.closeCockpit();
         });
         expect(calls).toEqual([
             'v1:switch:git',
             'v2:switch:tabs',
-            'v2:close',
         ]);
     });
 });

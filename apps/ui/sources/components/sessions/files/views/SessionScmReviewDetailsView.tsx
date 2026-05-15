@@ -7,7 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { ChangedFilesViewModeMenu } from '@/components/sessions/files/ChangedFilesViewModeMenu';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
-import { useProjectForSession, useProjectSessions, useSession, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { useProjectForSession, useProjectSessions, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSessionWorkspacePath, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
@@ -23,7 +23,6 @@ import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { t } from '@/text';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
-import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { useDerivedSessionChangeSet } from '@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
@@ -83,12 +82,8 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     const onScrollTopChange = React.useCallback((top: number) => {
         setPersistedReviewTabState({ scrollTop: top });
     }, [setPersistedReviewTabState]);
-    const session = useSession(props.sessionId);
     const project = useProjectForSession(props.sessionId);
-    const sessionPath = resolveSessionWorkspacePath({
-        sessionPath: session?.metadata?.path ?? null,
-        projectPath: project?.key?.rootPath ?? null,
-    });
+    const sessionPath = useSessionWorkspacePath(props.sessionId);
     const snapshot = useSessionProjectScmSnapshot(props.sessionId);
     const lastGoodSnapshot = useLastNonNullValue(snapshot, { resetKey: props.sessionId });
     const effectiveSnapshot = snapshot ?? lastGoodSnapshot;

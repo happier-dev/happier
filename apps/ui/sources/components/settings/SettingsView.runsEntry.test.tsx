@@ -124,7 +124,7 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
+    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -318,6 +318,13 @@ describe('SettingsView (runs entry)', () => {
         expect(screen.findRowByTitle('settings.voiceAssistant')).toBeNull();
         expect(screen.findRowByTitle('settings.filesSourceControl')).toBeNull();
         expect(screen.findRowByTitle('settings.memorySearch')).toBeNull();
+    });
+
+    it('hides the files and source control group when all child entries are disabled', async () => {
+        mockFeatureEnabled = (featureId) => featureId === 'execution.runs';
+        const screen = await renderSettingsViewUnderTest();
+
+        expect(screen.findAllByProps({ title: 'settings.filesAndSourceControl' })).toEqual([]);
     });
 
     it('shows feature-gated entries when voice, source control, and memory search are enabled', async () => {

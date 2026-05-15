@@ -6,6 +6,7 @@ export * from './focus';
 export * from './mutations';
 export * from './names';
 export * from './normalize';
+export * from './orderKey';
 export * from './sessionListFolders';
 export * from './sessionFolderMoveTargets';
 export * from './tree';

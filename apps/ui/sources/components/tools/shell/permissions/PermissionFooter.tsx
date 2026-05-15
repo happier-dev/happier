@@ -80,7 +80,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     buttonSelected: {
         backgroundColor: 'transparent',
-        borderLeftColor: theme.colors.text.primary,
+        borderLeftColor: theme.colors.permissionButton.selected.border,
     },
     buttonInactive: {
         opacity: 0.3,
@@ -102,45 +102,45 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 1,
     },
     buttonTextAllow: {
-        color: theme.colors.permissionButton.allow.background,
+        color: theme.colors.permissionButton.allow.text,
         fontWeight: '500',
     },
     buttonTextDeny: {
-        color: theme.colors.permissionButton.deny.background,
+        color: theme.colors.permissionButton.deny.text,
         fontWeight: '500',
     },
     buttonTextAllowAll: {
-        color: theme.colors.permissionButton.allowAll.background,
+        color: theme.colors.permissionButton.allowAll.text,
         fontWeight: '500',
     },
     buttonTextSelected: {
-        color: theme.colors.text.primary,
+        color: theme.colors.permissionButton.selected.text,
         fontWeight: '500',
     },
     buttonForSession: {
         backgroundColor: 'transparent',
     },
     buttonTextForSession: {
-        color: theme.colors.permissionButton.allowAll.background,
+        color: theme.colors.permissionButton.allowAll.text,
         fontWeight: '500',
     },
     loadingIndicatorAllow: {
-        color: theme.colors.permissionButton.allow.background,
+        color: theme.colors.permissionButton.allow.text,
     },
     loadingIndicatorDeny: {
-        color: theme.colors.permissionButton.deny.background,
+        color: theme.colors.permissionButton.deny.text,
     },
     loadingIndicatorAllowAll: {
-        color: theme.colors.permissionButton.allowAll.background,
+        color: theme.colors.permissionButton.allowAll.text,
     },
     loadingIndicatorForSession: {
-        color: theme.colors.permissionButton.allowAll.background,
+        color: theme.colors.permissionButton.allowAll.text,
     },
     iconApproved: {
-        color: theme.colors.permissionButton.allow.background,
+        color: theme.colors.permissionButton.allow.text,
     },
     iconDenied: {
-        color: theme.colors.permissionButton.deny.background,
+        color: theme.colors.permissionButton.deny.text,
     },
 }));
 

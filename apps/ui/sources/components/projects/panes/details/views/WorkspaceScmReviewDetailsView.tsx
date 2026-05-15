@@ -78,6 +78,7 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
         return (
             <SourceControlUnavailableState
                 details={error.message}
+                errorCode={error.errorCode}
                 onRetry={() => {
                     void refresh();
                 }}

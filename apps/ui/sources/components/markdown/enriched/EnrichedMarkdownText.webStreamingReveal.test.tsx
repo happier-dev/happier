@@ -72,9 +72,20 @@ type InlineRenderersModule = Readonly<{
     }>;
 }>;
 
+type WebRenderersModule = Readonly<{
+    RenderNode: React.ComponentType<{
+        node: MarkdownAstNode;
+        style: Record<string, unknown>;
+        styles: Record<string, unknown>;
+        callbacks: Record<string, never>;
+        capabilities: { katex: null };
+    }>;
+}>;
+
 type MarkdownAstNode = Readonly<{
     type: string;
     content?: string;
+    attributes?: Record<string, string | number | boolean | undefined>;
     children?: readonly MarkdownAstNode[];
 }>;
 
@@ -115,6 +126,14 @@ async function loadPatchedInlineRenderers(): Promise<InlineRenderersModule> {
     return import(/* @vite-ignore */ moduleUrl) as Promise<InlineRenderersModule>;
 }
 
+async function loadPatchedWebRenderers(): Promise<WebRenderersModule> {
+    const moduleUrl = new URL(
+        '../../../../node_modules/react-native-enriched-markdown/src/web/renderers/index.tsx',
+        import.meta.url,
+    ).href;
+    return import(/* @vite-ignore */ moduleUrl) as Promise<WebRenderersModule>;
+}
+
 function spanChildren(node: React.ReactNode): string[] {
     if (!Array.isArray(node)) return [];
     return node
@@ -136,6 +155,19 @@ function revealTextsFromNode(node: React.ReactNode): string[] {
     }
 
     return revealTextsFromNode(node.props.children);
+}
+
+function countJsonNodesByType(node: TestRenderer.ReactTestRendererJSON | TestRenderer.ReactTestRendererJSON[] | null, type: string): number {
+    if (node === null) return 0;
+    if (Array.isArray(node)) {
+        return node.reduce((count, child) => count + countJsonNodesByType(child, type), 0);
+    }
+
+    return (node.type === type ? 1 : 0)
+        + (node.children ?? []).reduce((count, child) => {
+            if (typeof child === 'string') return count;
+            return count + countJsonNodesByType(child, type);
+        }, 0);
 }
 
 describe('EnrichedMarkdownText web streaming reveal', () => {
@@ -385,6 +417,69 @@ describe('EnrichedMarkdownText web streaming reveal', () => {
         }
 
         expect(JSON.stringify(renderer.toJSON())).toContain('Immediate fallback text');
+        TestRenderer.act(() => {
+            renderer.unmount();
+        });
+    });
+
+    it('preserves paragraph block boundaries inside loose ordered list items', async () => {
+        const { RenderNode } = await loadPatchedWebRenderers();
+        const globalWithReact = globalThis as typeof globalThis & { React?: typeof React };
+        globalWithReact.React = React;
+        const ast: MarkdownAstNode = {
+            type: 'OrderedList',
+            children: [
+                {
+                    type: 'ListItem',
+                    children: [
+                        {
+                            type: 'Paragraph',
+                            children: [{ type: 'Text', content: 'First title' }],
+                        },
+                        {
+                            type: 'Paragraph',
+                            children: [{ type: 'Text', content: 'First continuation' }],
+                        },
+                    ],
+                },
+                {
+                    type: 'ListItem',
+                    children: [
+                        {
+                            type: 'Paragraph',
+                            children: [{ type: 'Text', content: 'Second title' }],
+                        },
+                    ],
+                },
+            ],
+        };
+        const rendererHolder: { current: TestRenderer.ReactTestRenderer | null } = { current: null };
+        TestRenderer.act(() => {
+            rendererHolder.current = TestRenderer.create(
+                <RenderNode
+                    node={ast}
+                    style={{}}
+                    styles={{
+                        list: {},
+                        listNested: {},
+                        listTask: {},
+                        paragraph: {},
+                        paragraphInListItem: {},
+                        paragraphInLastListItemChild: {},
+                    }}
+                    callbacks={{}}
+                    capabilities={{ katex: null }}
+                />,
+            );
+        });
+        const renderer = rendererHolder.current;
+        if (renderer === null) {
+            throw new Error('Expected RenderNode test renderer to be created');
+        }
+
+        expect(countJsonNodesByType(renderer.toJSON(), 'ol')).toBe(1);
+        expect(countJsonNodesByType(renderer.toJSON(), 'li')).toBe(2);
+        expect(countJsonNodesByType(renderer.toJSON(), 'p')).toBe(3);
         TestRenderer.act(() => {
             renderer.unmount();
         });

@@ -33,6 +33,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     isCreating: boolean;
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
+    onAutocompleteSuggestionSelect?: React.ComponentProps<typeof AgentInput>['onAutocompleteSuggestionSelect'];
     sessionPromptInputMaxHeight: number;
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     agentInputExtraActionChips?: React.ComponentProps<typeof AgentInput>['extraActionChips'];
@@ -169,6 +170,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                                         placeholder={t('session.inputPlaceholder')}
                                         autocompletePrefixes={props.emptyAutocompletePrefixes}
                                         autocompleteSuggestions={props.emptyAutocompleteSuggestions}
+                                        onAutocompleteSuggestionSelect={props.onAutocompleteSuggestionSelect}
                                         extraActionChips={extraActionChips}
                                         inputMaxHeight={props.sessionPromptInputMaxHeight}
                                         submitAccessibilityLabel={props.submitAccessibilityLabel}

@@ -22,6 +22,7 @@ import type { BusySteerSendPolicy, MessageSendMode } from '@/sync/domains/sessio
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
+import { normalizeSessionListAttentionPlacementMode } from '@/sync/domains/session/listing/sessionListAttentionPlacement';
 
 export default React.memo(function SessionSettingsScreen() {
     const { theme } = useUnistyles();
@@ -62,6 +63,9 @@ export default React.memo(function SessionSettingsScreen() {
     const deviceType = useDeviceType();
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const [sessionListDensity, setSessionListDensity] = useSettingMutable('sessionListDensity');
+    const [sessionListIdentityDisplay, setSessionListIdentityDisplay] = useSettingMutable('sessionListIdentityDisplay');
+    const [sessionListActiveColorMode, setSessionListActiveColorMode] = useSettingMutable('sessionListActiveColorModeV1');
+    const [sessionListAttentionPromotionMode, setSessionListAttentionPromotionMode] = useSettingMutable('sessionListAttentionPromotionModeV1');
     const [sessionListOrderingModeV1, setSessionListOrderingModeV1] = useSettingMutable('sessionListOrderingModeV1');
     const [sessionListNarrowWorkingIndicatorStyle, setSessionListNarrowWorkingIndicatorStyle] = useSettingMutable('sessionListNarrowWorkingIndicatorStyle');
     const [workspacePathDisplayModeV1, setWorkspacePathDisplayModeV1] = useSettingMutable('workspacePathDisplayModeV1');
@@ -83,6 +87,9 @@ export default React.memo(function SessionSettingsScreen() {
     const [openReplayMenu, setOpenReplayMenu] = React.useState<boolean>(false);
     const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
     const [openSessionListDensityMenu, setOpenSessionListDensityMenu] = React.useState(false);
+    const [openSessionListIdentityDisplayMenu, setOpenSessionListIdentityDisplayMenu] = React.useState(false);
+    const [openSessionListActiveColorModeMenu, setOpenSessionListActiveColorModeMenu] = React.useState(false);
+    const [openSessionListAttentionPromotionModeMenu, setOpenSessionListAttentionPromotionModeMenu] = React.useState(false);
     const [openSessionListOrderingModeMenu, setOpenSessionListOrderingModeMenu] = React.useState(false);
     const [openWorkspacePathDisplayMenu, setOpenWorkspacePathDisplayMenu] = React.useState(false);
     const [openWorkingIndicatorMenu, setOpenWorkingIndicatorMenu] = React.useState(false);
@@ -160,6 +167,82 @@ export default React.memo(function SessionSettingsScreen() {
         if (itemId !== 'detailed' && itemId !== 'cozy' && itemId !== 'narrow') return;
         setSessionListDensity(itemId);
     }, [setSessionListDensity]);
+
+    const sessionListIdentityDisplayItems = React.useMemo(() => [
+        {
+            id: 'avatar',
+            title: t('settingsSession.sessionList.identityDisplayAvatarTitle'),
+            subtitle: t('settingsSession.sessionList.identityDisplayAvatarSubtitle'),
+        },
+        {
+            id: 'agentLogo',
+            title: t('settingsSession.sessionList.identityDisplayAgentLogoTitle'),
+            subtitle: t('settingsSession.sessionList.identityDisplayAgentLogoSubtitle'),
+        },
+        {
+            id: 'none',
+            title: t('settingsSession.sessionList.identityDisplayNoneTitle'),
+            subtitle: t('settingsSession.sessionList.identityDisplayNoneSubtitle'),
+        },
+    ], [preferredLanguage]);
+
+    const normalizedSessionListIdentityDisplay =
+        sessionListIdentityDisplay === 'agentLogo' || sessionListIdentityDisplay === 'none'
+            ? sessionListIdentityDisplay
+            : 'avatar';
+    const handleSessionListIdentityDisplaySelect = React.useCallback((itemId: string) => {
+        if (itemId !== 'avatar' && itemId !== 'agentLogo' && itemId !== 'none') return;
+        setSessionListIdentityDisplay(itemId);
+    }, [setSessionListIdentityDisplay]);
+
+    const sessionListActiveColorModeItems = React.useMemo(() => [
+        {
+            id: 'activityAndAttention',
+            title: t('settingsSession.sessionList.activeColorActivityAndAttentionTitle'),
+            subtitle: t('settingsSession.sessionList.activeColorActivityAndAttentionSubtitle'),
+        },
+        {
+            id: 'attentionOnly',
+            title: t('settingsSession.sessionList.activeColorAttentionOnlyTitle'),
+            subtitle: t('settingsSession.sessionList.activeColorAttentionOnlySubtitle'),
+        },
+        {
+            id: 'allActive',
+            title: t('settingsSession.sessionList.activeColorAllActiveTitle'),
+            subtitle: t('settingsSession.sessionList.activeColorAllActiveSubtitle'),
+        },
+    ], [preferredLanguage]);
+    const normalizedSessionListActiveColorMode =
+        sessionListActiveColorMode === 'attentionOnly' || sessionListActiveColorMode === 'allActive'
+            ? sessionListActiveColorMode
+            : 'activityAndAttention';
+    const handleSessionListActiveColorModeSelect = React.useCallback((itemId: string) => {
+        if (itemId !== 'activityAndAttention' && itemId !== 'attentionOnly' && itemId !== 'allActive') return;
+        setSessionListActiveColorMode(itemId);
+    }, [setSessionListActiveColorMode]);
+
+    const sessionListAttentionPromotionModeItems = React.useMemo(() => [
+        {
+            id: 'off',
+            title: t('settingsSession.sessionList.attentionPromotionModeOffTitle'),
+            subtitle: t('settingsSession.sessionList.attentionPromotionModeOffSubtitle'),
+        },
+        {
+            id: 'global',
+            title: t('settingsSession.sessionList.attentionPromotionModeGlobalTitle'),
+            subtitle: t('settingsSession.sessionList.attentionPromotionModeGlobalSubtitle'),
+        },
+        {
+            id: 'withinGroups',
+            title: t('settingsSession.sessionList.attentionPromotionModeWithinGroupsTitle'),
+            subtitle: t('settingsSession.sessionList.attentionPromotionModeWithinGroupsSubtitle'),
+        },
+    ], [preferredLanguage]);
+    const normalizedSessionListAttentionPromotionMode = normalizeSessionListAttentionPlacementMode(sessionListAttentionPromotionMode);
+    const handleSessionListAttentionPromotionModeSelect = React.useCallback((itemId: string) => {
+        if (itemId !== 'off' && itemId !== 'global' && itemId !== 'withinGroups') return;
+        setSessionListAttentionPromotionMode(itemId);
+    }, [setSessionListAttentionPromotionMode]);
 
     const sessionListOrderingModeItems = React.useMemo(() => [
         {
@@ -380,6 +463,48 @@ export default React.memo(function SessionSettingsScreen() {
                     onSelect={handleSessionListDensitySelect}
                 />
                 <DropdownMenu
+                    open={openSessionListIdentityDisplayMenu}
+                    onOpenChange={setOpenSessionListIdentityDisplayMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedSessionListIdentityDisplay}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.identityDisplayTitle'),
+                        subtitle: t('settingsSession.sessionList.identityDisplaySubtitle'),
+                        icon: <Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-sessionListIdentityDisplay-trigger' },
+                    }}
+                    items={sessionListIdentityDisplayItems}
+                    onSelect={handleSessionListIdentityDisplaySelect}
+                />
+                <DropdownMenu
+                    open={openSessionListActiveColorModeMenu}
+                    onOpenChange={setOpenSessionListActiveColorModeMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedSessionListActiveColorMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.activeColorTitle'),
+                        subtitle: t('settingsSession.sessionList.activeColorSubtitle'),
+                        icon: <Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.purple} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-sessionListActiveColorMode-trigger' },
+                    }}
+                    items={sessionListActiveColorModeItems}
+                    onSelect={handleSessionListActiveColorModeSelect}
+                />
+                <DropdownMenu
                     open={openSessionListOrderingModeMenu}
                     onOpenChange={setOpenSessionListOrderingModeMenu}
                     variant="selectable"
@@ -399,6 +524,27 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={sessionListOrderingModeItems}
                     onSelect={handleSessionListOrderingModeSelect}
+                />
+                <DropdownMenu
+                    open={openSessionListAttentionPromotionModeMenu}
+                    onOpenChange={setOpenSessionListAttentionPromotionModeMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedSessionListAttentionPromotionMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.attentionPromotionModeTitle'),
+                        subtitle: t('settingsSession.sessionList.attentionPromotionModeSubtitle'),
+                        icon: <Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.warning.foreground} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-attentionPromotionMode-trigger' },
+                    }}
+                    items={sessionListAttentionPromotionModeItems}
+                    onSelect={handleSessionListAttentionPromotionModeSelect}
                 />
                 <DropdownMenu
                     open={openWorkspacePathDisplayMenu}

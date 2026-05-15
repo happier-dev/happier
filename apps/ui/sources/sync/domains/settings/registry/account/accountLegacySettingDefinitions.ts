@@ -34,8 +34,8 @@ export const ACCOUNT_LEGACY_SETTING_DEFINITIONS = defineSettingDefinitions({
     },
     compactSessionViewMinimal: {
         schema: z.boolean(),
-        default: false,
-        description: 'Whether compact session view should use the minimal (no-avatar) layout',
+        default: true,
+        description: 'Whether compact session view should use the narrow layout',
         storageScope: 'account',
     },
     reviewPromptAnswered: {

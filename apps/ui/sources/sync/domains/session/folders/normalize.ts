@@ -1,5 +1,6 @@
 import { SESSION_FOLDER_MAX_COUNT, SESSION_FOLDER_MAX_DEPTH } from './constants';
 import { makeSiblingUniqueSessionFolderName, normalizeSessionFolderName } from './names';
+import { migrateLegacyPaddedSortKeysToFractional, rebalanceSortKeys } from './orderKey';
 import type { SessionFolderV1, SessionFoldersV1 } from './types';
 import { buildSessionFolderWorkspaceRefKey, normalizeSessionFolderWorkspaceRef } from './workspaceRefs';
 
@@ -108,5 +109,32 @@ export function normalizeSessionFolders(
         });
     }
 
-    return { v: 1, folders: finalFolders };
+    const migrationSortKeysByFolderId = new Map<string, string>();
+    const siblingsByKey = new Map<string, SessionFolderV1[]>();
+    for (const folder of finalFolders) {
+        const siblingKey = `${buildSessionFolderWorkspaceRefKey(folder.workspace)}:${folder.parentId ?? 'root'}`;
+        const siblings = siblingsByKey.get(siblingKey) ?? [];
+        siblings.push(folder);
+        siblingsByKey.set(siblingKey, siblings);
+    }
+    for (const siblings of siblingsByKey.values()) {
+        const migrated = siblings.every((folder) => !folder.sortKey)
+            ? rebalanceSortKeys(new Map(
+                siblings.map((folder, index) => [folder.id, String(index + 1).padStart(6, '0')] as const),
+            ))
+            : migrateLegacyPaddedSortKeysToFractional(siblings);
+        for (const [folderId, sortKey] of migrated) {
+            migrationSortKeysByFolderId.set(folderId, sortKey);
+        }
+    }
+
+    return {
+        v: 1,
+        folders: migrationSortKeysByFolderId.size === 0
+            ? finalFolders
+            : finalFolders.map((folder) => {
+                const sortKey = migrationSortKeysByFolderId.get(folder.id);
+                return sortKey ? { ...folder, sortKey } : folder;
+            }),
+    };
 }

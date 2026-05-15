@@ -352,6 +352,31 @@ import {
     sessionTargetTrackedSet: async ({ sessionIds }) => await setTrackedSessionIds({ sessionIds }),
     sessionList: async ({ limit, cursor, includeLastMessagePreview }) => await listSessionsForVoiceTool({ limit, cursor, includeLastMessagePreview }),
     sessionActivityGet: async ({ sessionId, windowSeconds }) => await getSessionActivityForVoiceTool({ sessionId, windowSeconds }),
+    sessionTranscriptGet: async ({ sessionId, limit, cursor, roles, maxCharsPerMessage }) => {
+      const roleSet = Array.isArray(roles) ? new Set(roles) : null;
+      const res = await getSessionRecentMessagesForVoiceTool({
+        sessionId,
+        limit,
+        cursor,
+        includeUser: roleSet ? roleSet.has('user') : true,
+        includeAssistant: roleSet ? roleSet.has('assistant') : true,
+        maxCharsPerMessage,
+      });
+      if (!res.ok) return res;
+      return {
+        ok: true,
+        sessionId: res.sessionId,
+        items: res.messages.map((message) => ({
+          id: String(message.id ?? ''),
+          createdAt: Number(message.createdAt ?? 0),
+          role: message.role === 'assistant' ? 'assistant' : message.role === 'tool' ? 'tool' : 'user',
+          kind: message.role === 'tool' ? 'tool_call' : 'message',
+          text: String(message.text ?? ''),
+        })),
+        nextCursor: res.nextCursor,
+        hasMore: Boolean(res.nextCursor),
+      };
+    },
     sessionRecentMessagesGet: async ({ sessionId, defaultSessionId, limit, cursor, includeUser, includeAssistant, maxCharsPerMessage }) =>
       await getSessionRecentMessagesForVoiceTool({ sessionId, defaultSessionId, limit, cursor, includeUser, includeAssistant, maxCharsPerMessage }),
 

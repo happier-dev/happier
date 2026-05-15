@@ -26,7 +26,7 @@ vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () =>
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: { default: () => ({}), mono: () => ({}) },
 }));
 
 describe('FileContentPanel (web read-only diff)', () => {

@@ -85,7 +85,13 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {}, localSettings: { uiFontScale: 1 } }),
+    getStorage: () => {
+        const state = { sessionMessages: {}, localSettings: { uiFontScale: 1, uiContentWidthMode: null } };
+        return Object.assign(
+            (selector: any) => selector(state),
+            { getState: () => state },
+        );
+    },
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -488,6 +494,31 @@ describe('AgentInput (send button accessibility)', () => {
 
         expect(onSend).toHaveBeenCalledTimes(1);
         expect(onChangeText).toHaveBeenCalledWith('');
+
+        await screen.unmount();
+    });
+
+    it('does not clear the session composer immediately when sending attachments', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const onChangeText = vi.fn();
+        const onSend = vi.fn();
+
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value="Describe this image"
+            placeholder="Type"
+            onChangeText={onChangeText}
+            onSend={onSend}
+            hasSendableAttachments={true}
+            autocompletePrefixes={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        screen.pressByTestId('session-composer-send');
+
+        expect(onSend).toHaveBeenCalledTimes(1);
+        expect(onChangeText).not.toHaveBeenCalledWith('');
 
         await screen.unmount();
     });

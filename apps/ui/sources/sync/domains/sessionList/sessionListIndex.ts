@@ -1,13 +1,14 @@
 import type { MachineDisplayRenderable } from '../machines/machineDisplayRenderable';
 import type { SessionListViewItem } from '../session/listing/sessionListViewData';
-import { getSessionStorageKind } from '../session/sessionStorageKind';
+import { getSessionStorageKind, type SessionStorageKind } from '../session/sessionStorageKind';
 import type { SessionFolderWorkspaceRefV1 } from '../session/folders';
+import type { SessionListAttentionPlacementReason } from '../session/listing/sessionListAttentionPlacementTypes';
 
 export type SessionListIndexItem =
     | Readonly<{
         type: 'header';
         title: string;
-        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared' | 'folder';
+        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared' | 'folder' | 'attention';
         groupKey?: string;
         workspaceKey?: string;
         seedSessionId?: string | null;
@@ -23,20 +24,38 @@ export type SessionListIndexItem =
     | Readonly<{
         type: 'session';
         sessionId: string;
-        storageKind?: 'persisted' | 'direct';
+        storageKind?: SessionStorageKind;
         section?: 'active' | 'inactive';
         groupKey?: string;
-        groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared' | 'folder';
+        groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared' | 'folder' | 'attention';
         pinned?: boolean;
         variant?: 'default' | 'no-path';
         archivedAt?: number | null;
         keepVisibleWhenInactive?: boolean;
+        attentionPlacementReason?: SessionListAttentionPlacementReason;
         serverId?: string;
         serverName?: string;
         folderId?: string | null;
         folderDepth?: number;
         workspace?: SessionFolderWorkspaceRefV1;
     }>;
+
+export type SessionListIndexFolderDragEligibilityReason =
+    | 'eligible'
+    | 'feature-disabled'
+    | 'direct-session'
+    | 'unsupported-item';
+
+export type SessionListIndexFolderDragEligibility = Readonly<{
+    canUseSessionFolders: boolean;
+    foldersFeatureEnabled: boolean;
+    storageKind: SessionStorageKind | null;
+    reason: SessionListIndexFolderDragEligibilityReason;
+}>;
+
+export type ResolveSessionListIndexFolderDragEligibilityOptions = Readonly<{
+    foldersFeatureEnabled: boolean;
+}>;
 
 function areMachineDisplayRenderablesEqual(
     previous: MachineDisplayRenderable | null | undefined,
@@ -54,6 +73,22 @@ function areMachineDisplayRenderablesEqual(
         && (previous.metadata?.displayName ?? null) === (next.metadata?.displayName ?? null)
         && (previous.metadata?.host ?? null) === (next.metadata?.host ?? null)
         && (previous.metadata?.homeDir ?? null) === (next.metadata?.homeDir ?? null);
+}
+
+function areWorkspaceRefsEqual(
+    previous: SessionFolderWorkspaceRefV1 | null | undefined,
+    next: SessionFolderWorkspaceRefV1 | null | undefined,
+): boolean {
+    if (previous === next) return true;
+    if (!previous || !next) return previous === next;
+    if (previous.t !== next.t) return false;
+    if (previous.serverId !== next.serverId) return false;
+    if (previous.t === 'workspaceRef') {
+        return next.t === 'workspaceRef' && previous.workspaceRefId === next.workspaceRefId;
+    }
+    return next.t === 'workspaceScope'
+        && previous.machineId === next.machineId
+        && previous.rootPath === next.rootPath;
 }
 
 function areSessionListIndexItemsEqual(
@@ -75,11 +110,12 @@ function areSessionListIndexItemsEqual(
             && previous.variant === next.variant
             && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
             && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
+            && (previous.attentionPlacementReason ?? null) === (next.attentionPlacementReason ?? null)
             && previous.serverId === next.serverId
             && previous.serverName === next.serverName
             && (previous.folderId ?? null) === (next.folderId ?? null)
             && (previous.folderDepth ?? null) === (next.folderDepth ?? null)
-            && JSON.stringify(previous.workspace ?? null) === JSON.stringify(next.workspace ?? null);
+            && areWorkspaceRefsEqual(previous.workspace ?? null, next.workspace ?? null);
     }
 
     if (next.type !== 'header') return false;
@@ -99,6 +135,7 @@ function areSessionListIndexItemsEqual(
         && (previousHint?.serverId ?? null) === (nextHint?.serverId ?? null)
         && (previousHint?.machineId ?? null) === (nextHint?.machineId ?? null)
         && (previousHint?.rootPath ?? null) === (nextHint?.rootPath ?? null)
+        && areWorkspaceRefsEqual(previous.workspace ?? null, next.workspace ?? null)
         && areMachineDisplayRenderablesEqual(previous.machine ?? null, next.machine ?? null);
 }
 
@@ -139,6 +176,47 @@ export function buildSessionListIndexNodeId(item: SessionListIndexItem): string 
     const sessionId = String(item.sessionId ?? '').trim();
     if (serverId && sessionId) return `session:${serverId}:${sessionId}`;
     return `session:${sessionId}`;
+}
+
+export function resolveSessionListIndexFolderDragEligibility(
+    item: SessionListIndexItem,
+    options: ResolveSessionListIndexFolderDragEligibilityOptions,
+): SessionListIndexFolderDragEligibility {
+    const foldersFeatureEnabled = options.foldersFeatureEnabled === true;
+    if (!foldersFeatureEnabled) {
+        return {
+            canUseSessionFolders: false,
+            foldersFeatureEnabled,
+            storageKind: item.type === 'session' ? item.storageKind ?? 'persisted' : null,
+            reason: 'feature-disabled',
+        };
+    }
+
+    if (item.type === 'header') {
+        return {
+            canUseSessionFolders: item.headerKind === 'folder',
+            foldersFeatureEnabled,
+            storageKind: null,
+            reason: item.headerKind === 'folder' ? 'eligible' : 'unsupported-item',
+        };
+    }
+
+    const storageKind = item.storageKind ?? 'persisted';
+    if (storageKind !== 'persisted') {
+        return {
+            canUseSessionFolders: false,
+            foldersFeatureEnabled,
+            storageKind,
+            reason: 'direct-session',
+        };
+    }
+
+    return {
+        canUseSessionFolders: true,
+        foldersFeatureEnabled,
+        storageKind,
+        reason: 'eligible',
+    };
 }
 
 export function buildSessionListIndexFromViewData(

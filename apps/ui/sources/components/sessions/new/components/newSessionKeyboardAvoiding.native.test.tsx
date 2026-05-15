@@ -205,6 +205,11 @@ function buildWizard() {
                         border: { default: '#ddd' },
                         button: { secondary: { tint: '#000' } },
                         warning: '#d97706',
+                        state: {
+                            warning: { icon: '#d97706', text: '#92400e', background: '#fff8e1', border: '#f5d38f' },
+                            neutral: { icon: '#666', text: '#333', background: '#f5f5f5', border: '#ddd' },
+                            danger: { icon: '#dc2626', text: '#991b1b', background: '#fee2e2', border: '#fecaca' },
+                        },
                         box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
                     },
                 } as any,

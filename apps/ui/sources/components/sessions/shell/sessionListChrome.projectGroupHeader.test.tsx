@@ -318,6 +318,10 @@ describe('ProjectGroupHeader menu items', () => {
         const onAddSubfolder = vi.fn();
         const onRename = vi.fn();
         const onDelete = vi.fn();
+        const onMove = vi.fn();
+        const onMoveToWorkspaceRoot = vi.fn();
+        const onMoveUp = vi.fn();
+        const onMoveDown = vi.fn();
         const { FolderGroupHeader } = await import('./sessionListChrome');
 
         const screen = await renderScreen(
@@ -344,6 +348,10 @@ describe('ProjectGroupHeader menu items', () => {
                 onAddSubfolder={onAddSubfolder}
                 onRename={onRename}
                 onDelete={onDelete}
+                onMove={onMove}
+                onMoveToWorkspaceRoot={onMoveToWorkspaceRoot}
+                onMoveUp={onMoveUp}
+                onMoveDown={onMoveDown}
             />,
         );
 
@@ -369,20 +377,41 @@ describe('ProjectGroupHeader menu items', () => {
         expect(latestMenuProps?.items).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: 'new-session' }),
             expect.objectContaining({ id: 'add-subfolder' }),
+            expect.objectContaining({ id: 'move' }),
             expect.objectContaining({ id: 'rename' }),
             expect.objectContaining({ id: 'delete' }),
         ]));
 
         await act(async () => {
             await latestMenuProps?.onSelect?.('add-subfolder');
+            await latestMenuProps?.onSelect?.('move');
             await latestMenuProps?.onSelect?.('rename');
             await latestMenuProps?.onSelect?.('delete');
             await latestMenuProps?.onSelect?.('new-session');
         });
         expect(onAddSubfolder).toHaveBeenCalledTimes(1);
+        expect(onMove).toHaveBeenCalledTimes(1);
         expect(onRename).toHaveBeenCalledTimes(1);
         expect(onDelete).toHaveBeenCalledTimes(1);
         expect(onNewSession).toHaveBeenCalledTimes(1);
+
+        expect(focusButton.props.accessibilityActions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'moveUp' }),
+            expect.objectContaining({ name: 'moveDown' }),
+            expect.objectContaining({ name: 'moveToFolder' }),
+            expect.objectContaining({ name: 'moveToWorkspaceRoot' }),
+        ]));
+
+        await act(async () => {
+            focusButton.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveUp' } });
+            focusButton.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveDown' } });
+            focusButton.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveToFolder' } });
+            focusButton.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveToWorkspaceRoot' } });
+        });
+        expect(onMoveUp).toHaveBeenCalledTimes(1);
+        expect(onMoveDown).toHaveBeenCalledTimes(1);
+        expect(onMove).toHaveBeenCalledTimes(2);
+        expect(onMoveToWorkspaceRoot).toHaveBeenCalledTimes(1);
     });
 
     it('shows the folder outline only while it is the active drop target', async () => {

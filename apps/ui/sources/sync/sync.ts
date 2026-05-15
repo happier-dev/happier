@@ -228,6 +228,7 @@ import {
     handleNewMessageSocketUpdate,
     repairInvalidReadStateV1 as repairInvalidReadStateV1Engine,
 } from './engine/sessions/syncSessions';
+import { fetchUserMessageHistoryPage, type FetchUserMessageHistoryPageResult } from './engine/sessions/fetchUserMessageHistoryPage';
 import { fetchAndApplySessionFolderAssignments } from './ops/sessionFolders';
 import { fetchAndApplySessionById } from './engine/sessions/sessionById';
 import { getForkedTranscriptSnapshotCached } from './domains/sessionFork/forkedTranscriptSnapshot';
@@ -2817,6 +2818,28 @@ class Sync {
     private createSessionMessagesRequest = (sessionId: string): ((path: string) => Promise<Response>) => {
         const request = this.createSessionRequest(sessionId);
         return (path: string) => request(path, { method: 'GET' });
+    }
+
+    public fetchUserMessageHistoryPage = async (
+        sessionId: string,
+        opts: { beforeSeq?: number | null; limit?: number } = {},
+    ): Promise<FetchUserMessageHistoryPageResult> => {
+        const normalizedSessionId = String(sessionId ?? '').trim();
+        if (!normalizedSessionId) return { status: 'not_ready' };
+
+        const session = storage.getState().sessions[normalizedSessionId] ?? null;
+        if (!session && this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(normalizedSessionId)) {
+            return { status: 'not_ready' };
+        }
+
+        return fetchUserMessageHistoryPage({
+            sessionId: normalizedSessionId,
+            beforeSeq: opts.beforeSeq,
+            limit: opts.limit,
+            sessionEncryptionMode: session?.encryptionMode === 'plain' ? 'plain' : 'e2ee',
+            request: this.createSessionMessagesRequest(normalizedSessionId),
+            getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+        });
     }
 
     /**

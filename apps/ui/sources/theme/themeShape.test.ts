@@ -1,3 +1,5 @@
+import { readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { darkTheme, lightTheme } from '.';
@@ -18,16 +20,26 @@ function collectLeafPaths(value: unknown, prefix = ''): string[] {
 }
 
 describe('canonical theme color shape', () => {
+    it('keeps the root theme module as a compatibility re-export', () => {
+        const rootThemeModulePath = path.resolve(process.cwd(), 'sources/theme.ts');
+
+        expect(statSync(rootThemeModulePath).isFile()).toBe(true);
+
+        const contents = readFileSync(rootThemeModulePath, 'utf8');
+        expect(contents).toMatch(/export\s+\*\s+from\s+['"]\.\/theme\/index['"]/);
+        expect(contents).not.toMatch(/groupped|surfaceHigh|surfaceHighest|warningCritical|deleteAction/);
+    });
+
     it('uses the public canvas, surface, border, effect, and chrome token shape', () => {
         expect(lightTheme.colors.background.canvas).toBe('#F5F5F5');
-        expect(darkTheme.colors.background.canvas).toBe('#181818');
+        expect(darkTheme.colors.background.canvas).toBe('#131111');
 
         expect(lightTheme.colors.surface.base).toBe('#ffffff');
         expect(lightTheme.colors.surface.inset).toBe('#F8F8F8');
         expect(lightTheme.colors.surface.elevated).toBe('#f0f0f0');
-        expect(darkTheme.colors.surface.base).toBe('#202020');
-        expect(darkTheme.colors.surface.inset).toBe('#171717');
-        expect(darkTheme.colors.surface.elevated).toBe('#292929');
+        expect(darkTheme.colors.surface.base).toBe('#191717');
+        expect(darkTheme.colors.surface.inset).toBe('#171515');
+        expect(darkTheme.colors.surface.elevated).toBe('#221C1C');
 
         expect(lightTheme.colors.surface.pressed).toBe('#fafafa');
         expect(lightTheme.colors.surface.selected).toBe('#f8f8f8');
@@ -37,16 +49,16 @@ describe('canonical theme color shape', () => {
         expect(lightTheme.colors.border.default).toBe('#eaeaea');
         expect(lightTheme.colors.border.surface).toBe('transparent');
         expect(lightTheme.colors.border.modal).toBe('rgba(0, 0, 0, 0.1)');
-        expect(darkTheme.colors.border.default).toBe('#292929');
-        expect(darkTheme.colors.border.surface).toBe('transparent');
-        expect(darkTheme.colors.border.modal).toBe('rgba(255, 255, 255, 0.1)');
+        expect(darkTheme.colors.border.default).toBe('rgba(255,255,255,0.050)');
+        expect(darkTheme.colors.border.surface).toBe('rgba(255,255,255,0.056)');
+        expect(darkTheme.colors.border.modal).toBe('rgba(255,255,255,0.064)');
 
         expect(lightTheme.colors.effect.surfaceHighlight).toBe('transparent');
         expect(darkTheme.colors.effect.surfaceHighlight).toBe('transparent');
         expect(lightTheme.colors.chrome.header.background).toBe('#ffffff');
         expect(lightTheme.colors.chrome.header.foreground).toBe('#18171C');
-        expect(darkTheme.colors.chrome.header.background).toBe('#202020');
-        expect(darkTheme.colors.chrome.header.foreground).toBe('#ffffff');
+        expect(darkTheme.colors.chrome.header.background).toBe('#131111');
+        expect(darkTheme.colors.chrome.header.foreground).toBe('#EFEFEF');
     });
 
     it('does not expose legacy groupped or flat surface tokens in the canonical color shape', () => {
@@ -63,35 +75,35 @@ describe('canonical theme color shape', () => {
     });
 
     it('uses canonical semantic, text, message, syntax, version-control, and diff color groups', () => {
-        expect(lightTheme.colors).toHaveProperty('text.primary', '#000000');
-        expect(lightTheme.colors).toHaveProperty('text.secondary', '#6c6c70');
-        expect(lightTheme.colors).toHaveProperty('text.tertiary', '#99999d');
-        expect(lightTheme.colors).toHaveProperty('text.link', '#2BACCC');
-        expect(lightTheme.colors).toHaveProperty('text.destructive', '#FF3B30');
+        expect(darkTheme.colors).toHaveProperty('text.primary', '#EFEFEF');
+        expect(darkTheme.colors).toHaveProperty('text.secondary', '#8A817C');
+        expect(darkTheme.colors).toHaveProperty('text.tertiary', '#6C625D');
+        expect(darkTheme.colors).toHaveProperty('text.link', '#9EB9FF');
+        expect(darkTheme.colors).toHaveProperty('text.destructive', '#EE6E6C');
 
-        expect(lightTheme.colors).toHaveProperty('state.success.foreground', '#34C759');
-        expect(lightTheme.colors).toHaveProperty('state.warning.foreground', '#FF9500');
-        expect(lightTheme.colors).toHaveProperty('state.danger.foreground', '#FF3B30');
-        expect(lightTheme.colors).toHaveProperty('state.info.foreground', lightTheme.colors.accent.indigo);
-        expect(lightTheme.colors).toHaveProperty('state.neutral.foreground', '#8E8E93');
-        expect(lightTheme.colors).toHaveProperty('state.active.foreground', '#007AFF');
-        expect(lightTheme.colors).toHaveProperty('state.active.background', 'rgba(0, 122, 255, 0.10)');
-        expect(lightTheme.colors).toHaveProperty('state.active.border', 'rgba(0, 122, 255, 0.40)');
+        expect(darkTheme.colors).toHaveProperty('state.success.foreground', '#66DC7E');
+        expect(darkTheme.colors).toHaveProperty('state.warning.foreground', '#E0B65A');
+        expect(darkTheme.colors).toHaveProperty('state.danger.foreground', '#EE6E6C');
+        expect(darkTheme.colors).toHaveProperty('state.info.foreground', '#9EB9FF');
+        expect(darkTheme.colors).toHaveProperty('state.neutral.foreground', '#8A817C');
+        expect(darkTheme.colors).toHaveProperty('state.active.foreground', '#9EB9FF');
+        expect(darkTheme.colors).toHaveProperty('state.active.background', 'rgba(158, 185, 255, 0.12)');
+        expect(darkTheme.colors).toHaveProperty('state.active.border', 'rgba(158, 185, 255, 0.50)');
 
-        expect(lightTheme.colors).toHaveProperty('message.user.background', '#f0eee6');
-        expect(lightTheme.colors).toHaveProperty('message.user.foreground', '#000000');
-        expect(lightTheme.colors).toHaveProperty('message.agent.foreground', '#000000');
-        expect(lightTheme.colors).toHaveProperty('message.event.foreground', '#666666');
+        expect(darkTheme.colors).toHaveProperty('message.user.background', '#221C1C');
+        expect(darkTheme.colors).toHaveProperty('message.user.foreground', '#EFEFEF');
+        expect(darkTheme.colors).toHaveProperty('message.agent.foreground', '#EFEFEF');
+        expect(darkTheme.colors).toHaveProperty('message.event.foreground', '#8A817C');
 
-        expect(lightTheme.colors).toHaveProperty('syntax.keyword', '#1d4ed8');
-        expect(lightTheme.colors).toHaveProperty('syntax.default', '#374151');
-        expect(lightTheme.colors).toHaveProperty('versionControl.added.foreground', '#22c55e');
-        expect(lightTheme.colors).toHaveProperty('versionControl.removed.foreground', '#ef4444');
-        expect(lightTheme.colors).toHaveProperty('diff.added.background', '#E6FFED');
-        expect(lightTheme.colors).toHaveProperty('diff.removed.background', '#FFEEF0');
-        expect(lightTheme.colors).toHaveProperty('diff.hunk.background', '#F1F8FF');
-        expect(lightTheme.colors).toHaveProperty('diff.inlineAdded.background', '#ACFFA6');
-        expect(lightTheme.colors).toHaveProperty('diff.inlineRemoved.background', '#FFCECB');
+        expect(darkTheme.colors).toHaveProperty('syntax.keyword', '#9EB9FF');
+        expect(darkTheme.colors).toHaveProperty('syntax.default', '#EFEFEF');
+        expect(darkTheme.colors).toHaveProperty('versionControl.added.foreground', '#66DC7E');
+        expect(darkTheme.colors).toHaveProperty('versionControl.removed.foreground', '#EE6E6C');
+        expect(darkTheme.colors).toHaveProperty('diff.added.background', 'rgba(102, 220, 126, 0.12)');
+        expect(darkTheme.colors).toHaveProperty('diff.removed.background', 'rgba(238, 110, 108, 0.12)');
+        expect(darkTheme.colors).toHaveProperty('diff.hunk.background', 'rgba(158, 185, 255, 0.10)');
+        expect(darkTheme.colors).toHaveProperty('diff.inlineAdded.background', 'rgba(102, 220, 126, 0.16)');
+        expect(darkTheme.colors).toHaveProperty('diff.inlineRemoved.background', 'rgba(238, 110, 108, 0.16)');
     });
 
     it('does not expose legacy destructive, message, syntax, version-control, or terminal color fields', () => {

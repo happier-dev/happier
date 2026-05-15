@@ -126,6 +126,7 @@ describe('PromptTemplateEditorScreen', () => {
 
         expect(screen.findByTestId('promptTemplate.target.edit')).toBeTruthy();
         expect(screen.findByTestId('promptTemplate.target.new')).toBeTruthy();
+        expect(screen.findByTestId('promptTemplate.behavior.insert_on_send')).toBeTruthy();
 
         const footer = screen.findByTestId('promptTemplate.footer');
         expect(footer?.props.primaryTestID).toBe('promptTemplate.save');

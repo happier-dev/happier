@@ -11,8 +11,11 @@ import type { WorkspaceFileEditorState } from './useWorkspaceFileEditorState';
 
 installWorkspaceFileDetailsCommonModuleMocks();
 
+type WorkspaceWriteFileFn = typeof import('@/sync/domains/workspaces/files/workspaceFileReadWrite').workspaceWriteFile;
+const workspaceWriteFileSpy = vi.hoisted(() => vi.fn<WorkspaceWriteFileFn>(async () => ({ success: true, hash: 'saved-hash' })));
+
 vi.mock('@/sync/domains/workspaces/files/workspaceFileReadWrite', () => ({
-    workspaceWriteFile: vi.fn(async () => ({ success: true, hash: 'h1' })),
+    workspaceWriteFile: (params: any) => workspaceWriteFileSpy(params),
 }));
 
 vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
@@ -23,6 +26,7 @@ vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
 type HarnessProps = Readonly<{
     displayMode: 'file' | 'diff';
     fileText: string;
+    fileHash?: string | null;
 }>;
 
 describe('useWorkspaceFileEditorState (start from diff)', () => {
@@ -37,6 +41,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
                 filePath: 'src/a.ts',
                 displayMode: props.displayMode,
                 fileText: props.fileText,
+                fileHash: props.fileHash ?? null,
                 fileWriteSupported: true,
                 setFileWriteSupported: vi.fn(),
                 fileEditorFeatureEnabled: true,
@@ -92,6 +97,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
                 filePath: 'src/a.ts',
                 displayMode: props.displayMode,
                 fileText: props.fileText,
+                fileHash: props.fileHash ?? null,
                 fileWriteSupported: true,
                 setFileWriteSupported,
                 fileEditorFeatureEnabled: true,
@@ -137,6 +143,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
                 filePath: 'src/a.ts',
                 displayMode: 'file',
                 fileText: props.fileText,
+                fileHash: props.fileHash ?? null,
                 fileWriteSupported: true,
                 setFileWriteSupported: vi.fn(),
                 fileEditorFeatureEnabled: true,
@@ -159,7 +166,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
             return state;
         };
 
-        const tree = (await renderScreen(<Harness displayMode="file" fileText={'console.log(1);'} />)).tree;
+        const tree = (await renderScreen(<Harness displayMode="file" fileText={'console.log(1);'} fileHash="hash-1" />)).tree;
 
         await act(async () => {
             readLatest().startEditingFile();
@@ -169,11 +176,69 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
         const seedBeforeRefresh = readLatest().editorSeedText;
 
         await act(async () => {
-            tree.update(<Harness displayMode="file" fileText={'console.log(1);\n// refreshed'} />);
+            tree.update(<Harness displayMode="file" fileText={'console.log(1);\n// refreshed'} fileHash="hash-2" />);
         });
 
         expect(readLatest().editorResetKey).toBe(resetKeyBeforeRefresh);
         expect(readLatest().editorSeedText).toBe(seedBeforeRefresh);
         expect(readLatest().getEditorText()).toBe(seedBeforeRefresh);
+        expect(readLatest().fileChangedExternally).toBe(true);
+    });
+
+    it('guards saves with the hash from the loaded file content', async () => {
+        const { useWorkspaceFileEditorState } = await import('./useWorkspaceFileEditorState');
+
+        let latest: WorkspaceFileEditorState | null = null;
+
+        function Harness(props: HarnessProps) {
+            latest = useWorkspaceFileEditorState({
+                scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
+                filePath: 'src/a.ts',
+                displayMode: 'file',
+                fileText: props.fileText,
+                fileHash: props.fileHash ?? null,
+                fileWriteSupported: true,
+                setFileWriteSupported: vi.fn(),
+                fileEditorFeatureEnabled: true,
+                filesEditorWebMonacoEnabled: true,
+                filesEditorNativeCodeMirrorEnabled: true,
+                filesEditorAutoSave: false,
+                filesEditorChangeDebounceMs: 10,
+                filesEditorMaxFileBytes: 10_000,
+                filesEditorBridgeMaxChunkBytes: 10_000,
+                mountedRef: { current: true },
+                refreshAll: vi.fn(async () => undefined),
+                persistedDraft: null,
+                persistDraft: vi.fn(),
+            });
+            return null;
+        }
+        const readLatest = () => {
+            const state = latest;
+            if (!state) throw new Error('Expected editor state to be captured');
+            return state;
+        };
+
+        workspaceWriteFileSpy.mockClear();
+        await renderScreen(<Harness displayMode="file" fileText={'console.log(1);'} fileHash="loaded-hash" />);
+
+        await act(async () => {
+            readLatest().startEditingFile();
+        });
+
+        await act(async () => {
+            readLatest().onEditorChange('console.log(2);');
+        });
+
+        await act(async () => {
+            readLatest().saveFileEdits();
+        });
+
+        expect(workspaceWriteFileSpy).toHaveBeenCalledWith(expect.objectContaining({
+            scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
+            path: 'src/a.ts',
+            content: 'console.log(2);',
+            expectedHash: 'loaded-hash',
+        }));
     });
 });

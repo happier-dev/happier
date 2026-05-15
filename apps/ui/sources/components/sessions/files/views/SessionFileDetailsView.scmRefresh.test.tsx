@@ -60,6 +60,26 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: () => ({ machineId: 'm1', basePath: '/workspace' }),
 }));
 
+vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
+  useWorkspaceScopeForSession: () => {
+    const serverId = React.useSyncExternalStore(
+      (listener: () => void) => {
+        activeServerState.listeners.add(listener);
+        return () => {
+          activeServerState.listeners.delete(listener);
+        };
+      },
+      () => activeServerState.serverId ?? 'srv1',
+      () => activeServerState.serverId ?? 'srv1',
+    );
+    return {
+      serverId,
+      machineId: 'm1',
+      rootPath: '/workspace',
+    };
+  },
+}));
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
   usePreferredServerIdForSession: () =>
     React.useSyncExternalStore(

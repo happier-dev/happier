@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveSelectedSessionIdForList } from './resolveSelectedSessionIdForList';
+import { resolveSelectedSessionIdForList } from '@/sync/domains/session/listing/resolveSelectedSessionIdForList';
 
 describe('resolveSelectedSessionIdForList', () => {
     it('reuses the same session id string for identical session path inputs', () => {

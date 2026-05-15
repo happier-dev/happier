@@ -43,6 +43,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         | 'submitAccessibilityLabel'
         | 'emptyAutocompletePrefixes'
         | 'emptyAutocompleteSuggestions'
+        | 'onAutocompleteSuggestionSelect'
         | 'sessionPromptInputMaxHeight'
     >;
     agent: Pick<

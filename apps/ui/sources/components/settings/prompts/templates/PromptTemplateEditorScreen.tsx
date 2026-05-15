@@ -93,7 +93,7 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
   const [title, setTitle] = React.useState('');
   const [token, setToken] = React.useState('');
   const [targetArtifactId, setTargetArtifactId] = React.useState<string>('');
-  const [behavior, setBehavior] = React.useState<'insert' | 'insert_and_send'>('insert');
+  const [behavior, setBehavior] = React.useState<'insert' | 'insert_on_send' | 'insert_and_send'>('insert');
   const [allowArgs, setAllowArgs] = React.useState<boolean>(false);
   const [saving, setSaving] = React.useState(false);
   const [targetMenuOpen, setTargetMenuOpen] = React.useState(false);
@@ -230,6 +230,13 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
             selected={behavior === 'insert'}
             rightElement={behavior === 'insert' ? <Ionicons name="checkmark" size={18} color={theme.colors.accent.blue} /> : undefined}
             onPress={() => setBehavior('insert')}
+          />
+          <Item
+            testID="promptTemplate.behavior.insert_on_send"
+            title={t('promptLibrary.templateBehaviorInsertOnSend')}
+            selected={behavior === 'insert_on_send'}
+            rightElement={behavior === 'insert_on_send' ? <Ionicons name="checkmark" size={18} color={theme.colors.accent.blue} /> : undefined}
+            onPress={() => setBehavior('insert_on_send')}
           />
           <Item
             testID="promptTemplate.behavior.insert_and_send"

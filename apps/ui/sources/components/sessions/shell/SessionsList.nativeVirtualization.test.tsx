@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { findGestureByKind, renderScreen, standardCleanup } from '@/dev/testkit';
 import { SESSION_LIST_ROW_HEIGHT_DEFAULT } from './sessionListRowHeights';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { buildSessionListIndexFromViewData } from '@/sync/domains/sessionList/sessionListIndex';
@@ -158,10 +158,10 @@ const sessionB = {
     },
 } as any;
 
-vi.mock('react-native-gesture-handler', () => ({
-    GestureDetector: (props: any) => React.createElement('GestureDetector', { gesture: props.gesture }, props.children),
-    Swipeable: 'Swipeable',
-}));
+vi.mock('react-native-gesture-handler', async () => {
+    const { createGestureHandlerMock } = await import('@/dev/testkit/mocks/gestureHandler');
+    return createGestureHandlerMock();
+});
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -171,6 +171,11 @@ vi.mock('react-native-reanimated', () => ({
     default: { View: (props: any) => React.createElement('Animated.View', props) },
     useSharedValue: (init: any) => ({ value: init }),
     useAnimatedStyle: (fn: () => any) => fn(),
+    withSpring: (value: any) => value,
+}));
+
+vi.mock('react-native-worklets', () => ({
+    scheduleOnRN: (fn: (...args: any[]) => void, ...args: any[]) => fn(...args),
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -394,6 +399,9 @@ vi.mock('@/keyboard/KeyboardShortcutProvider', () => ({
 
 let mockAllowedServerIds: string[] = ['server_a'];
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
+    useEffectiveServerSelection: () => ({
+        serverIds: mockAllowedServerIds,
+    }),
     useResolvedActiveServerSelection: () => ({
         enabled: true,
         presentation: 'grouped',
@@ -443,12 +451,6 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
 
 vi.mock('@/utils/system/requestReview', () => ({
     requestReview: vi.fn(),
-}));
-
-const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((params: any) => ({ gesture: undefined, animatedStyle: {} })));
-
-vi.mock('./useSessionInlineDrag', () => ({
-    useSessionInlineDrag: (params: any) => useSessionInlineDragSpy(params),
 }));
 
 vi.mock('./SessionItem', () => ({
@@ -520,6 +522,14 @@ function findFirstDropdownMenuItems(screen: Awaited<ReturnType<typeof renderSess
     return [];
 }
 
+function findRecordedGestureDetectors(
+    screen: Awaited<ReturnType<typeof renderSessionsList>>,
+) {
+    return screen.root.findAll((node) =>
+        String(node.type) === 'GestureDetector' && Boolean(findGestureByKind(node.props.gesture, 'pan'))
+    );
+}
+
 describe('SessionsList (native virtualization)', () => {
     beforeEach(() => {
         sessionListOrderingModeV1 = 'custom';
@@ -539,7 +549,6 @@ describe('SessionsList (native virtualization)', () => {
         setCollapsedGroupKeysV1.mockClear();
         navigateToSessionSpy.mockClear();
         keyboardShortcutHandlersRef.current = null;
-        useSessionInlineDragSpy.mockClear();
         mockAllowedServerIds = ['server_a'];
         platformOs = 'ios';
         readMachineTargetForSessionMock.mockReset();
@@ -573,17 +582,78 @@ describe('SessionsList (native virtualization)', () => {
         expect(second.props.isLast).toBe(true);
     });
 
-    it('wraps iOS session rows with full-row long-press drag gestures in custom mode', async () => {
-        useSessionInlineDragSpy.mockReturnValueOnce({ gesture: { type: 'pan' }, animatedStyle: {} } as any);
-        useSessionInlineDragSpy.mockReturnValueOnce({ gesture: { type: 'pan' }, animatedStyle: {} } as any);
-
+    it('wraps iOS rows in a full-row drag gesture without exposing a hidden reorder handle', async () => {
         const screen = await renderSessionsList();
 
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
         expect(first.props.reorderHandleGesture).toBeUndefined();
         expect(first.props.nativeInlineDragEnabled).toBe(true);
-        expect(first.parent?.parent?.type).toBe('GestureDetector');
-        expect(first.parent?.parent?.props.gesture).toEqual({ type: 'pan' });
+
+        const nativeRowGestureDetectors = findRecordedGestureDetectors(screen);
+        expect(nativeRowGestureDetectors).toHaveLength(2);
+        expect(findGestureByKind(nativeRowGestureDetectors[0]?.props.gesture, 'pan')).toBeTruthy();
+        const nativeRowWrapper = expectPresent(
+            nativeRowGestureDetectors[0]?.children[0],
+            'expected native row gesture wrapper',
+        );
+        expect(typeof nativeRowWrapper).not.toBe('string');
+        if (typeof nativeRowWrapper === 'string') {
+            throw new Error('expected native row gesture wrapper element');
+        }
+        expect(String(nativeRowWrapper.type)).toContain('Animated.View');
+        expect(nativeRowWrapper.props.collapsable).toBe(false);
+    });
+
+    it('opens the iOS native context menu immediately when the row long-press gesture activates', async () => {
+        const screen = await renderSessionsList();
+        const initialListProps = flashListCompatState.current?.props;
+        expect(initialListProps).toBeTruthy();
+        const initialRenderItem = initialListProps?.renderItem;
+        const initialExtraData = initialListProps?.extraData;
+        const firstGesture = expectPresent(
+            findRecordedGestureDetectors(screen)[0]?.props.gesture,
+            'expected recorded native row gesture',
+        );
+        const longPress = findGestureByKind(firstGesture, 'longPress');
+
+        expect(longPress?.__handlers.onStart).toBeTruthy();
+
+        await act(async () => {
+            longPress?.__handlers.onStart?.({});
+        });
+
+        const open = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
+        expect(open.props.nativeContextMenuOpen).toBe(true);
+        const openListProps = flashListCompatState.current?.props;
+        expect(openListProps?.renderItem).toBe(initialRenderItem);
+        expect(openListProps?.extraData).not.toBe(initialExtraData);
+
+        await act(async () => {
+            open.props.onNativeContextMenuOpenChange(false);
+        });
+
+        const closed = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row after close');
+        expect(closed.props.nativeContextMenuOpen).toBe(false);
+    });
+
+    it('ignores stale iOS native context menu close requests from another row', async () => {
+        const screen = await renderSessionsList();
+        const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
+
+        await act(async () => {
+            first.props.onNativeContextMenuOpenChange(true);
+        });
+
+        const opened = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row after open');
+        expect(opened.props.nativeContextMenuOpen).toBe(true);
+
+        const second = expectPresent(findSessionItem(screen, 'sess_b'), 'expected sess_b session row');
+        await act(async () => {
+            second.props.onNativeContextMenuOpenChange(false);
+        });
+
+        const stillOpen = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row after stale close');
+        expect(stillOpen.props.nativeContextMenuOpen).toBe(true);
     });
 
     it('disables native inline drag affordances when ordering mode is not custom', async () => {
@@ -594,20 +664,20 @@ describe('SessionsList (native virtualization)', () => {
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
         expect(first.props.reorderHandleGesture).toBeUndefined();
         expect(first.props.nativeInlineDragEnabled).toBe(false);
-        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+        expect(findRecordedGestureDetectors(screen)).toHaveLength(0);
     });
 
-    it('keeps Android session rows out of native inline drag so row presses remain clickable', async () => {
+    it('keeps Android session rows on the shared drag handle without native inline context menus', async () => {
         platformOs = 'android';
-        useSessionInlineDragSpy.mockReturnValueOnce({ gesture: { type: 'pan' }, animatedStyle: {} } as any);
-        useSessionInlineDragSpy.mockReturnValueOnce({ gesture: { type: 'pan' }, animatedStyle: {} } as any);
 
         const screen = await renderSessionsList();
 
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
         expect(first.props.reorderHandleGesture).toBeUndefined();
-        expect(first.props.nativeInlineDragEnabled).toBe(false);
-        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+        expect(first.props.nativeInlineDragEnabled).toBeUndefined();
+        expect(first.props.nativeContextMenuOpen).toBeUndefined();
+        expect(first.props.onNativeContextMenuOpenChange).toBeUndefined();
+        expect(findRecordedGestureDetectors(screen)).toHaveLength(0);
     });
 
     it('passes FlashList recycling hints without deprecated size estimates', async () => {

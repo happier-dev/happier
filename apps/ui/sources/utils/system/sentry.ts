@@ -239,3 +239,17 @@ export function captureExceptionIfEnabled(
         // ignore reporting failures
     }
 }
+
+export function addBreadcrumbIfEnabled(breadcrumb: Parameters<typeof Sentry.addBreadcrumb>[0]): void {
+    if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return;
+    if (resolveCrashReportsOptOut()) return;
+    if (!resolveSentryEnv()) return;
+
+    initializeSentryOnce();
+
+    try {
+        Sentry.addBreadcrumb(breadcrumb);
+    } catch {
+        // ignore reporting failures
+    }
+}

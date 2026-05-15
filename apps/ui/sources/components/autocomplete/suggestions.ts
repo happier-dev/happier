@@ -5,6 +5,7 @@ import {
 import * as React from 'react';
 import { searchFiles, FileItem } from '@/sync/domains/input/suggestionFile';
 import { searchCommands, CommandItem } from '@/sync/domains/input/suggestionCommands';
+import type { PromptInvocationSuggestionMetadata } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
 
 export async function getCommandSuggestions(sessionId: string, query: string): Promise<{
     key: string;
@@ -12,6 +13,7 @@ export async function getCommandSuggestions(sessionId: string, query: string): P
     label: string;
     description?: string;
     rowHeight?: number;
+    promptInvocation?: PromptInvocationSuggestionMetadata;
 }[]> {
     // Remove the "/" prefix for searching
     const searchTerm = query.slice(1);
@@ -27,6 +29,7 @@ export async function getCommandSuggestions(sessionId: string, query: string): P
             label: `/${cmd.command}`,
             description: cmd.description,
             rowHeight: COMMAND_SUGGESTION_ROW_HEIGHT,
+            promptInvocation: cmd.promptInvocation,
         }));
     } catch {
         return [];
@@ -68,6 +71,7 @@ export async function getSuggestions(sessionId: string, query: string): Promise<
     description?: string;
     component?: React.ComponentType;
     rowHeight?: number;
+    promptInvocation?: PromptInvocationSuggestionMetadata;
 }[]> {
     if (!query || query.length === 0) {
         return [];

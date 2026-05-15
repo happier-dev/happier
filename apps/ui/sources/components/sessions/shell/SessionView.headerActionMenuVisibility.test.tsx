@@ -16,6 +16,7 @@ const routerBackSpy = vi.hoisted(() => vi.fn(() => {
   (globalThis as any).location.pathname = '/session/s1/previous';
 }));
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
+const keyboardDismissSpy = vi.hoisted(() => vi.fn());
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
 const responsiveState = vi.hoisted(() => ({ deviceType: 'phone' as 'phone' | 'tablet', isLandscape: false }));
 const windowDimensionsState = vi.hoisted(() => ({ width: 800, height: 600 }));
@@ -267,6 +268,9 @@ installSessionShellCommonModuleMocks({
       spec && Object.prototype.hasOwnProperty.call(spec, platformState.os)
         ? (spec as any)[platformState.os]
         : (spec as any).default;
+    Object.assign(module.Keyboard, {
+      dismiss: keyboardDismissSpy,
+    });
     return module;
   },
   unistyles: async () => {
@@ -412,6 +416,7 @@ describe('SessionView header action menu visibility', () => {
     sessionMessagesState.messages = [];
     automationsSupportState.enabled = false;
     localSettingsState.mobileWorkspaceExperienceV1 = 'classic';
+    keyboardDismissSpy.mockReset();
     headerActionMenuSpy.mockClear();
     chatHeaderSpy.mockClear();
     routerPushSpy.mockReset();
@@ -712,6 +717,20 @@ describe('SessionView header action menu visibility', () => {
     const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
     const extraIds = (props?.extraItems ?? []).map((item: any) => item?.id);
     expect(extraIds).toContain('header.openMobileWorkspaceCockpit');
+  });
+
+  it('dismisses the keyboard before opening cockpit from the session header toggle', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    localSettingsState.mobileWorkspaceExperienceV1 = 'classic';
+
+    await renderSessionView();
+
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    expect(props?.onSelectExtraItem?.('header.openMobileWorkspaceCockpit')).toBe(true);
+
+    expect(keyboardDismissSpy).toHaveBeenCalledTimes(1);
   });
 
   it('adds an open classic view menu item on phone when cockpit mode is active', async () => {

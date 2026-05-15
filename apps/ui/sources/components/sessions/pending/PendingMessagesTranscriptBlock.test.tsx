@@ -265,6 +265,10 @@ describe('PendingMessagesTranscriptBlock', () => {
             fontSize: 16,
             lineHeight: 24,
         });
+        const message = screen.findByTestId('pendingMessages.message:p1');
+        expect(flattenStyle(message!.props.style({ pressed: false }))).toMatchObject({
+            textAlign: 'left',
+        });
     });
 
     it('renders a block header label that reads as a section header', async () => {

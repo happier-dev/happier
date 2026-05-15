@@ -120,6 +120,10 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: (props: any) => React.createElement('PermissionFooter', props),
 }));
 
+vi.mock('../approvals/ApprovalPromptCard', () => ({
+    ApprovalPromptCard: (props: any) => React.createElement('ApprovalPromptCard', props),
+}));
+
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
     DEFAULT_AGENT_ID: 'claude',
@@ -178,6 +182,154 @@ describe('ToolTimelineRow (permission pending)', () => {
         );
 
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(1);
+    });
+
+    it('renders approval prompt cards linked to the current transcript tool call', async () => {
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            id: 'tool-approval',
+            name: 'session_list',
+            state: 'running',
+            input: { limit: 20 },
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: null,
+            description: 'List sessions',
+            result: null,
+        };
+
+        const screen = await renderScreen(
+            <ToolTimelineRow
+                tool={tool}
+                metadata={null}
+                sessionId="s1"
+                messageId="m-approval"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                approvalRequests={[
+                    {
+                        artifact: { id: 'approval-1', header: {} } as any,
+                        approval: {
+                            v: 1,
+                            status: 'open',
+                            createdAtMs: 1,
+                            updatedAtMs: 1,
+                            createdBy: { surface: 'session_agent', sessionId: 's1' },
+                            actionId: 'session.list',
+                            actionArgs: {},
+                            summary: 'List sessions',
+                            origin: {
+                                kind: 'transcript_tool_call',
+                                sessionId: 's1',
+                                messageId: 'm-approval',
+                                toolCallId: 'tool-approval',
+                                toolName: 'session_list',
+                                toolInput: { limit: 20 },
+                            },
+                        },
+                    },
+                ]}
+            />,
+        );
+
+        expect(screen.findAllByType('ApprovalPromptCard' as any)).toHaveLength(1);
+    });
+
+    it('does not render approval prompt cards when explicit origin message points at another tool row', async () => {
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            id: 'tool-current',
+            name: 'session_list',
+            state: 'running',
+            input: { limit: 20 },
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: null,
+            description: 'List sessions',
+            result: null,
+        };
+
+        const screen = await renderScreen(
+            <ToolTimelineRow
+                tool={tool}
+                metadata={null}
+                sessionId="s1"
+                messageId="m-current"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                approvalRequests={[
+                    {
+                        artifact: { id: 'approval-other', header: {} } as any,
+                        approval: {
+                            v: 1,
+                            status: 'open',
+                            createdAtMs: 1,
+                            updatedAtMs: 1,
+                            createdBy: { surface: 'session_agent', sessionId: 's1' },
+                            actionId: 'session.list',
+                            actionArgs: {},
+                            summary: 'List sessions',
+                            origin: {
+                                kind: 'transcript_tool_call',
+                                sessionId: 's1',
+                                messageId: 'm-other',
+                                toolName: 'session_list',
+                                toolInput: { limit: 20 },
+                            },
+                        },
+                    },
+                ]}
+            />,
+        );
+
+        expect(screen.findAllByType('ApprovalPromptCard' as any)).toHaveLength(0);
+    });
+
+    it('does not render approval prompt cards when explicit origin tool id points at another tool row', async () => {
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            id: 'tool-current',
+            name: 'session_list',
+            state: 'running',
+            input: { limit: 20 },
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: null,
+            description: 'List sessions',
+            result: null,
+        };
+
+        const screen = await renderScreen(
+            <ToolTimelineRow
+                tool={tool}
+                metadata={null}
+                sessionId="s1"
+                messageId="m-current"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                approvalRequests={[
+                    {
+                        artifact: { id: 'approval-other-tool', header: {} } as any,
+                        approval: {
+                            v: 1,
+                            status: 'open',
+                            createdAtMs: 1,
+                            updatedAtMs: 1,
+                            createdBy: { surface: 'session_agent', sessionId: 's1' },
+                            actionId: 'session.list',
+                            actionArgs: {},
+                            summary: 'List sessions',
+                            origin: {
+                                kind: 'transcript_tool_call',
+                                sessionId: 's1',
+                                toolCallId: 'tool-other',
+                                toolName: 'session_list',
+                                toolInput: { limit: 20 },
+                            },
+                        },
+                    },
+                ]}
+            />,
+        );
+
+        expect(screen.findAllByType('ApprovalPromptCard' as any)).toHaveLength(0);
     });
 
     it('renders PermissionFooter when transcript prompts are forced even if the global setting prefers the composer', async () => {

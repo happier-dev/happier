@@ -94,7 +94,16 @@ describe('suggestionCommands', () => {
 
         const { getAllCommands } = await import('./suggestionCommands');
         const commands = getAllCommands('s1');
-        expect(commands.some((c) => c.command === 'foo')).toBe(true);
+        expect(commands.find((c) => c.command === 'foo')).toMatchObject({
+            command: 'foo',
+            promptInvocation: {
+                invocationId: 't1',
+                token: '/foo',
+                targetArtifactId: 'a1',
+                behavior: 'insert',
+                allowArgs: true,
+            },
+        });
     });
 
     it('includes built-in prompt commands when the session has no metadata', async () => {

@@ -36,6 +36,7 @@ export type BuiltInThemeProfilePresetId =
     | 'sunsetDark'
     | 'tokyoNight'
     | 'nightDark'
+    | 'classicDark'
     | 'graphiteDark'
     | 'catppuccinMocha'
     | 'catppuccinMacchiato'

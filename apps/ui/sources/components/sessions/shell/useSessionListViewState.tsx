@@ -15,12 +15,14 @@ import { useSessionListNavigationActions } from './useSessionListNavigationActio
 import { useSessionListRowInteractions } from './useSessionListRowInteractions';
 import { useSessionListWorkspaceHeaderActions } from './useSessionListWorkspaceHeaderActions';
 import { useSessionListWorkspaceLabelMigration } from './useSessionListWorkspaceLabelMigration';
-import { resolveSessionListFolderDropPlacement } from './sessionListFolderDropPosition';
 import { useVisibleSessionListPaneState, type VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { normalizeSessionListShellState } from './normalizeSessionListShellState';
-import { resolveSelectedSessionIdForList } from './resolveSelectedSessionIdForList';
+import { resolveSelectedSessionIdForList } from '@/sync/domains/session/listing/resolveSelectedSessionIdForList';
 import { useSessionCanvasSelection } from './view/useSessionCanvasSelection';
+import { useSessionListA11yAnnouncements } from './accessibility/useSessionListA11yAnnouncements';
+import type { SessionListMoveSheetTarget } from './move-sheet/buildSessionListMoveSheetTargets';
+import { useSessionListMoveSheet } from './move-sheet/useSessionListMoveSheet';
 import {
     buildServerScopedSessionKey,
     moveSessionMruEntryToFront,
@@ -35,6 +37,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
     moveSessionFolderAssignments,
     setSessionFolderAssignment as setSessionFolderAssignmentOp,
@@ -45,7 +48,6 @@ import {
     createSessionFolder,
     deleteSessionFolder,
     DEFAULT_SESSION_FOLDERS_V1,
-    moveSessionFolder,
     normalizeSessionFolders,
     renameSessionFolder,
     type SessionFolderMoveTarget,
@@ -53,35 +55,31 @@ import {
     resolveDurableWorkspaceRefForSessionListHeader,
     type SessionFoldersV1,
 } from '@/sync/domains/session/folders';
+import { treeRowId } from './drop-resolution/treeRowId';
 
-type SessionFolderDropTargetBounds = Readonly<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}>;
+export type RegisterSessionFolderDropTarget = (target: Readonly<{
+    type: 'folder' | 'workspace-root';
+    id: string;
+    workspace: SessionFolderWorkspaceRefV1;
+    serverId: string | null;
+    bounds: Readonly<{ x: number; y: number; width: number; height: number }>;
+    folderId?: string;
+}>) => () => void;
 
-type SessionFolderRegisteredDropTarget = Readonly<
-    | {
-        id: string;
-        type: 'folder';
-        folderId: string;
-        workspace: SessionFolderWorkspaceRefV1;
-        serverId: string | null;
-        bounds: SessionFolderDropTargetBounds;
-    }
-    | {
-        id: string;
-        type: 'workspace-root';
-        workspace: SessionFolderWorkspaceRefV1;
-        serverId: string | null;
-        bounds: SessionFolderDropTargetBounds;
-    }
->;
+function resolveTreeRowIdForSessionItem(item: Extract<SessionListIndexItem, { type: 'session' }>): string {
+    const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
+    const sessionId = String(item.sessionId ?? '').trim();
+    return serverId ? treeRowId.session(serverId, sessionId) : `session:${sessionId}`;
+}
 
-export type RegisterSessionFolderDropTarget = (
-    target: SessionFolderRegisteredDropTarget,
-) => () => void;
+function resolveSessionTreeRowId(sessionKey: string | null): string | null {
+    if (!sessionKey) return null;
+    const separatorIndex = sessionKey.indexOf(':');
+    if (separatorIndex <= 0) return null;
+    const serverId = sessionKey.slice(0, separatorIndex);
+    const sessionId = sessionKey.slice(separatorIndex + 1);
+    return serverId && sessionId ? treeRowId.session(serverId, sessionId) : null;
+}
 
 function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
     if (left.length !== right.length) return false;
@@ -116,9 +114,13 @@ export function useSessionListViewStateFromPaneState(
     const [collapsedGroupKeysV1, setCollapsedGroupKeysV1] = useSettingMutable('collapsedGroupKeysV1');
     const [sessionMruOrderV1, setSessionMruOrderV1] = useLocalSettingMutable('sessionMruOrderV1');
     const [sessionListFocusedFolderV1, setSessionListFocusedFolderV1] = useLocalSettingMutable('sessionListFocusedFolderV1');
+    const sessionFoldersFeatureEnabled = useFeatureEnabled('sessions.folders');
+    const folderActionsEnabled = storageKind !== 'direct' && sessionFoldersFeatureEnabled;
     const sessionListDensity = useSetting('sessionListDensity');
     const profile = useProfile();
     const navigateToSession = useNavigateToSession();
+    const { openMoveSheet } = useSessionListMoveSheet();
+    const sessionListA11y = useSessionListA11yAnnouncements();
     const densityViewState = resolveSessionListDensityViewState(sessionListDensity);
     const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
     const selection = useSessionListSelectionState();
@@ -144,27 +146,6 @@ export function useSessionListViewStateFromPaneState(
         () => normalizeSessionFolders(sessionFoldersV1Raw ?? DEFAULT_SESSION_FOLDERS_V1),
         [sessionFoldersV1Raw],
     );
-    const folderDropTargetsRef = React.useRef(new Map<string, SessionFolderRegisteredDropTarget>());
-    const registerSessionFolderDropTarget = React.useCallback<RegisterSessionFolderDropTarget>((target) => {
-        folderDropTargetsRef.current.set(target.id, target);
-        return () => {
-            const current = folderDropTargetsRef.current.get(target.id);
-            if (current === target) {
-                folderDropTargetsRef.current.delete(target.id);
-            }
-        };
-    }, []);
-    const resolveFolderDropTarget = React.useCallback((point: Readonly<{ absoluteX: number; absoluteY: number }>) => {
-        const targets = Array.from(folderDropTargetsRef.current.values()).filter((target) => (
-            point.absoluteX >= target.bounds.x
-            && point.absoluteX <= target.bounds.x + target.bounds.width
-            && point.absoluteY >= target.bounds.y + Math.min(8, target.bounds.height * 0.25)
-            && point.absoluteY <= target.bounds.y + target.bounds.height - Math.min(8, target.bounds.height * 0.25)
-        ));
-        return targets.sort((left, right) => (
-            (left.bounds.width * left.bounds.height) - (right.bounds.width * right.bounds.height)
-        ))[0] ?? null;
-    }, []);
     const allKnownTags = getAllKnownTags(normalizedShellState.sessionTags);
     const selectedSessionId = useSessionCanvasSelection({
         selectable: shellFlags.selectable,
@@ -303,60 +284,127 @@ export function useSessionListViewStateFromPaneState(
         }
     }, []);
 
-    const handleMoveFolderHeaderByDrop = React.useCallback((
-        sessionKey: string,
-        _groupKey: string,
-        _positionDelta: number,
-        context?: { absoluteX: number | null; absoluteY: number | null },
-    ) => {
-        const folderId = sessionKey.startsWith('folder:') ? sessionKey.slice('folder:'.length) : '';
-        if (!folderId) return;
-        const sourceFolder = sessionFoldersV1.folders.find((folder) => folder.id === folderId);
-        if (!sourceFolder) return;
-        const target = context?.absoluteX == null || context.absoluteY == null
-            ? null
-            : resolveFolderDropTarget({
-                absoluteX: context.absoluteX,
-                absoluteY: context.absoluteY,
-            });
-        const placement = target && compareSessionFolderWorkspaceRefs(target.workspace, sourceFolder.workspace)
-            ? {
-                parentId: target.type === 'folder' ? target.folderId : null,
-            }
-            : resolveSessionListFolderDropPlacement({
-                items: listItemsRef.current,
-                folderId,
-                positionDelta: _positionDelta,
-            });
-        if (!placement) return;
-        const moved = moveSessionFolder({
-            current: sessionFoldersV1,
-            folderId,
-            parentId: placement.parentId,
-            beforeFolderId: placement.beforeFolderId,
-            afterFolderId: placement.afterFolderId,
-            now: Date.now(),
-        });
-        if (moved.folder) {
-            setSessionFoldersV1(moved.next);
-        }
-    }, [resolveFolderDropTarget, sessionFoldersV1, setSessionFoldersV1]);
-
     const rowInteractions = useSessionListRowInteractions({
+        folderActionsEnabled: Boolean(folderActionsEnabled),
+        sessionFoldersV1,
         listItems: renderModels.listItems,
         currentGroupOrderMap: orderingPersistenceState.currentGroupOrderMap,
-        canReorderSessions: shellFlags.canReorderSessions,
         setSessionListGroupOrderV1,
+        setSessionFoldersV1,
         pinnedKeyList: orderingPersistenceState.pinnedKeyList,
         pinnedKeySet: orderingPersistenceState.pinnedKeySet,
         setPinnedSessionKeysV1,
         sessionTags: normalizedShellState.sessionTags,
         setSessionTagsV1,
-        resolveFolderDropTarget,
-        assignSessionFolder: async ({ serverId, sessionId, folderId }) => {
-            await handleMoveSessionToFolder(sessionId, serverId, folderId);
-        },
     });
+
+    const rowLabelByTreeRowId = React.useMemo(() => {
+        const labels = new Map<string, string>();
+        for (const item of renderModels.listItems) {
+            if (item.type === 'session') {
+                labels.set(resolveTreeRowIdForSessionItem(item), item.sessionId);
+                continue;
+            }
+            if (item.headerKind === 'folder' && item.folderId) {
+                labels.set(treeRowId.folder(item.folderId), item.title);
+            } else if (item.headerKind === 'project' && (item.groupKey || item.workspaceKey)) {
+                labels.set(treeRowId.workspaceRoot(item.groupKey ?? item.workspaceKey ?? item.title), item.title);
+            }
+        }
+        return labels;
+    }, [renderModels.listItems]);
+
+    const resolveDropDestinationLabel = React.useCallback((target: SessionListMoveSheetTarget) => {
+        if (target.kind === 'root') return t('sessionsList.moveToWorkspaceRoot');
+        return target.label;
+    }, []);
+
+    const resolveDropResultDestinationLabel = React.useCallback((
+        result: Parameters<typeof sessionListA11y.announceDropResult>[0]['result'],
+    ) => {
+        const instruction = result.instruction;
+        if (instruction.kind === 'move-to-root') return t('sessionsList.moveToWorkspaceRoot');
+        if (instruction.kind === 'nest-into') return rowLabelByTreeRowId.get(instruction.targetId) ?? null;
+        if (instruction.kind === 'reorder-before' || instruction.kind === 'reorder-after') {
+            return rowLabelByTreeRowId.get(instruction.targetId) ?? null;
+        }
+        return null;
+    }, [rowLabelByTreeRowId]);
+
+    const applyMoveTargetWithAnnouncement = React.useCallback((
+        sourceRowId: string,
+        sourceLabel: string,
+        target: SessionListMoveSheetTarget,
+    ) => {
+        rowInteractions.applyMoveSheetTarget(sourceRowId, target);
+        sessionListA11y.announceDropResult({
+            label: sourceLabel,
+            destinationLabel: resolveDropDestinationLabel(target),
+            result: target.result,
+        });
+    }, [resolveDropDestinationLabel, rowInteractions, sessionListA11y]);
+
+    const openMoveSheetForTreeRow = React.useCallback(async (sourceRowId: string, sourceLabel: string) => {
+        const targets = rowInteractions.resolveMoveSheetTargets(sourceRowId);
+        if (targets.length === 0) return;
+        const selectedTarget = await openMoveSheet({
+            sourceLabel,
+            targets,
+        });
+        if (!selectedTarget) return;
+        applyMoveTargetWithAnnouncement(sourceRowId, sourceLabel, selectedTarget);
+    }, [applyMoveTargetWithAnnouncement, openMoveSheet, rowInteractions]);
+
+    const moveTreeRowToWorkspaceRoot = React.useCallback((sourceRowId: string, sourceLabel: string) => {
+        const rootTarget = rowInteractions.resolveMoveSheetTargets(sourceRowId).find((target) =>
+            target.kind === 'root' && !target.disabled
+        );
+        if (!rootTarget) return;
+        applyMoveTargetWithAnnouncement(sourceRowId, sourceLabel, rootTarget);
+    }, [applyMoveTargetWithAnnouncement, rowInteractions]);
+
+    const moveTreeRowByKeyboard = React.useCallback((
+        sourceRowId: string,
+        sourceLabel: string,
+        direction: 'up' | 'down',
+    ) => {
+        const result = rowInteractions.applyKeyboardMove(sourceRowId, direction);
+        if (!result) return;
+        sessionListA11y.announceDropResult({
+            label: sourceLabel,
+            destinationLabel: resolveDropResultDestinationLabel(result),
+            result,
+        });
+    }, [resolveDropResultDestinationLabel, rowInteractions, sessionListA11y]);
+
+    useKeyboardShortcutHandlers(React.useMemo(() => ({
+        'sessions.row.moveToFolder': () => {
+            const rowId = resolveSessionTreeRowId(activeSessionKey);
+            if (!rowId) return;
+            void openMoveSheetForTreeRow(rowId, rowLabelByTreeRowId.get(rowId) ?? t('sessionsList.sessionFallbackLabel'));
+        },
+        'sessions.row.moveToWorkspaceRoot': () => {
+            const rowId = resolveSessionTreeRowId(activeSessionKey);
+            if (!rowId) return;
+            moveTreeRowToWorkspaceRoot(rowId, rowLabelByTreeRowId.get(rowId) ?? t('sessionsList.sessionFallbackLabel'));
+        },
+        'sessions.row.moveUp': () => {
+            const rowId = resolveSessionTreeRowId(activeSessionKey);
+            if (!rowId) return;
+            moveTreeRowByKeyboard(rowId, rowLabelByTreeRowId.get(rowId) ?? t('sessionsList.sessionFallbackLabel'), 'up');
+        },
+        'sessions.row.moveDown': () => {
+            const rowId = resolveSessionTreeRowId(activeSessionKey);
+            if (!rowId) return;
+            moveTreeRowByKeyboard(rowId, rowLabelByTreeRowId.get(rowId) ?? t('sessionsList.sessionFallbackLabel'), 'down');
+        },
+    }), [
+        activeSessionKey,
+        moveTreeRowByKeyboard,
+        moveTreeRowToWorkspaceRoot,
+        openMoveSheetForTreeRow,
+        rowLabelByTreeRowId,
+    ]));
 
     const {
         handleOpenProject,
@@ -538,25 +586,42 @@ export function useSessionListViewStateFromPaneState(
             onAddSubfolder={handleAddSubfolder}
             onRenameFolder={handleRenameFolder}
             onDeleteFolder={handleDeleteFolder}
-            onRegisterSessionFolderDropTarget={registerSessionFolderDropTarget}
+            onMoveFolder={(folderItem) => {
+                if (!folderItem.folderId) return;
+                const rowId = treeRowId.folder(folderItem.folderId);
+                void openMoveSheetForTreeRow(rowId, rowLabelByTreeRowId.get(rowId) ?? folderItem.title);
+            }}
+            onMoveFolderToWorkspaceRoot={(folderItem) => {
+                if (!folderItem.folderId) return;
+                const rowId = treeRowId.folder(folderItem.folderId);
+                moveTreeRowToWorkspaceRoot(rowId, rowLabelByTreeRowId.get(rowId) ?? folderItem.title);
+            }}
+            onMoveFolderUp={(folderItem) => {
+                if (!folderItem.folderId) return;
+                const rowId = treeRowId.folder(folderItem.folderId);
+                moveTreeRowByKeyboard(rowId, rowLabelByTreeRowId.get(rowId) ?? folderItem.title, 'up');
+            }}
+            onMoveFolderDown={(folderItem) => {
+                if (!folderItem.folderId) return;
+                const rowId = treeRowId.folder(folderItem.folderId);
+                moveTreeRowByKeyboard(rowId, rowLabelByTreeRowId.get(rowId) ?? folderItem.title, 'down');
+            }}
             workspaceFaviconsEnabled={workspaceFaviconsEnabled}
             workspaceMachineSubtitlesEnabled={workspaceMachineSubtitlesEnabled}
             dataIndex={index}
-            totalItemCount={renderModels.listItems.length}
-            dropIndicatorIdx={rowInteractions.dropIndicatorIdx}
-            dropIndicatorEdge={rowInteractions.dropIndicatorEdge}
+            dropVisual={rowInteractions.dropVisual}
+            activeDropVisual={rowInteractions.activeDropVisual}
+            onRegisterTreeRowBounds={rowInteractions.registerTreeRowBounds}
+            onUnregisterTreeRowBounds={rowInteractions.unregisterTreeRowBounds}
             onFolderDragStart={rowInteractions.handleDragStart}
             onFolderDragUpdate={rowInteractions.handleDragUpdate}
-            onFolderDragEnd={(sessionKey, groupKey, positionDelta, context) => {
-                handleMoveFolderHeaderByDrop(sessionKey, groupKey, positionDelta, context);
-                rowInteractions.handleDragCancel();
-            }}
-            activeFolderDropTargetId={rowInteractions.activeFolderDropTargetId}
+            resolveDropResult={rowInteractions.resolveTreeDropResult}
+            onFolderDropResult={rowInteractions.handleFolderHeaderTreeDropResult}
+            activeFolderDropTargetId={rowInteractions.activeDropTargetId}
         />
     ), [
         collapsedKeys,
         handleAddSubfolder,
-        handleMoveFolderHeaderByDrop,
         handleOpenProject,
         handleCreateSessionFromWorkspaceScope,
         handleCreateSessionFromFolder,
@@ -567,16 +632,21 @@ export function useSessionListViewStateFromPaneState(
         handleRenameWorkspace,
         handleResetWorkspaceName,
         handleToggleCollapse,
+        moveTreeRowByKeyboard,
+        moveTreeRowToWorkspaceRoot,
+        openMoveSheetForTreeRow,
         projectHeaderViewModelByGroupKey,
-        registerSessionFolderDropTarget,
-        renderModels.listItems.length,
         renderModels.hasMultipleMachines,
-        rowInteractions.activeFolderDropTargetId,
-        rowInteractions.dropIndicatorEdge,
-        rowInteractions.dropIndicatorIdx,
-        rowInteractions.handleDragCancel,
+        rowInteractions.activeDropTargetId,
+        rowInteractions.activeDropVisual,
+        rowInteractions.dropVisual,
+        rowInteractions.handleFolderHeaderTreeDropResult,
         rowInteractions.handleDragStart,
         rowInteractions.handleDragUpdate,
+        rowInteractions.registerTreeRowBounds,
+        rowInteractions.resolveTreeDropResult,
+        rowInteractions.unregisterTreeRowBounds,
+        rowLabelByTreeRowId,
         workspaceFaviconsEnabled,
         workspaceMachineSubtitlesEnabled,
     ]);
@@ -587,8 +657,10 @@ export function useSessionListViewStateFromPaneState(
             rowViewModel={renderModels.rowViewModels[index]}
             rowHeight={densityViewState.rowHeight}
             canReorderSessions={shellFlags.canReorderSessions}
+            treeRowId={resolveTreeRowIdForSessionItem(item)}
             onDragStart={rowInteractions.handleDragStart}
-            onDragEnd={rowInteractions.handleDragEnd}
+            resolveDropResult={rowInteractions.resolveTreeDropResult}
+            onDropResult={rowInteractions.handleTreeDropResult}
             onDragUpdate={rowInteractions.handleDragUpdate}
             onTogglePinnedSessionKey={rowInteractions.handleTogglePinnedSessionKey}
             onSetTagsSessionKey={rowInteractions.handleSetTagsSessionKey}
@@ -596,16 +668,41 @@ export function useSessionListViewStateFromPaneState(
             draggingSessionKey={rowInteractions.draggingSessionKey}
             nativeContextMenuSessionKey={rowInteractions.nativeContextMenuSessionKey}
             dataIndex={index}
-            totalItemCount={renderModels.listItems.length}
-            dropIndicatorIdx={rowInteractions.dropIndicatorIdx}
-            dropIndicatorEdge={rowInteractions.dropIndicatorEdge}
+            dropVisual={rowInteractions.dropVisual}
+            activeDropVisual={rowInteractions.activeDropVisual}
+            onRegisterTreeRowBounds={rowInteractions.registerTreeRowBounds}
+            onUnregisterTreeRowBounds={rowInteractions.unregisterTreeRowBounds}
             currentUserId={currentUserId}
             allKnownTags={allKnownTags}
             tagsEnabled={sessionTagsEnabled === true}
             compact={Boolean(densityViewState.compact)}
             compactMinimal={Boolean(densityViewState.compact && densityViewState.compactMinimal)}
             folderMoveTargets={resolveFolderMoveTargetsForItem(item)}
-            onMoveToSessionFolder={handleMoveSessionToFolder}
+            onMoveToSessionFolder={folderActionsEnabled ? handleMoveSessionToFolder : null}
+            onMoveToFolder={folderActionsEnabled
+                ? () => {
+                    const rowId = resolveTreeRowIdForSessionItem(item);
+                    void openMoveSheetForTreeRow(rowId, rowLabelByTreeRowId.get(rowId) ?? item.sessionId);
+                }
+                : undefined}
+            onMoveToWorkspaceRoot={folderActionsEnabled
+                ? () => {
+                    const rowId = resolveTreeRowIdForSessionItem(item);
+                    moveTreeRowToWorkspaceRoot(rowId, rowLabelByTreeRowId.get(rowId) ?? item.sessionId);
+                }
+                : undefined}
+            onMoveUp={folderActionsEnabled
+                ? () => {
+                    const rowId = resolveTreeRowIdForSessionItem(item);
+                    moveTreeRowByKeyboard(rowId, rowLabelByTreeRowId.get(rowId) ?? item.sessionId, 'up');
+                }
+                : undefined}
+            onMoveDown={folderActionsEnabled
+                ? () => {
+                    const rowId = resolveTreeRowIdForSessionItem(item);
+                    moveTreeRowByKeyboard(rowId, rowLabelByTreeRowId.get(rowId) ?? item.sessionId, 'down');
+                }
+                : undefined}
         />
     ), [
         allKnownTags,
@@ -613,21 +710,28 @@ export function useSessionListViewStateFromPaneState(
         densityViewState.compact,
         densityViewState.compactMinimal,
         densityViewState.rowHeight,
-        renderModels.listItems.length,
         renderModels.rowViewModels,
+        folderActionsEnabled,
+        rowInteractions.activeDropVisual,
         rowInteractions.draggingSessionKey,
-        rowInteractions.dropIndicatorEdge,
-        rowInteractions.dropIndicatorIdx,
-        rowInteractions.handleDragEnd,
+        rowInteractions.dropVisual,
         rowInteractions.handleDragStart,
         rowInteractions.handleDragUpdate,
+        rowInteractions.handleTreeDropResult,
         rowInteractions.handleNativeContextMenuOpenChangeSessionKey,
         rowInteractions.handleSetTagsSessionKey,
         rowInteractions.handleTogglePinnedSessionKey,
+        rowInteractions.registerTreeRowBounds,
+        rowInteractions.resolveTreeDropResult,
+        rowInteractions.unregisterTreeRowBounds,
         resolveFolderMoveTargetsForItem,
         sessionTagsEnabled,
         shellFlags.canReorderSessions,
         handleMoveSessionToFolder,
+        moveTreeRowByKeyboard,
+        moveTreeRowToWorkspaceRoot,
+        openMoveSheetForTreeRow,
+        rowLabelByTreeRowId,
     ]);
 
     const nodeIds = React.useMemo(() => (
@@ -662,6 +766,9 @@ export function useSessionListViewStateFromPaneState(
     renderHeaderItemRef.current = renderHeaderItem;
     const renderSessionItemRef = React.useRef(renderSessionItem);
     renderSessionItemRef.current = renderSessionItem;
+    // FlashList keeps rendered cells when data/renderItem stay stable. Use the
+    // row renderer identity as the marker for state that changes row props.
+    const virtualizedRowExtraData = renderSessionItem;
 
     const renderVirtualizedItem = React.useCallback((params: { item: string; index: number }) => {
         const item = nodeByIdRef.current.get(params.item) ?? listItemsRef.current[params.index] ?? null;
@@ -686,6 +793,7 @@ export function useSessionListViewStateFromPaneState(
         nodeIds,
         rowHeight: densityViewState.rowHeight,
         renderVirtualizedItem,
+        virtualizedRowExtraData,
         onPressArchivedSessions: handleOpenArchivedSessions,
         folderFocus: sessionListPaneState.folderFocus,
         folderFocusRootTitle,

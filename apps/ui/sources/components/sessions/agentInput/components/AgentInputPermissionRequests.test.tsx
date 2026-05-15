@@ -152,6 +152,56 @@ describe('AgentInputPermissionRequests', () => {
         expect(screen.findByTestId('agentInput.permissionRequests.divider:userAction:u1')).toBeTruthy();
     });
 
+    it('passes resolved tool locations to approval prompt cards', async () => {
+        const { AgentInputPermissionRequests } = await import('./AgentInputPermissionRequests');
+        capturedApprovalPromptCardProps.length = 0;
+
+        await renderScreen(React.createElement(AgentInputPermissionRequests, {
+            sessionId: 's1',
+            permissionRequests: [],
+            approvalRequests: [
+                {
+                    artifact: {
+                        id: 'approval-1',
+                        header: { v: 1, kind: 'approval_request.v1', title: 'Approve', approvalStatus: 'open', sessionId: 's1' },
+                        title: 'Approve',
+                        headerVersion: 1,
+                        seq: 1,
+                        createdAt: 1,
+                        updatedAt: 1,
+                        isDecrypted: true,
+                    },
+                    approval: {
+                        v: 1,
+                        status: 'open',
+                        createdAtMs: 1,
+                        updatedAtMs: 1,
+                        createdBy: { surface: 'session_agent', sessionId: 's1' },
+                        requestedSurface: 'session_agent',
+                        actionId: 'session.list',
+                        actionArgs: {},
+                        summary: 'List sessions',
+                    },
+                },
+            ],
+            userActionRequests: [],
+            permissionLocationsById: new Map(),
+            approvalLocationsByArtifactId: new Map([
+                ['approval-1', { kind: 'top' as const, messageId: 'tool:call-1', seq: 10 }],
+            ]),
+            metadata: null,
+            canApprovePermissions: true,
+            maxHeightPx: 200,
+            onContentSizeChange: () => {},
+            onLayout: () => {},
+            onScroll: () => {},
+            fadeVisibility: { top: false, bottom: false },
+        } satisfies React.ComponentProps<typeof AgentInputPermissionRequestsComponent>));
+
+        expect(capturedApprovalPromptCardProps).toHaveLength(1);
+        expect(capturedApprovalPromptCardProps[0].location).toEqual({ kind: 'top', messageId: 'tool:call-1', seq: 10 });
+    });
+
     it('does not render when approvals are disabled due to inactive session', async () => {
         const { AgentInputPermissionRequests } = await import('./AgentInputPermissionRequests');
         capturedPermissionPromptCardProps.length = 0;

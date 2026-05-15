@@ -43,6 +43,17 @@ function makeResolver(rowsByKey: Record<string, SessionListRenderableSession>) {
     };
 }
 
+function describeItems(items: ReadonlyArray<SessionListIndexItem>): string[] {
+    return items.map((item) => {
+        if (item.type === 'header') {
+            return item.headerKind === 'attention'
+                ? 'h:attention'
+                : `h:${item.headerKind ?? 'unknown'}:${item.title}`;
+        }
+        return `s:${item.sessionId}:${item.groupKind ?? 'none'}:${item.groupKey ?? 'none'}`;
+    });
+}
+
 describe('computeVisibleSessionListIndex', () => {
     afterEach(() => {
         syncPerformanceTelemetry.configure({ enabled: false });
@@ -147,6 +158,156 @@ describe('computeVisibleSessionListIndex', () => {
         expect(pinnedSessions.map((s) => s.variant)).toEqual(['default', 'default']);
     });
 
+    it('promotes attention sessions into a global section below pinned sessions', () => {
+        const activeGroup = 'server:s1:active:project:repo';
+        const inactiveGroup = 'server:s1:day:2026-02-17';
+        const source: SessionListIndexItem[] = [
+            { type: 'header', headerKind: 'active', title: 'Active', serverId: 's1' },
+            { type: 'header', headerKind: 'project', title: '~/repo', serverId: 's1', groupKey: activeGroup },
+            { type: 'session', sessionId: 'action', serverId: 's1', section: 'active', groupKey: activeGroup, groupKind: 'project' },
+            { type: 'session', sessionId: 'working', serverId: 's1', section: 'active', groupKey: activeGroup, groupKind: 'project' },
+            { type: 'header', headerKind: 'inactive', title: 'Inactive', serverId: 's1' },
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: inactiveGroup },
+            { type: 'session', sessionId: 'ready', serverId: 's1', section: 'inactive', groupKey: inactiveGroup, groupKind: 'date' },
+            { type: 'session', sessionId: 'quiet', serverId: 's1', section: 'inactive', groupKey: inactiveGroup, groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListIndex({
+            source,
+            resolveSessionRow: makeResolver({
+                's1:action': makeSessionRow('action', {
+                    active: true,
+                    presence: 'online',
+                    hasPendingUserActionRequests: true,
+                    updatedAt: 300,
+                }),
+                's1:working': makeSessionRow('working', {
+                    active: true,
+                    presence: 'online',
+                    latestTurnStatus: 'in_progress',
+                    hasPendingUserActionRequests: true,
+                    updatedAt: 400,
+                }),
+                's1:ready': makeSessionRow('ready', {
+                    seq: 10,
+                    latestTurnStatus: 'completed',
+                    lastTurnCompletedAt: 200,
+                    lastViewedSessionSeq: 9,
+                    updatedAt: 200,
+                }),
+                's1:quiet': makeSessionRow('quiet', { updatedAt: 100 }),
+            }),
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: ['s1:quiet'],
+            sessionListGroupOrderV1: {},
+            sessionListOrderingModeV1: 'custom' as OrderingMode,
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            attentionPlacement: { mode: 'global' },
+        })!;
+
+        expect(describeItems(result)).toEqual([
+            'h:pinned:Pinned',
+            's:quiet:pinned:pinned-v1',
+            'h:attention',
+            's:action:attention:attention-promotion-v1',
+            's:ready:attention:attention-promotion-v1',
+            'h:active:Active',
+            'h:project:~/repo',
+            's:working:project:server:s1:active:project:repo',
+        ]);
+    });
+
+    it('does not re-promote an acknowledged completed turn after a later non-terminal update', () => {
+        const dateGroup = 'server:s1:day:2026-02-17';
+        const source: SessionListIndexItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: dateGroup },
+            { type: 'session', sessionId: 'done', serverId: 's1', section: 'inactive', groupKey: dateGroup, groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListIndex({
+            source,
+            resolveSessionRow: makeResolver({
+                's1:done': makeSessionRow('done', {
+                    seq: 12,
+                    latestTurnStatus: 'completed',
+                    lastTurnCompletedAt: 1_000,
+                    lastViewedSessionSeq: 10,
+                    updatedAt: 1_500,
+                    metadata: {
+                        path: '',
+                        readStateV1: {
+                            v: 1,
+                            sessionSeq: 10,
+                            pendingActivityAt: 0,
+                            updatedAt: 1_100,
+                        },
+                    },
+                }),
+            }),
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            sessionListOrderingModeV1: 'custom' as OrderingMode,
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            attentionPlacement: { mode: 'global' },
+        })!;
+
+        expect(describeItems(result)).toEqual([
+            'h:date:Today',
+            's:done:date:server:s1:day:2026-02-17',
+        ]);
+    });
+
+    it('keeps attention sessions inside current groups when within-groups mode is selected', () => {
+        const folderGroup = 'folder:s1:workspaceScope:s1:m1:/repo:planning';
+        const dateGroup = 'server:s1:day:2026-02-17';
+        const source: SessionListIndexItem[] = [
+            { type: 'header', headerKind: 'folder', title: 'Planning', serverId: 's1', groupKey: folderGroup, folderId: 'planning', folderDepth: 0 },
+            { type: 'session', sessionId: 'folder-quiet', serverId: 's1', section: 'active', groupKey: folderGroup, groupKind: 'folder', folderId: 'planning', folderDepth: 1 },
+            { type: 'session', sessionId: 'folder-action', serverId: 's1', section: 'active', groupKey: folderGroup, groupKind: 'folder', folderId: 'planning', folderDepth: 1 },
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: dateGroup },
+            { type: 'session', sessionId: 'date-quiet', serverId: 's1', section: 'inactive', groupKey: dateGroup, groupKind: 'date' },
+            { type: 'session', sessionId: 'date-ready', serverId: 's1', section: 'inactive', groupKey: dateGroup, groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListIndex({
+            source,
+            resolveSessionRow: makeResolver({
+                's1:folder-quiet': makeSessionRow('folder-quiet', { active: true, updatedAt: 100 }),
+                's1:folder-action': makeSessionRow('folder-action', {
+                    active: true,
+                    presence: 'online',
+                    hasPendingUserActionRequests: true,
+                    updatedAt: 200,
+                }),
+                's1:date-quiet': makeSessionRow('date-quiet', { updatedAt: 100 }),
+                's1:date-ready': makeSessionRow('date-ready', {
+                    seq: 10,
+                    latestTurnStatus: 'completed',
+                    lastTurnCompletedAt: 200,
+                    lastViewedSessionSeq: 9,
+                    updatedAt: 200,
+                }),
+            }),
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            sessionListOrderingModeV1: 'custom' as OrderingMode,
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+            attentionPlacement: { mode: 'withinGroups' },
+        })!;
+
+        expect(result.some((item) => item.type === 'header' && item.headerKind === 'attention')).toBe(false);
+        expect(describeItems(result)).toEqual([
+            'h:folder:Planning',
+            's:folder-action:folder:folder:s1:workspaceScope:s1:m1:/repo:planning',
+            's:folder-quiet:folder:folder:s1:workspaceScope:s1:m1:/repo:planning',
+            'h:date:Today',
+            's:date-ready:date:server:s1:day:2026-02-17',
+            's:date-quiet:date:server:s1:day:2026-02-17',
+        ]);
+    });
+
     it('orders sessions by updatedAt descending (with stable tie-breaks) when ordering mode is updated', () => {
         const g = 'server:s1:day:2026-02-17';
         const source: SessionListIndexItem[] = [
@@ -176,5 +337,70 @@ describe('computeVisibleSessionListIndex', () => {
 
         const sessions = result.filter((i) => i.type === 'session') as Array<Extract<SessionListIndexItem, { type: 'session' }>>;
         expect(sessions.map((s) => s.sessionId)).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    it('applies mixed folder and session ordering inside a workspace root folder group', () => {
+        const projectGroupKey = 'server:s1:active:project:abc123';
+        const rootFolderGroupKey = 'folder:s1:workspaceScope:s1:m1:/repo:root';
+        const planningFolderGroupKey = 'folder:s1:workspaceScope:s1:m1:/repo:planning';
+        const workspace = { t: 'workspaceScope' as const, serverId: 's1', machineId: 'm1', rootPath: '/repo' };
+        const source: SessionListIndexItem[] = [
+            { type: 'header', headerKind: 'active', title: 'Active', serverId: 's1' },
+            { type: 'header', headerKind: 'project', title: '~/repo', serverId: 's1', groupKey: projectGroupKey },
+            {
+                type: 'header',
+                headerKind: 'folder',
+                title: 'Planning',
+                serverId: 's1',
+                groupKey: planningFolderGroupKey,
+                folderId: 'planning',
+                folderDepth: 0,
+                workspace,
+            },
+            {
+                type: 'session',
+                sessionId: 'in-folder',
+                serverId: 's1',
+                section: 'active',
+                groupKey: planningFolderGroupKey,
+                groupKind: 'folder',
+                folderId: 'planning',
+                folderDepth: 1,
+            },
+            {
+                type: 'session',
+                sessionId: 'at-root',
+                serverId: 's1',
+                section: 'active',
+                groupKey: rootFolderGroupKey,
+                groupKind: 'folder',
+                folderId: null,
+                folderDepth: 0,
+            },
+        ];
+
+        const result = computeVisibleSessionListIndex({
+            source,
+            resolveSessionRow: makeResolver({
+                's1:in-folder': makeSessionRow('in-folder', { active: true }),
+                's1:at-root': makeSessionRow('at-root', { active: true }),
+            }),
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: { [rootFolderGroupKey]: ['s1:at-root', 'folder:planning'] },
+            sessionListOrderingModeV1: 'custom' as OrderingMode,
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+        })!;
+
+        expect(result.map((item) => (item.type === 'header'
+            ? `h:${item.headerKind}:${item.title}`
+            : `s:${item.sessionId}`
+        ))).toEqual([
+            'h:active:Active',
+            'h:project:~/repo',
+            's:at-root',
+            'h:folder:Planning',
+            's:in-folder',
+        ]);
     });
 });

@@ -135,11 +135,17 @@ describe('MultiTextInput', () => {
 
         const tree = (await renderScreen(<MultiTextInput
             testID="composer-input"
-            value=""
+            value="hello"
             onChangeText={() => {}}
             onKeyPress={onKeyPress}
         />)).tree;
         const input = tree.findByType('TextInput' as any);
+
+        input.props.onSelectionChange({
+            nativeEvent: {
+                selection: { start: 1, end: 4 },
+            },
+        });
 
         input.props.onKeyPress({
             preventDefault,
@@ -164,6 +170,10 @@ describe('MultiTextInput', () => {
             metaKey: false,
             repeat: true,
             isComposing: false,
+            inputState: {
+                text: 'hello',
+                selection: { start: 1, end: 4 },
+            },
         });
         expect(preventDefault).toHaveBeenCalledTimes(1);
     });
@@ -191,6 +201,11 @@ describe('MultiTextInput', () => {
             repeat: true,
             keyCode: 13,
             nativeEvent: { isComposing: false },
+            currentTarget: {
+                value: 'draft',
+                selectionStart: 2,
+                selectionEnd: 2,
+            },
             preventDefault,
         });
 
@@ -203,6 +218,10 @@ describe('MultiTextInput', () => {
             metaKey: true,
             repeat: true,
             isComposing: false,
+            inputState: {
+                text: 'draft',
+                selection: { start: 2, end: 2 },
+            },
         });
         expect(preventDefault).toHaveBeenCalledTimes(1);
     });

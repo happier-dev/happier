@@ -20,6 +20,7 @@ export * from './hooks/flushHookEffects';
 export * from './hooks/renderHook';
 export * from './mocks/icons';
 export * from './mocks/flashList';
+export * from './mocks/gestureHandler';
 export * from './mocks/modal';
 export * from './mocks/mainAppTabState';
 export * from './mocks/reactNative';

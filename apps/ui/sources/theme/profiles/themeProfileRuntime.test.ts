@@ -106,7 +106,7 @@ describe('theme profile runtime', () => {
         })).toBe('#0a0a0a');
     });
 
-    it('updates both registered Unistyles themes when applying a profile', () => {
+    it('updates both registered Unistyles themes on web when applying a profile', () => {
         const updateTheme = vi.fn();
         const setAdaptiveThemes = vi.fn();
         const setTheme = vi.fn();
@@ -116,6 +116,7 @@ describe('theme profile runtime', () => {
             themePreference: 'dark',
             themeProfiles: profileState,
             systemTheme: 'light',
+            platform: 'web',
             unistylesRuntime: {
                 updateTheme,
                 setAdaptiveThemes,
@@ -130,6 +131,40 @@ describe('theme profile runtime', () => {
         expect(setAdaptiveThemes).toHaveBeenCalledWith(false);
         expect(setTheme).toHaveBeenCalledWith('dark');
         expect(setRootViewBackgroundColor).toHaveBeenCalledWith('#0a0a0a');
+    });
+
+    it('updates only the visual Unistyles theme on native when applying a profile', () => {
+        const updateTheme = vi.fn();
+        const setAdaptiveThemes = vi.fn();
+        const setTheme = vi.fn();
+        const setRootViewBackgroundColor = vi.fn();
+        const recordBreadcrumb = vi.fn();
+
+        applyThemeRuntimeSelection({
+            themePreference: 'dark',
+            themeProfiles: profileState,
+            systemTheme: 'light',
+            platform: 'ios',
+            unistylesRuntime: {
+                updateTheme,
+                setAdaptiveThemes,
+                setTheme,
+                setRootViewBackgroundColor,
+            },
+            setSystemBackgroundColor: vi.fn(),
+            recordBreadcrumb,
+        });
+
+        expect(updateTheme).toHaveBeenCalledTimes(1);
+        expect(updateTheme).toHaveBeenCalledWith('dark', expect.any(Function));
+        expect(setAdaptiveThemes).toHaveBeenCalledWith(false);
+        expect(setTheme).toHaveBeenCalledWith('dark');
+        expect(setRootViewBackgroundColor).toHaveBeenCalledWith('#0a0a0a');
+        expect(recordBreadcrumb).toHaveBeenCalledWith(expect.objectContaining({
+            phase: 'update-visual-theme',
+            visualTheme: 'dark',
+            platform: 'ios',
+        }));
     });
 
     it('falls back to canonical base themes when profile resolution fails during application', () => {
@@ -181,12 +216,9 @@ describe('theme profile runtime', () => {
 
         expect(result.light).toBe(lightTheme);
         expect(result.dark).toBe(darkTheme);
-        expect(updateTheme).toHaveBeenCalledWith('light', expect.any(Function));
         expect(updateTheme).toHaveBeenCalledWith('dark', expect.any(Function));
-        expect(updateTheme).toHaveBeenCalledTimes(4);
-        const finalLightUpdater = updateTheme.mock.calls.filter(([themeName]) => themeName === 'light').at(-1)?.[1];
+        expect(updateTheme).toHaveBeenCalledTimes(2);
         const finalDarkUpdater = updateTheme.mock.calls.filter(([themeName]) => themeName === 'dark').at(-1)?.[1];
-        expect(finalLightUpdater?.(profileState)).toBe(lightTheme);
         expect(finalDarkUpdater?.(profileState)).toBe(darkTheme);
     });
 

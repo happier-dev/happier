@@ -60,12 +60,21 @@ describe('settings', () => {
             expect(settingsParse({})).toEqual(parsedSettingsDefaults);
         });
 
-        it('defaults session list density to cozy', () => {
+        it('defaults session list presentation to narrow agent logos with activity-and-attention active color', () => {
             const settings = settingsParse({});
-            expect((settings as any).sessionListDensity).toBe('cozy');
+            expect((settings as any).sessionListDensity).toBe('narrow');
+            expect((settings as any).sessionListIdentityDisplay).toBe('agentLogo');
             expect((settings as any).sessionListOrderingModeV1).toBe('custom');
+            expect((settings as any).sessionListAttentionPromotionModeV1).toBe('off');
             expect((settings as any).compactSessionView).toBe(true);
-            expect((settings as any).compactSessionViewMinimal).toBe(false);
+            expect((settings as any).compactSessionViewMinimal).toBe(true);
+            expect((settings as any).sessionListActiveColorModeV1).toBe('activityAndAttention');
+        });
+
+        it('accepts session list identity display preferences separately from avatar style', () => {
+            const parsed = settingsParse({ sessionListIdentityDisplay: 'agentLogo' });
+
+            expect((parsed as any).sessionListIdentityDisplay).toBe('agentLogo');
         });
 
         it('includes installables policy map by default', () => {
@@ -679,6 +688,25 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).sessionListInactiveGroupingV1).toBe('project');
+        });
+
+        it('parses the session list active color mode setting', () => {
+            const parsed = settingsParse({
+                sessionListActiveColorModeV1: 'attentionOnly',
+            } as any);
+
+            expect((parsed as any).sessionListActiveColorModeV1).toBe('attentionOnly');
+        });
+
+        it('parses the session list attention promotion mode setting', () => {
+            const parsed = settingsParse({
+                sessionListAttentionPromotionModeV1: 'withinGroups',
+            } as any);
+
+            expect((parsed as any).sessionListAttentionPromotionModeV1).toBe('withinGroups');
+            expect((settingsParse({
+                sessionListAttentionPromotionModeV1: 'invalid',
+            } as any) as any).sessionListAttentionPromotionModeV1).toBe('off');
         });
 
         it('parses new-session persistence defaults', () => {

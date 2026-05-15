@@ -52,6 +52,7 @@ export interface SessionListRenderableSession {
     lastViewedSessionSeq?: number | null;
     latestTurnStatus?: PrimaryTurnStatusV1 | null;
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
+    lastTurnCompletedAt?: number | null;
     metadataVersion: number;
     agentStateVersion: number;
     metadata: SessionListRenderableMetadata | null;
@@ -202,6 +203,7 @@ export function buildSessionListRenderableFromSession(
         lastViewedSessionSeq: normalizeLastViewedSessionSeq(session.lastViewedSessionSeq),
         latestTurnStatus: session.latestTurnStatus ?? null,
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
+        lastTurnCompletedAt: session.lastTurnCompletedAt ?? null,
         metadataVersion: preserveMetadata && previous ? previous.metadataVersion : session.metadataVersion,
         agentStateVersion: preservePendingFlags && previous ? previous.agentStateVersion : session.agentStateVersion,
         metadata: previous && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, nextMetadata)
@@ -313,6 +315,7 @@ export function areSessionListRenderablesEqual(
         && (previous.lastViewedSessionSeq ?? null) === (next.lastViewedSessionSeq ?? null)
         && (previous.latestTurnStatus ?? null) === (next.latestTurnStatus ?? null)
         && JSON.stringify(previous.lastRuntimeIssue ?? null) === JSON.stringify(next.lastRuntimeIssue ?? null)
+        && (previous.lastTurnCompletedAt ?? null) === (next.lastTurnCompletedAt ?? null)
         && previous.metadataVersion === next.metadataVersion
         && previous.agentStateVersion === next.agentStateVersion
         && previous.thinking === next.thinking

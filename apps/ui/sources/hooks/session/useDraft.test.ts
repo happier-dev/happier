@@ -296,4 +296,29 @@ describe('useDraft', () => {
     expect(harness.getCurrent().value).toBe('');
     harness.unmount();
   });
+
+  it('does not re-adopt a stale saved draft while the user clears the composer', async () => {
+    sessionsById = {
+      s1: { draft: null, metadata: {} },
+    };
+
+    const harness = await renderHarness({ initialSessionId: 's1' });
+    expect(harness.getCurrent().value).toBe('');
+
+    await act(async () => {
+      harness.getCurrent().setValue('expanded prompt text');
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(sessionsById.s1?.draft).toBe('expanded prompt text');
+
+    await act(async () => {
+      harness.getCurrent().setValue('');
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(harness.getCurrent().value).toBe('');
+    expect(sessionsById.s1?.draft).toBe('');
+    harness.unmount();
+  });
 });

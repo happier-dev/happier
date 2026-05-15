@@ -9,11 +9,11 @@ import {
 } from '@/sync/ops';
 import {
     storage,
-    useSession,
-    useProjectForSession,
     useSessions,
     useSessionProjectScmInFlightOperation,
     useSessionProjectScmSnapshot,
+    useSessionRpcAvailabilityState,
+    useSessionWorkspacePath,
     useWorkspaceReviewCommentsDrafts,
     useSetting,
 } from '@/sync/domains/state/storage';
@@ -41,7 +41,6 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabilityConfig';
 import { useViewableItemIndices } from '@/components/ui/scroll/useViewableItemIndices';
-import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { useScmDiffExpandedKeys } from '@/components/workspaces/scm/review/useScmDiffExpandedKeys';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -115,12 +114,8 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
 
     const sessions = useSessions();
     const isStorageReady = sessions !== null;
-    const session = useSession(sessionId);
-    const project = useProjectForSession(sessionId);
-    const sessionPath = resolveSessionWorkspacePath({
-        sessionPath: session?.metadata?.path ?? null,
-        projectPath: project?.key?.rootPath ?? null,
-    });
+    const { sessionExists } = useSessionRpcAvailabilityState(sessionId);
+    const sessionPath = useSessionWorkspacePath(sessionId);
 
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
@@ -163,7 +158,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
             return;
         }
 
-        if (!session) {
+        if (!sessionExists) {
             setError(t('files.commitDetails.missingContext'));
             setIsLoading(false);
             return;
@@ -193,7 +188,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
         } finally {
             setIsLoading(false);
         }
-    }, [isStorageReady, sessionId, sha]);
+    }, [isStorageReady, sessionExists, sessionId, sha]);
 
     React.useEffect(() => {
         loadCommit();

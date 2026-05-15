@@ -102,6 +102,36 @@ describe('sessionListOrderingStateV1', () => {
         expect(normalized).toEqual({ [g]: ['s1:a'] });
     });
 
+    it('preserves folder keys that are direct children of the ordered group', () => {
+        const rootFolderGroupKey = 'folder:s1:workspaceScope:s1:m1:/repo:root';
+        const planningFolderGroupKey = 'folder:s1:workspaceScope:s1:m1:/repo:planning';
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Repo', headerKind: 'project', groupKey: 'server:s1:project:repo', serverId: 's1' },
+            {
+                type: 'header',
+                title: 'Planning',
+                headerKind: 'folder',
+                groupKey: planningFolderGroupKey,
+                folderId: 'planning',
+                folderDepth: 0,
+                serverId: 's1',
+            },
+            makeSessionItem({ serverId: 's1', sessionId: 'root', groupKey: rootFolderGroupKey }),
+        ];
+
+        const normalized = normalizeSessionListGroupOrderV1ForSource({
+            source,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {
+                [rootFolderGroupKey]: ['s1:root', 'folder:planning', 'folder:missing'],
+            },
+        });
+
+        expect(normalized).toEqual({
+            [rootFolderGroupKey]: ['s1:root', 'folder:planning'],
+        });
+    });
+
     it('returns the original map when group order is already normalized for the source', () => {
         const g = 'server:s1:day:2026-02-17';
         const normalizedOrder = { [g]: ['s1:a', 's1:b'] };

@@ -920,6 +920,7 @@ const styles = StyleSheet.create(() => ({
         paddingVertical: 8,
         borderRadius: 12,
         maxWidth: '100%',
+        textAlign: 'left',
     },
     transcriptMarkdownText: {
         ...transcriptMarkdownTextStyle,

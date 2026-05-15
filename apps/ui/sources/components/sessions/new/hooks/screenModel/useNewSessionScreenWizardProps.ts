@@ -131,6 +131,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'submitAccessibilityLabel'
         | 'emptyAutocompletePrefixes'
         | 'emptyAutocompleteSuggestions'
+        | 'onAutocompleteSuggestionSelect'
         | 'connectionStatus'
         | 'machinePopover'
         | 'pathPopover'

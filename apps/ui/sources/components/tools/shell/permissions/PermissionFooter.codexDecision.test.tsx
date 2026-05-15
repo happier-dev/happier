@@ -1,6 +1,8 @@
 import React from 'react';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 
@@ -46,6 +48,12 @@ vi.mock('@/agents/catalog/permissionUiCopy', () => ({
 }));
 
 describe('PermissionFooter (codexDecision)', () => {
+    function getTextStyleFragments(button: ReactTestInstance) {
+        const textNode = button.findByType('Text' as any);
+        const style = textNode.props.style;
+        return (Array.isArray(style) ? style : [style]).filter(Boolean) as Array<Record<string, unknown>>;
+    }
+
     it('does not repeat the request summary (the tool UI already shows it)', async () => {
         const { PermissionFooter } = await import('../permissions/PermissionFooter');
         const screen = await renderScreen(React.createElement(PermissionFooter, {
@@ -61,11 +69,23 @@ describe('PermissionFooter (codexDecision)', () => {
 
         // Stable locators for Maestro flows.
         const allow = screen.findByProps({ testID: 'permission-footer.allow' });
+        const allowForSession = screen.findByProps({ testID: 'permission-footer.allow-for-session' });
         const deny = screen.findByProps({ testID: 'permission-footer.deny' });
         const stop = screen.findByProps({ testID: 'permission-footer.stop' });
         expect(allow).toBeTruthy();
+        expect(allowForSession).toBeTruthy();
         expect(deny).toBeTruthy();
         expect(stop).toBeTruthy();
+
+        const allowStyles = getTextStyleFragments(allow);
+        const allowForSessionStyles = getTextStyleFragments(allowForSession);
+        const denyStyles = getTextStyleFragments(deny);
+        const stopStyles = getTextStyleFragments(stop);
+
+        expect(allowStyles.some((style) => style.color === lightTheme.colors.permissionButton.allow.text)).toBe(true);
+        expect(allowForSessionStyles.some((style) => style.color === lightTheme.colors.permissionButton.allowAll.text)).toBe(true);
+        expect(denyStyles.some((style) => style.color === lightTheme.colors.permissionButton.deny.text)).toBe(true);
+        expect(stopStyles.some((style) => style.color === lightTheme.colors.permissionButton.deny.text)).toBe(true);
     });
 
     it('approves execpolicy amendment using the latest proposed_execpolicy_amendment payload', async () => {
@@ -86,6 +106,8 @@ describe('PermissionFooter (codexDecision)', () => {
             'codex.permissions.yesAlwaysAllowCommand',
         );
         expect(execPolicyButton).toBeTruthy();
+        const execPolicyTextStyle = getTextStyleFragments(execPolicyButton as ReactTestInstance);
+        expect(execPolicyTextStyle.some((style) => style.color === lightTheme.colors.permissionButton.allowAll.text)).toBe(true);
 
         await pressTestInstanceAsync(execPolicyButton, 'execpolicy approval button');
 

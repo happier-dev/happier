@@ -42,6 +42,15 @@ const deviceTypeState = vi.hoisted(() => ({
 const keyboardHeightState = vi.hoisted(() => ({
     value: 0,
 }));
+const gestureHandlerState = vi.hoisted(() => ({
+    gestures: [] as Array<{
+        kind: string;
+        config: Record<string, unknown>;
+        handlers: {
+            onEnd?: (event: { translationY: number; velocityY: number }) => void;
+        };
+    }>,
+}));
 const featureState = vi.hoisted(() => ({
     terminalEmbeddedPtyEnabled: true,
 }));
@@ -56,7 +65,6 @@ const cockpitRegistrationState = vi.hoisted(() => ({
         activeSurface: string;
         terminalTabAvailable: boolean;
         switchSurface: ReturnType<typeof vi.fn>;
-        closeCockpit: ReturnType<typeof vi.fn>;
     },
 }));
 const routerState = vi.hoisted(() => ({
@@ -148,6 +156,7 @@ vi.mock('react-native-gesture-handler', () => {
                 return gesture;
             },
         };
+        gestureHandlerState.gestures.push(gesture);
         return gesture;
     }
 
@@ -310,6 +319,7 @@ describe('MobileBottomChromeHost', () => {
         searchParamsState.serverId = undefined;
         searchParamsState.sourceSurface = undefined;
         keyboardHeightState.value = 0;
+        gestureHandlerState.gestures = [];
     });
 
     it('renders the main app tab bar on the authenticated home route', async () => {
@@ -388,6 +398,33 @@ describe('MobileBottomChromeHost', () => {
         expect(bar.props.terminalTabAvailable).toBe(true);
     });
 
+    it('shows session cockpit chrome when cockpit mode is enabled while already viewing a session', async () => {
+        pathState.pathname = '/session/session-1';
+        authState.isAuthenticated = true;
+        settingsState.mobileWorkspaceExperienceV1 = 'classic';
+        settingsState.sessionLastMobileSurfaceBySessionId = null;
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = null;
+        settingsState.embeddedTerminalDockLocation = 'sidebar';
+        deviceTypeState.value = 'phone';
+        featureState.terminalEmbeddedPtyEnabled = true;
+        searchParamsState.mobileSurface = undefined;
+        searchParamsState.worktreeId = undefined;
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
+
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        await act(async () => {
+            notifyStorageListeners();
+        });
+
+        const bar = screen.tree.findByType('SessionCockpitTabBar' as never);
+        expect(bar.props.sessionId).toBe('session-1');
+        expect(bar.props.activeSurface).toBe('chat');
+    });
+
     it('does not render session cockpit chrome for session history routes', async () => {
         pathState.pathname = '/session/archived';
         authState.isAuthenticated = true;
@@ -428,7 +465,7 @@ describe('MobileBottomChromeHost', () => {
         expect(bar.props.activeSurface).toBe('git');
     });
 
-    it('hides main app bottom chrome while the software keyboard is visible on phone', async () => {
+    it('keeps main app bottom chrome mounted while the software keyboard is visible on phone', async () => {
         pathState.pathname = '/';
         authState.isAuthenticated = true;
         settingsState.mobileWorkspaceExperienceV1 = 'classic';
@@ -444,12 +481,12 @@ describe('MobileBottomChromeHost', () => {
         const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
         const screen = await renderScreen(<MobileBottomChromeHost />);
 
-        expect(screen.tree.findAllByType('MainAppTabBar' as never)).toHaveLength(0);
+        expect(screen.tree.findAllByType('MainAppTabBar' as never)).toHaveLength(1);
         expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
         expect(screen.tree.findAllByType('ProjectCockpitTabBar' as never)).toHaveLength(0);
     });
 
-    it('hides session cockpit bottom chrome while the software keyboard is visible on phone', async () => {
+    it('keeps session cockpit bottom chrome mounted while the software keyboard is visible on phone', async () => {
         pathState.pathname = '/session/session-1/files';
         authState.isAuthenticated = true;
         settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
@@ -466,11 +503,11 @@ describe('MobileBottomChromeHost', () => {
         const screen = await renderScreen(<MobileBottomChromeHost />);
 
         expect(screen.tree.findAllByType('MainAppTabBar' as never)).toHaveLength(0);
-        expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
+        expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(1);
         expect(screen.tree.findAllByType('ProjectCockpitTabBar' as never)).toHaveLength(0);
     });
 
-    it('hides project cockpit bottom chrome while the software keyboard is visible on phone', async () => {
+    it('keeps project cockpit bottom chrome mounted while the software keyboard is visible on phone', async () => {
         pathState.pathname = '/projects/wr_1/git';
         authState.isAuthenticated = true;
         settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
@@ -488,7 +525,7 @@ describe('MobileBottomChromeHost', () => {
 
         expect(screen.tree.findAllByType('MainAppTabBar' as never)).toHaveLength(0);
         expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
-        expect(screen.tree.findAllByType('ProjectCockpitTabBar' as never)).toHaveLength(0);
+        expect(screen.tree.findAllByType('ProjectCockpitTabBar' as never)).toHaveLength(1);
     });
 
     it('hides bottom chrome on non-home routes', async () => {
@@ -571,7 +608,6 @@ describe('MobileBottomChromeHost', () => {
             activeSurface: 'browse',
             terminalTabAvailable: true,
             switchSurface,
-            closeCockpit: vi.fn(),
         };
 
         const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
@@ -584,6 +620,31 @@ describe('MobileBottomChromeHost', () => {
 
         expect(switchSurface).toHaveBeenCalledWith('git');
         expect(routerState.replace).not.toHaveBeenCalled();
+    });
+
+    it('keeps session cockpit chrome mounted when a tab press has incidental vertical movement', async () => {
+        pathState.pathname = '/session/session-1/files';
+        authState.isAuthenticated = true;
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        settingsState.sessionLastMobileSurfaceBySessionId = null;
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = null;
+        settingsState.embeddedTerminalDockLocation = 'sidebar';
+        deviceTypeState.value = 'phone';
+        featureState.terminalEmbeddedPtyEnabled = true;
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        const bar = screen.tree.findByType('SessionCockpitTabBar' as never);
+        await act(async () => {
+            bar.props.onSurfacePress('git');
+            for (const gesture of gestureHandlerState.gestures) {
+                gesture.handlers.onEnd?.({ translationY: 42, velocityY: 0 });
+            }
+        });
+
+        expect(storageMutators.setMobileWorkspaceExperience).not.toHaveBeenCalledWith('classic');
+        expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(1);
     });
 
     it('keeps both main and cockpit bars in the global host during the route swap animation', async () => {

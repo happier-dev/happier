@@ -175,6 +175,43 @@ describe('SelectableMenuResults', () => {
         expect(registerItemLayout).toHaveBeenCalledWith('0');
     });
 
+    it('opens submenu rows through a row-edge anchor without selecting the parent item', async () => {
+        const onSelectionChange = vi.fn();
+        const onPressItem = vi.fn();
+        const onOpenSubmenu = vi.fn();
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        const screen = await renderScreen(<SelectableMenuResults
+            categories={[
+                { id: 'c1', title: '', items: [{ id: 'move', title: 'Move', hasSubmenu: true } as any] },
+            ]}
+            selectedIndex={0}
+            onSelectionChange={onSelectionChange}
+            onPressItem={onPressItem}
+            onOpenSubmenu={onOpenSubmenu as any}
+            rowVariant="slim"
+        />);
+
+        const row = screen.findByType('SelectableRow');
+        act(() => {
+            row.props.onHover?.();
+        });
+
+        expect(onSelectionChange).toHaveBeenCalledWith(0);
+        expect(onOpenSubmenu).toHaveBeenCalledWith('move', expect.objectContaining({ current: null }));
+        expect(onPressItem).not.toHaveBeenCalled();
+
+        const submenuAnchor = screen.findByTestId('dropdown-option-move:submenu-anchor');
+        expect(submenuAnchor).toBeTruthy();
+
+        act(() => {
+            row.props.onPress?.();
+        });
+
+        expect(onOpenSubmenu).toHaveBeenCalledTimes(2);
+        expect(onPressItem).not.toHaveBeenCalled();
+    });
+
     it('left aligns category titles with slim dropdown rows', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
 

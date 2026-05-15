@@ -72,6 +72,30 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         when: (context) => !context.isEditableTarget,
     },
     {
+        id: 'sessions.row.moveUp',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionsRowMoveUp',
+        defaultBinding: { binding: 'Alt+Shift+ArrowUp' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'sessions.row.moveDown',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionsRowMoveDown',
+        defaultBinding: { binding: 'Alt+Shift+ArrowDown' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'sessions.row.moveToFolder',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionsRowMoveToFolder',
+        defaultBinding: { binding: 'Alt+Shift+F' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'sessions.row.moveToWorkspaceRoot',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionsRowMoveToWorkspaceRoot',
+        defaultBinding: { binding: 'Alt+Shift+R' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
         id: 'splitCanvas.closeLeaf',
         settingsTitleKey: 'settingsKeyboard.commands.splitCanvasCloseLeaf',
         defaultBinding: { binding: 'Alt+Backspace' },

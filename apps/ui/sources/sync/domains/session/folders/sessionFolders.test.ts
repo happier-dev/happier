@@ -178,6 +178,34 @@ describe('session folder domain helpers', () => {
             .toEqual(['parent', 'child', 'alpha', 'zulu']);
     });
 
+    it('moves a folder before a sibling without rewriting unchanged sibling sort keys', () => {
+        const current: SessionFoldersV1 = {
+            v: 1,
+            folders: [
+                folder({ id: 'parent', name: 'Parent', sortKey: 'a0', updatedAt: 10 }),
+                folder({ id: 'child', name: 'Child', parentId: 'parent', sortKey: 'a0', updatedAt: 11 }),
+                folder({ id: 'alpha', name: 'Alpha', sortKey: 'a1', updatedAt: 12 }),
+                folder({ id: 'zulu', name: 'Zulu', sortKey: 'a2', updatedAt: 13 }),
+            ],
+        };
+
+        const moved = moveSessionFolder({
+            current,
+            folderId: 'child',
+            parentId: null,
+            beforeFolderId: 'alpha',
+            now: 50,
+        });
+
+        const foldersById = new Map(moved.next.folders.map((item) => [item.id, item] as const));
+        expect(foldersById.get('alpha')).toMatchObject({ sortKey: 'a1', updatedAt: 12 });
+        expect(foldersById.get('zulu')).toMatchObject({ sortKey: 'a2', updatedAt: 13 });
+        expect(foldersById.get('child')).toMatchObject({ parentId: null, updatedAt: 50 });
+        expect(foldersById.get('child')?.sortKey).not.toBe('a0');
+        expect(buildSessionFolderTree(moved.next, workspaceA).rootNodes.map((node) => node.id))
+            .toEqual(['parent', 'child', 'alpha', 'zulu']);
+    });
+
     it('resolves durable workspace refs and drag intents for assignment', () => {
         expect(buildSessionFolderAssignmentKey('server-a', 'session-a')).toBe('server-a:session-a');
         expect(resolveDurableWorkspaceRefForSessionListHeader({

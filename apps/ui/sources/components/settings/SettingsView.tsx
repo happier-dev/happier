@@ -65,6 +65,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const voiceEnabled = useFeatureEnabled('voice');
     const sourceControlEnabled = useFeatureEnabled('scm.writeOperations');
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
+    const showFilesAndSourceControlGroup = sourceControlEnabled || attachmentsUploadsEnabled;
     const promptsLibraryEnabled = useFeatureEnabled('prompts.library');
     const petsCompanionEnabled = useFeatureEnabled('pets.companion');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
@@ -538,24 +539,26 @@ export const SettingsView = React.memo(function SettingsView() {
             </ItemGroup>
 
             {/* Files & Source Control */}
-            <ItemGroup title={t('settings.filesAndSourceControl')}>
-                {sourceControlEnabled ? (
-                    <Item
-                        title={t('settings.filesSourceControl')}
-                        subtitle={t('settings.filesSourceControlSubtitle')}
-                        icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.state.success.foreground} />}
-                        onPress={() => router.push('/(app)/settings/source-control')}
-                    />
-                ) : null}
-                {attachmentsUploadsEnabled ? (
-                    <Item
-                        title={t('settings.attachments')}
-                        subtitle={t('settings.attachmentsSubtitle')}
-                        icon={<Ionicons name="attach-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push('/(app)/settings/attachments')}
-                    />
-                ) : null}
-            </ItemGroup>
+            {showFilesAndSourceControlGroup ? (
+                <ItemGroup title={t('settings.filesAndSourceControl')}>
+                    {sourceControlEnabled ? (
+                        <Item
+                            title={t('settings.filesSourceControl')}
+                            subtitle={t('settings.filesSourceControlSubtitle')}
+                            icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.state.success.foreground} />}
+                            onPress={() => router.push('/(app)/settings/source-control')}
+                        />
+                    ) : null}
+                    {attachmentsUploadsEnabled ? (
+                        <Item
+                            title={t('settings.attachments')}
+                            subtitle={t('settings.attachmentsSubtitle')}
+                            icon={<Ionicons name="attach-outline" size={29} color={theme.colors.accent.blue} />}
+                            onPress={() => router.push('/(app)/settings/attachments')}
+                        />
+                    ) : null}
+                </ItemGroup>
+            ) : null}
 
             {/* System */}
             <ItemGroup title={t('settings.system')}>

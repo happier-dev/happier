@@ -4,7 +4,7 @@ import {
     type BottomTabBarProps,
 } from '@react-navigation/bottom-tabs';
 
-import { useLocalSetting, useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
+import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 
 import {
     type SessionMobileSurface,
@@ -113,7 +113,6 @@ const SessionCockpitNavigatorChromeBridge = React.memo((props: BottomTabBarProps
     terminalTabAvailable: boolean;
 }>) => {
     const register = useSessionCockpitChromeRegister();
-    const [, setMobileWorkspaceExperience] = useSettingMutable('mobileWorkspaceExperienceV1');
     const sessionLastMobileSurfaceBySessionId = useLocalSetting('sessionLastMobileSurfaceBySessionId');
     const [, setSessionLastMobileSurfaceBySessionId] = useLocalSettingMutable('sessionLastMobileSurfaceBySessionId');
     const activeSurface = normalizeSurface(props.state.routes[props.state.index]?.name) ?? 'chat';
@@ -147,19 +146,13 @@ const SessionCockpitNavigatorChromeBridge = React.memo((props: BottomTabBarProps
         switchSurfaceRef.current(surface);
     }, []);
 
-    const closeMobileWorkspaceCockpit = React.useCallback(() => {
-        setMobileWorkspaceExperience('classic');
-    }, [setMobileWorkspaceExperience]);
-
     React.useEffect(() => register({
         sessionId: props.sessionId,
         activeSurface,
         terminalTabAvailable: props.terminalTabAvailable,
         switchSurface,
-        closeCockpit: closeMobileWorkspaceCockpit,
     }), [
         activeSurface,
-        closeMobileWorkspaceCockpit,
         props.sessionId,
         props.terminalTabAvailable,
         register,

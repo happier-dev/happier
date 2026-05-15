@@ -1,6 +1,7 @@
 import type { TracedMessage } from '../reducerTracer';
 import type { ReducerState } from '../reducer';
 import { applyToolResultUpdateToReducerMessage } from '../helpers/applyToolResultUpdateToReducerMessage';
+import { applyClaudeTaskToolResultTodos } from '../helpers/claudeTaskListTodos';
 import { bufferOrphanToolResult } from '../helpers/orphanToolResults';
 import type { ToolResultUpdate } from '../helpers/toolResultUpdateTypes';
 
@@ -34,6 +35,13 @@ export function runToolResultsPhase(params: Readonly<{
             for (const [contentIndex, content] of msg.content.entries()) {
                 const c = content;
                 if (c.type === 'tool-result') {
+                    applyClaudeTaskToolResultTodos({
+                        state,
+                        toolUseId: c.tool_use_id,
+                        result: c,
+                        timestamp: msg.createdAt,
+                    });
+
                     // Find the message containing this tool
                     let messageId = state.toolIdToMessageId.get(c.tool_use_id);
                     if (!messageId) {

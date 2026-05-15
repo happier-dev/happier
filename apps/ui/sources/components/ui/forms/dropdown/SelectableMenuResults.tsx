@@ -13,7 +13,13 @@ import type { ScrollItemLayoutHandler } from '@/components/ui/scroll/useScrollRe
 
 type WebMouseDownActivationEvent = Readonly<{
     button?: number;
-    nativeEvent?: Readonly<{ button?: number }>;
+    currentTarget?: unknown;
+    target?: unknown;
+    nativeEvent?: Readonly<{
+        button?: number;
+        currentTarget?: unknown;
+        target?: unknown;
+    }>;
     preventDefault?: () => void;
     stopPropagation?: () => void;
 }>;
@@ -23,6 +29,38 @@ function asWebMouseDownActivationEvent(event: unknown): WebMouseDownActivationEv
         return {};
     }
     return event as WebMouseDownActivationEvent;
+}
+
+type ElementLike = Readonly<{
+    contains?: (node: unknown) => boolean;
+    closest?: (selector: string) => unknown;
+}>;
+
+function asElementLike(value: unknown): ElementLike | null {
+    if (!value || typeof value !== 'object') return null;
+    return value as ElementLike;
+}
+
+const INTERACTIVE_DESCENDANT_SELECTOR = [
+    'button',
+    'a[href]',
+    'input',
+    'textarea',
+    'select',
+    '[role="button"]',
+    '[role="link"]',
+].join(',');
+
+function startsFromInteractiveDescendant(event: WebMouseDownActivationEvent): boolean {
+    const target = asElementLike(event.target ?? event.nativeEvent?.target);
+    const currentTarget = asElementLike(event.currentTarget ?? event.nativeEvent?.currentTarget);
+    if (!target || !currentTarget || target === currentTarget) return false;
+    if (typeof target.closest !== 'function') return false;
+
+    const interactiveAncestor = target.closest(INTERACTIVE_DESCENDANT_SELECTOR);
+    if (!interactiveAncestor || interactiveAncestor === currentTarget) return false;
+    if (typeof currentTarget.contains !== 'function') return true;
+    return currentTarget.contains(interactiveAncestor);
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -45,6 +83,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingBottom: 8,
         color: theme.colors.input.placeholder,
     },
+    submenuAnchorFrame: {
+        position: 'relative',
+    },
+    submenuAnchor: {
+        position: 'absolute',
+        top: 0,
+        right: -2,
+        bottom: 0,
+        width: 4,
+    },
 }));
 
 export function SelectableMenuResults(props: {
@@ -52,6 +100,7 @@ export function SelectableMenuResults(props: {
     selectedIndex: number;
     onSelectionChange: (index: number) => void;
     onPressItem: (item: SelectableMenuItem) => void;
+    onOpenSubmenu?: (itemId: string, anchorRef: React.RefObject<unknown>) => void;
     rowVariant: SelectableRowVariant;
     emptyLabel?: string | null;
     showCategoryTitles?: boolean;
@@ -63,8 +112,29 @@ export function SelectableMenuResults(props: {
 }) {
     const styles = stylesheet;
     const mouseDownActivatedItemIdRef = React.useRef<string | null>(null);
+    const rowAnchorRefs = React.useRef(new Map<string, React.RefObject<View | null>>());
+    const submenuAnchorRefs = React.useRef(new Map<string, React.RefObject<View | null>>());
 
     const allItems = React.useMemo(() => props.categories.flatMap((c) => c.items), [props.categories]);
+    const getRowAnchorRef = React.useCallback((itemId: string): React.RefObject<View | null> => {
+        const existing = rowAnchorRefs.current.get(itemId);
+        if (existing) return existing;
+        const created = React.createRef<View>();
+        rowAnchorRefs.current.set(itemId, created);
+        return created;
+    }, []);
+    const getSubmenuAnchorRef = React.useCallback((itemId: string): React.RefObject<View | null> => {
+        const existing = submenuAnchorRefs.current.get(itemId);
+        if (existing) return existing;
+        const created = React.createRef<View>();
+        submenuAnchorRefs.current.set(itemId, created);
+        return created;
+    }, []);
+    const handleOpenSubmenu = React.useCallback((item: SelectableMenuItem, anchorRef: React.RefObject<unknown>) => {
+        if (!item.hasSubmenu || item.disabled) return false;
+        props.onOpenSubmenu?.(item.id, anchorRef);
+        return true;
+    }, [props]);
     const handleMouseDownActivatedPress = React.useCallback((item: SelectableMenuItem) => {
         mouseDownActivatedItemIdRef.current = String(item.id);
         props.onPressItem(item);
@@ -107,6 +177,8 @@ export function SelectableMenuResults(props: {
                     const itemIndex = categoryStartIndex + idx;
                     const isSelected = itemIndex === props.selectedIndex;
                     currentIndex++;
+                    const rowAnchorRef = getRowAnchorRef(String(item.id));
+                    const submenuAnchorRef = getSubmenuAnchorRef(String(item.id));
                     const testIdSafeItemId = String(item.id).replace(/[^a-zA-Z0-9_-]/g, '_');
                     const optionTestID = item.testID ?? `dropdown-option-${testIdSafeItemId}`;
                     const handleOptionMouseDownCapture =
@@ -115,11 +187,16 @@ export function SelectableMenuResults(props: {
                                 const activationEvent = asWebMouseDownActivationEvent(event);
                                 if (item.disabled) return;
                                 if (!isPrimaryWebActivationEvent(activationEvent)) return;
+                                if (startsFromInteractiveDescendant(activationEvent)) return;
                                 activationEvent.preventDefault?.();
                                 activationEvent.stopPropagation?.();
+                                if (handleOpenSubmenu(item, submenuAnchorRef as React.RefObject<unknown>)) return;
                                 handleMouseDownActivatedPress(item);
                             })
                             : undefined;
+                    const handleOpenItemSubmenu = () => {
+                        handleOpenSubmenu(item, submenuAnchorRef as React.RefObject<unknown>);
+                    };
                     const itemNode = rowKind === 'item' ? (
                         <Item
                             {...(props.itemProps ?? {})}
@@ -135,6 +212,7 @@ export function SelectableMenuResults(props: {
                             onMouseDownCapture={handleOptionMouseDownCapture}
                             onPress={() => {
                                 if (item.disabled) return;
+                                if (handleOpenSubmenu(item, rowAnchorRef as React.RefObject<unknown>)) return;
                                 handlePressItem(item);
                             }}
                         />
@@ -155,11 +233,13 @@ export function SelectableMenuResults(props: {
                             onMouseDownCapture={handleOptionMouseDownCapture}
                             onPress={() => {
                                 if (item.disabled) return;
+                                if (handleOpenSubmenu(item, rowAnchorRef as React.RefObject<unknown>)) return;
                                 handlePressItem(item);
                             }}
                             onHover={() => {
                                 if (item.disabled) return;
                                 props.onSelectionChange(itemIndex);
+                                handleOpenItemSubmenu();
                             }}
                         />
                     );
@@ -167,11 +247,26 @@ export function SelectableMenuResults(props: {
                     const scrollFrameLayout = props.registerItemLayout?.(String(itemIndex));
                     return (
                         <View
+                            ref={rowAnchorRef}
                             key={item.id}
                             testID={`${optionTestID}:scroll-frame`}
+                            style={item.hasSubmenu ? styles.submenuAnchorFrame : undefined}
+                            onPointerEnter={Platform.OS === 'web' && item.hasSubmenu ? () => {
+                                props.onSelectionChange(itemIndex);
+                                handleOpenItemSubmenu();
+                            } : undefined}
                             {...(scrollFrameLayout ? { onLayout: scrollFrameLayout } : {})}
                         >
                             {itemNode}
+                            {item.hasSubmenu ? (
+                                <View
+                                    ref={submenuAnchorRef}
+                                    collapsable={false}
+                                    pointerEvents="none"
+                                    testID={`${optionTestID}:submenu-anchor`}
+                                    style={styles.submenuAnchor}
+                                />
+                            ) : null}
                         </View>
                     );
                 });

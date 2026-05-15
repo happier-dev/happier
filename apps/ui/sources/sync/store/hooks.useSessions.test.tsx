@@ -287,12 +287,53 @@ describe('useSessionListRenderableWithServerScope', () => {
         }
     });
 
+    it('preserves read-state fields on projected row renderables', async () => {
+        const previousState = storage.getState();
+        try {
+            const renderable: SessionListRenderableSession = {
+                ...makeRenderable('session-1'),
+                seq: 7,
+                lastViewedSessionSeq: 7,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: { path: '/repo', machineId: 'm-1', host: 'localhost' },
+                metadataVersion: 1,
+                presence: 'online',
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionListRenderables: {
+                    'session-1': renderable,
+                },
+                sessionListRowStateByServerId: {},
+            }));
+
+            const hook = await renderHook(
+                () => useSessionListRenderableWithServerScope(null, 'session-1'),
+                { flushOptions: { cycles: 1, turns: 4 } },
+            );
+
+            expect(hook.getCurrent()).toEqual(expect.objectContaining({
+                seq: 7,
+                lastViewedSessionSeq: 7,
+            }));
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('keeps scoped row renderables stable when only streaming version counters change', async () => {
         const previousState = storage.getState();
         try {
             const renderable: SessionListRenderableSession = {
                 ...makeRenderable('session-1'),
                 seq: 10,
+                lastViewedSessionSeq: 10,
                 createdAt: 1,
                 updatedAt: 2,
                 active: true,
@@ -330,7 +371,6 @@ describe('useSessionListRenderableWithServerScope', () => {
                     sessionListRenderables: {
                         'session-1': {
                             ...renderable,
-                            seq: 11,
                             updatedAt: 3,
                             pendingVersion: 2,
                             metadataVersion: 2,

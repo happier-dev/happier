@@ -9,10 +9,12 @@ import { storage } from '../state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { t } from '@/text';
 import { BUILT_IN_PROMPTS } from './slashCommands/builtInPrompts';
+import type { PromptInvocationSuggestionMetadata } from './slashCommands/promptInvocationSuggestion';
 
 export interface CommandItem {
     command: string;        // The command without slash (e.g., "compact")
     description?: string;   // Optional description of what the command does
+    promptInvocation?: PromptInvocationSuggestionMetadata;
 }
 
 interface SearchOptions {
@@ -102,8 +104,17 @@ function buildPromptInvocationSlashCommands(state: any): CommandItem[] {
 
     for (const entry of entries) {
         if (!entry || typeof entry !== 'object') continue;
+        const invocationId = typeof (entry as any).id === 'string' ? String((entry as any).id) : '';
+        if (invocationId.trim().length === 0) continue;
+
         const token = typeof (entry as any).token === 'string' ? String((entry as any).token) : '';
         if (!token.startsWith('/')) continue;
+
+        const target = (entry as any).target;
+        const targetArtifactId = target && typeof target === 'object' && typeof target.artifactId === 'string'
+            ? String(target.artifactId)
+            : '';
+        if (targetArtifactId.trim().length === 0) continue;
 
         const availableIn = typeof (entry as any).availableIn === 'string' ? String((entry as any).availableIn) : 'global';
         if (availableIn !== 'global') continue;
@@ -112,9 +123,20 @@ function buildPromptInvocationSlashCommands(state: any): CommandItem[] {
         if (command.trim().length === 0) continue;
 
         const title = typeof (entry as any).title === 'string' ? String((entry as any).title) : '';
+        const rawBehavior = typeof (entry as any).behavior === 'string' ? String((entry as any).behavior) : '';
+        const behavior = rawBehavior === 'insert_and_send' || rawBehavior === 'insert_on_send'
+            ? rawBehavior
+            : 'insert';
         out.push({
             command,
             description: title.trim().length > 0 ? title : undefined,
+            promptInvocation: {
+                invocationId,
+                token,
+                targetArtifactId,
+                behavior,
+                allowArgs: (entry as any).allowArgs === true,
+            },
         });
     }
 

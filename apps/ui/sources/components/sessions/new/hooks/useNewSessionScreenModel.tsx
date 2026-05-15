@@ -13,6 +13,7 @@ import { sync } from '@/sync/sync';
 import { getTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Modal } from '@/modal';
 import { type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import {
     getProfileEnvironmentVariables,
@@ -84,6 +85,8 @@ import { useNewSessionScreenWizardProps } from '@/components/sessions/new/hooks/
 import { useNewSessionConnectedServicesAgentOptions } from '@/components/sessions/new/hooks/screenModel/useNewSessionConnectedServicesAgentOptions';
 import { useNewSessionScreenPreflightState } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenPreflightState';
 import type { NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
+import type { AgentInputAutocompleteSelectionHandler } from '@/components/sessions/agentInput';
+import { resolvePromptInvocationAutocompleteSelection } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
 import { randomUUID } from '@/platform/randomUUID';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { isProfileCompatibleWithResolvedBackendEntry } from '@/components/profiles/edit/profileBackendEntryStorage';
@@ -404,6 +407,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         const { getCommandSuggestions } = await import('@/components/autocomplete/suggestions');
         return getCommandSuggestions(NEW_SESSION_COMMAND_SUGGESTION_SESSION_ID, query);
+    }, []);
+    const handleAutocompleteSuggestionSelect = React.useCallback<AgentInputAutocompleteSelectionHandler>(async (args) => {
+        try {
+            return await resolvePromptInvocationAutocompleteSelection(args);
+        } catch (error) {
+            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage'));
+            return { handled: true };
+        }
     }, []);
 
     const effectiveMachineIdParam = React.useMemo(() => {
@@ -1159,6 +1170,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         acpSessionModeId,
         sessionConfigOptionOverrides,
         sessionPrompt,
+        setSessionPrompt,
         automationEditId,
         resumeSessionId,
         agentNewSessionOptions,
@@ -1371,6 +1383,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             submitAccessibilityLabel,
             emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions,
+            onAutocompleteSuggestionSelect: handleAutocompleteSuggestionSelect,
             connectionStatus,
             machinePopover,
             pathPopover,
@@ -1412,6 +1425,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             submitAccessibilityLabel,
             emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions,
+            onAutocompleteSuggestionSelect: handleAutocompleteSuggestionSelect,
             sessionPromptInputMaxHeight,
         },
         agent: {

@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useRouter } from 'expo-router';
 
 import { getActionSpec, type ApprovalRequestV1 } from '@happier-dev/protocol';
 
@@ -12,6 +13,9 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 import { useApprovalDecisionHandler } from './useApprovalDecisionHandler';
 import { ApprovalDecisionFooter } from './ApprovalDecisionFooter';
+import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
+import { buildPermissionToolCallRoute, canOpenPermissionToolCallRoute } from '@/utils/sessions/permissions/buildPermissionToolCallRoute';
+import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 
 const PROMPT_CARD_HORIZONTAL_PADDING = 12;
 const PROMPT_CARD_ICON_SIZE = 18;
@@ -40,17 +44,26 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
     approval: ApprovalRequestV1;
     sessionId: string;
     metadata: Metadata | null;
+    location?: PermissionToolCallMessageLocation | null;
     canApprovePermissions: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     chrome?: 'card' | 'inline';
 }>) {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const decide = useApprovalDecisionHandler(props.artifact, props.sessionId);
     const [isDeciding, setIsDeciding] = React.useState(false);
     const chrome = props.chrome ?? 'card';
     const actionTitle = React.useMemo(() => resolveActionTitle(props.approval), [props.approval]);
     const previewSummary = React.useMemo(() => getPreviewSummary(props.approval.preview), [props.approval.preview]);
     const approvalDisabled = !props.canApprovePermissions || Boolean(props.disabledReason);
+    const canOpenToolRoute = canOpenPermissionToolCallRoute(props.location ?? null);
+
+    const onViewTool = React.useCallback(() => {
+        navigateWithBlurOnWeb(() => {
+            router.push(buildPermissionToolCallRoute({ sessionId: props.sessionId, location: props.location ?? null }));
+        });
+    }, [props.location, props.sessionId, router]);
 
     const onDecision = React.useCallback(async (decision: 'approve' | 'reject') => {
         if (approvalDisabled || isDeciding) return;
@@ -85,6 +98,17 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
                         {props.approval.summary || t('approvals.untitled')}
                     </Text>
                 </View>
+                {canOpenToolRoute ? (
+                    <Pressable
+                        testID="approval-prompt-view-tool"
+                        onPress={onViewTool}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('toolView.open')}
+                        style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
+                    >
+                        <Ionicons name="open-outline" size={18} color={theme.colors.text.secondary} />
+                    </Pressable>
+                ) : null}
             </View>
             {previewSummary ? (
                 <View style={styles.preview}>
@@ -146,6 +170,13 @@ const styles = StyleSheet.create((theme) => ({
     subtitle: {
         fontSize: 12,
         color: theme.colors.text.secondary,
+    },
+    viewButton: {
+        padding: 6,
+        borderRadius: 8,
+    },
+    viewButtonPressed: {
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
     preview: {
         paddingLeft: PROMPT_CARD_TEXT_COLUMN_START,

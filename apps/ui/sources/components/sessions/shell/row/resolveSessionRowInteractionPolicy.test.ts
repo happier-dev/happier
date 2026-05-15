@@ -77,7 +77,7 @@ describe('resolveSessionRowInteractionPolicy', () => {
         expect(policy.swipeEnabled).toBe(false);
     });
 
-    it('disables fallback row long-press menus while native inline drag owns long-press', () => {
+    it('delegates iOS long-press context menu opening to native inline drag while it owns reorder', () => {
         const policy = resolveSessionRowInteractionPolicy({
             platformOs: 'ios',
             isActiveSession: true,
@@ -92,5 +92,21 @@ describe('resolveSessionRowInteractionPolicy', () => {
 
         expect(policy.enableLongPressContextMenu).toBe(false);
         expect(policy.showReorderHandle).toBe(true);
+    });
+
+    it('keeps Android row long-press menus disabled so row presses remain clickable', () => {
+        const policy = resolveSessionRowInteractionPolicy({
+            platformOs: 'android',
+            isActiveSession: true,
+            canStopSession: true,
+            canArchiveSession: false,
+            contextMenuItemCount: 2,
+            contextMenuOpen: false,
+            contextMenuWasOpen: false,
+            nativeInlineDragEnabled: false,
+            hasReorderHandle: false,
+        });
+
+        expect(policy.enableLongPressContextMenu).toBe(false);
     });
 });

@@ -74,6 +74,68 @@ describe('buildSessionViewShellSessionSignature', () => {
         );
     });
 
+    it('changes when pending request details hydrate at the same agent state version', () => {
+        const projectedOnly = createSession({
+            agentState: null,
+            agentStateVersion: 6,
+            pendingPermissionRequestCount: 1,
+        });
+        const hydrated = createSession({
+            agentStateVersion: 6,
+            pendingPermissionRequestCount: 1,
+            agentState: {
+                requests: {
+                    req_1: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'pwd' },
+                        createdAt: 10,
+                    },
+                },
+            },
+        });
+
+        expect(buildSessionViewShellSessionSignature(hydrated)).not.toBe(
+            buildSessionViewShellSessionSignature(projectedOnly),
+        );
+    });
+
+    it('stays stable for pending request notification-only updates', () => {
+        const base = createSession({
+            agentStateVersion: 6,
+            pendingPermissionRequestCount: 1,
+            agentState: {
+                requests: {
+                    req_1: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'pwd' },
+                        createdAt: 10,
+                    },
+                },
+            },
+        });
+        const notified = createSession({
+            agentStateVersion: 6,
+            pendingPermissionRequestCount: 1,
+            agentState: {
+                requests: {
+                    req_1: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'pwd' },
+                        createdAt: 10,
+                        pushNotifiedAt: 20,
+                    },
+                },
+            },
+        });
+
+        expect(buildSessionViewShellSessionSignature(notified)).toBe(
+            buildSessionViewShellSessionSignature(base),
+        );
+    });
+
     it('stays stable for read-cursor-only updates while viewing the session', () => {
         const base = createSession({
             lastViewedSessionSeq: 25,

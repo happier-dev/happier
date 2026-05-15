@@ -2,6 +2,7 @@ import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View, Platform, useWindowDimensions, ViewStyle, Pressable, ScrollView } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
+import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { MultiTextInput, KeyPressEvent, type MultiTextInputSubmitBehavior } from '@/components/ui/forms/MultiTextInput';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from '@/components/ui/forms/multiTextInputTypography';
 import { Typography } from '@/constants/Typography';
@@ -20,6 +21,7 @@ import { hapticsLight, hapticsError } from '@/components/ui/theme/haptics';
 import { type ShakeInstance } from '@/components/ui/feedback/Shaker';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useActiveWord } from '@/components/autocomplete/useActiveWord';
+import { findActiveWord, type ActiveWord } from '@/components/autocomplete/findActiveWord';
 import { useActiveSuggestions } from '@/components/autocomplete/useActiveSuggestions';
 import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
@@ -89,6 +91,7 @@ import { Text } from '@/components/ui/text/Text';
 import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
+import { resolveApprovalToolCallLocations } from '@/utils/sessions/approvals/resolveApprovalToolCallLocations';
 import {
     resolvePermissionPromptSurface,
     shouldShowGenericPermissionPromptForRequest,
@@ -117,6 +120,7 @@ import {
 } from '@/keyboard/composer';
 import { useKeyboardShortcutHandlers, type KeyboardShortcutHandlers } from '@/keyboard';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import type { PromptInvocationSuggestionMetadata } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
 
 const NATIVE_ACTION_CHIP_GAP_Y = 1;
 const NATIVE_ACTION_BAR_SECTION_GAP_Y = 6;
@@ -131,6 +135,45 @@ const AGENT_INPUT_TEST_IDS = {
     newSessionSend: 'new-session-composer-send',
     connectionStatusText: 'agent-input-connection-status-text',
 } as const;
+const HISTORY_INPUT_PROGRAMMATIC_STATE_NOTIFICATION_BUDGET = 2;
+
+export type AgentInputAutocompleteSelectionResult = Readonly<{
+    handled: boolean;
+    text?: string;
+    cursorPosition?: number;
+}>;
+
+export type AgentInputAutocompleteSelectionHandler = (args: Readonly<{
+    input: string;
+    selection: Readonly<{ start: number; end: number }>;
+    activeWord: ActiveWord | undefined;
+    suggestion: Readonly<{
+        key: string;
+        text: string;
+        label?: string;
+        description?: string;
+        component?: React.ElementType;
+        rowHeight?: number;
+        promptInvocation?: PromptInvocationSuggestionMetadata;
+    }>;
+}>) => Promise<AgentInputAutocompleteSelectionResult> | AgentInputAutocompleteSelectionResult;
+
+type ProgrammaticHistoryInputState = Readonly<{
+    state: TextInputState;
+    remainingStateNotifications: number;
+}>;
+
+function resolveHistoryKeyInputState(event: KeyPressEvent, fallback: TextInputState): TextInputState {
+    return event.inputState ?? fallback;
+}
+
+function scheduleAfterSynchronousInputStateNotifications(callback: () => void) {
+    if (typeof queueMicrotask === 'function') {
+        queueMicrotask(callback);
+        return;
+    }
+    setTimeout(callback, 0);
+}
 
 interface AgentInputProps {
     value: string;
@@ -196,7 +239,9 @@ interface AgentInputProps {
         description?: string;
         component?: React.ElementType;
         rowHeight?: number;
+        promptInvocation?: PromptInvocationSuggestionMetadata;
     }[]>;
+    onAutocompleteSuggestionSelect?: AgentInputAutocompleteSelectionHandler;
     usageData?: {
         inputTokens: number;
         outputTokens: number;
@@ -254,16 +299,19 @@ interface AgentInputProps {
 type AgentInputPermissionRequestsProps = React.ComponentProps<typeof AgentInputPermissionRequests>;
 
 const EMPTY_PERMISSION_LOCATIONS_BY_ID: ReadonlyMap<string, PermissionToolCallMessageLocation | null> = new Map();
+const EMPTY_APPROVAL_LOCATIONS_BY_ARTIFACT_ID: ReadonlyMap<string, PermissionToolCallMessageLocation | null> = new Map();
 
 const AgentInputAttentionRequestsWithLocations = React.memo(function AgentInputAttentionRequestsWithLocations(
-    props: Omit<AgentInputPermissionRequestsProps, 'permissionLocationsById'>,
+    props: Omit<AgentInputPermissionRequestsProps, 'permissionLocationsById' | 'approvalLocationsByArtifactId'>,
 ) {
     const { ids: committedMessageIdsOldestFirst } = useSessionTranscriptIds(props.sessionId);
     const committedMessagesById = useSessionMessagesById(props.sessionId);
     const committedMessagesReducerState = useSessionMessagesReducerState(props.sessionId);
     const permissionLocationVersion = useSessionMessagesVersion(
         props.sessionId,
-        props.permissionRequests.length > 0 || (props.userActionRequests?.length ?? 0) > 0,
+        props.permissionRequests.length > 0 ||
+            (props.userActionRequests?.length ?? 0) > 0 ||
+            (props.approvalRequests?.length ?? 0) > 0,
     );
 
     const permissionLocationsById = React.useMemo(() => {
@@ -294,7 +342,40 @@ const AgentInputAttentionRequestsWithLocations = React.memo(function AgentInputA
         props.userActionRequests,
     ]);
 
-    return <AgentInputPermissionRequests {...props} permissionLocationsById={permissionLocationsById} />;
+    const approvalLocationsByArtifactId = React.useMemo(() => {
+        const approvals = (props.approvalRequests ?? []).map((request) => ({
+            artifactId: request.artifact.id,
+            approval: request.approval,
+        }));
+        if (approvals.length === 0) return EMPTY_APPROVAL_LOCATIONS_BY_ARTIFACT_ID;
+        return resolveApprovalToolCallLocations({
+            approvals,
+            sessionId: props.sessionId,
+            messageIdsOldestFirst: committedMessageIdsOldestFirst,
+            messagesById: committedMessagesById,
+            resolveRouteMessageId: (messageId, _message) =>
+                buildSessionMessageRouteId({
+                    messageId,
+                    messagesById: committedMessagesById,
+                    reducerState: committedMessagesReducerState,
+                }),
+        });
+    }, [
+        committedMessageIdsOldestFirst,
+        committedMessagesById,
+        committedMessagesReducerState,
+        permissionLocationVersion,
+        props.approvalRequests,
+        props.sessionId,
+    ]);
+
+    return (
+        <AgentInputPermissionRequests
+            {...props}
+            permissionLocationsById={permissionLocationsById}
+            approvalLocationsByArtifactId={approvalLocationsByArtifactId}
+        />
+    );
 });
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -679,6 +760,23 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const keyboardHeight = useKeyboardHeight();
     const voiceEnabled = useFeatureEnabled('voice');
     const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
+    const fileDropOverlayBackdropStyle = React.useMemo<ViewStyle>(() => {
+        const backgroundColor = theme.colors.overlay.scrimWizard ?? theme.colors.overlay.scrim;
+        if (Platform.OS === 'web') {
+            return createBackdropWebStyle({
+                backgroundColor,
+                blurPx: 2,
+                enableBlur: uiBackdropBlurEnabled,
+                fallbackBackgroundColorWhenBlurDisabled: theme.colors.overlay.scrimStrong ?? theme.colors.overlay.scrim,
+            }) as unknown as ViewStyle;
+        }
+        return createBackdropNativeStyle({ backgroundColor });
+    }, [
+        theme.colors.overlay.scrim,
+        theme.colors.overlay.scrimStrong,
+        theme.colors.overlay.scrimWizard,
+        uiBackdropBlurEnabled,
+    ]);
     const keyboardShortcutsV2Enabled = useSetting('keyboardShortcutsV2Enabled') === true;
     const keyboardSingleKeyShortcutsEnabled = useSetting('keyboardSingleKeyShortcutsEnabled') === true;
     const keyboardShortcutOverridesV1 = useSetting('keyboardShortcutOverridesV1') ?? {};
@@ -863,8 +961,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const agentInputChipDensity = useSetting('agentInputChipDensity');
     const sessionPermissionModeApplyTiming = useSetting('sessionPermissionModeApplyTiming');
 
+    const historyScope = agentInputHistoryScope === 'global' ? 'global' : 'perSession';
     const messageHistory = useUserMessageHistory({
-        scope: agentInputHistoryScope === 'global' ? 'global' : 'perSession',
+        scope: historyScope,
         sessionId: props.sessionId ?? null,
     });
 
@@ -881,7 +980,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (props.sessionId) {
             inputRef.current?.blur();
         }
-        if (props.sessionId && (props.value.trim().length > 0 || props.hasSendableAttachments === true)) {
+        if (props.sessionId && props.value.trim().length > 0 && props.hasSendableAttachments !== true) {
             // Clear immediately for existing sessions so Enter-to-send doesn't leave stale text behind
             // if the input emits a late change event after the send action.
             props.onChangeText('');
@@ -930,23 +1029,87 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         selection: { start: props.value.length, end: props.value.length }
     });
     const inputStateRef = React.useRef(inputState);
+    const historyAppliedInputStateRef = React.useRef<ProgrammaticHistoryInputState | null>(null);
+
+    const isHistoryBrowsing = React.useCallback(() => (
+        messageHistory.isBrowsing()
+    ), [messageHistory]);
+
+    const hasRetainedHistorySession = React.useCallback(() => (
+        messageHistory.hasRetainedSession()
+    ), [messageHistory]);
 
     // Handle combined text and selection state changes
     const handleInputStateChange = React.useCallback((newState: TextInputState) => {
+        const historyAppliedInputState = historyAppliedInputStateRef.current;
+        const isProgrammaticHistoryApply =
+            historyAppliedInputState !== null
+            && historyAppliedInputState.state.text === newState.text
+            && historyAppliedInputState.remainingStateNotifications > 0;
+        if (isProgrammaticHistoryApply) {
+            const remainingStateNotifications = historyAppliedInputState.remainingStateNotifications - 1;
+            historyAppliedInputStateRef.current = remainingStateNotifications > 0
+                ? { ...historyAppliedInputState, remainingStateNotifications }
+                : null;
+        } else if (hasRetainedHistorySession()) {
+            historyAppliedInputStateRef.current = null;
+            messageHistory.pause(newState.text);
+        }
         setInputState(newState);
-    }, []);
+    }, [hasRetainedHistorySession, messageHistory]);
+
+    React.useEffect(() => {
+        historyAppliedInputStateRef.current = null;
+    }, [props.sessionId, historyScope]);
 
     React.useEffect(() => {
         inputStateRef.current = inputState;
     }, [inputState]);
 
+    React.useEffect(() => {
+        const current = inputStateRef.current;
+        if (current.text === props.value) return;
+
+        const nextSelection = {
+            start: Math.min(current.selection.start, props.value.length),
+            end: Math.min(current.selection.end, props.value.length),
+        };
+        const nextState = {
+            text: props.value,
+            selection: nextSelection,
+        };
+        inputStateRef.current = nextState;
+        setInputState(nextState);
+    }, [props.value]);
+
     const handleComposerFocus = React.useCallback(() => {
         setIsInputFocused(true);
-    }, []);
+        messageHistory.warmup();
+    }, [messageHistory]);
 
     const handleComposerBlur = React.useCallback(() => {
         setIsInputFocused(false);
     }, []);
+
+    const applyHistoryInputText = React.useCallback((next: string) => {
+        const nextState = { text: next, selection: { start: next.length, end: next.length } };
+        const setTextAndSelection = inputRef.current?.setTextAndSelection;
+        if (setTextAndSelection) {
+            const pendingHistoryApply: ProgrammaticHistoryInputState = {
+                state: nextState,
+                remainingStateNotifications: HISTORY_INPUT_PROGRAMMATIC_STATE_NOTIFICATION_BUDGET,
+            };
+            historyAppliedInputStateRef.current = pendingHistoryApply;
+            setTextAndSelection(next, nextState.selection);
+            scheduleAfterSynchronousInputStateNotifications(() => {
+                if (historyAppliedInputStateRef.current === pendingHistoryApply) {
+                    historyAppliedInputStateRef.current = null;
+                }
+            });
+        } else {
+            props.onChangeText(next);
+        }
+    }, [props.onChangeText]);
 
     React.useEffect(() => {
         if (Platform.OS !== 'ios' || !enterToSendEnabled || !isInputFocused || props.disabled) {
@@ -970,6 +1133,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     // Use the tracked selection from inputState
     const activeWord = useActiveWord(inputState.text, inputState.selection, props.autocompletePrefixes);
+    const activeWordDetails = React.useMemo(() => {
+        return findActiveWord(inputState.text, inputState.selection, props.autocompletePrefixes);
+    }, [inputState.selection, inputState.text, props.autocompletePrefixes]);
     // Using default options: clampSelection=true, autoSelectFirst=true, wrapAround=true
     // To customize: useActiveSuggestions(activeWord, props.autocompleteSuggestions, { clampSelection: false, wrapAround: false })
     const [suggestions, selected, moveUp, moveDown] = useActiveSuggestions(activeWord, props.autocompleteSuggestions, { clampSelection: true, wrapAround: true });
@@ -979,6 +1145,27 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (!suggestions[index] || !inputRef.current) return;
 
         const suggestion = suggestions[index];
+        const override = props.onAutocompleteSuggestionSelect?.({
+            input: inputState.text,
+            selection: inputState.selection,
+            activeWord: activeWordDetails,
+            suggestion,
+        });
+        if (override) {
+            void Promise.resolve(override).then((result) => {
+                if (!result.handled || !inputRef.current) {
+                    return;
+                }
+                if (typeof result.text === 'string' && typeof result.cursorPosition === 'number') {
+                    inputRef.current.setTextAndSelection(result.text, {
+                        start: result.cursorPosition,
+                        end: result.cursorPosition,
+                    });
+                    hapticsLight();
+                }
+            });
+            return;
+        }
 
         // Apply the suggestion
         const result = applySuggestion(
@@ -997,7 +1184,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
         // Small haptic feedback
         hapticsLight();
-    }, [suggestions, inputState, props.autocompletePrefixes]);
+    }, [activeWordDetails, inputState, props]);
 
     // Action menu popover state
     const composerAnchorRef = React.useRef<View>(null);
@@ -1042,13 +1229,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             },
             fadeVisibility: permissionRequestsFades.visibility,
         };
-        if (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0) {
+        if (composerPermissionRequests.length > 0 || pendingApprovalRequests.length > 0 || composerUserActionRequests.length > 0) {
             return <AgentInputAttentionRequestsWithLocations {...sharedProps} />;
         }
         return (
             <AgentInputPermissionRequests
                 {...sharedProps}
                 permissionLocationsById={EMPTY_PERMISSION_LOCATIONS_BY_ID}
+                approvalLocationsByArtifactId={EMPTY_APPROVAL_LOCATIONS_BY_ARTIFACT_ID}
             />
         );
     }, [
@@ -1821,28 +2009,25 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // Original key handling
         if (Platform.OS === 'web') {
             // Shell-like history: only when suggestions are not visible and cursor is at the boundary.
-            const isCollapsedSelection = inputState.selection.start === inputState.selection.end;
+            const historyInputState = resolveHistoryKeyInputState(event, inputStateRef.current);
+            const isCollapsedSelection = historyInputState.selection.start === historyInputState.selection.end;
             if (isCollapsedSelection && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-                if (event.key === 'ArrowUp' && inputState.selection.start === 0) {
-                    const next = messageHistory.moveUp(inputState.text);
+                const historyBrowsing = isHistoryBrowsing();
+                if (event.key === 'ArrowUp' && (historyBrowsing || historyInputState.selection.start === 0)) {
+                    const next = messageHistory.moveUp(historyInputState.text);
                     if (next !== null) {
-                        if (inputRef.current?.setTextAndSelection) {
-                            inputRef.current.setTextAndSelection(next, { start: next.length, end: next.length });
-                        } else {
-                            props.onChangeText(next);
-                        }
+                        applyHistoryInputText(next);
                         return true;
                     }
                 }
 
-                if (event.key === 'ArrowDown' && inputState.selection.end === inputState.text.length) {
-                    const next = messageHistory.moveDown();
+                const canResumeRetainedSessionDown =
+                    hasRetainedHistorySession()
+                    && historyInputState.selection.end === historyInputState.text.length;
+                if (event.key === 'ArrowDown' && (historyBrowsing || canResumeRetainedSessionDown)) {
+                    const next = messageHistory.moveDown(historyInputState.text);
                     if (next !== null) {
-                        if (inputRef.current?.setTextAndSelection) {
-                            inputRef.current.setTextAndSelection(next, { start: next.length, end: next.length });
-                        } else {
-                            props.onChangeText(next);
-                        }
+                        applyHistoryInputText(next);
                         return true;
                     }
                 }
@@ -1872,7 +2057,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
         }
         return false; // Key was not handled
-    }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, runAbortShortcutAction, enterToSendEnabled, props.value, props.hasSendableAttachments, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText, sendActionDisabled]);
+    }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, runAbortShortcutAction, enterToSendEnabled, props.value, props.hasSendableAttachments, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, applyHistoryInputText, sendActionDisabled, isHistoryBrowsing, hasRetainedHistorySession]);
 
     const handleSubmitEditing = React.useCallback(() => {
         if (Platform.OS === 'web') return;
@@ -2056,12 +2241,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             pointerEvents="none"
                             style={[
                                 styles.fileDropOverlay,
-                                Platform.OS === 'web' && !uiBackdropBlurEnabled
-                                    ? ({ backgroundColor: theme.colors.overlay.scrimStrong } as ViewStyle)
-                                    : null,
-                                Platform.OS === 'web' && uiBackdropBlurEnabled
-                                    ? ({ backdropFilter: 'blur(2px)' } as unknown as ViewStyle)
-                                    : null,
+                                fileDropOverlayBackdropStyle,
                             ]}
                         >
                             <View style={styles.fileDropOverlayContent}>

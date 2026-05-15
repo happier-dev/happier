@@ -1,38 +1,42 @@
 import { Platform } from 'react-native';
-import type { SharedValue } from 'react-native-reanimated';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { useSessionListRenderableWithServerScope } from '@/sync/domains/state/storage';
+import type { TreeDropResult, TreeInstructionVisual } from '@/components/ui/treeDragDrop';
 
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
 import { SessionListRow } from './sessionListRow';
-import type { SessionInlineDragEndContext } from './useSessionInlineDrag';
+import type {
+    SessionInlineDragVisualSharedValues,
+    UseSessionInlineDragDropResultEvent,
+    UseSessionInlineDragResolveDropResultEvent,
+} from './useSessionInlineDrag';
 import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
+import type {
+    RegisterSessionListTreeRowBounds,
+    UnregisterSessionListTreeRowBounds,
+} from './SessionListHeaderFrame';
 
 type SessionListSessionItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'session' }>;
     rowViewModel: SessionListRowViewModel | null | undefined;
     rowHeight: number;
     canReorderSessions: boolean;
+    treeRowId: string;
     onDragStart: (sessionKey: string) => void;
-    onDragEnd: (sessionKey: string, groupKey: string, positionDelta: number, context?: SessionInlineDragEndContext) => void | Promise<void>;
-    onDragUpdate?: (event: Readonly<{
-        sessionKey: string;
-        groupKey: string;
-        positionDelta: number;
-        dataIndex: number;
-        absoluteX: number;
-        absoluteY: number;
-    }>) => void;
+    resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => TreeDropResult;
+    onDropResult: (event: UseSessionInlineDragDropResultEvent) => void | Promise<void>;
+    onDragUpdate?: (event: UseSessionInlineDragDropResultEvent) => void;
     onTogglePinnedSessionKey: ((sessionKey: string) => void) | null;
     onSetTagsSessionKey: ((sessionKey: string, newTags: string[]) => void) | null;
     onNativeContextMenuOpenChangeSessionKey: ((sessionKey: string, next: boolean) => void) | null;
     draggingSessionKey: string | null;
     nativeContextMenuSessionKey: string | null;
-    totalItemCount: number;
     dataIndex: number;
-    dropIndicatorIdx: SharedValue<number>;
-    dropIndicatorEdge: SharedValue<number>;
+    dropVisual: SessionInlineDragVisualSharedValues;
+    activeDropVisual: TreeInstructionVisual;
+    onRegisterTreeRowBounds: RegisterSessionListTreeRowBounds;
+    onUnregisterTreeRowBounds: UnregisterSessionListTreeRowBounds;
     currentUserId: string | null;
     allKnownTags: string[];
     tagsEnabled: boolean;
@@ -40,6 +44,10 @@ type SessionListSessionItemProps = Readonly<{
     compactMinimal: boolean;
     folderMoveTargets: readonly SessionFolderMoveTarget[];
     onMoveToSessionFolder: ((sessionId: string, serverId: string, folderId: string | null) => void | Promise<void>) | null;
+    onMoveToFolder?: () => void;
+    onMoveToWorkspaceRoot?: () => void;
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
 }>;
 
 export function SessionListSessionItem(props: SessionListSessionItemProps) {
@@ -55,27 +63,28 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
 
     const sessionKey = rowViewModel.sessionKey;
     const isIos = Platform.OS === 'ios';
-    const isNative = isIos || Platform.OS === 'android';
-    const nativeContextMenuOpen = isNative && sessionKey != null && props.nativeContextMenuSessionKey === sessionKey;
+    const nativeContextMenuOpen = isIos && sessionKey != null && props.nativeContextMenuSessionKey === sessionKey;
 
     return (
         <SessionListRow
             sessionKey={sessionKey}
+            treeRowId={props.treeRowId}
             groupKey={rowViewModel.groupKey}
-            rowHeight={props.rowHeight}
             reorderEnabled={props.canReorderSessions}
             onDragStart={props.onDragStart}
-            onDragEnd={props.onDragEnd}
+            resolveDropResult={props.resolveDropResult}
+            onDropResult={props.onDropResult}
             onDragUpdate={props.onDragUpdate}
             onTogglePinnedSessionKey={sessionKey ? props.onTogglePinnedSessionKey : null}
             onSetTagsSessionKey={sessionKey ? props.onSetTagsSessionKey : null}
-            onNativeContextMenuOpenChangeSessionKey={isNative && sessionKey ? props.onNativeContextMenuOpenChangeSessionKey : null}
+            onNativeContextMenuOpenChangeSessionKey={isIos && sessionKey ? props.onNativeContextMenuOpenChangeSessionKey : null}
             isDragActive={props.draggingSessionKey != null}
             isBeingDragged={sessionKey != null && sessionKey === props.draggingSessionKey}
             dataIndex={props.dataIndex}
-            totalItemCount={props.totalItemCount}
-            dropIndicatorIdx={props.dropIndicatorIdx}
-            dropIndicatorEdge={props.dropIndicatorEdge}
+            dropVisual={props.dropVisual}
+            activeDropVisual={props.activeDropVisual}
+            onRegisterTreeRowBounds={props.onRegisterTreeRowBounds}
+            onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
             session={session}
             subtitleOverride={rowViewModel.subtitleOverride}
             subtitleEllipsizeMode={rowViewModel.subtitleEllipsizeMode}
@@ -100,7 +109,11 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             onMoveToSessionFolder={props.onMoveToSessionFolder && props.item.serverId
                 ? (folderId) => props.onMoveToSessionFolder?.(props.item.sessionId, props.item.serverId!, folderId)
                 : undefined}
-            {...(isNative && sessionKey != null
+            onMoveToFolder={props.onMoveToFolder}
+            onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
+            onMoveUp={props.onMoveUp}
+            onMoveDown={props.onMoveDown}
+            {...(isIos && sessionKey != null
                 ? {
                     nativeInlineDragEnabled: isIos && props.canReorderSessions,
                     nativeContextMenuOpen,

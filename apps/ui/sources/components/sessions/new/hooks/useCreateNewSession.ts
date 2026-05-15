@@ -35,6 +35,7 @@ import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/aut
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
+import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import {
     buildAutomationScheduleFromDraft,
@@ -160,6 +161,7 @@ export function useCreateNewSession(params: Readonly<{
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
 
     sessionPrompt: string;
+    setSessionPrompt?: (prompt: string) => void;
     resumeSessionId: string;
     agentNewSessionOptions?: Record<string, unknown> | null;
     authoringDraft?: SessionAuthoringDraft | null;
@@ -226,6 +228,29 @@ export function useCreateNewSession(params: Readonly<{
                 ? targetResolution.targetServerId
                 : snapshot.serverId;
             rollbackServerId = resolvedTargetServerId;
+
+            const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
+            const shouldPrepareInitialMessage = shouldSendInitialMessage && current.sessionPrompt.trim();
+            const resolvedInitialMessage = shouldPrepareInitialMessage
+                ? resolveSessionComposerSend({
+                    input: current.sessionPrompt,
+                    executionRunsEnabled: current.executionRunsEnabled === true,
+                    promptInvocationsV1: storage.getState().settings.promptInvocationsV1,
+                })
+                : null;
+
+            if (
+                resolvedInitialMessage?.kind === 'template' &&
+                resolvePromptInvocationComposerSendAction(resolvedInitialMessage.behavior) === 'insert'
+            ) {
+                const expanded = await expandPromptTemplateInvocation({
+                    targetArtifactId: resolvedInitialMessage.targetArtifactId,
+                    argsText: resolvedInitialMessage.rest,
+                });
+                current.setSessionPrompt?.(expanded);
+                current.setIsCreating(false);
+                return;
+            }
 
             const updatedPaths = [
                 { machineId: current.selectedMachineId, path: effectiveSelectedPath },
@@ -528,16 +553,6 @@ export function useCreateNewSession(params: Readonly<{
                 let postSpawnReplacementHref: string | null = null;
 
                 try {
-                    const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
-                    const shouldPrepareInitialMessage = shouldSendInitialMessage && current.sessionPrompt.trim();
-                    const resolvedInitialMessage = shouldPrepareInitialMessage
-                        ? resolveSessionComposerSend({
-                            input: current.sessionPrompt,
-                            executionRunsEnabled: current.executionRunsEnabled === true,
-                            promptInvocationsV1: storage.getState().settings.promptInvocationsV1,
-                        })
-                        : null;
-
                     if (resolvedInitialMessage) {
                         if (resolvedInitialMessage.kind === 'template') {
                             initialMessageText = await expandPromptTemplateInvocation({

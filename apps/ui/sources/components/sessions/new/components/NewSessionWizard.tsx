@@ -165,6 +165,7 @@ export interface NewSessionWizardFooterProps {
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
+    onAutocompleteSuggestionSelect?: React.ComponentProps<typeof AgentInput>['onAutocompleteSuggestionSelect'];
     connectionStatus?: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
@@ -1014,6 +1015,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                       placeholder={t('session.inputPlaceholder')}
                                       autocompletePrefixes={emptyAutocompletePrefixes}
                                       autocompleteSuggestions={emptyAutocompleteSuggestions}
+                                      onAutocompleteSuggestionSelect={props.footer.onAutocompleteSuggestionSelect}
                                           extraActionChips={extraActionChips}
                                           attachments={agentInputAttachments}
                                           onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}

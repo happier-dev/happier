@@ -71,18 +71,20 @@ export type WorkspaceFileDetailsViewProps = Readonly<{
 type WorkspaceFileDetailsPersistedDraft = Readonly<{
     isEditingFile: boolean;
     editorOriginalText: string;
+    editorOriginalHash?: string | null;
     editorText: string;
 }>;
 
 function readWorkspaceFileDetailsPersistedDraft(value: unknown): WorkspaceFileDetailsPersistedDraft | null {
     if (!value || typeof value !== 'object') return null;
-    const maybe = value as { isEditingFile?: unknown; editorOriginalText?: unknown; editorText?: unknown };
+    const maybe = value as { isEditingFile?: unknown; editorOriginalText?: unknown; editorOriginalHash?: unknown; editorText?: unknown };
     if (typeof maybe.isEditingFile !== 'boolean') return null;
     if (typeof maybe.editorOriginalText !== 'string') return null;
     if (typeof maybe.editorText !== 'string') return null;
     return {
         isEditingFile: maybe.isEditingFile,
         editorOriginalText: maybe.editorOriginalText,
+        editorOriginalHash: typeof maybe.editorOriginalHash === 'string' ? maybe.editorOriginalHash : null,
         editorText: maybe.editorText,
     };
 }
@@ -311,9 +313,14 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         void refreshAll();
     }, [refreshAll]);
 
+    const snapshotRefreshKey = scmSnapshot?.fetchedAt ?? null;
+    const fileRefreshFingerprint = React.useMemo(
+        () => `${lineSelectionFingerprint ?? 'none'}:${snapshotRefreshKey ?? 'none'}`,
+        [lineSelectionFingerprint, snapshotRefreshKey],
+    );
     const lastFingerprintRef = React.useRef<string | null>(null);
     React.useEffect(() => {
-        const fingerprint = lineSelectionFingerprint ?? null;
+        const fingerprint = fileRefreshFingerprint;
         if (lastFingerprintRef.current === null) {
             lastFingerprintRef.current = fingerprint;
             return;
@@ -325,7 +332,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         if (lastFingerprintRef.current === fingerprint) return;
         lastFingerprintRef.current = fingerprint;
         void refreshAll({ background: true });
-    }, [lineSelectionFingerprint, refreshAll]);
+    }, [fileRefreshFingerprint, refreshAll]);
 
     const language = getFileLanguageFromPath(filePath);
     const markdownPreviewAvailable = fileContent?.isBinary !== true
@@ -425,6 +432,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         onEditorChange,
         isSavingEdits,
         editorDirty,
+        fileChangedExternally,
         editorTooLarge,
         editorChunkTooLarge,
         startEditingFile,
@@ -435,6 +443,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         filePath,
         displayMode,
         fileText: fileContent?.isBinary ? null : (fileContent?.content ?? null),
+        fileHash: fileContent?.isBinary ? null : (fileContent?.contentHash ?? null),
         fileWriteSupported,
         setFileWriteSupported,
         fileEditorFeatureEnabled: fileEditorFeatureEnabled === true,
@@ -659,19 +668,20 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                 {previewTooLarge && error ? (
                     <View
                         testID="file-preview-unavailable-banner"
-                        style={{
-                            marginHorizontal: 16,
-                            marginBottom: 12,
-                            paddingHorizontal: 12,
-                            paddingVertical: 10,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: theme.colors.border.default,
-                            backgroundColor: theme.colors.surface.inset,
-                        }}
+                        style={styles.noticeBanner}
                     >
-                        <Text style={{ fontSize: 13, color: theme.colors.text.secondary, ...Typography.default() }}>
+                        <Text style={styles.noticeBannerText}>
                             {error}
+                        </Text>
+                    </View>
+                ) : null}
+                {fileChangedExternally ? (
+                    <View
+                        testID="file-editor-external-change-banner"
+                        style={styles.noticeBanner}
+                    >
+                        <Text style={styles.noticeBannerText}>
+                            {t('files.fileChangedExternally')}
                         </Text>
                     </View>
                 ) : null}
@@ -765,5 +775,20 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         backgroundColor: theme.colors.surface.base,
+    },
+    noticeBanner: {
+        marginHorizontal: 16,
+        marginBottom: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
+    },
+    noticeBannerText: {
+        fontSize: 13,
+        color: theme.colors.text.secondary,
+        ...Typography.default(),
     },
 }));

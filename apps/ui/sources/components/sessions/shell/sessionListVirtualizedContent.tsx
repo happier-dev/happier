@@ -62,6 +62,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     rowHeight: number;
     safeAreaBottom: number;
     renderItem: (params: { item: string; index: number }) => React.ReactElement | null;
+    rowExtraData: unknown;
     onStopScrollEventPropagationOnWeb: (event: any) => void;
     onPressArchivedSessions: () => void;
     folderFocus: SessionFolderFocusScope | null;
@@ -111,6 +112,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
                 } as any)}
                 data={props.nodeIds as any}
                 renderItem={props.renderItem as any}
+                extraData={props.rowExtraData}
                 keyExtractor={sessionListNodeKeyExtractor}
                 contentContainerStyle={contentContainerStyle}
                 ListHeaderComponent={headerComponent as any}
@@ -123,6 +125,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
         <FlashList
             data={props.nodeIds as any}
             renderItem={props.renderItem as any}
+            extraData={props.rowExtraData}
             keyExtractor={sessionListNodeKeyExtractor}
             getItemType={getSessionListNodeType as any}
             contentContainerStyle={contentContainerStyle as any}

@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 
 import { Text } from '@/components/ui/text/Text';
 import { ToolView } from '@/components/tools/shell/views/ToolView';
@@ -72,6 +73,7 @@ function renderGroupedToolCallRowContent(params: Readonly<{
     sessionId: string;
     nestedMessageId: string | undefined;
     forcePermissionPromptsInTranscript?: boolean;
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
     interaction: TranscriptInteraction;
 }>): React.ReactNode {
     if (shouldRenderGroupedToolCallWithMessageView(params.message, params.chromeMode, params.groupExpanded)) {
@@ -82,6 +84,7 @@ function renderGroupedToolCallRowContent(params: Readonly<{
                 sessionId={params.sessionId}
                 layoutContext="tool_calls_group"
                 forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
+                approvalRequests={params.approvalRequests}
                 interaction={params.interaction}
             />
         );
@@ -95,6 +98,7 @@ function renderGroupedToolCallRowContent(params: Readonly<{
                 messages={params.message.children}
                 sessionId={params.sessionId}
                 messageId={params.nestedMessageId}
+                approvalRequests={params.approvalRequests}
                 forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
                 interaction={params.interaction}
             />
@@ -108,6 +112,7 @@ function renderGroupedToolCallRowContent(params: Readonly<{
             messages={params.message.children}
             sessionId={params.sessionId}
             messageId={params.nestedMessageId}
+            approvalRequests={params.approvalRequests}
             forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
             interaction={params.interaction}
         />
@@ -121,6 +126,7 @@ export const ToolCallsGroupView = React.memo((props: {
     metadata: Metadata | null;
     sessionId: string;
     forcePermissionPromptsInTranscript?: boolean;
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
     expanded: boolean;
     setExpanded: (expanded: boolean) => void;
     interaction: TranscriptInteraction;
@@ -258,6 +264,7 @@ export const ToolCallsGroupView = React.memo((props: {
                                         sessionId: props.sessionId,
                                         nestedMessageId,
                                         forcePermissionPromptsInTranscript: props.forcePermissionPromptsInTranscript,
+                                        approvalRequests: props.approvalRequests,
                                         interaction: props.interaction,
                                     })}
                                 </View>
@@ -284,6 +291,7 @@ export const ToolCallsGroupView = React.memo((props: {
                                             sessionId: props.sessionId,
                                             nestedMessageId,
                                             forcePermissionPromptsInTranscript: props.forcePermissionPromptsInTranscript,
+                                            approvalRequests: props.approvalRequests,
                                             interaction: props.interaction,
                                         })}
                                     </View>

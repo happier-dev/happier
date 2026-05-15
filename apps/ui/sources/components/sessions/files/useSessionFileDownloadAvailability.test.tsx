@@ -39,6 +39,10 @@ function createServerFeaturesResponse(partial?: Readonly<{
 vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
     createPartialStorageModuleMock(importOriginal, {
         useSession: () => ({ active: true }),
+        useSessionRpcAvailabilityState: () => ({
+            sessionExists: true,
+            sessionRpcAvailable: true,
+        }),
         useMachine: () => state.machineState.value,
     }),
 );

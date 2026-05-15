@@ -1,6 +1,6 @@
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useUnistyles } from 'react-native-unistyles';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -17,11 +17,13 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
     const safeArea = useChromeSafeAreaInsets();
     const headerHeight = useHeaderHeight();
     const keyboardDismissOnTapHandlers = useKeyboardDismissOnTap();
+    const useAutomaticKeyboardOffset = Platform.OS === 'ios';
 
     return (
         <KeyboardAvoidingView
             testID="agent-content-keyboard-host"
-            behavior="padding"
+            behavior={useAutomaticKeyboardOffset ? 'translate-with-padding' : 'padding'}
+            automaticOffset={useAutomaticKeyboardOffset}
             keyboardVerticalOffset={0}
             style={{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base }}
         >

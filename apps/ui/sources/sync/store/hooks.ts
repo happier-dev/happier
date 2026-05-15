@@ -28,6 +28,7 @@ import type { UserProfile } from '../domains/social/friendTypes';
 import { buildSessionMessageRouteId, resolveSessionMessageRouteId } from '../domains/messages/messageRouteIds';
 import { useApplyLocalSettings, useApplySettings } from './settingsWriters';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
+import { resolveWorkspaceTargetForSessionFromState } from '../domains/session/resolveWorkspaceTargetForSessionFromState';
 import { deriveSessionAttentionFlags } from '../domains/session/attention/sessionAttention';
 import { normalizeSessionId } from '../domains/session/normalizeSessionId';
 import { buildMachineDisplayRenderableFromMachine } from '../domains/machines/machineDisplayRenderable';
@@ -74,7 +75,6 @@ function projectSessionListRowRenderable(renderable: SessionListRenderableSessio
   if (!renderable) return null;
   return {
     ...renderable,
-    seq: 0,
     updatedAt: 0,
     thinkingAt: 0,
     pendingVersion: undefined,
@@ -967,6 +967,38 @@ export function useProject(projectId: string | null) {
 export function useProjectForSession(sessionId: string | null) {
   return getStorage()(
     useShallow((state) => (sessionId ? state.getProjectForSession(sessionId) : null))
+  );
+}
+
+export function useSessionWorkspacePath(sessionId: string | null): string | null {
+  return getStorage()(
+    useShallow((state) => {
+      const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+      if (!normalizedSessionId) return null;
+      return resolveWorkspaceTargetForSessionFromState({
+        sessions: state.sessions,
+        sessionListRenderables: state.sessionListRenderables,
+        machines: state.machines,
+        sessionListIndexByServerId: state.sessionListIndexByServerId,
+        getProjectForSession: state.getProjectForSession,
+      }, normalizedSessionId)?.rootPath ?? null;
+    })
+  );
+}
+
+export function useSessionRpcAvailabilityState(sessionId: string | null): Readonly<{
+  sessionExists: boolean;
+  sessionRpcAvailable: boolean;
+}> {
+  return getStorage()(
+    useShallow((state) => {
+      const session = sessionId ? state.sessions[sessionId] ?? null : null;
+      const sessionExists = Boolean(session);
+      return {
+        sessionExists,
+        sessionRpcAvailable: sessionExists && session?.active !== false,
+      };
+    })
   );
 }
 

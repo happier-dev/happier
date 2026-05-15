@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderHook } from '@/dev/testkit';
-import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
+import { DEFAULT_SESSION_FOLDERS_V1 } from '@/sync/domains/session/folders';
+import { useSessionListRowInteractions } from './useSessionListRowInteractions';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,228 +11,90 @@ vi.mock('react-native-reanimated', () => ({
     useSharedValue: (initial: unknown) => ({ value: initial }),
 }));
 
-const workspace: SessionFolderWorkspaceRefV1 = {
-    t: 'workspaceScope',
-    serverId: 'server-a',
-    machineId: 'machine-a',
-    rootPath: '/repo',
-};
+vi.mock('@/hooks/ui/useHappyAction', () => ({
+    useHappyAction: (action: () => Promise<void>) => [null, () => { void action(); }],
+}));
 
 describe('useSessionListRowInteractions', () => {
-    it('assigns a dragged session to a centered folder target when no reorder line is active', async () => {
-        const { useSessionListRowInteractions } = await import('./useSessionListRowInteractions');
-        const setSessionListGroupOrderV1 = vi.fn();
-        const assignSessionFolder = vi.fn(async () => {});
-        const listItems: SessionListIndexItem[] = [
-            {
-                type: 'session',
-                sessionId: 's1',
-                serverId: 'server-a',
-                groupKey: 'folder-root',
-                workspace,
-            },
-        ];
-
-        type Input = Parameters<typeof useSessionListRowInteractions>[0] & {
-            resolveFolderDropTarget?: (point: { absoluteX: number; absoluteY: number }) => {
-                type: 'folder';
-                folderId: string;
-                workspace: SessionFolderWorkspaceRefV1;
-                serverId: string | null;
-            } | null;
-            assignSessionFolder?: (params: {
-                serverId: string;
-                sessionId: string;
-                folderId: string | null;
-            }) => Promise<void>;
-        };
-
-        const hook = await renderHook(() => useSessionListRowInteractions({
-            listItems,
+    function renderInteractions(overrides: Partial<Parameters<typeof useSessionListRowInteractions>[0]> = {}) {
+        return renderHook(() => useSessionListRowInteractions({
+            folderActionsEnabled: true,
+            sessionFoldersV1: DEFAULT_SESSION_FOLDERS_V1,
+            listItems: [],
             currentGroupOrderMap: {},
-            canReorderSessions: true,
-            setSessionListGroupOrderV1,
+            setSessionListGroupOrderV1: vi.fn(),
+            setSessionFoldersV1: vi.fn(),
             pinnedKeyList: [],
             pinnedKeySet: new Set(),
-            setPinnedSessionKeysV1: () => {},
+            setPinnedSessionKeysV1: vi.fn(),
             sessionTags: {},
-            setSessionTagsV1: () => {},
-            resolveFolderDropTarget: () => ({
-                type: 'folder',
-                folderId: 'folder-a',
-                workspace,
-                serverId: 'server-a',
-            }),
-            assignSessionFolder,
-        } satisfies Input));
-
-        await act(async () => {
-            await hook.getCurrent().handleDragEnd('server-a:s1', 'folder-root', 0, {
-                absoluteX: 10,
-                absoluteY: 20,
-                positionDelta: 0,
-                dataIndex: 0,
-            });
-        });
-
-        expect(assignSessionFolder).toHaveBeenCalledWith({
-            serverId: 'server-a',
-            sessionId: 's1',
-            folderId: 'folder-a',
-        });
-        expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
-        await hook.unmount();
-    });
-
-    it('prefers the reorder line over a centered folder target when the dragged row moved between rows', async () => {
-        const { useSessionListRowInteractions } = await import('./useSessionListRowInteractions');
-        const setSessionListGroupOrderV1 = vi.fn();
-        const assignSessionFolder = vi.fn(async () => {});
-        const listItems: SessionListIndexItem[] = [
-            { type: 'session', sessionId: 's1', serverId: 'server-a', groupKey: 'g1', workspace },
-            { type: 'session', sessionId: 's2', serverId: 'server-a', groupKey: 'g1', workspace },
-        ];
-
-        const hook = await renderHook(() => useSessionListRowInteractions({
-            listItems,
-            currentGroupOrderMap: {},
-            canReorderSessions: true,
-            setSessionListGroupOrderV1,
-            pinnedKeyList: [],
-            pinnedKeySet: new Set(),
-            setPinnedSessionKeysV1: () => {},
-            sessionTags: {},
-            setSessionTagsV1: () => {},
-            resolveFolderDropTarget: () => ({
-                type: 'folder',
-                folderId: 'folder-a',
-                workspace,
-                serverId: 'server-a',
-            }),
-            assignSessionFolder,
+            setSessionTagsV1: vi.fn(),
+            ...overrides,
         }));
+    }
+
+    it('tracks the resolved outline visual from the canonical tree drop result', async () => {
+        const hook = await renderInteractions();
 
         await act(async () => {
-            await hook.getCurrent().handleDragEnd('server-a:s1', 'g1', 1, {
-                absoluteX: 10,
-                absoluteY: 20,
-                positionDelta: 1,
-                dataIndex: 0,
-            });
-        });
-
-        expect(assignSessionFolder).not.toHaveBeenCalled();
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            g1: ['server-a:s2', 'server-a:s1'],
-        });
-        await hook.unmount();
-    });
-
-    it('preserves reorder when no folder drop target resolves', async () => {
-        const { useSessionListRowInteractions } = await import('./useSessionListRowInteractions');
-        const setSessionListGroupOrderV1 = vi.fn();
-        const assignSessionFolder = vi.fn(async () => {});
-        const listItems: SessionListIndexItem[] = [
-            { type: 'session', sessionId: 's1', serverId: 'server-a', groupKey: 'g1' },
-            { type: 'session', sessionId: 's2', serverId: 'server-a', groupKey: 'g1' },
-        ];
-
-        type Input = Parameters<typeof useSessionListRowInteractions>[0] & {
-            resolveFolderDropTarget?: () => null;
-            assignSessionFolder?: (params: {
-                serverId: string;
-                sessionId: string;
-                folderId: string | null;
-            }) => Promise<void>;
-        };
-
-        const hook = await renderHook(() => useSessionListRowInteractions({
-            listItems,
-            currentGroupOrderMap: {},
-            canReorderSessions: true,
-            setSessionListGroupOrderV1,
-            pinnedKeyList: [],
-            pinnedKeySet: new Set(),
-            setPinnedSessionKeysV1: () => {},
-            sessionTags: {},
-            setSessionTagsV1: () => {},
-            resolveFolderDropTarget: () => null,
-            assignSessionFolder,
-        } satisfies Input));
-
-        await act(async () => {
-            await hook.getCurrent().handleDragEnd('server-a:s1', 'g1', 1, {
-                absoluteX: 10,
-                absoluteY: 20,
-                positionDelta: 1,
-                dataIndex: 0,
-            });
-        });
-
-        expect(assignSessionFolder).not.toHaveBeenCalled();
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            g1: ['server-a:s2', 'server-a:s1'],
-        });
-        await hook.unmount();
-    });
-
-    it('unassigns a folder session when its drop position lands in workspace root rows', async () => {
-        const { useSessionListRowInteractions } = await import('./useSessionListRowInteractions');
-        const setSessionListGroupOrderV1 = vi.fn();
-        const assignSessionFolder = vi.fn(async () => {});
-        const projectGroupKey = 'server:server-a:active:project:workspace-a';
-        const folderGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo:folder-a';
-        const listItems: SessionListIndexItem[] = [
-            { type: 'header', title: '~/repo', headerKind: 'project', groupKey: projectGroupKey, workspace },
-            {
-                type: 'session',
-                sessionId: 's1',
-                serverId: 'server-a',
-                groupKey: folderGroupKey,
-                groupKind: 'folder',
-                folderId: 'folder-a',
-                workspace,
-            },
-            {
-                type: 'session',
-                sessionId: 's2',
-                serverId: 'server-a',
-                groupKey: projectGroupKey,
-                groupKind: 'project',
-                folderId: null,
-                workspace,
-            },
-        ];
-
-        const hook = await renderHook(() => useSessionListRowInteractions({
-            listItems,
-            currentGroupOrderMap: {},
-            canReorderSessions: true,
-            setSessionListGroupOrderV1,
-            pinnedKeyList: [],
-            pinnedKeySet: new Set(),
-            setPinnedSessionKeysV1: () => {},
-            sessionTags: {},
-            setSessionTagsV1: () => {},
-            resolveFolderDropTarget: () => null,
-            assignSessionFolder,
-        }));
-
-        await act(async () => {
-            await hook.getCurrent().handleDragEnd('server-a:s1', folderGroupKey, 1, {
-                absoluteX: null,
-                absoluteY: null,
-                positionDelta: 1,
+            hook.getCurrent().handleDragStart('server-a:s1');
+            hook.getCurrent().handleDragUpdate({
+                sessionKey: 'server-a:s1',
+                groupKey: 'g1',
                 dataIndex: 1,
+                result: {
+                    instruction: {
+                        kind: 'nest-into',
+                        targetId: 'folder:target',
+                        containerId: 'folder:target',
+                        parentId: 'folder:target',
+                        depth: 1,
+                    },
+                    visual: {
+                        kind: 'outline',
+                        targetId: 'folder:target',
+                    },
+                },
             });
         });
 
-        expect(assignSessionFolder).toHaveBeenCalledWith({
-            serverId: 'server-a',
-            sessionId: 's1',
-            folderId: null,
+        expect(hook.getCurrent().draggingSessionKey).toBe('server-a:s1');
+        expect(hook.getCurrent().activeDropTargetId).toBe('folder:target');
+        expect(hook.getCurrent().activeDropVisual).toEqual({
+            kind: 'outline',
+            targetId: 'folder:target',
         });
-        expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
+
+        await hook.unmount();
+    });
+
+    it('does not expose a legacy delta-based drag-end handler', async () => {
+        const hook = await renderInteractions();
+
+        expect(hook.getCurrent()).not.toHaveProperty('handleDragEnd');
+        expect(hook.getCurrent()).toHaveProperty('resolveTreeDropResult');
+        expect(hook.getCurrent()).toHaveProperty('handleTreeDropResult');
+
+        await hook.unmount();
+    });
+
+    it('preserves pin and tag row actions while using the tree pipeline', async () => {
+        const setPinnedSessionKeysV1 = vi.fn();
+        const setSessionTagsV1 = vi.fn();
+        const hook = await renderInteractions({
+            pinnedKeyList: ['server-a:s1'],
+            pinnedKeySet: new Set(['server-a:s1']),
+            setPinnedSessionKeysV1,
+            sessionTags: { 'server-a:s1': ['old'] },
+            setSessionTagsV1,
+        });
+
+        hook.getCurrent().handleTogglePinnedSessionKey('server-a:s1');
+        hook.getCurrent().handleSetTagsSessionKey('server-a:s1', ['new']);
+
+        expect(setPinnedSessionKeysV1).toHaveBeenCalledWith([]);
+        expect(setSessionTagsV1).toHaveBeenCalledWith({ 'server-a:s1': ['new'] });
+
         await hook.unmount();
     });
 });

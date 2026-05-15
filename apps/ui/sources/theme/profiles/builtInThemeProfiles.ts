@@ -1,5 +1,6 @@
 import { COMMUNITY_BUILT_IN_THEME_PROFILES } from './communityBuiltInThemeProfiles';
 import { createBuiltInProfile } from './builtInThemeProfileFactory';
+import { classicDarkProfile } from './classicDarkThemeProfile';
 import { pitchDarkProfile, premiumDarkProfile, sunsetDarkProfile, tokyoNightProfile } from './builtInDarkThemeProfiles';
 import type { BuiltInThemeProfileDefinition, BuiltInThemeProfilePresetId } from './themeProfileTypes';
 
@@ -162,6 +163,15 @@ export const BUILT_IN_THEME_PROFILES: readonly BuiltInThemeProfileDefinition[] =
                 'overlay.secondaryForeground': '#898892',
             },
         }),
+    },
+    {
+        presetId: 'classicDark',
+        translationKey: 'settingsAppearance.themeProfiles.presets.classicDark',
+        preferredMode: 'dark',
+        cloneable: true,
+        editable: false,
+        deletable: false,
+        profile: classicDarkProfile,
     },
     ...COMMUNITY_BUILT_IN_THEME_PROFILES.slice(0, 8),
     {

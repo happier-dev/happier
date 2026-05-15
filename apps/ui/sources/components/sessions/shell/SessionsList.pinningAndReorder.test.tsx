@@ -160,14 +160,20 @@ installSessionShellCommonModuleMocks({
     },
 });
 
+vi.mock('react-native-gesture-handler', async () => {
+    const { createGestureHandlerMock } = await import('@/dev/testkit/mocks/gestureHandler');
+    return createGestureHandlerMock();
+});
+
 vi.mock('react-native-reanimated', () => ({
     default: { View: (props: any) => React.createElement('Animated.View', props) },
     useSharedValue: (init: any) => ({ value: init }),
     useAnimatedStyle: (fn: () => any) => fn(),
+    withSpring: (value: any) => value,
 }));
 
-vi.mock('react-native-gesture-handler', () => ({
-    Swipeable: 'Swipeable',
+vi.mock('react-native-worklets', () => ({
+    scheduleOnRN: (fn: (...args: any[]) => void, ...args: any[]) => fn(...args),
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -237,6 +243,15 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionMock(sessionId),
+    readDisplayMachineTargetForSession: (input: { sessionId?: string | null; metadata?: { machineId?: string | null; path?: string | null } | null }) => {
+        const sessionId = typeof input.sessionId === 'string' ? input.sessionId : '';
+        const mockedTarget = sessionId ? readMachineTargetForSessionMock(sessionId) : null;
+        if (mockedTarget) return mockedTarget;
+        const metadata = input.metadata ?? null;
+        return metadata?.machineId && metadata?.path
+            ? { machineId: metadata.machineId, basePath: metadata.path }
+            : null;
+    },
 }));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
@@ -245,6 +260,9 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
 
 let mockAllowedServerIds: string[] = ['server_a'];
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
+    useEffectiveServerSelection: () => ({
+        serverIds: mockAllowedServerIds,
+    }),
     useResolvedActiveServerSelection: () => ({
         enabled: true,
         presentation: 'grouped',
@@ -311,10 +329,6 @@ vi.mock('@/sync/domains/server/selection/serverSelectionResolution', () => ({
             activeServerId: 'server_a',
             allowedServerIds: ['server_a'],
         }) as any,
-}));
-
-vi.mock('./useSessionInlineDrag', () => ({
-    useSessionInlineDrag: () => ({ gesture: undefined, animatedStyle: {} }),
 }));
 
 vi.mock('./SessionItem', () => ({

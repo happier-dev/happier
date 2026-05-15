@@ -183,6 +183,7 @@
     "expo-video": "~55.0.16",
     "expo-web-browser": "~55.0.12",
     "expo-widgets": "~55.0.15",
+    "fractional-indexing": "3.2.0",
     "fuse.js": "^7.1.0",
     "katex": "^0.16.22",
     "libsodium-wrappers": "0.8.2",

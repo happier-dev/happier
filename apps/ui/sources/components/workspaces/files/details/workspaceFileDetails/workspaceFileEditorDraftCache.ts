@@ -1,6 +1,7 @@
 export type WorkspaceFileEditorDraft = Readonly<{
     isEditingFile: boolean;
     editorOriginalText: string;
+    editorOriginalHash?: string | null;
     editorText: string;
 }>;
 

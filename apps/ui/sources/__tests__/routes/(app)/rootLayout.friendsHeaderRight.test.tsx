@@ -196,6 +196,25 @@ describe('RootLayout', () => {
         }
     });
 
+    it('registers project list and project detail source-control routes', async () => {
+        vi.resetModules();
+        stubRootLayoutFeaturesFetch();
+
+        const tree = await renderRootLayout();
+        try {
+            const screenNames = getScreenNames(tree);
+
+            expect(screenNames).toContain('projects/index');
+            expect(screenNames).toContain('projects/[workspaceRefId]/index');
+            expect(screenNames).toContain('projects/[workspaceRefId]/files');
+            expect(screenNames).toContain('projects/[workspaceRefId]/git');
+            expect(screenNames).toContain('projects/[workspaceRefId]/details');
+            expect(screenNames).toContain('projects/[workspaceRefId]/terminal');
+        } finally {
+            await tree?.unmount();
+        }
+    });
+
     it('renders terminal connect without the shell header on web', async () => {
         vi.resetModules();
         stubRootLayoutFeaturesFetch();

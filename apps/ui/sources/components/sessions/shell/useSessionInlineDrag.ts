@@ -1,56 +1,67 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { ViewStyle } from 'react-native';
-import { useSharedValue, useAnimatedStyle, withSpring, type AnimatedStyle, type SharedValue } from 'react-native-reanimated';
+import { useSharedValue, useAnimatedStyle, withSpring, type AnimatedStyle } from 'react-native-reanimated';
 import { Gesture, type ComposedGesture, type GestureType } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useUnistyles } from 'react-native-unistyles';
 
-export const DRAGGED_SESSION_ROW_OPACITY = 0.38;
+import type { TreeDropResult, TreeInstructionVisual, WindowPointer } from '@/components/ui/treeDragDrop';
+
+const DRAGGED_SESSION_ROW_OPACITY = 0.38;
+export const SESSION_INLINE_DRAG_VISUAL_KIND_NONE = 0;
+export const SESSION_INLINE_DRAG_VISUAL_KIND_LINE = 1;
+export const SESSION_INLINE_DRAG_VISUAL_KIND_OUTLINE = 2;
+
+const CONTEXT_MENU_LONG_PRESS_MAX_DISTANCE = 44;
+const CONTEXT_MENU_TOUCH_CANCEL_DISTANCE = CONTEXT_MENU_LONG_PRESS_MAX_DISTANCE;
+
+const IDLE_TREE_DROP_RESULT: TreeDropResult = Object.freeze({
+    instruction: Object.freeze({ kind: 'idle' }),
+    visual: Object.freeze({ kind: 'none' }),
+});
+
+export type SessionInlineDragVisualKind =
+    | typeof SESSION_INLINE_DRAG_VISUAL_KIND_NONE
+    | typeof SESSION_INLINE_DRAG_VISUAL_KIND_LINE
+    | typeof SESSION_INLINE_DRAG_VISUAL_KIND_OUTLINE;
+
+export type SessionInlineDragMirroredValue<T> = {
+    value: T;
+};
+
+export type SessionInlineDragVisualSharedValues = Readonly<{
+    visualKind: SessionInlineDragMirroredValue<SessionInlineDragVisualKind>;
+    visualTargetId: SessionInlineDragMirroredValue<string | null>;
+    visualEdge: SessionInlineDragMirroredValue<'top' | 'bottom' | null>;
+    visualDepth: SessionInlineDragMirroredValue<number>;
+}>;
+
+export type UseSessionInlineDragResolveDropResultEvent = Readonly<{
+    sessionKey: string;
+    groupKey: string;
+    dataIndex: number;
+    pointer: WindowPointer | null;
+}>;
+
+export type UseSessionInlineDragDropResultEvent = Readonly<{
+    sessionKey: string;
+    groupKey: string;
+    dataIndex: number;
+    result: TreeDropResult;
+}>;
 
 export type UseSessionInlineDragParams = Readonly<{
     sessionKey: string | null;
     groupKey: string;
-    rowHeight: number;
     enabled?: boolean;
     onDragStart: (sessionKey: string) => void;
-    /**
-     * Called once when the drag gesture ends (or is cancelled).
-     * `positionDelta` is the number of positions the item should move
-     * (positive = down, negative = up, 0 = no change).
-     *
-     * The reorder is deferred to drag-end so that the FlatList data never
-     * changes while the gesture is active. Changing data mid-gesture causes
-     * React's keyed reconciliation to unmount/remount the dragged item's DOM
-     * node, which releases pointer capture and kills the Pan gesture.
-     */
-    onDragEnd: (
-        sessionKey: string,
-        groupKey: string,
-        positionDelta: number,
-        context?: SessionInlineDragEndContext,
-    ) => void;
-    onDragUpdate?: (event: Readonly<{
-        sessionKey: string;
-        groupKey: string;
-        positionDelta: number;
-        dataIndex: number;
-        absoluteX: number;
-        absoluteY: number;
-    }>) => void;
+    resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => TreeDropResult;
+    onDropResult: (event: UseSessionInlineDragDropResultEvent) => void;
+    onDragUpdate?: (event: UseSessionInlineDragDropResultEvent) => void;
     /** Flat-list data index of this row (used for drop indicator computation). */
     dataIndex: number;
-    /** Total number of items in the FlatList data array. */
-    totalItemCount: number;
-    /**
-     * Shared value written by the dragging row to tell all rows which
-     * flat-list index should display the drop indicator. `-1` = hidden.
-     */
-    dropIndicatorIdx: SharedValue<number>;
-    /**
-     * `0` = show indicator at the top edge of the target row,
-     * `1` = show indicator at the bottom edge (used when inserting after the last item).
-     */
-    dropIndicatorEdge: SharedValue<number>;
+    /** Minimal visual shared values mirrored from the canonical TreeDropResult. */
+    dropVisual: SessionInlineDragVisualSharedValues;
     /**
      * Optional: require a long-press before the drag gesture activates (native UX).
      * When omitted, dragging activates immediately on pointer movement (web handle UX).
@@ -66,30 +77,45 @@ export type UseSessionInlineDragParams = Readonly<{
     onLongPressActivated?: (sessionKey: string) => void;
 }>;
 
-export type SessionInlineDragEndContext = Readonly<{
-    absoluteX: number | null;
-    absoluteY: number | null;
-    positionDelta: number;
-    dataIndex: number;
-}>;
-
 export type UseSessionInlineDragResult = Readonly<{
     gesture: GestureType | ComposedGesture | undefined;
     animatedStyle: AnimatedStyle<ViewStyle>;
 }>;
 
+function pointerFromAbsoluteCoordinates(absoluteX: number | null | undefined, absoluteY: number | null | undefined): WindowPointer | null {
+    if (typeof absoluteX !== 'number' || typeof absoluteY !== 'number') return null;
+    if (!Number.isFinite(absoluteX) || !Number.isFinite(absoluteY)) return null;
+    return { x: absoluteX, y: absoluteY };
+}
+
+function visualKindForInstruction(visual: TreeInstructionVisual): SessionInlineDragVisualKind {
+    if (visual.kind === 'line') return SESSION_INLINE_DRAG_VISUAL_KIND_LINE;
+    if (visual.kind === 'outline') return SESSION_INLINE_DRAG_VISUAL_KIND_OUTLINE;
+    return SESSION_INLINE_DRAG_VISUAL_KIND_NONE;
+}
+
+function mirrorDropVisual(target: SessionInlineDragVisualSharedValues, visual: TreeInstructionVisual): void {
+    target.visualKind.value = visualKindForInstruction(visual);
+    target.visualTargetId.value = visual.kind === 'line' || visual.kind === 'outline' ? visual.targetId : null;
+    target.visualEdge.value = visual.kind === 'line' ? visual.edge : null;
+    target.visualDepth.value = visual.kind === 'line' ? visual.depth : 0;
+}
+
+function clearDropVisual(target: SessionInlineDragVisualSharedValues): void {
+    mirrorDropVisual(target, IDLE_TREE_DROP_RESULT.visual);
+}
+
 export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSessionInlineDragResult {
     const {
         sessionKey,
         groupKey,
-        rowHeight,
         enabled = true,
         onDragStart,
-        onDragEnd,
+        onDragUpdate,
+        resolveDropResult,
+        onDropResult,
         dataIndex,
-        totalItemCount,
-        dropIndicatorIdx,
-        dropIndicatorEdge,
+        dropVisual,
         activateAfterLongPressMs,
         onLongPressActivated,
     } = params;
@@ -100,18 +126,36 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
     // callbacks change. This keeps the active Pan gesture alive.
     const onDragStartRef = useRef(onDragStart);
     onDragStartRef.current = onDragStart;
-    const onDragEndRef = useRef(onDragEnd);
-    onDragEndRef.current = onDragEnd;
-    const onDragUpdateRef = useRef(params.onDragUpdate);
-    onDragUpdateRef.current = params.onDragUpdate;
+    const onDragUpdateRef = useRef(onDragUpdate);
+    onDragUpdateRef.current = onDragUpdate;
+    const resolveDropResultRef = useRef(resolveDropResult);
+    resolveDropResultRef.current = resolveDropResult;
+    const onDropResultRef = useRef(onDropResult);
+    onDropResultRef.current = onDropResult;
     const onLongPressActivatedRef = useRef(onLongPressActivated);
     onLongPressActivatedRef.current = onLongPressActivated;
 
+    const contextMenuLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const contextMenuLongPressStartRef = useRef<Readonly<{ absoluteX: number; absoluteY: number }> | null>(null);
+    const contextMenuLongPressActivatedSessionKeyRef = useRef<string | null>(null);
     const translateY = useSharedValue(0);
     const isDragging = useSharedValue(false);
     const scale = useSharedValue(1);
     const didEnd = useSharedValue(false);
     const didStartDrag = useSharedValue(false);
+    const didActivateLongPress = useSharedValue(false);
+
+    const clearContextMenuLongPressTimer = () => {
+        if (contextMenuLongPressTimerRef.current === null) return;
+        clearTimeout(contextMenuLongPressTimerRef.current);
+        contextMenuLongPressTimerRef.current = null;
+    };
+
+    useEffect(() => {
+        return () => {
+            clearContextMenuLongPressTimer();
+        };
+    }, []);
 
     const gesture = useMemo(() => {
         if (!sessionKey || enabled === false) return undefined;
@@ -121,33 +165,87 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         const fireDragStart = (sk: string) => {
             onDragStartRef.current(sk);
         };
-        const fireDragEnd = (sk: string, gk: string, delta: number, absoluteX: number | null, absoluteY: number | null) => {
-            onDragEndRef.current(sk, gk, delta, {
-                absoluteX,
-                absoluteY,
-                positionDelta: delta,
+        const resolveDropResultForPointer = (
+            sk: string,
+            gk: string,
+            absoluteX: number | null | undefined,
+            absoluteY: number | null | undefined,
+        ): TreeDropResult => {
+            return resolveDropResultRef.current?.({
+                sessionKey: sk,
+                groupKey: gk,
                 dataIndex,
-            });
+                pointer: pointerFromAbsoluteCoordinates(absoluteX, absoluteY),
+            }) ?? IDLE_TREE_DROP_RESULT;
         };
-        const fireDragUpdate = (sk: string, gk: string, delta: number, absoluteX: number, absoluteY: number) => {
+
+        const fireDragUpdate = (sk: string, gk: string, absoluteX: number, absoluteY: number) => {
+            const result = resolveDropResultForPointer(sk, gk, absoluteX, absoluteY);
+            mirrorDropVisual(dropVisual, result.visual);
             onDragUpdateRef.current?.({
                 sessionKey: sk,
                 groupKey: gk,
-                positionDelta: delta,
                 dataIndex,
-                absoluteX,
-                absoluteY,
+                result,
+            });
+        };
+        const fireDragComplete = (sk: string, gk: string, absoluteX: number | null, absoluteY: number | null) => {
+            const result = resolveDropResultForPointer(sk, gk, absoluteX, absoluteY);
+            clearDropVisual(dropVisual);
+            onDropResultRef.current({
+                sessionKey: sk,
+                groupKey: gk,
+                dataIndex,
+                result,
             });
         };
         const fireLongPressActivated = (sk: string) => {
+            if (contextMenuLongPressActivatedSessionKeyRef.current === sk) return;
+            contextMenuLongPressActivatedSessionKeyRef.current = sk;
+            clearContextMenuLongPressTimer();
             onLongPressActivatedRef.current?.(sk);
+        };
+        const cancelContextMenuLongPressForTouch = () => {
+            clearContextMenuLongPressTimer();
+            contextMenuLongPressStartRef.current = null;
+        };
+        const suppressContextMenuLongPressForTouch = (sk: string) => {
+            cancelContextMenuLongPressForTouch();
+            contextMenuLongPressActivatedSessionKeyRef.current = sk;
+        };
+        const startContextMenuLongPressTimer = (
+            sk: string,
+            delayMs: number,
+            absoluteX: number,
+            absoluteY: number,
+        ) => {
+            contextMenuLongPressActivatedSessionKeyRef.current = null;
+            clearContextMenuLongPressTimer();
+            contextMenuLongPressStartRef.current = { absoluteX, absoluteY };
+            contextMenuLongPressTimerRef.current = setTimeout(() => {
+                contextMenuLongPressTimerRef.current = null;
+                fireLongPressActivated(sk);
+            }, delayMs);
+        };
+        const cancelContextMenuLongPressTimerIfMoved = (sk: string, absoluteX: number, absoluteY: number) => {
+            const start = contextMenuLongPressStartRef.current;
+            if (!start) return;
+            const dx = absoluteX - start.absoluteX;
+            const dy = absoluteY - start.absoluteY;
+            if (Math.hypot(dx, dy) < CONTEXT_MENU_TOUCH_CANCEL_DISTANCE) return;
+            suppressContextMenuLongPressForTouch(sk);
+        };
+        const resetContextMenuLongPressActivation = () => {
+            contextMenuLongPressActivatedSessionKeyRef.current = null;
         };
 
         const requiresLongPress = typeof activateAfterLongPressMs === 'number';
 
         // Pan drives the actual drag/reorder. On native we delay its activation with
         // `activateAfterLongPress(...)` so the list can still scroll naturally.
-        let pan = Gesture.Pan().minDistance(requiresLongPress ? 0 : 4);
+        let pan = Gesture.Pan()
+            .minDistance(requiresLongPress ? 0 : 4)
+            .cancelsTouchesInView(false);
         if (typeof activateAfterLongPressMs === 'number') {
             const panWithLongPress = pan as unknown as { activateAfterLongPress?: (ms: number) => typeof pan };
             if (typeof panWithLongPress.activateAfterLongPress === 'function') {
@@ -164,6 +262,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 translateY.value = 0;
                 didEnd.value = false;
                 didStartDrag.value = false;
+                scheduleOnRN(clearDropVisual, dropVisual);
             })
             .onUpdate((e) => {
                 'worklet';
@@ -172,44 +271,17 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                     didStartDrag.value = true;
                     isDragging.value = true;
                     scale.value = withSpring(1.03);
+                    scheduleOnRN(suppressContextMenuLongPressForTouch, sessionKey);
                     scheduleOnRN(fireDragStart, sessionKey);
                 }
                 // Free movement — no snapping, no real-time data reorder.
                 // The item follows the pointer exactly.
                 translateY.value = e.translationY;
-
-                // Compute which row should show the drop indicator line.
-                const delta = Math.round(e.translationY / rowHeight);
-                if (typeof e.absoluteX === 'number' && typeof e.absoluteY === 'number') {
-                    scheduleOnRN(fireDragUpdate, sessionKey, groupKey, delta, e.absoluteX, e.absoluteY);
-                }
-                if (delta === 0) {
-                    dropIndicatorIdx.value = -1;
-                } else if (delta > 0) {
-                    // Moving DOWN: indicator goes on the top edge of the row
-                    // *after* the last row we'd displace, i.e. originIdx + delta + 1.
-                    const targetRow = dataIndex + delta + 1;
-                    if (targetRow < totalItemCount) {
-                        dropIndicatorIdx.value = targetRow;
-                        dropIndicatorEdge.value = 0; // top
-                    } else {
-                        // Past the end — show bottom border on the last item.
-                        dropIndicatorIdx.value = totalItemCount - 1;
-                        dropIndicatorEdge.value = 1; // bottom
-                    }
-                } else {
-                    // Moving UP: indicator goes on the top edge of the
-                    // destination row.
-                    dropIndicatorIdx.value = dataIndex + delta;
-                    dropIndicatorEdge.value = 0; // top
-                }
+                scheduleOnRN(fireDragUpdate, sessionKey, groupKey, e.absoluteX, e.absoluteY);
             })
             .onEnd((e) => {
                 'worklet';
-                const positionDelta = Math.round(translateY.value / rowHeight);
                 const didDrag = didStartDrag.value === true;
-                const absoluteX = typeof e.absoluteX === 'number' ? e.absoluteX : null;
-                const absoluteY = typeof e.absoluteY === 'number' ? e.absoluteY : null;
 
                 // Reset immediately — the reorder callback will commit the new
                 // position, so the item should snap to its slot once React
@@ -217,12 +289,14 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 translateY.value = 0;
                 scale.value = withSpring(1);
                 didEnd.value = true;
-                dropIndicatorIdx.value = -1;
                 didStartDrag.value = false;
                 isDragging.value = false;
                 if (didDrag) {
-                    scheduleOnRN(fireDragEnd, sessionKey, groupKey, positionDelta, absoluteX, absoluteY);
+                    scheduleOnRN(fireDragComplete, sessionKey, groupKey, e.absoluteX, e.absoluteY);
+                } else {
+                    scheduleOnRN(clearDropVisual, dropVisual);
                 }
+                scheduleOnRN(cancelContextMenuLongPressForTouch);
             })
             .onFinalize((e) => {
                 'worklet';
@@ -232,18 +306,45 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                     didEnd.value = false;
                     return;
                 }
-                const positionDelta = Math.round(translateY.value / rowHeight);
                 const didDrag = didStartDrag.value === true;
-                const absoluteX = typeof e.absoluteX === 'number' ? e.absoluteX : null;
-                const absoluteY = typeof e.absoluteY === 'number' ? e.absoluteY : null;
                 translateY.value = 0;
                 scale.value = withSpring(1);
-                dropIndicatorIdx.value = -1;
                 didStartDrag.value = false;
                 isDragging.value = false;
                 if (didDrag) {
-                    scheduleOnRN(fireDragEnd, sessionKey, groupKey, positionDelta, absoluteX, absoluteY);
+                    scheduleOnRN(fireDragComplete, sessionKey, groupKey, e.absoluteX, e.absoluteY);
+                } else {
+                    scheduleOnRN(clearDropVisual, dropVisual);
                 }
+                scheduleOnRN(cancelContextMenuLongPressForTouch);
+            })
+            .onTouchesDown((event) => {
+                'worklet';
+                if (!requiresLongPress || typeof activateAfterLongPressMs !== 'number') return;
+                const touch = event.changedTouches[0] ?? event.allTouches[0];
+                if (!touch) return;
+                scheduleOnRN(
+                    startContextMenuLongPressTimer,
+                    sessionKey,
+                    activateAfterLongPressMs,
+                    touch.absoluteX,
+                    touch.absoluteY,
+                );
+            })
+            .onTouchesMove((event) => {
+                'worklet';
+                if (!requiresLongPress) return;
+                const touch = event.changedTouches[0] ?? event.allTouches[0];
+                if (!touch) return;
+                scheduleOnRN(cancelContextMenuLongPressTimerIfMoved, sessionKey, touch.absoluteX, touch.absoluteY);
+            })
+            .onTouchesUp(() => {
+                'worklet';
+                scheduleOnRN(cancelContextMenuLongPressForTouch);
+            })
+            .onTouchesCancelled(() => {
+                'worklet';
+                scheduleOnRN(suppressContextMenuLongPressForTouch, sessionKey);
             });
 
         // `activateAfterLongPress` on Pan only fires once the user starts moving, which
@@ -254,16 +355,33 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
 
         const longPressGesture = Gesture.LongPress()
             .minDuration(activateAfterLongPressMs)
-            .maxDistance(10)
+            .maxDistance(CONTEXT_MENU_LONG_PRESS_MAX_DISTANCE)
+            .shouldCancelWhenOutside(false)
+            .cancelsTouchesInView(false)
+            .onBegin(() => {
+                'worklet';
+                didActivateLongPress.value = false;
+                scheduleOnRN(resetContextMenuLongPressActivation);
+            })
             .onStart(() => {
                 'worklet';
+                if (didStartDrag.value) return;
+                if (didActivateLongPress.value) return;
+                didActivateLongPress.value = true;
+                scheduleOnRN(fireLongPressActivated, sessionKey);
+            })
+            .onEnd((_event, success) => {
+                'worklet';
+                if (!success || didActivateLongPress.value) return;
+                if (didStartDrag.value) return;
+                didActivateLongPress.value = true;
                 scheduleOnRN(fireLongPressActivated, sessionKey);
             });
 
         return Gesture.Simultaneous(longPressGesture, panGesture);
     // Only recreate when the row's identity or size changes — NOT when callbacks change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [enabled, sessionKey, groupKey, rowHeight, dataIndex, totalItemCount]);
+    }, [enabled, sessionKey, groupKey, dataIndex, dropVisual]);
 
     const animatedStyle = useAnimatedStyle<ViewStyle>(() => {
         if (!enabled) {

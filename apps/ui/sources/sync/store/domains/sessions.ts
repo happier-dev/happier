@@ -62,6 +62,7 @@ import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/rev
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import type { SessionActionDraftStatus } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { areScmWorkingSnapshotsEquivalentIgnoringFetchedAt } from '@/scm/sync/snapshotDiff';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     mutateSessionModelModeField,
@@ -1872,6 +1873,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         },
         updateSessionProjectScmSnapshot: (sessionId: string, snapshot: ScmWorkingSnapshot | null) => {
             ensureProjectManagerSession(sessionId);
+            const previous = projectManager.getSessionProjectScmSnapshot(sessionId);
+            if (areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(previous, snapshot)) {
+                return;
+            }
             projectManager.updateSessionProjectScmSnapshot(sessionId, snapshot);
             // Trigger a state update to notify hooks
             set((state) => ({ ...state }));
@@ -1989,6 +1994,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         getWorkspaceScmSnapshot: (scope) => projectManager.getWorkspaceScmSnapshot(scope),
         getWorkspaceScmSnapshotError: (scope) => projectManager.getWorkspaceScmSnapshotError(scope),
         updateWorkspaceScmSnapshot: (scope, snapshot) => {
+            const previous = projectManager.getWorkspaceScmSnapshot(scope);
+            if (areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(previous, snapshot)) {
+                return;
+            }
             projectManager.updateWorkspaceScmSnapshot(scope, snapshot);
             set((state) => ({ ...state }));
         },

@@ -52,11 +52,10 @@ export function resolveSessionRowInteractionPolicy(
         contextMenuItemCount,
         contextMenuOpen,
         contextMenuWasOpen,
-        nativeInlineDragEnabled,
         hasReorderHandle,
     } = params;
 
-    const isNativeMobile = platformOs === 'ios' || platformOs === 'android';
+    const isIos = platformOs === 'ios';
     const swipeEnabled = platformOs !== 'web' && canArchiveSession;
     const suppressNextPressOnNativeContextMenuOpen = contextMenuItemCount > 0 && contextMenuOpen && !contextMenuWasOpen;
 
@@ -64,9 +63,9 @@ export function resolveSessionRowInteractionPolicy(
         swipeEnabled,
         showReorderHandle: hasReorderHandle,
         enableLongPressContextMenu:
-            isNativeMobile
-            && contextMenuItemCount > 0
-            && !nativeInlineDragEnabled,
+            isIos
+            && params.nativeInlineDragEnabled !== true
+            && contextMenuItemCount > 0,
         suppressNextPressOnNativeContextMenuOpen,
     };
 

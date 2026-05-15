@@ -301,6 +301,7 @@ installSessionShellCommonModuleMocks({
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
             useSessionPendingMessages: () => ({ messages: [] }),
+            useSessionSubagentSourceMessages: () => [],
             useSessionReviewCommentsDrafts: () => [],
             useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
             useSessionUsage: () => null,
@@ -599,6 +600,84 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     },
                 },
             });
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('keeps composer text visible while attachment upload is pending and clears after send', async () => {
+        featureEnabledState.reviewComments = false;
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        reviewCommentDraftsState.current = [];
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        pendingFireAndForget.length = 0;
+
+        let resolveUpload: (() => void) | null = null;
+        const uploadStarted = new Promise<void>((resolveStarted) => {
+            uploadSpy.mockImplementationOnce(async () => {
+                resolveStarted();
+                return await new Promise((resolve) => {
+                    resolveUpload = () => resolve({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
+                });
+            });
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Describe this image', 'AgentInput');
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Describe this image');
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget.length).toBe(1);
+            await act(async () => {
+                await uploadStarted;
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Describe this image');
+            expect(sendMessageSpy).toHaveBeenCalledTimes(0);
+
+            await act(async () => {
+                if (!resolveUpload) throw new Error('upload did not start');
+                resolveUpload();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+            expect(agentInput.props.value).toBe('');
         } finally {
             act(() => {
                 tree?.unmount();

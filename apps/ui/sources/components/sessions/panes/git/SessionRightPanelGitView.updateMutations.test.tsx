@@ -16,12 +16,17 @@ const appendSessionProjectScmOperationMock = vi.hoisted(() => vi.fn());
 const sessionScmRemoteAddMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<ScmMutationResult>>(async () => ({ success: true })));
 const sessionScmBranchMergeMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<ScmMutationResult>>(async () => ({ success: true, stdout: 'merged' })));
 const sessionScmRepositoryRemoveIndexLockMock = vi.hoisted(() => vi.fn());
+const sessionScmHostingRepositoryDescribePublishTargetsMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({
+    success: false,
+    error: 'not configured',
+})));
 const modalConfirmMock = vi.hoisted(() => vi.fn());
 
 let activeGitSubTab: 'commit' | 'update' | 'history' = 'update';
 let sessionSnapshotMock: any = null;
 let capturedRemotesProps: any = null;
 let capturedBranchProps: any = null;
+let capturedPublishProps: any = null;
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -190,6 +195,13 @@ vi.mock('@/components/workspaces/scm/update/SourceControlBranchIntegrationSectio
     },
 }));
 
+vi.mock('@/components/workspaces/scm/update/SourceControlPublishRepositorySection', () => ({
+    SourceControlPublishRepositorySection: (props: any) => {
+        capturedPublishProps = props;
+        return React.createElement('SourceControlPublishRepositorySection');
+    },
+}));
+
 vi.mock('@/components/workspaces/scm/WorkspaceScmUpdateTab', () => ({
     WorkspaceScmUpdateTab: (props: any) => React.createElement('WorkspaceScmUpdateTab', props, props.children),
 }));
@@ -211,6 +223,12 @@ vi.mock('@/sync/ops/sessions', () => ({
     sessionScmBranchOperationContinue: vi.fn(async () => ({ success: true })),
     sessionScmBranchOperationAbort: vi.fn(async () => ({ success: true })),
     sessionScmRepositoryRemoveIndexLock: (...args: any[]) => sessionScmRepositoryRemoveIndexLockMock(...args),
+    sessionScmHostingRepositoryDescribePublishTargets: (...args: any[]) => sessionScmHostingRepositoryDescribePublishTargetsMock(...args),
+    sessionScmHostingRepositoryPublish: vi.fn(async () => ({ success: true })),
+    sessionScmPullRequestOpenCompose: vi.fn(async () => ({ success: true, url: 'https://example.com/compare' })),
+    sessionScmPullRequestOpenOrReuse: vi.fn(async () => ({ success: true, pullRequest: null, reused: false, nextAction: { kind: 'none' } })),
+    sessionScmRepositoryInit: vi.fn(async () => ({ success: true })),
+    sessionScmBranchCreate: vi.fn(async () => ({ success: true })),
 }));
 
 function createSnapshot() {
@@ -259,12 +277,14 @@ describe('SessionRightPanelGitView update mutations', () => {
         sessionSnapshotMock = createSnapshot();
         capturedRemotesProps = null;
         capturedBranchProps = null;
+        capturedPublishProps = null;
         beginSessionProjectScmOperationMock.mockReset();
         finishSessionProjectScmOperationMock.mockClear();
         appendSessionProjectScmOperationMock.mockClear();
         sessionScmRemoteAddMock.mockClear();
         sessionScmBranchMergeMock.mockClear();
         sessionScmRepositoryRemoveIndexLockMock.mockReset();
+        sessionScmHostingRepositoryDescribePublishTargetsMock.mockClear();
         modalConfirmMock.mockReset();
     });
 
@@ -362,5 +382,35 @@ describe('SessionRightPanelGitView update mutations', () => {
         });
         expect(sessionScmRemoteAddMock).toHaveBeenCalledTimes(2);
         expect(response).toEqual({ success: true });
+    });
+
+    it('describes repository publish targets through the detected hosting provider', async () => {
+        sessionSnapshotMock = {
+            ...createSnapshot(),
+            capabilities: {
+                ...createSnapshot().capabilities,
+                readHostingRepositoryPublishTargets: true,
+                writeHostingRepositoryPublish: true,
+            },
+            hostingProvider: {
+                id: 'scm.gitlab',
+                kind: 'gitlab',
+                displayName: 'GitLab',
+                baseUrl: 'https://gitlab.com',
+                nameWithOwner: 'happier-dev/happier',
+                repositoryWebUrl: 'https://gitlab.com/happier-dev/happier',
+                remoteName: 'origin',
+                urlSafety: { allowedSchemes: ['https:'] },
+            },
+        };
+
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+        await renderScreen(<SessionRightPanelGitView sessionId="session-1" scopeId="session:1" />);
+
+        await capturedPublishProps.onDescribePublishTargets();
+
+        expect(sessionScmHostingRepositoryDescribePublishTargetsMock).toHaveBeenCalledWith('session-1', {
+            providerKind: 'gitlab',
+        });
     });
 });

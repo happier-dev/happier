@@ -76,6 +76,7 @@ function mockSessionPersistenceBoundaries(options?: { trackWarmCacheEntries?: bo
 }
 
 function createHarness(createSessionsDomain: any, initialState?: Record<string, unknown>) {
+    let setCalls = 0;
     let state: any = {
         sessions: {},
         sessionListRenderables: {},
@@ -98,12 +99,13 @@ function createHarness(createSessionsDomain: any, initialState?: Record<string, 
 
     const get = () => state;
     const set = (updater: any) => {
+        setCalls += 1;
         const next = typeof updater === 'function' ? updater(state) : updater;
         state = { ...state, ...next };
     };
 
     const domain = createSessionsDomain({ get, set } as any);
-    return { get, domain };
+    return { get, domain, getSetCalls: () => setCalls };
 }
 
 describe('sessions domain: sessionListIndex rebuild gating', () => {
@@ -171,6 +173,111 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
         expect(domain.getSessionProjectScmSnapshot('s1')).toBe(snapshot);
         expect(projectManager.getProjectForSession('s1')?.sessionIds).toEqual(['s1']);
+    });
+
+    it('does not notify storage when SCM snapshot refreshes only change fetchedAt', async () => {
+        mockSessionPersistenceBoundaries();
+        const { projectManager } = await import('../../runtime/orchestration/projectManager');
+        projectManager.clear();
+
+        const session = {
+            id: 's1',
+            serverId: 'server-active',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: { machineId: 'm1', host: 'h1', path: '/home/u/repo', homeDir: '/home/u' },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } satisfies Session;
+        const snapshot: ScmWorkingSnapshot = {
+            projectKey: 'server-active:m1:/home/u/repo',
+            fetchedAt: 123,
+            repo: {
+                isRepo: true,
+                rootPath: '/home/u/repo',
+                backendId: 'git',
+                mode: '.git',
+                worktrees: [{ path: '/home/u/repo', branch: 'main', isCurrent: true }],
+            },
+            branch: {
+                head: 'main',
+                upstream: null,
+                ahead: 0,
+                behind: 0,
+                detached: false,
+            },
+            hasConflicts: false,
+            entries: [
+                {
+                    path: 'src/app.ts',
+                    previousPath: null,
+                    kind: 'modified',
+                    includeStatus: 'modified',
+                    pendingStatus: 'modified',
+                    hasIncludedDelta: false,
+                    hasPendingDelta: true,
+                    stats: {
+                        includedAdded: 0,
+                        includedRemoved: 0,
+                        pendingAdded: 1,
+                        pendingRemoved: 1,
+                        isBinary: false,
+                    },
+                },
+            ],
+            totals: {
+                includedFiles: 0,
+                pendingFiles: 1,
+                untrackedFiles: 0,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 1,
+                pendingRemoved: 1,
+            },
+        };
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { domain, getSetCalls } = createHarness(createSessionsDomain, {
+            sessions: { s1: session },
+            machines: { m1: { id: 'm1', metadata: { homeDir: '/home/u' } } },
+        });
+
+        domain.updateSessionProjectScmSnapshot('s1', snapshot);
+        expect(getSetCalls()).toBe(1);
+
+        domain.updateSessionProjectScmSnapshot('s1', {
+            ...snapshot,
+            fetchedAt: 456,
+        });
+        expect(getSetCalls()).toBe(1);
+
+        const scope = { serverId: 'server-active', machineId: 'm1', rootPath: '/home/u/other-repo' };
+        const workspaceSnapshot = {
+            ...snapshot,
+            projectKey: 'server-active:m1:/home/u/other-repo',
+            repo: {
+                ...snapshot.repo,
+                rootPath: '/home/u/other-repo',
+                worktrees: [{ path: '/home/u/other-repo', branch: 'main', isCurrent: true }],
+            },
+        } satisfies ScmWorkingSnapshot;
+
+        domain.updateWorkspaceScmSnapshot(scope, workspaceSnapshot);
+        expect(getSetCalls()).toBe(2);
+
+        domain.updateWorkspaceScmSnapshot(scope, {
+            ...workspaceSnapshot,
+            fetchedAt: 789,
+        });
+        expect(getSetCalls()).toBe(2);
     });
 
     it('builds an empty sessionListIndex when the server snapshot returns zero sessions', async () => {

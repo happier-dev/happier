@@ -45,6 +45,14 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: () => ({ machineId: 'm1', basePath: '/workspace' }),
 }));
 
+vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
+  useWorkspaceScopeForSession: () => ({
+    serverId: 'srv1',
+    machineId: 'm1',
+    rootPath: '/workspace',
+  }),
+}));
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
   usePreferredServerIdForSession: () => 'srv1',
 }));

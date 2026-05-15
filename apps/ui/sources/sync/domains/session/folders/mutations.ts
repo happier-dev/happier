@@ -2,6 +2,11 @@ import { randomUUID } from '@/platform/randomUUID';
 
 import { makeSiblingUniqueSessionFolderName, normalizeSessionFolderName } from './names';
 import { normalizeSessionFolders } from './normalize';
+import {
+    SESSION_FOLDER_SORT_KEY_MAX_LENGTH,
+    nextSortKeyBetween,
+    rebalanceSortKeys,
+} from './orderKey';
 import type { SessionFolderV1, SessionFoldersV1, SessionFolderWorkspaceRefV1 } from './types';
 import { buildSessionFolderWorkspaceRefKey } from './workspaceRefs';
 
@@ -129,6 +134,13 @@ function isDescendantFolder(
     return false;
 }
 
+function compareFolderSortOrder(a: SessionFolderV1, b: SessionFolderV1): number {
+    const sortA = a.sortKey ?? a.name.toLocaleLowerCase();
+    const sortB = b.sortKey ?? b.name.toLocaleLowerCase();
+    if (sortA !== sortB) return sortA.localeCompare(sortB);
+    return a.id.localeCompare(b.id);
+}
+
 export function moveSessionFolder(params: Readonly<{
     current: SessionFoldersV1;
     folderId: string;
@@ -140,7 +152,8 @@ export function moveSessionFolder(params: Readonly<{
     next: SessionFoldersV1;
     folder: SessionFolderV1 | null;
 }> {
-    const byId = new Map(params.current.folders.map((folder) => [folder.id, folder] as const));
+    const current = normalizeSessionFolders(params.current);
+    const byId = new Map(current.folders.map((folder) => [folder.id, folder] as const));
     const target = byId.get(params.folderId);
     if (!target) {
         return { next: params.current, folder: null };
@@ -184,12 +197,14 @@ export function moveSessionFolder(params: Readonly<{
         return { next: params.current, folder: target };
     }
 
-    const destinationSiblings = params.current.folders
+    const destinationSiblings = current.folders
         .filter((folder) => (
             folder.id !== target.id
             && buildSessionFolderWorkspaceRefKey(folder.workspace) === buildSessionFolderWorkspaceRefKey(target.workspace)
             && (folder.parentId ?? null) === (params.parentId ?? null)
-        ));
+        ))
+        .slice()
+        .sort(compareFolderSortOrder);
     let insertIndex = destinationSiblings.length;
     if (before) {
         insertIndex = destinationSiblings.findIndex((folder) => folder.id === before.id);
@@ -198,15 +213,23 @@ export function moveSessionFolder(params: Readonly<{
         insertIndex = afterIndex < 0 ? destinationSiblings.length : afterIndex + 1;
     }
     if (insertIndex < 0) insertIndex = destinationSiblings.length;
-    const orderedDestinationSiblings = [...destinationSiblings];
-    orderedDestinationSiblings.splice(insertIndex, 0, { ...target, parentId: params.parentId });
-    const sortKeyByFolderId = new Map(
-        orderedDestinationSiblings.map((folder, index) => [folder.id, String(index + 1).padStart(6, '0')] as const),
-    );
+    const previousSibling = insertIndex > 0 ? destinationSiblings[insertIndex - 1] : null;
+    const nextSibling = destinationSiblings[insertIndex] ?? null;
+    const nextTargetSortKey = nextSortKeyBetween(previousSibling?.sortKey ?? null, nextSibling?.sortKey ?? null);
+    const sortKeyByFolderId = new Map<string, string>([[target.id, nextTargetSortKey]]);
+    if (nextTargetSortKey.length > SESSION_FOLDER_SORT_KEY_MAX_LENGTH) {
+        const affectedSiblings = [...destinationSiblings];
+        affectedSiblings.splice(insertIndex, 0, { ...target, parentId: params.parentId, sortKey: nextTargetSortKey });
+        const rebalanced = rebalanceSortKeys(new Map(
+            affectedSiblings.map((folder) => [folder.id, folder.sortKey ?? folder.name.toLocaleLowerCase()] as const),
+        ));
+        sortKeyByFolderId.clear();
+        for (const [folderId, sortKey] of rebalanced) sortKeyByFolderId.set(folderId, sortKey);
+    }
 
     const next = normalizeSessionFolders({
         v: 1,
-        folders: params.current.folders.map((folder) => folder.id === target.id
+        folders: current.folders.map((folder) => folder.id === target.id
             ? {
                 ...folder,
                 parentId: params.parentId,

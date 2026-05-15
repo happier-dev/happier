@@ -277,6 +277,7 @@ const settingsAppearanceTranslationExtension = {
       pitchDark: 'Pitch Dark',
       sunsetDark: 'Sunset Dark',
       nightDark: 'Night Dark',
+      classicDark: 'Classic Dark',
       graphiteDark: 'Graphite Dark',
       tokyoNight: 'Tokyo Night',
       premiumLight: 'Crisp Light',
@@ -367,7 +368,6 @@ const settingsAppearanceTranslationExtension = {
       overlay: 'Overlays',
     },
   },
-
   sessionListDensity: {
     title: 'Session List Density',
     subtitle: 'Choose how sessions are displayed in the sidebar',
@@ -376,7 +376,7 @@ const settingsAppearanceTranslationExtension = {
     cozy: 'Cozy',
     cozyDescription: 'Slightly tighter rows with avatars',
     narrow: 'Narrow',
-    narrowDescription: 'Minimal rows without avatars',
+    narrowDescription: 'Narrow rows with micro avatars',
   },
 } as const;
 
@@ -490,31 +490,24 @@ export const en = {
             composerSendImmediate: 'Send immediately',
             commandPaletteOpen: 'Open command palette',
             modeCycle: 'Cycle mode',
-            permissionCycle: 'Cycle permissions',
             shortcutsHelpOpen: 'Open shortcuts help',
             sessionNew: 'Create new session',
             sessionMruNext: 'Next recent session',
             sessionMruPrevious: 'Previous recent session',
             sessionVisibleNext: 'Next visible session',
             sessionVisiblePrevious: 'Previous visible session',
-            splitCanvasCloseLeaf: 'Close split pane',
-            splitCanvasFocusDown: 'Focus pane below',
-            splitCanvasFocusLeft: 'Focus pane left',
-            splitCanvasFocusRight: 'Focus pane right',
-            splitCanvasFocusUp: 'Focus pane above',
-            splitCanvasRestoreMaximize: 'Restore maximized pane',
-            splitCanvasSplitDown: 'Split pane down',
-            splitCanvasSplitRight: 'Split pane right',
-            splitCanvasToggleMaximize: 'Toggle pane maximize',
+            sessionsRowMoveUp: 'Move selected row up',
+            sessionsRowMoveDown: 'Move selected row down',
+            sessionsRowMoveToFolder: 'Move selected row to folder',
+            sessionsRowMoveToWorkspaceRoot: 'Move selected row to workspace root',
             settingsOpen: 'Open settings',
-            transcriptMessageNext: 'Next transcript message',
-            transcriptMessagePrevious: 'Previous transcript message',
             transcriptScrollBottom: 'Scroll transcript to bottom',
             transcriptScrollPageDown: 'Scroll transcript page down',
             transcriptScrollPageUp: 'Scroll transcript page up',
             transcriptScrollTop: 'Scroll transcript to top',
         },
     },
+
     tabs: {
         // Tab navigation labels
         inbox: 'Inbox',
@@ -743,6 +736,7 @@ export const en = {
         templateTokenLabel: 'Slash command',
         templateBehavior: 'Behavior',
         templateBehaviorInsert: 'Insert',
+        templateBehaviorInsertOnSend: 'Insert on send',
         templateBehaviorInsertAndSend: 'Insert and send',
         templateAllowArgs: 'Allow arguments',
         templateAllowArgsSubtitle: 'If enabled, extra text after the token is passed as $args.',
@@ -1050,8 +1044,6 @@ export const en = {
         update: 'Update',
         commit: 'Commit',
         history: 'History',
-        active: 'Active',
-        inactive: 'Inactive',
         applied: 'Applied',
         signOut: 'Sign out',
         keep: 'Keep',
@@ -1075,8 +1067,6 @@ export const en = {
         pasteImage: 'Paste image',
         expand: 'Expand',
         collapse: 'Collapse',
-        restore: 'Restore',
-        maximize: 'Maximize',
         command: 'Command',
         scanning: 'Scanning...',
         urlPlaceholder: 'https://example.com',
@@ -1143,6 +1133,8 @@ export const en = {
         disconnected: 'disconnected',
         error: 'error',
         online: 'online',
+        working: 'working...',
+        readyForReview: 'ready for review',
         offline: 'offline',
         lastSeen: ({ time }: { time: string }) => `last seen ${time}`,
         actionRequired: 'action required',
@@ -1167,20 +1159,30 @@ export const en = {
         justNow: 'just now',
         minutesAgo: ({ count }: { count: number }) => `${count} minute${count !== 1 ? 's' : ''} ago`,
         hoursAgo: ({ count }: { count: number }) => `${count} hour${count !== 1 ? 's' : ''} ago`,
+        // Compact forms used by SelectionList accessories (RelativeTimeText) where
+        // tabular-nums + tight horizontal budget make the long form unsuitable.
         nowShort: 'now',
         minutesAgoShort: ({ count }: { count: number }) => `${count}m ago`,
         hoursAgoShort: ({ count }: { count: number }) => `${count}h ago`,
         daysAgoShort: ({ count }: { count: number }) => `${count}d ago`,
     },
+
     selectionList: {
+        // Generic strings consumed by the `components/ui/selectionList/`
+        // primitive surface (empty state, clear input button, back-chip
+        // accessibility label).
         emptyMatch: 'No matches',
         clearInput: 'Clear',
         backTo: ({ label }: { label: string }) => `Back to ${label}`,
         dynamicSectionError: 'Something went wrong',
+        // RUX-1 Issue 6: dedicated copy for notFound (path doesn't exist).
+        // Distinct from `dynamicSectionError` (transient/RPC failure).
         pathNotFound: 'Path not found',
+        // RUX-13: footer hint label for the universal Shift+Tab back/up
+        // shortcut. Surfaces whenever the user has somewhere to back to (a
+        // sub-step, or a non-root path in path-mode).
         backShortcut: 'back',
     },
-
 
     connect: {
         restoreAccount: 'Restore Account',
@@ -1544,7 +1546,7 @@ export const en = {
                   placeholder: 'execution.run.start …',
               },
           },
-          settings: {
+        settings: {
               groupTitle: 'Subagents',
               disabled: {
                   footer:
@@ -3267,8 +3269,6 @@ export const en = {
         backdropBlurDescription: 'Use frosted background blur behind modals and menus. Disable to improve browser performance.',
         multiPanePanels: 'Right panels',
         multiPanePanelsDescription: 'Show resizable right-side panels for files and source control (web/tablet)',
-        settingsNavSidebar: 'Settings sidebar',
-        settingsNavSidebarDescription: 'Show the settings sidebar in sessions (web/tablet)',
         sessionsRightPaneDefaultOpen: 'Always show right sidebar in sessions',
         sessionsRightPaneDefaultOpenDescription: 'Open the right sidebar automatically when you enter a session (web/tablet)',
         detailsPaneTabsBehavior: 'Editor tabs',
@@ -3333,7 +3333,7 @@ export const en = {
         compactSessionView: 'Compact Session View',
         compactSessionViewDescription: 'Show active sessions in a more compact layout',
         compactSessionViewMinimal: 'Minimal Compact View',
-        compactSessionViewMinimalDescription: 'Remove avatars and show a very compact session row layout',
+        compactSessionViewMinimalDescription: 'Use the narrowest session row layout',
         sessionListDensity: {
             title: 'Session List Density',
             subtitle: 'Choose how sessions are displayed in the sidebar',
@@ -3342,7 +3342,7 @@ export const en = {
             cozy: 'Cozy',
             cozyDescription: 'Slightly tighter rows with avatars',
             narrow: 'Narrow',
-            narrowDescription: 'Minimal rows without avatars',
+            narrowDescription: 'Narrow rows with micro avatars',
         },
         text: 'Text',
         textDescription: 'Adjust text size across the app',
@@ -3720,8 +3720,15 @@ export const en = {
             emptyFavorites: 'No favorite paths',
             emptySuggested: 'No suggested paths',
             emptyAll: 'No paths',
-                    inThisFolderTitle: 'In this folder',
+            // Keys consumed by the unified PathSelectionList (R6) inside the
+            // SelectionList primitive. Restored alongside the selectionList
+            // block so consumers compile.
+            inThisFolderTitle: 'In this folder',
             openInTreeBrowserLabel: 'Open in tree browser',
+            // FR3-11: dedicated label for the directory-row drill chevron. The
+            // chevron only updates the input shorthand to descend into the row's
+            // folder; it does NOT open the tree-browser modal. Distinct copy
+            // matters for screen-reader correctness.
             openFolderLabel: 'Show folder contents',
             emptyInThisFolder: 'No matches in this folder',
             favoriteAdd: 'Add to favorites',
@@ -3732,7 +3739,7 @@ export const en = {
                 autocomplete: 'autocomplete',
                 walkUp: 'go up one level',
             },
-},
+        },
         sessionType: {
             title: 'Session Type',
             simple: 'Simple',
@@ -3761,7 +3768,8 @@ export const en = {
             notGitRepo: 'Worktrees require a git repository',
             failed: ({ error }: { error: string }) => `Failed to create worktree: ${error}`,
             success: 'Worktree created successfully',
-                    createTitle: 'New worktree from branch',
+            // Keys consumed by buildWorktreeSelectionListSteps (R10/R6).
+            createTitle: 'New worktree from branch',
             backToRoot: 'Worktrees',
             searchPlaceholder: 'Search worktrees',
             searchBranchPlaceholder: 'Search branches',
@@ -3772,6 +3780,10 @@ export const en = {
             statusPill: {
                 clean: 'clean',
                 stale: 'stale',
+                // FR4-10: StatusPill renders the count separately; return only the noun
+                // suffix here so the rendered pill is "{count} {suffix}" (e.g. "3 changes"),
+                // not "{count} {count} {suffix}". The `string` annotation is required so
+                // sibling locales can widen to their own translated forms.
                 changesSuffix: ({ count }: { count: number }): string =>
                     count === 1 ? 'change' : 'changes',
             },
@@ -3784,7 +3796,7 @@ export const en = {
                 select: 'select',
                 back: 'back',
             },
-},
+        },
         resume: {
             title: 'Resume session',
             optional: 'Resume: Optional',
@@ -3891,6 +3903,39 @@ export const en = {
 
     session: {
         inputPlaceholder: 'What would you like to work on?',
+        workState: {
+            accessibilityLabel: 'Session work state',
+            commandDescription: 'Set or inspect the session goal',
+            unsupportedTitle: 'Goal unavailable',
+            unsupportedMessage: 'This backend does not support editable session goals yet.',
+            noCurrentGoalTitle: 'No goal to update',
+            noCurrentGoalMessage: 'Set a goal before pausing or resuming it.',
+            dirtyCloseTitle: 'Discard goal edits?',
+            dirtyCloseBody: 'Your unsaved goal changes will be lost.',
+            badge: {
+                goal: ({ title }: { title: string }) => `Goal: ${title}`,
+                goalPaused: 'Goal paused',
+                goalBlocked: 'Goal blocked',
+                goalComplete: 'Goal complete',
+                item: ({ title }: { title: string }) => title,
+            },
+            group: {
+                active: 'Active',
+                pending: 'Pending',
+                blockedPaused: 'Blocked or paused',
+                done: 'Complete or cancelled',
+            },
+            goal: {
+                title: 'Goal',
+                placeholder: 'What should this session focus on?',
+                set: 'Set goal',
+                pause: 'Pause',
+                resume: 'Resume',
+                clear: 'Clear',
+                clearTitle: 'Clear goal?',
+                clearBody: 'This removes the editable goal from this session.',
+            },
+        },
         rightPanel: {
             tabs: {
                 git: 'Git',
@@ -4504,28 +4549,59 @@ export const en = {
         serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
         storagePersistedTab: 'Synced',
         storageDirectTab: 'Direct',
-        openProject: 'Open project',
         renameWorkspace: 'Rename workspace',
         renameWorkspacePromptTitle: 'Rename workspace',
         renameWorkspacePromptPlaceholder: 'Enter a name...',
         resetWorkspaceName: 'Reset name',
+        viewOptions: 'View options',
+        folders: 'Folders',
         addFolder: 'Add folder',
-        newFolderDefaultName: 'Folder',
-        folderNamePlaceholder: 'Folder name',
-        workspaceRoot: 'Workspace root',
-        moveToFolder: 'Move to folder',
-        failedToMoveSessionToFolder: 'Failed to move the session to that folder.',
-        newSessionInFolder: 'New session in folder',
+        addFolderPromptTitle: 'Add folder',
         addSubfolder: 'Add subfolder',
-        renameFolder: 'Rename folder',
-        deleteFolder: 'Delete folder',
         addSubfolderPromptTitle: 'Add subfolder',
+        folderNamePlaceholder: 'Folder name',
+        renameFolder: 'Rename folder',
         renameFolderPromptTitle: 'Rename folder',
-        deleteFolderPromptTitle: 'Delete folder?',
-        deleteFolderPromptDescription: 'Sessions in this folder will move to the parent folder or workspace root.',
+        moveFolder: 'Move folder',
+        deleteFolder: 'Delete folder',
+        deleteFolderPromptTitle: 'Delete folder',
+        deleteFolderPromptDescription: 'Sessions in this folder will stay in the workspace.',
+        newSessionInFolder: 'New session in folder',
+        clearFolderFocus: 'Clear folder focus',
+        folderViewTree: 'Folder view',
+        folderViewOff: 'Hide folders',
+        moveToFolder: 'Move to folder',
+        moveToWorkspaceRoot: 'Workspace root',
+        sessionFallbackLabel: 'Session',
+        moveSheetTitle: ({ item }: { item: string }) => 'Move ' + item,
+        moveSheetDestinationLabel: 'Destination',
+        moveSheetSubmit: 'Move',
+        moveSheetSearchPlaceholder: 'Search folders...',
+        moveSheetEmpty: 'No move targets available',
+        moveSheetDestinations: 'Destinations',
+        moveSheetDisabledDescendant: 'Cannot move into itself or a child folder.',
+        moveSheetDisabledMaxDepth: 'This would exceed the folder depth limit.',
+        moveSheetDisabledCurrent: 'Already in this location.',
+        moveSheetDisabledUnavailable: 'This destination is not available.',
+        dragHandleA11yLabel: 'Drag handle',
+        dragA11yPickedUp: ({ item }: { item: string }) => 'Picked up ' + item + '.',
+        dragA11yDroppedReorder: ({ item, destination }: { item: string; destination: string }) => 'Moved ' + item + ' near ' + destination + '.',
+        dragA11yDroppedNest: ({ item, destination }: { item: string; destination: string }) => 'Moved ' + item + ' into ' + destination + '.',
+        dragA11yDroppedRoot: ({ item, destination }: { item: string; destination: string }) => 'Moved ' + item + ' to ' + destination + '.',
+        dragA11yCancelled: ({ item }: { item: string }) => 'Move cancelled for ' + item + '.',
+        dragA11yBlocked: ({ item, reason }: { item: string; reason: string }) => 'Could not move ' + item + ': ' + reason,
+        dragA11yBlockedDescendantCycle: 'destination is inside the moved folder',
+        dragA11yBlockedLeafCannotBeParent: 'sessions cannot contain other items',
+        dragA11yBlockedMaxDepth: 'folder depth limit reached',
+        dragA11yBlockedSamePosition: 'already in that position',
+        dragA11yBlockedWorkspaceScope: 'destination is in another workspace',
+        dragA11yBlockedNoTarget: 'no destination selected',
+        hideInactiveSessions: 'Hide inactive sessions',
+        showInactiveSessions: 'Show inactive sessions',
+        attentionSectionTitle: 'Needs attention',
     },
 
-    externalSessions: {
+    directSessions: {
         browseTitle: 'Browse provider sessions',
         browseOpenExisting: 'Browse provider sessions',
         browseActionSubtitle: 'Choose a machine, provider, and session to open it here.',
@@ -4612,9 +4688,6 @@ export const en = {
         lastUpdated: 'Last Updated',
         sequence: 'Sequence',
         quickActions: 'Quick Actions',
-        openInSplitRight: 'Open in split right',
-        openInSplitDown: 'Open in split down',
-        revealInCurrentSplit: 'Reveal in current split',
         markSessionRead: 'Mark as read',
         markSessionReadSubtitle: 'Clear unread attention for this session',
         markSessionUnread: 'Mark as unread',
@@ -5328,6 +5401,8 @@ export const en = {
                 },
             fileEditingUnsupported:
                 'File editing isn’t supported by the connected daemon. Update Happier on the machine to enable write operations.',
+          fileChangedExternally:
+              'This file changed on disk while you were editing. Your draft was kept unchanged; review the latest file before saving.',
           selectionFailed: 'Failed to update selection',
           openReviewCommentsFailed: 'Failed to open review comments',
               reviewComments: {
@@ -5390,8 +5465,6 @@ export const en = {
                 generatedImageA11y: ({ name }: { name: string }) => `Open generated image ${name}`,
                 attachmentImageA11y: ({ name }: { name: string }) => `Open attached image ${name}`,
                 toolArtifactImageA11y: ({ name }: { name: string }) => `Open tool artifact image ${name}`,
-                unavailableImageA11y: ({ name }: { name: string }) => `Image unavailable: ${name}`,
-                previewUnavailableA11y: 'Preview unavailable',
             },
             cannotDisplayBinary: 'Cannot display binary file content',
             diff: 'Diff',
@@ -5404,8 +5477,6 @@ export const en = {
             },
             fileActions: {
                 selectForCommit: 'Select for commit',
-                selectEntireFileForCommit: 'Select entire file',
-                rangeSelection: 'Range',
                 stageFile: 'Stage file',
                 removeFromSelection: 'Remove from selection',
                 removeFromCommitSelection: 'Remove from commit selection',
@@ -5536,20 +5607,6 @@ export const en = {
                     publish: 'Publish repository',
                     publishing: 'Publishing…',
                     noTargets: 'Connect GitHub or sign in with gh CLI to publish this repository.',
-                    originConflictRemediation: 'Choose how to handle the existing origin before publishing.',
-                    commitRequired: 'Commit pending changes before publishing.',
-                    unsafeUrl: 'Happier blocked an unsafe follow-up URL.',
-                    auth: {
-                        connectedAccountReady: 'GitHub connection is ready.',
-                        providerCliReady: 'gh CLI is authenticated.',
-                    },
-                    remediation: {
-                        connectGitHub: 'Connect GitHub',
-                        installGh: 'Install gh CLI',
-                        useManagedGh: 'Use managed gh CLI',
-                        authenticateGh: 'Authenticate gh CLI',
-                        openBrowser: 'Open in browser',
-                    },
                     errors: {
                         targetRequired: 'Choose a GitHub account or organization.',
                         nameRequired: 'Enter a repository name.',
@@ -5749,10 +5806,6 @@ export const en = {
                 title: 'Voice panel',
                 subtitle: 'Shown in the voice assistant panel.',
             },
-            voice: {
-                title: 'Voice tool',
-                subtitle: 'Available to the voice agent as a callable tool.',
-            },
             run_list: {
                 title: 'Runs list',
                 subtitle: 'Visible from execution run lists.',
@@ -5795,25 +5848,16 @@ settingsSession: {
 	              tagsTitle: 'Session tags',
 	              tagsEnabledSubtitle: 'Tag controls visible in the session list',
 	              tagsDisabledSubtitle: 'Tag controls hidden',
-	              orderingTitle: 'Session list options',
-	              orderingSubtitle: 'Choose how sessions are grouped and displayed.',
-	              orderingOptions: {
-	                  custom: 'Custom order',
-	                  created: 'Created',
-	                  updated: 'Updated',
-	              },
-	              menuSections: {
-	                  sortBy: 'Sort by',
-	                  show: 'Show',
-	              },
-	              folderTreeView: 'Folder tree',
-	              workspacePathDisplayTitle: 'Workspace names',
-	              workspacePathDisplayNameSelectedSubtitle: 'Show the last folder name by default',
-	              workspacePathDisplayPathSelectedSubtitle: 'Show the full workspace path',
-	              workspacePathDisplayName: 'Folder name',
-	              workspacePathDisplayNameDescription: 'Use the last path segment unless you renamed the workspace.',
-	              workspacePathDisplayPath: 'Full path',
-	              workspacePathDisplayPathDescription: 'Use the formatted workspace path unless you renamed the workspace.',
+	              workingStatusAnimatedTextTitle: 'Animated working text',
+	              workingStatusAnimatedTextEnabledSubtitle: 'Rotate working verbs while a session is running',
+	              workingStatusAnimatedTextDisabledSubtitle: 'Show a steady working... label while a session is running',
+	              narrowWorkingIndicatorTitle: 'Narrow working indicator',
+	              narrowWorkingIndicatorSpinnerSelectedSubtitle: 'Show a small neutral spinner in narrow rows',
+	              narrowWorkingIndicatorPulseSelectedSubtitle: 'Show a pulsing dot in narrow rows',
+	              narrowWorkingIndicatorSpinnerTitle: 'Spinner',
+	              narrowWorkingIndicatorSpinnerSubtitle: 'A compact neutral spinner while the session is working.',
+	              narrowWorkingIndicatorPulseTitle: 'Pulsing dot',
+	              narrowWorkingIndicatorPulseSubtitle: 'A compact animated dot while the session is working.',
 	              workingIndicatorTitle: 'Working indicator',
 	              workingIndicatorSpinnerSelectedSubtitle: 'Show a small neutral spinner while sessions work',
 	              workingIndicatorPulseSelectedSubtitle: 'Show a pulsing dot while sessions work',
@@ -5821,6 +5865,44 @@ settingsSession: {
 	              workingIndicatorSpinnerSubtitle: 'A compact neutral spinner while the session is working.',
 	              workingIndicatorPulseTitle: 'Pulsing dot',
 	              workingIndicatorPulseSubtitle: 'A compact animated dot while the session is working.',
+	              identityDisplayTitle: 'Session identity',
+	              identityDisplaySubtitle: 'Choose what appears before session names in the list.',
+	              identityDisplayAvatarTitle: 'Avatar',
+	              identityDisplayAvatarSubtitle: 'Show each session’s generated avatar.',
+	              identityDisplayAgentLogoTitle: 'Agent logo',
+	              identityDisplayAgentLogoSubtitle: 'Show the agent logo for each session.',
+	              identityDisplayNoneTitle: 'None',
+	              identityDisplayNoneSubtitle: 'Hide the identity marker in session rows.',
+	              activeColorTitle: 'Active title color',
+	              activeColorSubtitle: 'Choose which sessions use the active title color.',
+	              activeColorActivityAndAttentionTitle: 'Activity and attention',
+	              activeColorActivityAndAttentionSubtitle: 'Use active color for working sessions and sessions that need attention.',
+	              activeColorAttentionOnlyTitle: 'Attention only',
+	              activeColorAttentionOnlySubtitle: 'Use active color only for sessions that need your attention.',
+	              activeColorAllActiveTitle: 'All active sessions',
+	              activeColorAllActiveSubtitle: 'Use active color for every active connected session.',
+	              orderingTitle: 'Session order',
+	              orderingSubtitle: 'Choose how sessions are sorted within their groups.',
+	              orderingOptions: {
+	                  custom: 'Custom',
+	                  created: 'Created',
+	                  updated: 'Updated',
+	              },
+	              attentionPromotionModeTitle: 'Sessions needing attention',
+	              attentionPromotionModeSubtitle: 'Choose where sessions waiting for you or ready to review appear',
+	              attentionPromotionModeOffTitle: 'Leave in normal position',
+	              attentionPromotionModeOffSubtitle: 'Keep the list exactly as grouped and sorted',
+	              attentionPromotionModeGlobalTitle: 'Group below pinned sessions',
+	              attentionPromotionModeGlobalSubtitle: 'Show one attention section above the rest',
+	              attentionPromotionModeWithinGroupsTitle: 'Move to top of current group',
+	              attentionPromotionModeWithinGroupsSubtitle: 'Keep sessions in their folder or workspace',
+	              workspacePathDisplayTitle: 'Workspace names',
+	              workspacePathDisplayNameSelectedSubtitle: 'Show the last folder name by default',
+	              workspacePathDisplayPathSelectedSubtitle: 'Show the full workspace path',
+	              workspacePathDisplayName: 'Folder name',
+	              workspacePathDisplayNameDescription: 'Use the last path segment unless you renamed the workspace.',
+	              workspacePathDisplayPath: 'Full path',
+	              workspacePathDisplayPathDescription: 'Use the formatted workspace path unless you renamed the workspace.',
 	              workspaceFaviconsTitle: 'Workspace favicons',
 	              workspaceFaviconsEnabledSubtitle: 'Show detected project favicons next to workspace names',
 	              workspaceFaviconsDisabledSubtitle: 'Hide project favicons from workspace headers',
@@ -6144,9 +6226,9 @@ settingsSession: {
               rememberLastProjectSelectionsTitle: 'Remember last project session selections',
               rememberLastProjectSelectionsEnabledSubtitle: 'Project shortcuts reuse the newest session’s machine, folder, engine, model, and session options.',
               rememberLastProjectSelectionsDisabledSubtitle: 'Project shortcuts only preselect the project machine and folder.',
-              rememberLastEngineSelectionsTitle: 'Remember last engine selections',
-              rememberLastEngineSelectionsEnabledSubtitle: 'New sessions reuse the last model, mode, and engine options for each server and engine.',
-              rememberLastEngineSelectionsDisabledSubtitle: 'New sessions start from engine defaults unless a draft or shortcut provides selections.',
+              rememberLastEngineSelectionsTitle: 'Remember last model and options for each engine',
+              rememberLastEngineSelectionsEnabledSubtitle: 'New sessions restore the last model, mode, and engine options you selected on this account.',
+              rememberLastEngineSelectionsDisabledSubtitle: 'New sessions use defaults unless a project shortcut or draft provides a setup.',
               wizardSettingsTitle: 'New session wizard',
               wizardSettingsSubtitle: 'Choose whether each wizard selector appears as a list or dropdown.',
               wizardDispositionTitle: 'Wizard disposition',
@@ -7543,9 +7625,9 @@ settingsSession: {
         replacementRepair: {
             replaceWithMachine: 'Mark as Replaced',
             replaceWithMachineSubtitle: ({ machine }: { machine: string }) => `Use ${machine} as the replacement for this machine.`,
-            chooseReplacementSubtitle: 'Choose the machine that replaced this one.',
+            chooseReplacementSubtitle: 'Choose which machine replaces this one.',
             pickerTitle: 'Choose Replacement Machine',
-            pickerCandidatesTitle: 'Available machines',
+            pickerCandidatesTitle: 'Eligible machines',
             confirmTitle: 'Mark Machine as Replaced?',
             confirmBody: ({ machine }: { machine: string }) => `Future launches and old sessions for this machine will use ${machine}.`,
             confirmAction: 'Replace',
@@ -8145,11 +8227,11 @@ settingsSession: {
 };
 
 type DeepTranslationShape<T> =
-    T extends (...args: any[]) => any
+    T extends (...args: infer Args) => infer Return
         // Some translation extension modules expose no-arg functions to defer selection until runtime
         // (for example based on the active language stored in settings). Locales may still implement
         // these leaves as plain strings, so treat `() => string` and `string` as interchangeable.
-        ? (Parameters<T> extends [] ? string | (() => string) : T)
+        ? (Args extends [] ? string | (() => string) : (...args: Args) => Return)
         : T extends string
             ? string
             : T extends readonly (infer U)[]

@@ -3,6 +3,7 @@ import { normalizeTrimmedStringArrayWithSharedEmpty } from './normalizeTrimmedSt
 import { normalizeTrimmedString } from './normalizeTrimmedString';
 import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionFolderWorkspaceRefKey } from '@/sync/domains/session/folders/workspaceRefs';
 
 export const PINNED_GROUP_KEY_V1 = 'pinned-v1';
 
@@ -169,38 +170,117 @@ export function sortSessionListViewItemsByOrderingMode(
     return out;
 }
 
-function buildSessionKeySetByGroupKey(source: ReadonlyArray<SessionListViewItem>): Map<string, Set<string>> {
-    const map = new Map<string, Set<string>>();
-    for (const item of source) {
-        if (item.type !== 'session') continue;
-        const groupKey = normalizeTrimmedString(item.groupKey);
-        if (!groupKey) continue;
-        const sessionKey = normalizeSessionListKeyParts(item.serverId, item.session?.id).sessionKey;
-        if (!sessionKey) continue;
-        const bucket = map.get(groupKey);
-        if (!bucket) {
-            map.set(groupKey, new Set([sessionKey]));
-        } else {
-            bucket.add(sessionKey);
+function addKey(map: Map<string, Set<string>>, groupKey: string, key: string): void {
+    const bucket = map.get(groupKey);
+    if (!bucket) {
+        map.set(groupKey, new Set([key]));
+    } else {
+        bucket.add(key);
+    }
+}
+
+function buildFolderKey(folderIdRaw: unknown): string | null {
+    const folderId = normalizeTrimmedString(folderIdRaw);
+    return folderId ? `folder:${folderId}` : null;
+}
+
+function readFolderDepth(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+}
+
+function buildFolderRootGroupKey(item: Pick<Extract<SessionListIndexItem, { type: 'header' }>, 'serverId' | 'workspace'>): string | null {
+    if (!item.workspace) return null;
+    const serverId = String(item.serverId ?? item.workspace.serverId ?? 'local').trim() || 'local';
+    return `folder:${serverId}:${buildSessionFolderWorkspaceRefKey(item.workspace)}:root`;
+}
+
+function resolveParentFolderGroupKeyFromOwnGroupKey(groupKeyRaw: unknown, depth: number): string | null {
+    const groupKey = normalizeTrimmedString(groupKeyRaw);
+    if (!groupKey) return null;
+    const remoteMarker = ':folder:';
+    const remoteMarkerIndex = groupKey.indexOf(remoteMarker);
+    if (remoteMarkerIndex >= 0) {
+        return depth <= 0 ? groupKey.slice(0, remoteMarkerIndex) : null;
+    }
+    if (groupKey.startsWith('folder:')) {
+        const lastSeparator = groupKey.lastIndexOf(':');
+        if (lastSeparator > 'folder:'.length && depth <= 0) {
+            return `${groupKey.slice(0, lastSeparator)}:root`;
         }
+    }
+    return null;
+}
+
+function resolveFolderParentGroupKeyFromViewSource(params: Readonly<{
+    source: ReadonlyArray<SessionListViewItem>;
+    itemIndex: number;
+    folder: Extract<SessionListViewItem, { type: 'header' }>;
+}>): string | null {
+    const depth = readFolderDepth(params.folder.folderDepth);
+    if (depth <= 0) {
+        return resolveParentFolderGroupKeyFromOwnGroupKey(params.folder.groupKey, depth);
+    }
+    for (let index = params.itemIndex - 1; index >= 0; index -= 1) {
+        const candidate = params.source[index];
+        if (candidate?.type !== 'header' || candidate.headerKind !== 'folder') continue;
+        if (readFolderDepth(candidate.folderDepth) < depth) {
+            return normalizeTrimmedString(candidate.groupKey) || null;
+        }
+    }
+    return resolveParentFolderGroupKeyFromOwnGroupKey(params.folder.groupKey, depth);
+}
+
+function resolveFolderParentGroupKeyFromIndexSource(params: Readonly<{
+    source: ReadonlyArray<SessionListIndexItem>;
+    itemIndex: number;
+    folder: Extract<SessionListIndexItem, { type: 'header' }>;
+}>): string | null {
+    const depth = readFolderDepth(params.folder.folderDepth);
+    if (depth <= 0) return buildFolderRootGroupKey(params.folder);
+    for (let index = params.itemIndex - 1; index >= 0; index -= 1) {
+        const candidate = params.source[index];
+        if (candidate?.type !== 'header' || candidate.headerKind !== 'folder') continue;
+        if (readFolderDepth(candidate.folderDepth) < depth) {
+            return normalizeTrimmedString(candidate.groupKey) || null;
+        }
+    }
+    return buildFolderRootGroupKey(params.folder);
+}
+
+function buildChildKeySetByGroupKey(source: ReadonlyArray<SessionListViewItem>): Map<string, Set<string>> {
+    const map = new Map<string, Set<string>>();
+    for (let index = 0; index < source.length; index += 1) {
+        const item = source[index]!;
+        if (item.type === 'session') {
+            const groupKey = normalizeTrimmedString(item.groupKey);
+            if (!groupKey) continue;
+            const sessionKey = normalizeSessionListKeyParts(item.serverId, item.session?.id).sessionKey;
+            if (sessionKey) addKey(map, groupKey, sessionKey);
+            continue;
+        }
+        if (item.headerKind !== 'folder') continue;
+        const groupKey = resolveFolderParentGroupKeyFromViewSource({ source, itemIndex: index, folder: item });
+        const folderKey = buildFolderKey(item.folderId);
+        if (groupKey && folderKey) addKey(map, groupKey, folderKey);
     }
     return map;
 }
 
-function buildSessionKeySetByGroupKeyFromIndex(source: ReadonlyArray<SessionListIndexItem>): Map<string, Set<string>> {
+function buildChildKeySetByGroupKeyFromIndex(source: ReadonlyArray<SessionListIndexItem>): Map<string, Set<string>> {
     const map = new Map<string, Set<string>>();
-    for (const item of source) {
-        if (item.type !== 'session') continue;
-        const groupKey = normalizeTrimmedString(item.groupKey);
-        if (!groupKey) continue;
-        const sessionKey = normalizeSessionListKeyParts(item.serverId, item.sessionId).sessionKey;
-        if (!sessionKey) continue;
-        const bucket = map.get(groupKey);
-        if (!bucket) {
-            map.set(groupKey, new Set([sessionKey]));
-        } else {
-            bucket.add(sessionKey);
+    for (let index = 0; index < source.length; index += 1) {
+        const item = source[index]!;
+        if (item.type === 'session') {
+            const groupKey = normalizeTrimmedString(item.groupKey);
+            if (!groupKey) continue;
+            const sessionKey = normalizeSessionListKeyParts(item.serverId, item.sessionId).sessionKey;
+            if (sessionKey) addKey(map, groupKey, sessionKey);
+            continue;
         }
+        if (item.headerKind !== 'folder') continue;
+        const groupKey = resolveFolderParentGroupKeyFromIndexSource({ source, itemIndex: index, folder: item });
+        const folderKey = buildFolderKey(item.folderId);
+        if (groupKey && folderKey) addKey(map, groupKey, folderKey);
     }
     return map;
 }
@@ -273,7 +353,7 @@ function isSessionListGroupOrderV1AlreadyNormalizedForSource(params: Readonly<{
     sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 }>, sessionsByGroupKey?: Map<string, Set<string>>): boolean {
     const pinnedSet = new Set(normalizeTrimmedStringArrayWithSharedEmpty(params.pinnedSessionKeysV1));
-    const sourceSessionKeys = sessionsByGroupKey ?? buildSessionKeySetByGroupKey(params.source);
+    const sourceSessionKeys = sessionsByGroupKey ?? buildChildKeySetByGroupKey(params.source);
 
     for (const [groupKeyRaw, keysRaw] of Object.entries(params.sessionListGroupOrderV1 ?? {})) {
         const groupKey = normalizeTrimmedString(groupKeyRaw);
@@ -317,7 +397,7 @@ function isSessionListGroupOrderV1AlreadyNormalizedForIndexSource(params: Readon
     sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 }>, sessionsByGroupKey?: Map<string, Set<string>>): boolean {
     const pinnedSet = new Set(normalizeTrimmedStringArrayWithSharedEmpty(params.pinnedSessionKeysV1));
-    const sourceSessionKeys = sessionsByGroupKey ?? buildSessionKeySetByGroupKeyFromIndex(params.source);
+    const sourceSessionKeys = sessionsByGroupKey ?? buildChildKeySetByGroupKeyFromIndex(params.source);
 
     for (const [groupKeyRaw, keysRaw] of Object.entries(params.sessionListGroupOrderV1 ?? {})) {
         const groupKey = normalizeTrimmedString(groupKeyRaw);
@@ -372,7 +452,7 @@ export function normalizeSessionListGroupOrderV1ForSource(params: Readonly<{
         return cacheSessionListGroupOrderV1ForSource(params, EMPTY_SESSION_LIST_GROUP_ORDER_V1);
     }
 
-    const sourceSessionKeys = buildSessionKeySetByGroupKey(params.source);
+    const sourceSessionKeys = buildChildKeySetByGroupKey(params.source);
 
     if (isSessionListGroupOrderV1AlreadyNormalizedForSource(params, sourceSessionKeys)) {
         return cacheSessionListGroupOrderV1ForSource(
@@ -446,7 +526,7 @@ export function normalizeSessionListGroupOrderV1ForIndexSource(params: Readonly<
     }
 
     const pinnedSet = new Set(normalizeTrimmedStringArrayWithSharedEmpty(params.pinnedSessionKeysV1));
-    const sessionsByGroupKey = buildSessionKeySetByGroupKeyFromIndex(params.source);
+    const sessionsByGroupKey = buildChildKeySetByGroupKeyFromIndex(params.source);
 
     const normalized: Record<string, string[]> = {};
     for (const [groupKeyRaw, keysRaw] of Object.entries(params.sessionListGroupOrderV1 ?? {})) {

@@ -143,6 +143,7 @@ const fileEditorState = vi.hoisted(() => ({
         getEditorText: () => '',
         isSavingEdits: false,
         editorDirty: false,
+        fileChangedExternally: false,
         editorTooLarge: false,
         editorChunkTooLarge: false,
         startEditingFile: vi.fn(),
@@ -167,7 +168,7 @@ vi.mock('@/components/workspaces/files/details/workspaceFileDetails/refreshWorks
     refreshWorkspaceFileDetails: (input: any) => refreshSpy(input),
 }));
 
-const workspaceSnapshot: ScmWorkingSnapshot = {
+let workspaceSnapshot: ScmWorkingSnapshot = {
     projectKey: 'workspace:srv1:m1:/repo',
     fetchedAt: 1,
     repo: {
@@ -267,6 +268,11 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         featureEnabledMock.mockReset();
         featureEnabledMock.mockReturnValue(false);
         workspaceCommitSelectionPatches = [];
+        workspaceSnapshot = {
+            ...workspaceSnapshot,
+            fetchedAt: 1,
+        };
+        fileEditorState.fileChangedExternally = false;
         refreshSpy.mockReset();
         refreshSpy.mockImplementation(async (_input: any) => ({
             status: 'ready' as const,
@@ -662,6 +668,71 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         expect(refreshSpy).toHaveBeenCalled();
         const firstCall = refreshSpy.mock.calls[0]?.[0];
         expect(firstCall?.fileEntryKind).toBe('modified');
+    });
+
+    it('refreshes file details when the SCM snapshot refreshes with the same file fingerprint', async () => {
+        let call = 0;
+        refreshSpy.mockImplementation(async (_input: any) => {
+            call += 1;
+            return {
+                status: 'ready' as const,
+                error: null,
+                diffContent: call === 1 ? 'diff-1' : 'diff-2',
+                fileContent: { content: 'hello', isBinary: false },
+                fileWriteSupported: true,
+            };
+        });
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+        await act(async () => {});
+
+        expect(screen.findAllByType('FileContentPanel')[0]?.props.diffContent).toBe('diff-1');
+
+        workspaceSnapshot = {
+            ...workspaceSnapshot,
+            fetchedAt: 2,
+        };
+
+        await act(async () => {
+            screen.tree.update(
+                <WorkspaceFileDetailsView
+                    scopeId="workspace:srv1:m1:/repo"
+                    scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                    filePath="src/a.txt"
+                    sessionIdForAugmentation={null}
+                />,
+            );
+        });
+        await act(async () => {});
+
+        expect(screen.findAllByType('FileContentPanel')[0]?.props.diffContent).toBe('diff-2');
+    });
+
+    it('surfaces an external file change while editor text is preserved', async () => {
+        fileEditorState.fileChangedExternally = true;
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+        await act(async () => {});
+
+        expect(screen.findAllByTestId('file-editor-external-change-banner')).toHaveLength(1);
     });
 
     it('keeps the toolbar edit callback stable across unchanged file-detail rerenders', async () => {

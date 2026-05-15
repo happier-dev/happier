@@ -218,6 +218,164 @@ describe('reducer', () => {
         });
     });
 
+    describe('Claude task-list tracking', () => {
+        it('tracks TodoWrite tool inputs as session todos', () => {
+            const state = createReducer();
+
+            const result = reducer(state, [{
+                id: 'msg-todo-write',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'toolu_todo_1',
+                    name: 'TodoWrite',
+                    input: {
+                        todos: [
+                            { id: 'todo-1', content: 'Patch parser', status: 'in_progress', priority: 'high' },
+                            { id: 'todo-2', content: 'Run tests', status: 'pending', priority: 'medium' },
+                        ],
+                    },
+                    description: null,
+                    uuid: 'uuid_todo_1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            expect(result.todos?.map((todo) => [todo.id, todo.content, todo.status])).toEqual([
+                ['todo-1', 'Patch parser', 'in_progress'],
+                ['todo-2', 'Run tests', 'pending'],
+            ]);
+        });
+
+        it('tracks TaskCreate results and TaskUpdate tool uses as session todos', () => {
+            const state = createReducer();
+
+            reducer(state, [{
+                id: 'msg-task-create',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'toolu_task_create_1',
+                    name: 'TaskCreate',
+                    input: {
+                        subject: 'Patch task projection',
+                        activeForm: 'Patching task projection',
+                    },
+                    description: null,
+                    uuid: 'uuid_task_create_1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            const created = reducer(state, [{
+                id: 'msg-task-create-result',
+                localId: null,
+                createdAt: 1001,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'toolu_task_create_1',
+                    content: 'Task #1 created successfully: Patch task projection',
+                    tool_use_result: {
+                        task: {
+                            id: 'task_real_1',
+                            subject: 'Patch task projection',
+                            status: 'pending',
+                        },
+                    },
+                    is_error: false,
+                    uuid: 'uuid_task_create_result_1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            expect(created.todos?.map((todo) => [todo.id, todo.content, todo.status])).toEqual([
+                ['task_real_1', 'Patch task projection', 'pending'],
+            ]);
+
+            const updated = reducer(state, [{
+                id: 'msg-task-update',
+                localId: null,
+                createdAt: 1002,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'toolu_task_update_1',
+                    name: 'TaskUpdate',
+                    input: {
+                        taskId: 'task_real_1',
+                        subject: 'Run tests',
+                        status: 'in_progress',
+                    },
+                    description: null,
+                    uuid: 'uuid_task_update_1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            expect(updated.todos?.map((todo) => [todo.id, todo.content, todo.status])).toEqual([
+                ['task_real_1', 'Run tests', 'in_progress'],
+            ]);
+        });
+
+        it('replaces session todos from TaskList tool results', () => {
+            const state = createReducer();
+
+            reducer(state, [{
+                id: 'msg-task-list',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'toolu_task_list_1',
+                    name: 'TaskList',
+                    input: {},
+                    description: null,
+                    uuid: 'uuid_task_list_1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            const result = reducer(state, [{
+                id: 'msg-task-list-result',
+                localId: null,
+                createdAt: 1001,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'toolu_task_list_1',
+                    content: 'Listed tasks',
+                    tool_use_result: {
+                        tasks: [
+                            { id: 'task_a', subject: 'Author tests', status: 'completed' },
+                            { id: 'task_b', subject: 'Ship parser', status: 'pending' },
+                            { id: 'task_deleted', subject: 'Old task', status: 'deleted' },
+                        ],
+                    },
+                    is_error: false,
+                    uuid: 'uuid_task_list_result_1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            expect(result.todos?.map((todo) => [todo.id, todo.content, todo.status])).toEqual([
+                ['task_a', 'Author tests', 'completed'],
+                ['task_b', 'Ship parser', 'pending'],
+            ]);
+        });
+    });
+
     describe('agent text message handling', () => {
         it('should process agent text messages', () => {
             const state = createReducer();

@@ -68,6 +68,7 @@ const sessionUsageState = vi.hoisted(() => ({ current: null as null | {
 } }));
 const participantTargetsState = vi.hoisted(() => ({ current: [] as any[] }));
 const reviewCommentDraftsState = vi.hoisted(() => ({ current: [] as any[] }));
+const sessionMessagesState = vi.hoisted(() => ({ current: [] as any[] }));
 const focusState = vi.hoisted(() => ({ current: true }));
 const pathnameState = vi.hoisted(() => ({ current: '/session/s1' }));
 const storageState = vi.hoisted(() => ({
@@ -218,7 +219,7 @@ installSessionShellCommonModuleMocks({
         useSession: () => storageState.sessions.s1,
         useIsDataReady: () => true,
         useRealtimeStatus: () => 'connected',
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useSessionMessages: () => ({ messages: sessionMessagesState.current, isLoaded: true }),
         useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
         useArtifacts: () => Object.values(storageState.artifacts),
@@ -492,6 +493,7 @@ describe('SessionView (direct sessions)', () => {
     resolvePreferredServerIdForSessionIdSpy.mockReset();
     resolveSessionViewRuntimeDisplayStateSpy.mockReset();
     participantTargetsState.current = [];
+    sessionMessagesState.current = [];
     sessionUsageState.current = null;
     reviewCommentDraftsState.current = [];
     focusState.current = true;
@@ -670,6 +672,47 @@ describe('SessionView (direct sessions)', () => {
         id: 'req_question_1',
         tool: 'AskUserQuestion',
         kind: 'user_action',
+      }),
+    ]);
+  });
+
+  it('passes pending transcript-backed permission requests to AgentInput', async () => {
+    storageState.sessions.s1.agentState = null;
+    sessionMessagesState.current = [
+      {
+        kind: 'tool-call',
+        id: 'm-tool-1',
+        localId: null,
+        createdAt: 2,
+        children: [],
+        tool: {
+          id: 'tool-permission-1',
+          name: 'Bash',
+          state: 'running',
+          input: { command: 'rm -rf /tmp/session-permission-fixture' },
+          createdAt: 2,
+          startedAt: 2,
+          completedAt: null,
+          description: 'Remove temporary directory',
+          permission: {
+            id: 'tool-permission-1',
+            status: 'pending',
+            kind: 'permission',
+          },
+        },
+      },
+    ];
+
+    const screen = await renderSessionViewAndSettle();
+
+    const agentInput = findAgentInput(screen);
+    expect(agentInput.props.sessionId).toBe('s1');
+    expect(agentInput.props.permissionRequests).toEqual([
+      expect.objectContaining({
+        id: 'tool-permission-1',
+        tool: 'Bash',
+        kind: 'permission',
+        arguments: { command: 'rm -rf /tmp/session-permission-fixture' },
       }),
     ]);
   });

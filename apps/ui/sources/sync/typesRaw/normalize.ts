@@ -28,6 +28,8 @@ type NormalizedAgentContent =
         type: 'tool-result'
         tool_use_id: string;
         content: any;
+        toolUseResult?: unknown;
+        tool_use_result?: unknown;
         is_error: boolean;
         uuid: string;
         parentUUID: string | null;

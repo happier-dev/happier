@@ -71,6 +71,40 @@ describe('FileContentPanel', () => {
         },
     };
 
+    it('treats equivalent theme token objects as stable for memoized file content props', async () => {
+        const { areFileContentPanelPropsEqual } = await import('./FileContentPanel');
+        expect(areFileContentPanelPropsEqual).toBeTypeOf('function');
+
+        const baseProps = {
+            theme,
+            displayMode: 'file' as const,
+            sessionId: 's1',
+            filePath: 'src/a.ts',
+            diffContent: null,
+            fileContent: 'const a = 1;',
+            language: 'typescript',
+            selectedLineKeys: new Set<string>(),
+            lineSelectionEnabled: false,
+            onToggleLine: vi.fn(),
+        };
+
+        expect(areFileContentPanelPropsEqual(baseProps as any, {
+            ...baseProps,
+            theme: {
+                colors: {
+                    textSecondary: '#999',
+                    text: {
+                        secondary: '#999',
+                    },
+                },
+            },
+        } as any)).toBe(true);
+        expect(areFileContentPanelPropsEqual(baseProps as any, {
+            ...baseProps,
+            fileContent: 'const a = 2;',
+        })).toBe(false);
+    });
+
     it('renders diff view when diff mode is selected and diff exists', async () => {
         const { FileContentPanel } = await import('./FileContentPanel');
         const onToggleLine = vi.fn();

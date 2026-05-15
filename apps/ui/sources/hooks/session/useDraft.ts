@@ -102,7 +102,7 @@ export function useDraft(
         }
         const canAdoptExternalDraft =
             externalDraft != null
-                ? !currentValue.trim() || currentValue === lastSavedValue.current
+                ? currentValue === lastSavedValue.current || (!currentValue.trim() && !lastSavedValue.current.trim())
                 : false;
 
         if (externalDraft != null && canAdoptExternalDraft) {

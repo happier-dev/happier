@@ -71,4 +71,21 @@ describe('AgentContentView safe area', () => {
             }),
         );
     });
+
+    it('uses automatic keyboard offset for the existing-session composer on iOS', async () => {
+        const { AgentContentView } = await import('./AgentContentView.native');
+
+        const tree = (await renderScreen(
+            <AgentContentView
+                content={<React.Fragment>content</React.Fragment>}
+                input={<React.Fragment>input</React.Fragment>}
+                placeholder={<React.Fragment>placeholder</React.Fragment>}
+            />,
+        )).tree as renderer.ReactTestRenderer;
+
+        const keyboardHost = tree.root.findByProps({ testID: 'agent-content-keyboard-host' });
+        expect(keyboardHost.props.automaticOffset).toBe(true);
+        expect(keyboardHost.props.behavior).toBe('translate-with-padding');
+        expect(keyboardHost.props.keyboardVerticalOffset).toBe(0);
+    });
 });

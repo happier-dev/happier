@@ -109,6 +109,7 @@ installSessionShellCommonModuleMocks({
             useSession: () => null,
             useSessionListRenderable: () => null,
             useSessionListMeaningfulActivityAt: () => null,
+            useSessionListActivityTimeLabel: () => null,
         });
     },
 });
@@ -133,7 +134,7 @@ describe('SessionItem context menu press suppression', () => {
         vi.useRealTimers();
     });
 
-    it('does not indefinitely suppress navigation when a native context menu is opened externally', async () => {
+    it('suppresses the release press after a native context menu is opened externally', async () => {
         vi.useFakeTimers();
 
         const { SessionItem } = await import('./SessionItem');
@@ -186,20 +187,26 @@ describe('SessionItem context menu press suppression', () => {
             );
         });
 
-        await act(async () => {
-            vi.advanceTimersByTime(750);
-        });
-
         const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_1' });
         await act(async () => {
             await pressTestInstanceAsync(itemPressable, 'session list item');
         });
 
-        expect(onNativeContextMenuOpenChange).toHaveBeenCalledWith(false);
+        expect(onNativeContextMenuOpenChange).not.toHaveBeenCalledWith(false);
+        expect(navigateToSessionSpy).not.toHaveBeenCalled();
+
+        await act(async () => {
+            vi.advanceTimersByTime(750);
+        });
+
+        await act(async () => {
+            await pressTestInstanceAsync(itemPressable, 'session list item');
+        });
+
         expect(navigateToSessionSpy).toHaveBeenCalledWith('sess_1', undefined);
     });
 
-    it('disables row fallback long-press actions when native inline drag owns long-press', async () => {
+    it('delegates iOS native inline drag context-menu opening to the outer row gesture', async () => {
         vi.useFakeTimers();
 
         const { SessionItem } = await import('./SessionItem');
@@ -239,7 +246,68 @@ describe('SessionItem context menu press suppression', () => {
         );
 
         const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_2' });
+        expect(itemPressable.props.onPressIn).toBeUndefined();
+        expect(itemPressable.props.onPressOut).toBeUndefined();
         expect(itemPressable.props.onLongPress).toBeUndefined();
+        expect(onNativeContextMenuOpenChange).not.toHaveBeenCalled();
+    });
+
+    it('opens the iOS native context menu from a press-in timer before release', async () => {
+        vi.useFakeTimers();
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_press_in',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        const onNativeContextMenuOpenChange = vi.fn();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                nativeInlineDragEnabled={false}
+                nativeContextMenuOpen={false}
+                onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
+            />,
+        );
+
+        const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_press_in' });
+        expect(itemPressable.props.onPressIn).toEqual(expect.any(Function));
+
+        await act(async () => {
+            itemPressable.props.onPressIn();
+            vi.advanceTimersByTime(349);
+        });
+        expect(onNativeContextMenuOpenChange).not.toHaveBeenCalled();
+
+        await act(async () => {
+            vi.advanceTimersByTime(1);
+        });
+        expect(onNativeContextMenuOpenChange).toHaveBeenCalledWith(true);
+
+        await act(async () => {
+            await pressTestInstanceAsync(itemPressable, 'session list item');
+        });
+        expect(navigateToSessionSpy).not.toHaveBeenCalled();
     });
 
     it('adds Android ripple feedback to the session row pressable', async () => {

@@ -28,7 +28,19 @@ export type DropdownMenuItem = Readonly<{
     icon?: React.ReactNode;
     shortcut?: string;
     rightElement?: React.ReactNode;
+    rowContainerStyle?: StyleProp<ViewStyle>;
     disabled?: boolean;
+    submenu?: DropdownMenuSubmenu;
+}>;
+
+export type DropdownMenuSubmenu = Readonly<{
+    items: ReadonlyArray<DropdownMenuItem>;
+    placement?: PopoverPlacement;
+    search?: boolean;
+    searchPlaceholder?: string;
+    emptyLabel?: string | null;
+    maxHeightCap?: number;
+    maxWidthCap?: number;
 }>;
 
 export type DropdownMenuCreateItemDisplay = Readonly<{
@@ -193,6 +205,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const { theme } = useUnistyles();
     const anchorRef = React.useRef<View>(null);
     const resolvedAnchorRef = props.popoverAnchorRef ?? anchorRef;
+    const [activeSubmenu, setActiveSubmenu] = React.useState<{
+        itemId: string;
+        anchorRef: React.RefObject<unknown>;
+    } | null>(null);
 
     const rowVariant: SelectableRowVariant = props.variant ?? 'slim';
     const resolvedTriggerDensity = useResolvedItemDensity(props.itemTrigger?.itemProps?.density);
@@ -218,21 +234,28 @@ export function DropdownMenu(props: DropdownMenuProps) {
     }, [matchTriggerWidth, props.connectToTrigger, requestedPlacement]);
 
     const selectableItems = React.useMemo((): SelectableMenuItem[] => {
-        return props.items.map((item) => ({
-            id: item.id,
-            testID: item.testID,
-            title: item.title,
-            subtitle: item.subtitle,
-            category: item.category,
-            disabled: item.disabled,
-            left: item.icon ?? null,
-            right: item.rightElement
-                ? item.rightElement
-                : item.shortcut
-                    ? <KeyHint label={item.shortcut} />
-                    : null,
-        }));
-    }, [props.items]);
+        return props.items.map((item) => {
+            const hasSubmenu = Boolean(item.submenu && item.submenu.items.length > 0);
+            return {
+                id: item.id,
+                testID: item.testID,
+                title: item.title,
+                subtitle: item.subtitle,
+                category: item.category,
+                disabled: item.disabled,
+                left: item.icon ?? null,
+                rowContainerStyle: item.rowContainerStyle,
+                right: item.rightElement
+                    ? item.rightElement
+                    : hasSubmenu
+                        ? <Ionicons name="chevron-forward" size={16} color={theme.colors.text.secondary} />
+                        : item.shortcut
+                            ? <KeyHint label={item.shortcut} />
+                            : null,
+                hasSubmenu,
+            };
+        });
+    }, [props.items, theme.colors.text.secondary]);
 
     const closeOnSelect = props.closeOnSelect !== false;
     const onRequestClose = React.useCallback(() => props.onOpenChange(false), [props]);
@@ -257,6 +280,18 @@ export function DropdownMenu(props: DropdownMenuProps) {
         schedule(() => props.onOpenChange(true));
     }, [props, schedule]);
     const closeMenu = React.useCallback(() => props.onOpenChange(false), [props]);
+    const isSubmenuAnchorReady = React.useCallback((itemAnchorRef: React.RefObject<unknown>) => {
+        const current = itemAnchorRef.current as { getBoundingClientRect?: () => { width?: number; height?: number } } | null;
+        if (!current) return false;
+        if (Platform.OS !== 'web') return true;
+        if (typeof current.getBoundingClientRect !== 'function') return true;
+        try {
+            const rect = current.getBoundingClientRect();
+            return Number.isFinite(rect?.width) && Number.isFinite(rect?.height) && (rect.width ?? 0) > 0 && (rect.height ?? 0) > 0;
+        } catch {
+            return false;
+        }
+    }, []);
     const toggle = React.useCallback(() => {
         if (props.open) {
             props.onOpenChange(false);
@@ -272,6 +307,15 @@ export function DropdownMenu(props: DropdownMenuProps) {
         if (!found || found.disabled) return null;
         return found;
     }, [props.items, props.selectedId]);
+    const activeSubmenuItem = React.useMemo((): DropdownMenuItem | null => {
+        if (!activeSubmenu) return null;
+        return props.items.find((item) => item.id === activeSubmenu.itemId) ?? null;
+    }, [activeSubmenu, props.items]);
+    React.useEffect(() => {
+        if (!props.open && activeSubmenu) {
+            setActiveSubmenu(null);
+        }
+    }, [activeSubmenu, props.open]);
 
     const triggerNode = React.useMemo(() => {
         if (props.itemTrigger) {
@@ -383,10 +427,49 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 handleCreate();
                 return;
             }
+            if (item.hasSubmenu) return;
             if (closeOnSelect) props.onOpenChange(false);
             props.onSelect(item.id);
         });
     }, [closeOnSelect, handleCreate, handleKeyPress, props]);
+    const handleOpenSubmenu = React.useCallback((itemId: string, itemAnchorRef: React.RefObject<unknown>) => {
+        const item = props.items.find((candidate) => candidate.id === itemId);
+        if (!item?.submenu || item.disabled) return;
+        const openFromAnchor = () => {
+            setActiveSubmenu({ itemId, anchorRef: itemAnchorRef });
+        };
+        if (isSubmenuAnchorReady(itemAnchorRef)) {
+            openFromAnchor();
+            return;
+        }
+        const retryWhenAnchorSettles = (attempt: number) => {
+            if (isSubmenuAnchorReady(itemAnchorRef)) {
+                openFromAnchor();
+                return;
+            }
+            if (attempt >= 10) return;
+            if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(() => retryWhenAnchorSettles(attempt + 1));
+                return;
+            }
+            setTimeout(() => retryWhenAnchorSettles(attempt + 1), 0);
+        };
+        retryWhenAnchorSettles(0);
+    }, [isSubmenuAnchorReady, props.items]);
+    const handlePressMenuItem = React.useCallback((item: SelectableMenuItem) => {
+        if (item.id === CREATE_ITEM_ID) {
+            handleCreate();
+            return;
+        }
+        if (item.hasSubmenu) return;
+        if (closeOnSelect) props.onOpenChange(false);
+        props.onSelect(item.id);
+    }, [closeOnSelect, handleCreate, props]);
+    const handleSubmenuSelect = React.useCallback((itemId: string) => {
+        setActiveSubmenu(null);
+        if (closeOnSelect) props.onOpenChange(false);
+        props.onSelect(itemId);
+    }, [closeOnSelect, props]);
 
     const overlayArrowCfg = React.useMemo((): Omit<Exclude<FloatingOverlayArrow, boolean>, 'placement'> | null => {
         const arrow = props.overlayArrow;
@@ -490,13 +573,9 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                     selectedIndex={selectedIndex}
                                     onSelectionChange={setSelectedIndex}
                                     onPressItem={(item) => {
-                                        if (item.id === CREATE_ITEM_ID) {
-                                            handleCreate();
-                                            return;
-                                        }
-                                        if (closeOnSelect) props.onOpenChange(false);
-                                        props.onSelect(item.id);
+                                        handlePressMenuItem(item);
                                     }}
+                                    onOpenSubmenu={handleOpenSubmenu}
                                     rowVariant={rowVariant}
                                     emptyLabel={emptyLabel}
                                     showCategoryTitles={props.showCategoryTitles ?? false}
@@ -508,6 +587,34 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         </FloatingOverlay>
                     )}
                 </Popover>
+            ) : null}
+            {props.open && activeSubmenu && activeSubmenuItem?.submenu ? (
+                <DropdownMenu
+                    open={true}
+                    onOpenChange={(next) => {
+                        if (!next) setActiveSubmenu(null);
+                    }}
+                    items={activeSubmenuItem.submenu.items}
+                    onSelect={handleSubmenuSelect}
+                    closeOnSelect={false}
+                    trigger={null}
+                    placement={activeSubmenuItem.submenu.placement ?? 'auto-horizontal'}
+                    gap={4}
+                    maxHeightCap={activeSubmenuItem.submenu.maxHeightCap ?? props.maxHeightCap}
+                    maxWidthCap={activeSubmenuItem.submenu.maxWidthCap ?? props.maxWidthCap}
+                    matchTriggerWidth={false}
+                    popoverAnchorRef={activeSubmenu.anchorRef}
+                    popoverBoundaryRef={null}
+                    popoverPortalWebTarget="body"
+                    search={activeSubmenuItem.submenu.search}
+                    searchPlaceholder={activeSubmenuItem.submenu.searchPlaceholder}
+                    emptyLabel={activeSubmenuItem.submenu.emptyLabel}
+                    variant={props.variant}
+                    rowKind={props.rowKind}
+                    itemRowProps={props.itemRowProps}
+                    showCategoryTitles={props.showCategoryTitles}
+                    allowEmptySelection={props.allowEmptySelection}
+                />
             ) : null}
         </View>
     );

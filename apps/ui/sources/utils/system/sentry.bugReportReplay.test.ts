@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sentryInitSpy = vi.fn<(...args: unknown[]) => void>(() => {});
 const sentryCaptureMessageSpy = vi.fn<(...args: unknown[]) => string>(() => 'sentry-test-event-id');
+const sentryAddBreadcrumbSpy = vi.fn<(...args: unknown[]) => void>(() => {});
 const replayFlushSpy = vi.fn<(...args: unknown[]) => Promise<void>>(async () => {});
 
 vi.mock('@sentry/react-native', () => ({
     init: (...args: unknown[]) => sentryInitSpy(...args),
     captureMessage: (...args: unknown[]) => sentryCaptureMessageSpy(...args),
+    addBreadcrumb: (...args: unknown[]) => sentryAddBreadcrumbSpy(...args),
     mobileReplayIntegration: () => ({
         name: 'mobileReplayIntegration',
         flush: (...args: unknown[]) => replayFlushSpy(...args),
@@ -29,6 +31,7 @@ describe('utils/system/sentry (bug report replay)', () => {
     beforeEach(() => {
         sentryInitSpy.mockClear();
         sentryCaptureMessageSpy.mockClear();
+        sentryAddBreadcrumbSpy.mockClear();
         replayFlushSpy.mockClear();
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete (globalThis as any).__HAPPIER_SENTRY_INIT__;
@@ -64,5 +67,28 @@ describe('utils/system/sentry (bug report replay)', () => {
             eventId: 'sentry-test-event-id',
             replayId: 'replay-id-1',
         }));
+    });
+
+    it('adds breadcrumbs when crash reports are enabled', async () => {
+        const sentryModule = await import('./sentry') as typeof import('./sentry') & {
+            addBreadcrumbIfEnabled?: (breadcrumb: Readonly<{
+                category: string;
+                level: 'info';
+                data: Record<string, unknown>;
+            }>) => void;
+        };
+
+        sentryModule.addBreadcrumbIfEnabled?.({
+            category: 'theme.runtime',
+            level: 'info',
+            data: { phase: 'update-visual-theme' },
+        });
+
+        expect(sentryInitSpy).toHaveBeenCalledTimes(1);
+        expect(sentryAddBreadcrumbSpy).toHaveBeenCalledWith({
+            category: 'theme.runtime',
+            level: 'info',
+            data: { phase: 'update-visual-theme' },
+        });
     });
 });

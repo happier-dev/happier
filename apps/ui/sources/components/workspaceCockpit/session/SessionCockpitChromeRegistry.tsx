@@ -7,7 +7,6 @@ export type SessionCockpitChromeRegistration = Readonly<{
     activeSurface: SessionMobileSurface;
     terminalTabAvailable: boolean;
     switchSurface: (surface: SessionMobileSurface) => void;
-    closeCockpit: () => void;
 }>;
 
 type SessionCockpitChromeRegistryContextValue = Readonly<{
@@ -47,9 +46,6 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                 terminalTabAvailable: nextRegistration.terminalTabAvailable,
                 switchSurface: (surface) => {
                     latestRegistrationRef.current?.switchSurface(surface);
-                },
-                closeCockpit: () => {
-                    latestRegistrationRef.current?.closeCockpit();
                 },
             };
         });
