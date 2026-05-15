@@ -12,6 +12,8 @@ import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv"
 import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
 import { reserveNextPendingQueuePosition } from "@/app/session/pending/reserveNextPendingQueuePosition";
+import { resolveSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
+import { isDeepStrictEqual } from "node:util";
 
 type ParticipantCursor = SessionParticipantCursor;
 
@@ -37,6 +39,7 @@ export async function listPendingMessages(params: {
 
     const select = {
         localId: true,
+        messageRole: true,
         content: true,
         status: true,
         position: true,
@@ -92,6 +95,7 @@ export async function enqueuePendingMessage(params: {
     actorUserId: string;
     sessionId: string;
     localId: string;
+    messageRole?: unknown;
 } & (
     | Readonly<{ ciphertext: string; content?: never }>
     | Readonly<{ content: PrismaJson.SessionPendingMessageContent; ciphertext?: never }>
@@ -119,6 +123,15 @@ export async function enqueuePendingMessage(params: {
             if (!session) return { ok: false, error: "session-not-found" } as const;
 
             const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+            const messageRole = resolveSessionMessageRole({
+                content,
+                suppliedRole: params.messageRole,
+                telemetry: {
+                    sessionId,
+                    storageMode: sessionEncryptionMode,
+                    source: "pending-message",
+                },
+            }).messageRole;
             const writeKind: SessionStoredContentKind = content.t === "plain" ? "plain" : "encrypted";
             const policy = readEncryptionFeatureEnv(process.env);
             if (!isStoredContentKindAllowedForSessionByStoragePolicy(policy.storagePolicy, sessionEncryptionMode, writeKind)) {
@@ -137,6 +150,7 @@ export async function enqueuePendingMessage(params: {
                 where: { sessionId_localId: { sessionId, localId } },
                 select: {
                     localId: true,
+                    messageRole: true,
                     content: true,
                     status: true,
                     position: true,
@@ -148,10 +162,28 @@ export async function enqueuePendingMessage(params: {
                 },
             });
             if (existing) {
+                const pending = existing.messageRole === null && messageRole !== null && isDeepStrictEqual(existing.content, content)
+                    ? await tx.sessionPendingMessage.update({
+                        where: { sessionId_localId: { sessionId, localId } },
+                        data: { messageRole },
+                        select: {
+                            localId: true,
+                            messageRole: true,
+                            content: true,
+                            status: true,
+                            position: true,
+                            createdAt: true,
+                            updatedAt: true,
+                            discardedAt: true,
+                            discardedReason: true,
+                            authorAccountId: true,
+                        },
+                    })
+                    : existing;
                 return {
                     ok: true,
                     didWrite: false,
-                    pending: mapPendingMessageRow(existing),
+                    pending: mapPendingMessageRow(pending),
                     pendingCount: session.pendingCount ?? 0,
                     pendingVersion: session.pendingVersion ?? 0,
                     badgeAttentionChanged: false,
@@ -165,6 +197,7 @@ export async function enqueuePendingMessage(params: {
                 data: {
                     sessionId,
                     localId,
+                    messageRole,
                     content,
                     status: "queued",
                     position,
@@ -172,6 +205,7 @@ export async function enqueuePendingMessage(params: {
                 },
                 select: {
                     localId: true,
+                    messageRole: true,
                     content: true,
                     status: true,
                     position: true,
@@ -212,6 +246,7 @@ export async function updatePendingMessage(params: {
     actorUserId: string;
     sessionId: string;
     localId: string;
+    messageRole?: unknown;
 } & (
     | Readonly<{ ciphertext: string; content?: never }>
     | Readonly<{ content: PrismaJson.SessionPendingMessageContent; ciphertext?: never }>
@@ -239,6 +274,15 @@ export async function updatePendingMessage(params: {
             if (!session) return { ok: false, error: "session-not-found" } as const;
 
             const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+            const messageRole = resolveSessionMessageRole({
+                content,
+                suppliedRole: params.messageRole,
+                telemetry: {
+                    sessionId,
+                    storageMode: sessionEncryptionMode,
+                    source: "pending-message",
+                },
+            }).messageRole;
             const writeKind: SessionStoredContentKind = content.t === "plain" ? "plain" : "encrypted";
             const policy = readEncryptionFeatureEnv(process.env);
             if (!isStoredContentKindAllowedForSessionByStoragePolicy(policy.storagePolicy, sessionEncryptionMode, writeKind)) {
@@ -261,7 +305,7 @@ export async function updatePendingMessage(params: {
 
             await tx.sessionPendingMessage.update({
                 where: { sessionId_localId: { sessionId, localId } },
-                data: { content },
+                data: { content, messageRole },
             });
 
             const { pendingVersion, pendingCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({

@@ -3,7 +3,8 @@ import { z } from "zod";
 
 import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
 import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@/app/monitoring/metrics/index";
-import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
+import { SessionMessageRoleSchema, SessionStoredMessageContentSchema, type SessionMessageRole } from "@happier-dev/protocol";
+import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
 import { checkSessionAccess } from "@/app/share/accessControl";
@@ -14,6 +15,38 @@ import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAcco
 import { type Fastify } from "../../types";
 
 type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
+
+function parseSessionMessageRoleCsv(value: unknown): { ok: true; roles: string[] } | { ok: false } {
+    if (typeof value !== "string") return { ok: false };
+    const roles = value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    return roles.length > 0 ? { ok: true, roles } : { ok: false };
+}
+
+function resolveRequestedMessageRoles(query: Readonly<{ role?: unknown; roles?: unknown }> | undefined): { ok: true; roles: SessionMessageRole[] } | { ok: false } {
+    if (!query || (query.role === undefined && query.roles === undefined)) return { ok: true, roles: [] };
+    if (Array.isArray(query.role) || Array.isArray(query.roles)) return { ok: false };
+
+    const roles: SessionMessageRole[] = [];
+    if (query.role !== undefined) {
+        const parsed = SessionMessageRoleSchema.safeParse(query.role);
+        if (!parsed.success) return { ok: false };
+        roles.push(parsed.data);
+    }
+    if (query.roles !== undefined) {
+        const parsedCsv = parseSessionMessageRoleCsv(query.roles);
+        if (!parsedCsv.ok) return { ok: false };
+        for (const rawRole of parsedCsv.roles) {
+            const parsed = SessionMessageRoleSchema.safeParse(rawRole);
+            if (!parsed.success) return { ok: false };
+            roles.push(parsed.data);
+        }
+    }
+
+    return { ok: true, roles: Array.from(new Set(roles)) };
+}
 
 export function registerSessionMessageRoutes(app: Fastify) {
     app.get('/v2/sessions/:sessionId/messages/by-local-id/:localId', {
@@ -29,6 +62,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                         seq: z.number().int().min(0),
                         localId: z.string().nullable(),
                         sidechainId: z.string().nullable().optional(),
+                        messageRole: SessionMessageRoleSchema.nullable().optional(),
                         content: SessionStoredMessageContentSchema,
                         createdAt: z.number().int().min(0),
                         updatedAt: z.number().int().min(0),
@@ -57,6 +91,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 seq: true,
                 localId: true,
                 sidechainId: true,
+                messageRole: true,
                 content: true,
                 createdAt: true,
                 updatedAt: true,
@@ -66,12 +101,14 @@ export function registerSessionMessageRoutes(app: Fastify) {
             return reply.code(404).send({ error: 'Message not found' });
         }
 
+        const messageRole = parseSessionMessageRole(row.messageRole);
         return reply.send({
             message: {
                 id: row.id,
                 seq: row.seq,
                 localId: row.localId,
                 ...(typeof row.sidechainId === "string" && row.sidechainId ? { sidechainId: row.sidechainId } : {}),
+                ...(messageRole ? { messageRole } : {}),
                 content: row.content,
                 createdAt: row.createdAt.getTime(),
                 updatedAt: row.updatedAt.getTime(),
@@ -90,6 +127,8 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 limit: z.coerce.number().int().min(1).max(500).default(150),
                 beforeSeq: z.coerce.number().int().min(1).optional(),
                 afterSeq: z.coerce.number().int().min(0).optional(),
+                role: SessionMessageRoleSchema.optional(),
+                roles: z.string().optional(),
             }).superRefine((value, ctx) => {
                 if (value.beforeSeq !== undefined && value.afterSeq !== undefined) {
                     ctx.addIssue({
@@ -119,9 +158,16 @@ export function registerSessionMessageRoutes(app: Fastify) {
                   limit?: number;
                   beforeSeq?: number;
                   afterSeq?: number;
+                  role?: unknown;
+                  roles?: unknown;
               }>
             | undefined;
         const { limit = 150, beforeSeq, afterSeq } = query ?? {};
+        const parsedRoles = resolveRequestedMessageRoles(query);
+        if (!parsedRoles.ok) {
+            return reply.code(400).send({ error: "Invalid parameters", code: "invalid-role" });
+        }
+        const roles = parsedRoles.roles;
 
         const scope = (() => {
             const raw = query?.scope;
@@ -148,6 +194,8 @@ export function registerSessionMessageRoutes(app: Fastify) {
         const where: Prisma.SessionMessageWhereInput = { sessionId };
         if (scope === "main") where.sidechainId = null;
         if (scope === "sidechain") where.sidechainId = sidechainId;
+        if (roles.length === 1) where.messageRole = roles[0];
+        if (roles.length > 1) where.messageRole = { in: roles };
         if (beforeSeq !== undefined) {
             where.seq = { lt: beforeSeq };
         }
@@ -164,6 +212,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 seq: true,
                 localId: true,
                 sidechainId: true,
+                messageRole: true,
                 content: true,
                 createdAt: true,
                 updatedAt: true
@@ -196,6 +245,10 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 content: v.content,
                 localId: v.localId,
                 ...(typeof v.sidechainId === "string" && v.sidechainId ? { sidechainId: v.sidechainId } : {}),
+                ...(() => {
+                    const messageRole = parseSessionMessageRole(v.messageRole);
+                    return messageRole ? { messageRole } : {};
+                })(),
                 createdAt: v.createdAt.getTime(),
                 updatedAt: v.updatedAt.getTime()
             })),
@@ -216,11 +269,13 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     ciphertext: z.string().min(1),
                     localId: z.string().optional(),
                     sidechainId: z.string().min(1).nullable().optional(),
+                    messageRole: z.unknown().optional(),
                 }),
                 z.object({
                     content: SessionStoredMessageContentSchema,
                     localId: z.string().optional(),
                     sidechainId: z.string().min(1).nullable().optional(),
+                    messageRole: z.unknown().optional(),
                 }),
             ]),
             response: {
@@ -245,7 +300,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
-        const body = request.body as Readonly<{ localId?: string; sidechainId?: string | null } & ({ ciphertext: string } | { content: SessionStoredMessageContent })>;
+        const body = request.body as Readonly<{ localId?: string; sidechainId?: string | null; messageRole?: unknown } & ({ ciphertext: string } | { content: SessionStoredMessageContent })>;
         const localId = typeof body.localId === "string" ? body.localId : undefined;
         const parsedSidechainId = parseSessionMessageSidechainId(body.sidechainId, { emptyString: "invalid" });
         if (!parsedSidechainId.ok) {
@@ -271,6 +326,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                       content: body.content,
                       localId: effectiveLocalId,
                       sidechainId,
+                      messageRole: body.messageRole,
                   })
                 : await createSessionMessage({
                       actorUserId: userId,
@@ -278,6 +334,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                       ciphertext: body.ciphertext,
                       localId: effectiveLocalId,
                       sidechainId,
+                      messageRole: body.messageRole,
                   });
 
         if (!result.ok) {

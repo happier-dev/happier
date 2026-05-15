@@ -1,11 +1,12 @@
 import { AccountProfile } from "@/types";
 import { getPublicUrl } from "@/storage/blob/files";
 import { type UpdatePayload, type EphemeralPayload } from "./eventPayloadTypes";
-import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from "@happier-dev/protocol";
+import type { PrimaryTurnStatusV1, SessionMessageRole, SessionRuntimeIssueV1 } from "@happier-dev/protocol";
 
 type UpdateMessagePayloadInput = Readonly<{
     id: string;
     seq: number;
+    messageRole?: SessionMessageRole | null;
     content: any;
     localId: string | null;
     sidechainId?: string | null;
@@ -19,6 +20,7 @@ function serializeUpdateMessage(message: UpdateMessagePayloadInput) {
         seq: message.seq,
         content: message.content,
         localId: message.localId,
+        ...(typeof message.messageRole === "string" ? { messageRole: message.messageRole } : {}),
         ...(typeof message.sidechainId === "string" && message.sidechainId ? { sidechainId: message.sidechainId } : {}),
         createdAt: message.createdAt.getTime(),
         updatedAt: message.updatedAt.getTime(),

@@ -80,6 +80,7 @@ describe("materializeNextPendingMessage badgeAttentionChanged", () => {
         txSessionPendingMessageFindFirst.mockResolvedValue({
             localId: "l1",
             status: "queued",
+            messageRole: "user",
             content: { t: "encrypted", c: "ciphertext" },
         });
         txSessionMessageFindFirst.mockResolvedValue(null);
@@ -88,6 +89,7 @@ describe("materializeNextPendingMessage badgeAttentionChanged", () => {
             id: "m1",
             seq: 1,
             localId: "l1",
+            messageRole: "user",
             content: { t: "encrypted", c: "ciphertext" },
             createdAt: new Date("2026-03-16T00:00:00.000Z"),
             updatedAt: new Date("2026-03-16T00:00:00.000Z"),
@@ -124,6 +126,16 @@ describe("materializeNextPendingMessage badgeAttentionChanged", () => {
             ok: true,
             didMaterialize: true,
             badgeAttentionChanged: true,
+            message: {
+                messageRole: "user",
+            },
         });
+        expect(txSessionMessageCreate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    messageRole: "user",
+                }),
+            }),
+        );
     });
 });

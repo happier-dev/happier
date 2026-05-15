@@ -36,6 +36,7 @@ describe("monitoring/metrics/index", () => {
         expect(register.getSingleMetric("presence_stream_redis_pending_refresh_failures_total")).toBeTruthy();
         expect(register.getSingleMetric("presence_flush_retries_total")).toBeTruthy();
         expect(register.getSingleMetric("session_write_create_message_duration_seconds")).toBeTruthy();
+        expect(register.getSingleMetric("session_message_role_mismatch_total")).toBeTruthy();
         expect(register.getSingleMetric("database_transaction_retries_total")).toBeTruthy();
         expect(register.getSingleMetric("session_scoped_binding_duration_seconds")).toBeTruthy();
         expect(register.getSingleMetric("runtime_event_loop_lag_seconds")).toBeTruthy();

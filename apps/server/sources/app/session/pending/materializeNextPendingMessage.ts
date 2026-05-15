@@ -4,8 +4,9 @@ import { resolveSessionPendingOwnerAccess } from "@/app/session/pending/resolveS
 import { inTx, type Tx } from "@/storage/inTx";
 import { db } from "@/storage/db";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
+import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionMessageRole, type SessionStoredContentKind } from "@happier-dev/protocol";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
+import { parseSessionMessageRole, resolveSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 
 type ParticipantCursor = SessionParticipantCursor;
 
@@ -18,7 +19,7 @@ export type MaterializeNextPendingMessageResult =
         ok: true;
         didMaterialize: true;
         didWriteMessage: boolean;
-        message: { id: string; seq: number; localId: string; content: PrismaJson.SessionMessageContent; createdAt: Date; updatedAt: Date };
+        message: { id: string; seq: number; localId: string; messageRole: SessionMessageRole | null; content: PrismaJson.SessionMessageContent; createdAt: Date; updatedAt: Date };
         participantCursorsMessage: ParticipantCursor[];
         participantCursorsPending: ParticipantCursor[];
         pendingCount: number;
@@ -34,27 +35,37 @@ function toSessionMessageContentFromPending(content: PrismaJson.SessionPendingMe
 async function createSessionMessageFromPending(tx: Tx, params: {
     sessionId: string;
     localId: string;
+    messageRole: SessionMessageRole | null;
     content: PrismaJson.SessionMessageContent;
 }): Promise<{
     didWrite: boolean;
-    message: { id: string; seq: number; localId: string; content: PrismaJson.SessionMessageContent; createdAt: Date; updatedAt: Date };
+    message: { id: string; seq: number; localId: string; messageRole: SessionMessageRole | null; content: PrismaJson.SessionMessageContent; createdAt: Date; updatedAt: Date };
 }> {
-    const { sessionId, localId, content } = params;
+    const { sessionId, localId, messageRole, content } = params;
 
     const existing = await tx.sessionMessage.findFirst({
         where: { sessionId, localId },
-        select: { id: true, seq: true, localId: true, content: true, createdAt: true, updatedAt: true },
+        select: { id: true, seq: true, localId: true, messageRole: true, content: true, createdAt: true, updatedAt: true },
     });
     if (existing && existing.localId) {
+        const row = existing.messageRole === null && messageRole !== null
+            ? await tx.sessionMessage.update({
+                where: { id: existing.id },
+                data: { messageRole },
+                select: { id: true, seq: true, localId: true, messageRole: true, content: true, createdAt: true, updatedAt: true },
+            })
+            : existing;
+
         return {
             didWrite: false,
             message: {
-                id: existing.id,
-                seq: existing.seq,
-                localId: existing.localId,
-                content: existing.content as PrismaJson.SessionMessageContent,
-                createdAt: existing.createdAt,
-                updatedAt: existing.updatedAt,
+                id: row.id,
+                seq: row.seq,
+                localId,
+                messageRole: parseSessionMessageRole(row.messageRole),
+                content: row.content as PrismaJson.SessionMessageContent,
+                createdAt: row.createdAt,
+                updatedAt: row.updatedAt,
             },
         };
     }
@@ -71,8 +82,9 @@ async function createSessionMessageFromPending(tx: Tx, params: {
             seq: next.seq,
             content,
             localId,
+            messageRole,
         },
-        select: { id: true, seq: true, localId: true, content: true, createdAt: true, updatedAt: true },
+        select: { id: true, seq: true, localId: true, messageRole: true, content: true, createdAt: true, updatedAt: true },
     });
 
     return {
@@ -81,6 +93,7 @@ async function createSessionMessageFromPending(tx: Tx, params: {
             id: created.id,
             seq: created.seq,
             localId: created.localId!,
+            messageRole: parseSessionMessageRole(created.messageRole),
             content: created.content as PrismaJson.SessionMessageContent,
             createdAt: created.createdAt,
             updatedAt: created.updatedAt,
@@ -148,7 +161,7 @@ export async function materializeNextPendingMessage(params: {
             const nextPending = await tx.sessionPendingMessage.findFirst({
                 where: { sessionId, status: "queued" },
                 orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
-                select: { localId: true, content: true, status: true },
+                select: { localId: true, messageRole: true, content: true, status: true },
             });
 
             if (!nextPending) {
@@ -157,13 +170,22 @@ export async function materializeNextPendingMessage(params: {
 
             const localId = nextPending.localId;
             const content = toSessionMessageContentFromPending(nextPending.content as PrismaJson.SessionPendingMessageContent);
+            const messageRole = resolveSessionMessageRole({
+                content,
+                suppliedRole: nextPending.messageRole,
+                telemetry: {
+                    sessionId,
+                    storageMode: sessionEncryptionMode,
+                    source: "pending-materialization",
+                },
+            }).messageRole;
 
             const writeKind: SessionStoredContentKind = content.t === "plain" ? "plain" : "encrypted";
             if (!isStoredContentKindAllowedForSessionByStoragePolicy(policy.storagePolicy, sessionEncryptionMode, writeKind)) {
                 return { ok: false, error: "invalid-params" } as const;
             }
 
-            const created = await createSessionMessageFromPending(tx, { sessionId, localId, content });
+            const created = await createSessionMessageFromPending(tx, { sessionId, localId, messageRole, content });
 
             await tx.sessionPendingMessage.delete({
                 where: { sessionId_localId: { sessionId, localId } },

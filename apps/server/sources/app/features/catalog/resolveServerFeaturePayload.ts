@@ -82,6 +82,7 @@ export function resolveServerFeaturePayload(
             },
         }));
     }
+    Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, { session: { messages: { role: true } } }));
 
     const parsedFeatureGates = FeatureGatesSchema.safeParse(mergedFeatures);
     if (!parsedFeatureGates.success) {

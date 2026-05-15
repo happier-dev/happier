@@ -22,6 +22,7 @@ describe("eventRouter payloads (protocol container)", () => {
                 seq: 1,
                 localId: "l1",
                 sidechainId: null,
+                messageRole: "user",
                 content: { t: "encrypted", c: "abc" },
                 createdAt: new Date(1),
                 updatedAt: new Date(1),
@@ -34,6 +35,7 @@ describe("eventRouter payloads (protocol container)", () => {
         expect(UpdateContainerSchema.safeParse(payload).success).toBe(true);
         expect((payload.body as any).sid).toBe("s1");
         expect((payload.body as any).id).toBe("s1");
+        expect((payload.body as any).message.messageRole).toBe("user");
         expect(Object.prototype.hasOwnProperty.call((payload.body as any).message ?? {}, "sidechainId")).toBe(false);
     });
 

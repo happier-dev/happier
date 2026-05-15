@@ -10,6 +10,7 @@ import {
     PrimaryTurnStatusV1Schema,
     SessionRuntimeIssueV1Schema,
     type PrimaryTurnStatusV1,
+    type SessionMessageRole,
     type SessionRuntimeIssueV1,
     type SessionStoredContentKind,
 } from "@happier-dev/protocol";
@@ -22,21 +23,41 @@ import {
     type SessionReadCursorOperation,
     type SessionReadCursorReadState,
 } from "./readCursor/resolveSessionReadCursorOperation";
+import { parseSessionMessageRole, resolveSessionMessageRole } from "./messageRole/resolveSessionMessageRole";
 
 type ParticipantCursor = SessionParticipantCursor;
 type RuntimeIssueSummaryV1 = Readonly<{
     latestTurnStatus: PrimaryTurnStatusV1;
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
 }>;
-type SessionMessageRow = Readonly<{
+type SessionMessageWriteRow = {
     id: string;
     seq: number;
     localId: string | null;
     sidechainId: string | null;
+    messageRole: SessionMessageRole | null;
     content: PrismaJson.SessionMessageContent;
     createdAt: Date;
     updatedAt: Date;
-}>;
+};
+
+const SESSION_MESSAGE_WRITE_SELECT = {
+    id: true,
+    seq: true,
+    localId: true,
+    sidechainId: true,
+    messageRole: true,
+    content: true,
+    createdAt: true,
+    updatedAt: true,
+} as const;
+
+function toSessionMessageWriteRow(row: Omit<SessionMessageWriteRow, "messageRole"> & { messageRole: unknown }): SessionMessageWriteRow {
+    return {
+        ...row,
+        messageRole: parseSessionMessageRole(row.messageRole),
+    };
+}
 
 function selectSessionActivityBadgeInputs() {
     return {
@@ -179,15 +200,7 @@ export type CreateSessionMessageResult =
         didWrite: true;
         didUpdate: false;
         badgeAttentionChanged: boolean;
-        message: {
-            id: string;
-            seq: number;
-            localId: string | null;
-            sidechainId: string | null;
-            content: PrismaJson.SessionMessageContent;
-            createdAt: Date;
-            updatedAt: Date;
-        };
+        message: SessionMessageWriteRow;
         participantCursors: ParticipantCursor[];
       }
     | {
@@ -195,15 +208,7 @@ export type CreateSessionMessageResult =
         didWrite: false;
         didUpdate: true;
         badgeAttentionChanged: boolean;
-        message: {
-            id: string;
-            seq: number;
-            localId: string | null;
-            sidechainId: string | null;
-            content: PrismaJson.SessionMessageContent;
-            createdAt: Date;
-            updatedAt: Date;
-        };
+        message: SessionMessageWriteRow;
         participantCursors: ParticipantCursor[];
       }
     | {
@@ -211,15 +216,7 @@ export type CreateSessionMessageResult =
         didWrite: false;
         didUpdate: false;
         badgeAttentionChanged: false;
-        message: {
-            id: string;
-            seq: number;
-            localId: string | null;
-            sidechainId: string | null;
-            content: PrismaJson.SessionMessageContent;
-            createdAt: Date;
-            updatedAt: Date;
-        };
+        message: SessionMessageWriteRow;
         participantCursors: [];
       }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: EncryptionPolicyRejectionCode };
@@ -229,6 +226,7 @@ type CreateSessionMessageParamsBase = Readonly<{
     sessionId: string;
     localId?: string | null;
     sidechainId?: string | null;
+    messageRole?: unknown;
 }>;
 
 export async function createSessionMessage(
@@ -262,6 +260,17 @@ export async function createSessionMessage(
         return { ok: false, error: "invalid-params" };
     }
 
+    const resolveRoleForStorageMode = (storageMode: "e2ee" | "plain") =>
+        resolveSessionMessageRole({
+            content,
+            suppliedRole: params.messageRole,
+            telemetry: {
+                sessionId,
+                storageMode,
+                source: "session-message",
+            },
+        }).messageRole;
+
     try {
         return await inTx(async (tx) => {
             const accessStartedAt = Date.now();
@@ -279,6 +288,7 @@ export async function createSessionMessage(
                 });
                 return { ok: false, error: access.error };
             }
+            const resolvedRole = resolveRoleForStorageMode(access.sessionEncryptionMode);
 
             const encryptionPolicy = readEncryptionFeatureEnv(process.env);
             const writeKind: SessionStoredContentKind = content.t === "plain" ? "plain" : "encrypted";
@@ -315,8 +325,9 @@ export async function createSessionMessage(
                     content,
                     localId,
                     sidechainId,
+                    messageRole: resolvedRole,
                 },
-                select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
+                select: SESSION_MESSAGE_WRITE_SELECT,
             });
             observeCreateSessionMessageStage({
                 stage: "persist",
@@ -356,7 +367,7 @@ export async function createSessionMessage(
                 didWrite: true,
                 didUpdate: false,
                 badgeAttentionChanged,
-                message: created,
+                message: toSessionMessageWriteRow(created),
                 participantCursors,
             };
         }, { isolationLevel: "ReadCommitted" });
@@ -381,9 +392,10 @@ export async function createSessionMessage(
                 });
                 return { ok: false, error: access.error };
             }
+            const resolvedRole = resolveRoleForStorageMode(access.sessionEncryptionMode);
             const existing = await db.sessionMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId } },
-                select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
+                select: SESSION_MESSAGE_WRITE_SELECT,
             });
             if (existing) {
                 if ((existing.sidechainId ?? null) !== sidechainId) {
@@ -396,12 +408,49 @@ export async function createSessionMessage(
                 }
 
                 if (isDeepStrictEqual(existing.content, content)) {
+                    if (existing.messageRole === null && resolvedRole !== null) {
+                        try {
+                            return await inTx(async (tx) => {
+                                const duplicateRoleUpdateStartedAt = Date.now();
+                                const updatedRole = await tx.sessionMessage.update({
+                                    where: { id: existing.id },
+                                    data: { messageRole: resolvedRole },
+                                    select: SESSION_MESSAGE_WRITE_SELECT,
+                                });
+                                observeCreateSessionMessageStage({
+                                    stage: "persist",
+                                    durationMs: Date.now() - duplicateRoleUpdateStartedAt,
+                                    result: "ok",
+                                });
+                                observeCreateSessionMessageStage({
+                                    stage: "total",
+                                    durationMs: Date.now() - totalStartedAt,
+                                    result: "ok",
+                                });
+                                return {
+                                    ok: true,
+                                    didWrite: false,
+                                    didUpdate: false,
+                                    badgeAttentionChanged: false,
+                                    message: toSessionMessageWriteRow(updatedRole),
+                                    participantCursors: [],
+                                };
+                            }, { isolationLevel: "ReadCommitted" });
+                        } catch {
+                            observeCreateSessionMessageStage({
+                                stage: "total",
+                                durationMs: Date.now() - totalStartedAt,
+                                result: "error",
+                            });
+                            return { ok: false, error: "internal" };
+                        }
+                    }
                     observeCreateSessionMessageStage({
                         stage: "total",
                         durationMs: Date.now() - totalStartedAt,
                         result: "ok",
                     });
-                    return { ok: true, didWrite: false, didUpdate: false, badgeAttentionChanged: false, message: existing, participantCursors: [] };
+                    return { ok: true, didWrite: false, didUpdate: false, badgeAttentionChanged: false, message: toSessionMessageWriteRow(existing), participantCursors: [] };
                 }
 
                 try {
@@ -409,8 +458,8 @@ export async function createSessionMessage(
                         const duplicateUpdateStartedAt = Date.now();
                         const updated = await tx.sessionMessage.update({
                             where: { id: existing.id },
-                            data: { content, sidechainId },
-                            select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
+                            data: { content, sidechainId, messageRole: resolvedRole },
+                            select: SESSION_MESSAGE_WRITE_SELECT,
                         });
                         observeCreateSessionMessageStage({
                             stage: "persist",
@@ -442,7 +491,7 @@ export async function createSessionMessage(
                             didWrite: false,
                             didUpdate: true,
                             badgeAttentionChanged: false,
-                            message: updated,
+                            message: toSessionMessageWriteRow(updated),
                             participantCursors,
                         };
                     }, { isolationLevel: "ReadCommitted" });

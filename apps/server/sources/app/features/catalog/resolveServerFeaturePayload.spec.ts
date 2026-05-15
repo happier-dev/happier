@@ -185,6 +185,12 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(2 * 1024 * 1024 * 1024);
     });
 
+    it("advertises indexed session message role query support", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveSessionHandoffFeature]);
+
+        expect(payload.capabilities.session.messages.role).toBe(true);
+    });
+
     it("enables session folders by default so the UI toggle can appear", async () => {
         const mod = await loadSessionFoldersFeatureModule();
         expect(mod?.resolveSessionFoldersFeature).toBeTypeOf("function");

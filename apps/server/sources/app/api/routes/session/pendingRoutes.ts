@@ -23,6 +23,7 @@ type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSch
 function toPendingJson(row: PendingMessageRow) {
     return {
         localId: row.localId,
+        ...(typeof row.messageRole === "string" ? { messageRole: row.messageRole } : {}),
         content: row.content,
         status: row.status,
         position: row.position,
@@ -134,10 +135,12 @@ export function sessionPendingRoutes(app: Fastify) {
                     z.object({
                         ciphertext: z.string().min(1),
                         localId: z.string().min(1),
+                        messageRole: z.unknown().optional(),
                     }),
                     z.object({
                         content: SessionStoredMessageContentSchema,
                         localId: z.string().min(1),
+                        messageRole: z.unknown().optional(),
                     }),
                 ]),
             },
@@ -157,6 +160,10 @@ export function sessionPendingRoutes(app: Fastify) {
                 body && typeof body === "object" && "content" in body
                     ? ((body as { content: SessionStoredMessageContent }).content ?? null)
                     : null;
+            const messageRole =
+                body && typeof body === "object" && "messageRole" in body
+                    ? (body as { messageRole?: unknown }).messageRole
+                    : null;
 
             const res = await (content
                 ? enqueuePendingMessage({
@@ -164,12 +171,14 @@ export function sessionPendingRoutes(app: Fastify) {
                       sessionId,
                       localId,
                       content,
+                      messageRole,
                   })
                 : enqueuePendingMessage({
                       actorUserId: request.userId,
                       sessionId,
                       localId,
                       ciphertext: ciphertext ?? "",
+                      messageRole,
                   }));
 
             if (!res.ok) {
@@ -212,8 +221,8 @@ export function sessionPendingRoutes(app: Fastify) {
             schema: {
                 params: z.object({ sessionId: z.string(), localId: z.string() }),
                 body: z.union([
-                    z.object({ ciphertext: z.string().min(1) }),
-                    z.object({ content: SessionStoredMessageContentSchema }),
+                    z.object({ ciphertext: z.string().min(1), messageRole: z.unknown().optional() }),
+                    z.object({ content: SessionStoredMessageContentSchema, messageRole: z.unknown().optional() }),
                 ]),
             },
         },
@@ -228,10 +237,14 @@ export function sessionPendingRoutes(app: Fastify) {
                 body && typeof body === "object" && "content" in body
                     ? ((body as { content: SessionStoredMessageContent }).content ?? null)
                     : null;
+            const messageRole =
+                body && typeof body === "object" && "messageRole" in body
+                    ? (body as { messageRole?: unknown }).messageRole
+                    : null;
 
             const res = await (content
-                ? updatePendingMessage({ actorUserId: request.userId, sessionId, localId, content })
-                : updatePendingMessage({ actorUserId: request.userId, sessionId, localId, ciphertext: ciphertext ?? "" }));
+                ? updatePendingMessage({ actorUserId: request.userId, sessionId, localId, content, messageRole })
+                : updatePendingMessage({ actorUserId: request.userId, sessionId, localId, ciphertext: ciphertext ?? "", messageRole }));
             if (!res.ok) {
                 if (res.error === "invalid-params") {
                     const payload: { error: string; code?: string } = { error: res.error };
@@ -455,7 +468,12 @@ export function sessionPendingRoutes(app: Fastify) {
                 ok: true,
                 didMaterialize: true,
                 didWriteMessage: res.didWriteMessage,
-                message: { id: res.message.id, seq: res.message.seq, localId: res.message.localId },
+                message: {
+                    id: res.message.id,
+                    seq: res.message.seq,
+                    localId: res.message.localId,
+                    ...(typeof res.message.messageRole === "string" ? { messageRole: res.message.messageRole } : {}),
+                },
             });
         },
     );

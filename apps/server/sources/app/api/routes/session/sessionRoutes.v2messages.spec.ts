@@ -133,6 +133,78 @@ describe("sessionRoutes v2 messages", () => {
         });
     });
 
+    it("forwards messageRole to the message write service when provided", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        createSessionMessage.mockResolvedValue({
+            ok: true,
+            didWrite: true,
+            didUpdate: false,
+            message: {
+                id: "m1",
+                seq: 10,
+                localId: "l1",
+                sidechainId: null,
+                messageRole: "user",
+                content: { t: "encrypted", c: "c" },
+                createdAt,
+                updatedAt: createdAt,
+            },
+            participantCursors: [],
+        });
+
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/messages");
+        await route.invoke({
+            params: { sessionId: "s1" },
+            headers: {},
+            body: { ciphertext: "cipher", localId: "l1", messageRole: "user" },
+        });
+
+        expect(createSessionMessage).toHaveBeenCalledWith({
+            actorUserId: "u1",
+            sessionId: "s1",
+            ciphertext: "cipher",
+            localId: "l1",
+            sidechainId: null,
+            messageRole: "user",
+        });
+    });
+
+    it("forwards unsupported messageRole metadata without rejecting the write", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        createSessionMessage.mockResolvedValue({
+            ok: true,
+            didWrite: true,
+            didUpdate: false,
+            message: {
+                id: "m1",
+                seq: 10,
+                localId: "l1",
+                sidechainId: null,
+                messageRole: null,
+                content: { t: "encrypted", c: "c" },
+                createdAt,
+                updatedAt: createdAt,
+            },
+            participantCursors: [],
+        });
+
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/messages");
+        const { reply } = await route.invoke({
+            params: { sessionId: "s1" },
+            headers: {},
+            body: { ciphertext: "cipher", localId: "l1", messageRole: "future-role" },
+        });
+
+        expect(reply.code).not.toHaveBeenCalledWith(400);
+        expect(createSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+            actorUserId: "u1",
+            sessionId: "s1",
+            ciphertext: "cipher",
+            localId: "l1",
+            messageRole: "future-role",
+        }));
+    });
+
     it("emits message-updated when the service updates an existing message row", async () => {
         const createdAt = new Date("2020-01-01T00:00:00.000Z");
         const updatedAt = new Date("2020-01-01T00:00:01.000Z");

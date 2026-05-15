@@ -20,6 +20,13 @@ export const databaseTransactionRetriesCounter = new Counter({
     registers: [register],
 });
 
+export const sessionMessageRoleMismatchCounter = new Counter({
+    name: "session_message_role_mismatch_total",
+    help: "Total session message role mismatches between supplied metadata and derived plaintext content",
+    labelNames: ["supplied_role", "derived_role", "final_role", "content_kind", "storage_mode", "source"] as const,
+    registers: [register],
+});
+
 export function observeCreateSessionMessageStage(params: Readonly<{
     stage: CreateSessionMessageStage;
     durationMs: number;

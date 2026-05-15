@@ -57,6 +57,7 @@ describe("sessionPendingRoutes (enqueue)", () => {
             sessionId: "s1",
             localId: "l1",
             content: { t: "plain", v: { type: "user", text: "hi" } },
+            messageRole: null,
         });
         expect(reply.send).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -96,5 +97,47 @@ describe("sessionPendingRoutes (enqueue)", () => {
             error: "invalid-params",
             code: "session_encryption_mode_mismatch",
         });
+    });
+
+    it("forwards unsupported messageRole metadata without rejecting enqueue", async () => {
+        const createdAt = new Date(1);
+        enqueuePendingMessage.mockResolvedValueOnce({
+            ok: true,
+            didWrite: true,
+            pending: {
+                localId: "l1",
+                content: { t: "encrypted", c: "cipher" },
+                status: "queued",
+                position: 1,
+                createdAt,
+                updatedAt: createdAt,
+                discardedAt: null,
+                discardedReason: null,
+                authorAccountId: "actor",
+            },
+            pendingCount: 1,
+            pendingVersion: 1,
+            participantCursors: [],
+        });
+
+        const { sessionPendingRoutes } = await import("./pendingRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/sessions/:sessionId/pending",
+            registerRoutes(app) {
+                sessionPendingRoutes(app as any);
+            },
+        });
+
+        const { reply } = await route.invoke({
+            userId: "actor",
+            params: { sessionId: "s1" },
+            body: { localId: "l1", ciphertext: "cipher", messageRole: "future-role" },
+        });
+
+        expect(reply.code).not.toHaveBeenCalledWith(400);
+        expect(enqueuePendingMessage).toHaveBeenCalledWith(expect.objectContaining({
+            messageRole: "future-role",
+        }));
     });
 });

@@ -360,6 +360,7 @@ model SessionMessage {
     localId   String?
     sidechainId String?
     seq       Int
+    messageRole String?
     /// [SessionMessageContent]
     content   Json
     createdAt DateTime @default(now())
@@ -369,6 +370,8 @@ model SessionMessage {
     @@unique([sessionId, localId])
     @@index([sessionId, seq])
     @@index([sessionId, sidechainId, seq])
+    @@index([sessionId, messageRole, seq])
+    @@index([sessionId, sidechainId, messageRole, seq])
 }
 
 enum SessionPendingMessageStatus {
@@ -386,6 +389,7 @@ model SessionPendingMessage {
     authorAccount    Account?                   @relation(fields: [authorAccountId], references: [id], onDelete: SetNull)
 
     localId          String
+    messageRole      String?
     /// [SessionPendingMessageContent]
     content          Json
     status           SessionPendingMessageStatus @default(queued)

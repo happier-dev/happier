@@ -48,6 +48,7 @@ describe("pendingMessageService", () => {
                 findUnique: vi.fn(),
                 findFirst: vi.fn(),
                 create: vi.fn(),
+                update: vi.fn(),
             },
         };
     });
@@ -62,6 +63,7 @@ describe("pendingMessageService", () => {
         currentTx.sessionPendingMessage.create.mockResolvedValue({
             localId: "l1",
             content: { t: "plain", v: { type: "user", text: "hi" } },
+            messageRole: "user",
             status: "queued",
             position: 1,
             createdAt,
@@ -83,9 +85,93 @@ describe("pendingMessageService", () => {
             expect.objectContaining({
                 data: expect.objectContaining({
                     content: { t: "plain", v: { type: "user", text: "hi" } },
+                    messageRole: "user",
                 }),
             }),
         );
+    });
+
+    it("stores supplied encrypted pending message role metadata", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+
+        currentTx.session.findUnique.mockResolvedValue({ encryptionMode: "e2ee", pendingCount: 0, pendingVersion: 0 });
+        currentTx.sessionPendingMessage.findUnique.mockResolvedValue(null);
+        currentTx.sessionPendingMessage.findFirst.mockResolvedValue(null);
+        currentTx.sessionPendingMessage.create.mockResolvedValue({
+            localId: "l1",
+            content: { t: "encrypted", c: "cipher" },
+            messageRole: "user",
+            status: "queued",
+            position: 1,
+            createdAt,
+            updatedAt: createdAt,
+            discardedAt: null,
+            discardedReason: null,
+            authorAccountId: "u1",
+        });
+
+        const res = await enqueuePendingMessageCompat({
+            actorUserId: "u1",
+            sessionId: "s1",
+            localId: "l1",
+            ciphertext: "cipher",
+            messageRole: "user",
+        });
+
+        expect(res.ok).toBe(true);
+        expect(res.pending.messageRole).toBe("user");
+        expect(currentTx.sessionPendingMessage.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    messageRole: "user",
+                }),
+            }),
+        );
+    });
+
+    it("self-heals missing role metadata on idempotent encrypted enqueue retry", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+
+        currentTx.session.findUnique.mockResolvedValue({ encryptionMode: "e2ee", pendingCount: 1, pendingVersion: 1 });
+        currentTx.sessionPendingMessage.findUnique.mockResolvedValue({
+            localId: "l1",
+            content: { t: "encrypted", c: "cipher" },
+            messageRole: null,
+            status: "queued",
+            position: 1,
+            createdAt,
+            updatedAt: createdAt,
+            discardedAt: null,
+            discardedReason: null,
+            authorAccountId: "u1",
+        });
+        currentTx.sessionPendingMessage.update.mockResolvedValue({
+            localId: "l1",
+            content: { t: "encrypted", c: "cipher" },
+            messageRole: "user",
+            status: "queued",
+            position: 1,
+            createdAt,
+            updatedAt: createdAt,
+            discardedAt: null,
+            discardedReason: null,
+            authorAccountId: "u1",
+        });
+
+        const res = await enqueuePendingMessageCompat({
+            actorUserId: "u1",
+            sessionId: "s1",
+            localId: "l1",
+            ciphertext: "cipher",
+            messageRole: "user",
+        });
+
+        expect(res.ok).toBe(true);
+        expect(res.didWrite).toBe(false);
+        expect(res.pending.messageRole).toBe("user");
+        expect(currentTx.sessionPendingMessage.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: { messageRole: "user" },
+        }));
     });
 
     it("rejects encrypted writes when session encryptionMode is plain", async () => {
@@ -153,7 +239,7 @@ describe("pendingMessageService", () => {
         expect(res.ok).toBe(true);
         expect(currentTx.sessionPendingMessage.update).toHaveBeenCalledWith(
             expect.objectContaining({
-                data: { content: { t: "plain", v: { type: "user", text: "hi" } } },
+                data: { content: { t: "plain", v: { type: "user", text: "hi" } }, messageRole: "user" },
             }),
         );
     });

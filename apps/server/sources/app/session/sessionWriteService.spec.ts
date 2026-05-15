@@ -19,8 +19,10 @@ vi.mock("@/app/changes/markAccountChanged", () => ({
 }));
 
 const observeCreateSessionMessageStage = vi.fn();
+const sessionMessageRoleMismatchCounter = { inc: vi.fn() };
 vi.mock("@/app/monitoring/metrics/sessionWriteMetrics", () => ({
     observeCreateSessionMessageStage: (...args: any[]) => observeCreateSessionMessageStage(...args),
+    sessionMessageRoleMismatchCounter,
 }));
 
 const dbMocks = createDbMocks({
@@ -58,6 +60,7 @@ describe("sessionWriteService", () => {
         getSessionParticipantUserIds.mockReset();
         markAccountChanged.mockReset();
         observeCreateSessionMessageStage.mockReset();
+        sessionMessageRoleMismatchCounter.inc.mockReset();
         dbMocks.reset();
         storagePolicyEnv.restore();
 
@@ -114,6 +117,7 @@ describe("sessionWriteService", () => {
                     seq: 4,
                     localId: "l1",
                     sidechainId: null,
+                    messageRole: null,
                     content: { t: "encrypted", c: "c1" },
                     createdAt: new Date(1),
                     updatedAt: new Date(2),
@@ -234,7 +238,7 @@ describe("sessionWriteService", () => {
             expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(
                 expect.objectContaining({
                     where: { id: "m1" },
-                    data: { content: { t: "encrypted", c: "next" }, sidechainId: null },
+                    data: { content: { t: "encrypted", c: "next" }, sidechainId: null, messageRole: null },
                 }),
             );
             expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
@@ -325,6 +329,65 @@ describe("sessionWriteService", () => {
             expect(currentTx.sessionMessage.findUnique).not.toHaveBeenCalled();
         });
 
+        it("stores supplied encrypted message role metadata when creating a message", async () => {
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+
+            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({
+                    accountId: "u1",
+                    shares: [],
+                    seq: 9,
+                    lastViewedSessionSeq: 9,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                })
+                .mockResolvedValueOnce({
+                    seq: 9,
+                    lastViewedSessionSeq: 9,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockResolvedValue({
+                id: "m1",
+                seq: 10,
+                localId: "l1",
+                sidechainId: null,
+                messageRole: "user",
+                content: { t: "encrypted", c: "cipher" },
+                createdAt,
+                updatedAt: createdAt,
+            });
+
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "cipher",
+                localId: "l1",
+                messageRole: "user",
+            });
+
+            expect(res.ok).toBe(true);
+            if (!res.ok) throw new Error("expected ok");
+            expect(res.message.messageRole).toBe("user");
+            expect(currentTx.sessionMessage.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        messageRole: "user",
+                    }),
+                }),
+            );
+        });
+
         it("keeps owner-only message writes on the canonical Prisma + change-marking path", async () => {
             const createdAt = new Date("2020-01-01T00:00:00.000Z");
             const updatedAt = new Date("2020-01-01T00:00:00.000Z");
@@ -348,6 +411,7 @@ describe("sessionWriteService", () => {
                 seq: 10,
                 localId: "l1",
                 sidechainId: null,
+                messageRole: null,
                 content: { t: "encrypted", c: "cipher" },
                 createdAt,
                 updatedAt,
@@ -369,6 +433,7 @@ describe("sessionWriteService", () => {
                 seq: 10,
                 localId: "l1",
                 sidechainId: null,
+                messageRole: null,
                 content: { t: "encrypted", c: "cipher" },
                 createdAt,
                 updatedAt,
@@ -462,6 +527,7 @@ describe("sessionWriteService", () => {
                     seq: 4,
                     localId: "l1",
                     sidechainId: null,
+                    messageRole: null,
                     content: { t: "encrypted", c: "cipher" },
                     createdAt,
                     updatedAt,
@@ -534,6 +600,47 @@ describe("sessionWriteService", () => {
                 expect.objectContaining({
                     data: expect.objectContaining({
                         content: { t: "plain", v: { type: "user", text: "hi" } },
+                        messageRole: "user",
+                    }),
+                }),
+            );
+        });
+
+        it("lets a valid supplied role override a plaintext envelope role", async () => {
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+
+            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.update.mockResolvedValue({ seq: 1 });
+            currentTx.sessionMessage.create.mockResolvedValue({
+                id: "m1",
+                seq: 1,
+                localId: null,
+                sidechainId: null,
+                messageRole: "event",
+                content: { t: "plain", v: { role: "agent", content: { type: "acp", data: { type: "tool-call" } } } },
+                createdAt,
+                updatedAt: createdAt,
+            });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                content: { t: "plain", v: { role: "agent", content: { type: "acp", data: { type: "tool-call" } } } },
+                messageRole: "event",
+            });
+
+            expect(res).toEqual(expect.objectContaining({ ok: true }));
+            if (!res.ok) throw new Error("expected ok");
+            expect(res.message.messageRole).toBe("event");
+            expect(currentTx.sessionMessage.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        messageRole: "event",
                     }),
                 }),
             );

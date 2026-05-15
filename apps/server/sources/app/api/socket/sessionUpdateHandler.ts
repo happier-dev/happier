@@ -28,7 +28,7 @@ import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessContro
 import { getSessionParticipantUserIds } from "@/app/share/sessionParticipants";
 import { parseIntEnv } from "@/config/env";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
-import { ExecutionRunPublicStateSchema, PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from "@happier-dev/protocol";
+import { ExecutionRunPublicStateSchema, PrimaryTurnStatusV1Schema, SessionMessageRoleSchema, SessionRuntimeIssueV1Schema } from "@happier-dev/protocol";
 import { TranscriptStreamSegmentEphemeralMessageSchema } from "@happier-dev/protocol/updates";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
@@ -467,6 +467,15 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 const content = normalizeIncomingSessionMessageContent(data?.message);
                 const localId = typeof data?.localId === 'string' ? data.localId : null;
                 const echoToSender = data?.echoToSender === true;
+                const parsedMessageRole =
+                    data && typeof data === "object" && "messageRole" in data
+                        ? SessionMessageRoleSchema.safeParse((data as { messageRole?: unknown }).messageRole)
+                        : null;
+                if (parsedMessageRole !== null && !parsedMessageRole.success) {
+                    socketMessageAckCounter.inc({ result: 'error', error: 'invalid-params' });
+                    respond({ ok: false, error: 'invalid-params' });
+                    return;
+                }
                 const parsedSidechainId = parseSessionMessageSidechainId(data?.sidechainId, { emptyString: "invalid" });
                 if (!parsedSidechainId.ok) {
                     socketMessageAckCounter.inc({ result: 'error', error: 'invalid-params' });
@@ -499,6 +508,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     sessionId: sid,
                     content,
                     localId,
+                    messageRole: parsedMessageRole?.data,
                     sidechainId,
                 });
 
@@ -514,6 +524,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     id: result.message.id,
                     seq: result.message.seq,
                     localId: result.message.localId,
+                    ...(typeof result.message.messageRole === "string" ? { messageRole: result.message.messageRole } : {}),
                     didWrite: result.didWrite,
                     ...(result.didUpdate ? { didUpdate: true } : {}),
                 });
@@ -584,7 +595,12 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     ok: true,
                     didMaterialize: true,
                     didWrite: result.didWriteMessage,
-                    message: { id: result.message.id, seq: result.message.seq, localId: result.message.localId },
+                    message: {
+                        id: result.message.id,
+                        seq: result.message.seq,
+                        localId: result.message.localId,
+                        ...(typeof result.message.messageRole === "string" ? { messageRole: result.message.messageRole } : {}),
+                    },
                 });
 
                 if (result.didWriteMessage) {
