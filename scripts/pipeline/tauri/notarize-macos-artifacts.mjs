@@ -11,6 +11,9 @@ import { ensureTauriSigningKeyFile } from './ensure-signing-key-file.mjs';
 import { resolveTauriSigningPrivateKeyPassword } from './resolve-signing-key-password.mjs';
 import { resolveYarnInvocation } from './resolve-yarn-invocation.mjs';
 
+const DEFAULT_NOTARYTOOL_SUBMIT_ATTEMPTS = 2;
+const DEFAULT_NOTARYTOOL_RETRY_DELAY_MS = 10_000;
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -79,6 +82,108 @@ function run(opts, cmd, args, extra) {
     stdio: extra.stdio ?? 'inherit',
     timeout: extra.timeoutMs ?? 30 * 60_000,
   });
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string} name
+ * @param {number} fallback
+ * @returns {number}
+ */
+function readPositiveIntegerEnv(env, name, fallback) {
+  const raw = String(env[name] ?? '').trim();
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function stringifyCommandOutput(value) {
+  if (typeof value === 'string') return value;
+  if (Buffer.isBuffer(value)) return value.toString('utf8');
+  return '';
+}
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function stringifyCommandError(error) {
+  if (!(error instanceof Error)) return String(error ?? '');
+  const commandError = /** @type {Error & { stdout?: unknown; stderr?: unknown }} */ (error);
+  return [
+    error.message,
+    stringifyCommandOutput(commandError.stdout),
+    stringifyCommandOutput(commandError.stderr),
+  ].filter(Boolean).join('\n');
+}
+
+/**
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function shouldRetryNotarytoolSubmitError(error) {
+  const text = stringifyCommandError(error);
+  if (!/\bnotarytool\s+submit\b/i.test(text)) return false;
+  return /NSURLErrorDomain\s+Code=-1001/i.test(text)
+    || /HTTPError\(statusCode:\s*nil/i.test(text)
+    || /\brequest timed out\b/i.test(text)
+    || /\bnetwork connection was lost\b/i.test(text);
+}
+
+/**
+ * @param {number} ms
+ */
+function sleepSync(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.trunc(ms));
+}
+
+/**
+ * @param {{ dryRun: boolean }} opts
+ * @param {string[]} args
+ * @param {{ cwd: string; env?: Record<string, string>; timeoutMs?: number }} extra
+ * @returns {string}
+ */
+function runNotarytoolSubmit(opts, args, extra) {
+  if (opts.dryRun) {
+    return run(opts, 'xcrun', args, { ...extra, stdio: 'inherit' });
+  }
+
+  const attempts = readPositiveIntegerEnv(process.env, 'TAURI_NOTARYTOOL_SUBMIT_ATTEMPTS', DEFAULT_NOTARYTOOL_SUBMIT_ATTEMPTS);
+  const retryDelayMs = readPositiveIntegerEnv(process.env, 'TAURI_NOTARYTOOL_RETRY_DELAY_MS', DEFAULT_NOTARYTOOL_RETRY_DELAY_MS);
+  const printable = `xcrun ${args.map((a) => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')}`;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const stdout = execFileSync('xcrun', args, {
+        cwd: extra.cwd,
+        env: { ...process.env, ...(extra.env ?? {}) },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: extra.timeoutMs ?? 30 * 60_000,
+      });
+      if (stdout) process.stdout.write(stdout);
+      return stdout;
+    } catch (error) {
+      const commandError = /** @type {Error & { stdout?: unknown; stderr?: unknown }} */ (error);
+      const stdout = stringifyCommandOutput(commandError.stdout);
+      const stderr = stringifyCommandOutput(commandError.stderr);
+      if (stdout) process.stdout.write(stdout);
+      if (stderr) process.stderr.write(stderr);
+
+      const shouldRetry = attempt < attempts && shouldRetryNotarytoolSubmitError(error);
+      if (!shouldRetry) throw error;
+
+      console.warn(`[notarytool] transient submit failure; retrying ${printable} (${attempt + 1}/${attempts})`);
+      sleepSync(retryDelayMs);
+    }
+  }
+
+  return '';
 }
 
 /**
@@ -240,9 +345,8 @@ function main() {
   const appPath = opts.dryRun ? path.join(workDir, 'Happier.app') : findAppDir(workDir);
   run(opts, 'ditto', ['-c', '-k', '--keepParent', appPath, zipPath], { cwd: absUiDir, timeoutMs: 10 * 60_000 });
 
-  run(
+  runNotarytoolSubmit(
     opts,
-    'xcrun',
     ['notarytool', 'submit', zipPath, '--key', keyPath, '--key-id', appleKeyId || 'DRY_RUN', '--issuer', appleIssuerId || 'DRY_RUN', '--wait', '--timeout', '15m'],
     { cwd: absUiDir, timeoutMs: 30 * 60_000 },
   );
@@ -288,9 +392,8 @@ function main() {
     .sort((a, b) => a.localeCompare(b));
   const dmgPath = opts.dryRun ? path.join(searchDir, 'DRY_RUN.dmg') : dmgCandidates[0];
   if (dmgCandidates.length > 0 || opts.dryRun) {
-    run(
+    runNotarytoolSubmit(
       opts,
-      'xcrun',
       ['notarytool', 'submit', dmgPath, '--key', keyPath, '--key-id', appleKeyId || 'DRY_RUN', '--issuer', appleIssuerId || 'DRY_RUN', '--wait', '--timeout', '15m'],
       { cwd: absUiDir, timeoutMs: 30 * 60_000 },
     );

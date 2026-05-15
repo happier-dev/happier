@@ -13,6 +13,8 @@ import { createEasLocalBuildEnv } from './eas-local-build-env.mjs';
 import { ensureStagedGitRepo } from '../git/ensure-staged-git-repo.mjs';
 import { shouldStageRepoForEasLocalBuild } from './should-stage-eas-local-build-repo.mjs';
 import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
+import { resolveEasBuildProfileEnv } from './resolve-eas-build-profile-env.mjs';
+import { createCanonicalFingerprintFromExpoFingerprint } from './canonical-fingerprint.mjs';
 import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
 import {
   normalizeMobileReleaseEnvironment,
@@ -492,7 +494,14 @@ async function generateCurrentProjectFingerprintHash({ opts, uiDir, easCliVersio
   ).trim();
   if (!fpJson) return '';
   const parsed = JSON.parse(fpJson);
-  return String(parsed?.hash ?? parsed?.fingerprintHash ?? '').trim();
+  const canonical = createCanonicalFingerprintFromExpoFingerprint(parsed);
+  const rawHash = String(parsed?.hash ?? parsed?.fingerprintHash ?? '').trim();
+  if (canonical.hash && rawHash && canonical.hash !== rawHash) {
+    console.log(
+      `[pipeline] expo native fingerprint: platform=${platform} raw=${rawHash} canonical=${canonical.hash}`,
+    );
+  }
+  return String(canonical.hash || rawHash).trim();
 }
 
 /**
@@ -698,8 +707,14 @@ async function main() {
   );
 
   const uiDir = path.join(repoRoot, 'apps', 'ui');
+  const easJsonPath = path.join(uiDir, 'eas.json');
+  const easProfileEnv = resolveEasBuildProfileEnv({ easJsonPath, profileId: profile });
+  const profileAppEnv = String(easProfileEnv.APP_ENV ?? '').trim();
+  if (profileAppEnv) {
+    console.log(`[pipeline] expo native build: profile APP_ENV=${profileAppEnv}`);
+  }
   const artifactOut = String(values['artifact-out'] ?? '').trim();
-  const easCommandEnv = withEasGitCaseSensitiveEnv(process.env);
+  const easCommandEnv = withEasGitCaseSensitiveEnv({ ...process.env, ...easProfileEnv });
 
   if (buildMode === 'local') {
     if (platform === 'all') {
@@ -820,9 +835,21 @@ async function main() {
     const absOut = path.resolve(repoRoot, artifactOut);
     if (!dryRun) fs.mkdirSync(path.dirname(absOut), { recursive: true });
 
-    const baseEnv = /** @type {Record<string, string>} */ ({ ...process.env });
+    const baseEnv = /** @type {Record<string, string>} */ ({ ...process.env, ...easProfileEnv });
     const buildEnvBase = withUtf8LocaleDefaults(baseEnv);
     const buildEnv = createEasLocalBuildEnv({ baseEnv: buildEnvBase, platform });
+    const canonicalFingerprintHash = await generateCurrentProjectFingerprintHash({
+      opts,
+      uiDir,
+      easCliVersion,
+      platform,
+      profile,
+      env: easCommandEnv,
+    });
+    if (canonicalFingerprintHash) {
+      buildEnv.EXPO_UPDATES_FINGERPRINT_OVERRIDE = canonicalFingerprintHash;
+      buildEnv.HAPPIER_EXPO_RUNTIME_VERSION = canonicalFingerprintHash;
+    }
     if (platform === 'ios') {
       // CocoaPods on macOS can crash when locale is `C`/`C.UTF-8` even if the terminal locale is set.
       // Force a known UTF-8 locale for the local build subprocess tree.

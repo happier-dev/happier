@@ -32,4 +32,15 @@ test('native-build supports fingerprint-gated builds (if-changed)', () => {
     /runCaptureWithHeartbeat[\s\S]+fingerprint:generate/,
     "expected native-build.mjs to capture fingerprint JSON via the streaming runner (avoid ENOBUFS)",
   );
+
+  assert.match(
+    src,
+    /EXPO_UPDATES_FINGERPRINT_OVERRIDE/,
+    'expected native-build.mjs to pass the canonical fingerprint into EAS local builds',
+  );
+  assert.match(
+    src,
+    /HAPPIER_EXPO_RUNTIME_VERSION/,
+    'expected native-build.mjs to align app.config runtimeVersion with the canonical fingerprint',
+  );
 });

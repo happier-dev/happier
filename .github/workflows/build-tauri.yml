@@ -178,6 +178,21 @@ jobs:
           corepack enable
           corepack prepare yarn@1.22.22 --activate
 
+      - name: Free Linux runner disk space
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/share/dotnet \
+            /opt/hostedtoolcache/CodeQL
+          docker image prune -af || true
+          docker builder prune -af || true
+          sudo apt-get clean
+          df -h /
+
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"

@@ -8,7 +8,9 @@ import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
 import { applyExpoNodeHeapEnv } from '../../expo/expoNodeHeapEnv.mjs';
 import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
 import { resolveEasBuildProfileEnv } from './resolve-eas-build-profile-env.mjs';
+import { createCanonicalFingerprintFromExpoFingerprint } from './canonical-fingerprint.mjs';
 import {
+  MOBILE_RELEASE_PROFILES,
   MOBILE_RELEASE_ENVIRONMENT_CHOICES,
   formatMobileReleaseEnvironment,
   normalizeMobileReleaseEnvironment,
@@ -132,6 +134,55 @@ function pickNonEmptyString(raw) {
 }
 
 /**
+ * @param {import('./mobile-release-environments.mjs').MobileReleaseEnvironment} environment
+ * @param {'ios' | 'android'} platform
+ * @returns {string}
+ */
+function resolveOtaFingerprintProfile(environment, platform) {
+  if (platform === 'ios') return environment;
+  const apkProfile = `${environment}-apk`;
+  return MOBILE_RELEASE_PROFILES.includes(/** @type {any} */ (apkProfile)) ? apkProfile : environment;
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   platform: 'ios' | 'android';
+ *   profile: string;
+ *   env: Record<string, string>;
+ * }} params
+ * @returns {string}
+ */
+function generateCanonicalOtaFingerprintHash({ opts, uiDir, easCliVersion, platform, profile, env }) {
+  const fpJson = run(
+    opts,
+    'npx',
+    [
+      '--yes',
+      `eas-cli@${easCliVersion}`,
+      'fingerprint:generate',
+      '--platform',
+      platform,
+      '--build-profile',
+      profile,
+      '--json',
+      '--non-interactive',
+    ],
+    { cwd: uiDir, env, stdio: 'pipe' },
+  ).trim();
+  if (!fpJson) return '';
+  const parsed = JSON.parse(fpJson);
+  const canonical = createCanonicalFingerprintFromExpoFingerprint(parsed);
+  const rawHash = String(parsed?.hash ?? parsed?.fingerprintHash ?? '').trim();
+  if (canonical.hash && rawHash && canonical.hash !== rawHash) {
+    console.log(`[pipeline] expo ota fingerprint: platform=${platform} raw=${rawHash} canonical=${canonical.hash}`);
+  }
+  return String(canonical.hash || rawHash).trim();
+}
+
+/**
  * OTA updates must be generated with the same env inputs as the corresponding native build profile;
  * otherwise iOS/Android builds won't be eligible to download the update. We also support an explicit
  * runtimeVersion override for maintenance trains that need to target an older store binary.
@@ -178,6 +229,7 @@ function main() {
       environment: { type: 'string' },
       message: { type: 'string', default: '' },
       'runtime-version': { type: 'string', default: '' },
+      platform: { type: 'string', default: 'all' },
       interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
@@ -209,8 +261,14 @@ function main() {
 
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
+  const platformRaw = String(values.platform ?? '').trim().toLowerCase() || 'all';
+  if (platformRaw !== 'ios' && platformRaw !== 'android' && platformRaw !== 'all') {
+    fail(`--platform must be 'ios', 'android', or 'all' (got: ${values.platform})`);
+  }
+  /** @type {'ios' | 'android' | 'all'} */
+  const platform = platformRaw;
 
-  console.log(`[pipeline] expo ota: environment=${formatMobileReleaseEnvironment(normalizedEnvironment)}`);
+  console.log(`[pipeline] expo ota: environment=${formatMobileReleaseEnvironment(normalizedEnvironment)} platform=${platform}`);
 
   const uiDir = path.join(repoRoot, 'apps', 'ui');
   const appEnvironment = normalizedEnvironment;
@@ -218,12 +276,12 @@ function main() {
   const nodeEnvironment = resolveMobileBuildNodeEnvironment(normalizedEnvironment);
   const otaFingerprintEnv = resolveOtaFingerprintEnv(uiDir, normalizedEnvironment);
   const explicitRuntimeVersion = String(values['runtime-version'] ?? '').trim();
+  if (explicitRuntimeVersion && platform === 'all') {
+    fail('--runtime-version requires --platform ios or --platform android so the override targets one runtime.');
+  }
 
   /** @type {Record<string, string>} */
   const injectedEnv = { ...otaFingerprintEnv };
-  if (explicitRuntimeVersion) {
-    injectedEnv.HAPPIER_EXPO_RUNTIME_VERSION = explicitRuntimeVersion;
-  }
   for (const [key, value] of Object.entries(injectedEnv)) {
     if (!pickNonEmptyString(value)) delete injectedEnv[key];
   }
@@ -246,6 +304,21 @@ function main() {
       envKey: 'HAPPIER_PIPELINE_EXPO_MAX_OLD_SPACE_SIZE_MB',
     }),
   );
+  const runtimeVersion =
+    explicitRuntimeVersion ||
+    (normalizedEnvironment === 'publicdev' && platform !== 'all'
+      ? generateCanonicalOtaFingerprintHash({
+          opts,
+          uiDir,
+          easCliVersion,
+          platform,
+          profile: resolveOtaFingerprintProfile(normalizedEnvironment, platform),
+          env: easCommandEnv,
+        })
+      : '');
+  if (runtimeVersion) {
+    easCommandEnv.HAPPIER_EXPO_RUNTIME_VERSION = runtimeVersion;
+  }
   run(opts, 'yarn', ['tsx', 'sources/scripts/parseChangelog.ts'], {
     cwd: uiDir,
     env: { ...process.env, APP_ENV: process.env.APP_ENV ?? appEnvironment, NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment },
@@ -266,6 +339,7 @@ function main() {
     'update',
     '--channel',
     updateLane,
+    ...(platform !== 'all' ? ['--platform', platform] : []),
     ...(interactivity.nonInteractive ? ['--non-interactive'] : []),
     '--message',
     message,

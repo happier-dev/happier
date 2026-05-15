@@ -31,3 +31,18 @@ test('tauri notarize-macos-artifacts script supports dry-run', async () => {
   assert.match(out, /\btauri signer sign\b/);
 });
 
+test('tauri notarization retries transient notarytool submit timeouts only', async () => {
+  const srcPath = resolve(repoRoot, 'scripts', 'pipeline', 'tauri', 'notarize-macos-artifacts.mjs');
+  const src = await import(srcPath);
+  assert.equal(typeof src.shouldRetryNotarytoolSubmitError, 'function');
+
+  const transient = Object.assign(new Error('Command failed: xcrun notarytool submit app.zip'), {
+    stderr: 'Error: HTTPError(statusCode: nil) NSURLErrorDomain Code=-1001 "The request timed out."',
+  });
+  assert.equal(src.shouldRetryNotarytoolSubmitError(transient), true);
+
+  const unrelated = Object.assign(new Error('Command failed: xcrun stapler staple Happier.app'), {
+    stderr: 'The request timed out.',
+  });
+  assert.equal(src.shouldRetryNotarytoolSubmitError(unrelated), false);
+});

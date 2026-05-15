@@ -179,6 +179,28 @@ test('build-tauri workflow validates updater pubkey via pipeline script', async 
   );
 });
 
+test('build-tauri Linux jobs free unused hosted-runner disk before dependency install', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const parsed = parse(workflow);
+  const buildSteps = parsed?.jobs?.build?.steps;
+  assert.ok(Array.isArray(buildSteps), 'build-tauri workflow should define jobs.build.steps');
+
+  const cleanupIndex = buildSteps.findIndex((step) => step?.name === 'Free Linux runner disk space');
+  const installIndex = buildSteps.findIndex((step) => step?.name === 'Install dependencies');
+  assert.ok(cleanupIndex >= 0, 'workflow should free unused hosted-runner disk for Linux desktop builds');
+  assert.ok(installIndex >= 0, 'workflow should contain dependency installation step');
+  assert.ok(cleanupIndex < installIndex, 'Linux disk cleanup should run before dependency installation expands node_modules');
+
+  const cleanupStep = buildSteps[cleanupIndex];
+  assert.equal(cleanupStep?.if, "runner.os == 'Linux'");
+  const runScript = String(cleanupStep?.run ?? '');
+  for (const unusedPath of ['/usr/local/lib/android', '/opt/ghc', '/usr/share/dotnet', '/opt/hostedtoolcache/CodeQL']) {
+    assert.match(runScript, new RegExp(unusedPath.replaceAll('/', '\\/')), `cleanup should remove ${unusedPath}`);
+  }
+  assert.match(runScript, /docker image prune -af/, 'cleanup should remove preloaded Docker images from the Tauri runner');
+  assert.match(runScript, /df -h \//, 'cleanup should report available root filesystem space');
+});
+
 test('build-tauri workflow sets Happier Cloud as explicit default server for desktop release builds', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const parsed = parse(workflow);

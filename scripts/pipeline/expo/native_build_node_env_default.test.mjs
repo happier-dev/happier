@@ -16,5 +16,6 @@ test('native-build ensures NODE_ENV is set for EAS build subprocesses (fixes loc
   // EAS local build (and some config plugins) expect NODE_ENV to be set.
   // The pipeline should ensure it is set when launching EAS build commands.
   assert.match(src, /NODE_ENV/, 'expected native-build to set NODE_ENV for EAS builds');
+  assert.match(src, /resolveEasBuildProfileEnv/, 'expected native-build to apply the selected EAS build profile env');
+  assert.match(src, /APP_ENV/, 'expected native-build to align APP_ENV with the selected build profile');
 });
-

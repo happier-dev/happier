@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,6 +15,13 @@ const sharedPublishScriptPath = resolve(
   'publishing',
   'publish-binary-release.mjs',
 );
+
+function readPackageVersion(relativePackageJsonPath) {
+  const raw = readFileSync(resolve(repoRoot, relativePackageJsonPath), 'utf8');
+  const parsed = JSON.parse(raw);
+  assert.equal(typeof parsed.version, 'string');
+  return parsed.version;
+}
 
 for (const { channel, rollingTag, versionSuffix } of [
   { channel: 'preview', rollingTag: 'cli-preview', versionSuffix: '-preview.' },
@@ -97,6 +105,8 @@ test('publish-cli-binaries fails fast with helpful message when MINISIGN_SECRET_
 });
 
 test('publish-cli-binaries allocates dev versions from the published CLI channel instead of workflow run number', async () => {
+  const cliBaseVersion = readPackageVersion('apps/cli/package.json');
+
   const out = execFileSync(
     process.execPath,
     [
@@ -124,10 +134,10 @@ test('publish-cli-binaries allocates dev versions from the published CLI channel
         GITHUB_RUN_ATTEMPT: '1',
         HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({
           github: {
-            cli: ['0.2.0-dev.125.1'],
+            cli: [`${cliBaseVersion}-dev.125.1`],
           },
           npm: {
-            '@happier-dev/cli': ['0.2.0-dev.124.1'],
+            '@happier-dev/cli': [`${cliBaseVersion}-dev.124.1`],
           },
         }),
       },
@@ -137,6 +147,6 @@ test('publish-cli-binaries allocates dev versions from the published CLI channel
     },
   );
 
-  assert.match(out, /cli-v0\.2\.0-dev\.126\b/);
-  assert.doesNotMatch(out, /cli-v0\.2\.0-dev\.16\.1\b/);
+  assert.match(out, new RegExp(`cli-v${cliBaseVersion.replaceAll('.', '\\.')}-dev\\.126\\b`));
+  assert.doesNotMatch(out, new RegExp(`cli-v${cliBaseVersion.replaceAll('.', '\\.')}-dev\\.16\\.1\\b`));
 });
