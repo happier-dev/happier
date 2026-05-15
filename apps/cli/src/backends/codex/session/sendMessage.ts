@@ -1,6 +1,7 @@
 import {
     prepareCodexTranscriptDispatch,
 } from '@/api/session/outbound/providers/sessionTranscriptDispatch';
+import { resolveCodexSessionMessageRole } from '@/api/session/messageRole';
 import {
     recordCodexToolTraceEventIfNeeded,
 } from '@/api/session/toolTrace';
@@ -35,6 +36,7 @@ export function sendCodexSessionClientMessage(
         message: payload,
         localId,
         sidechainId: null,
+        messageRole: resolveCodexSessionMessageRole(normalizedBody),
         logErrorMessage: '[SOCKET] Failed to commit Codex message (non-fatal)',
     });
     const extracted = extractAssistantTextSnapshotFromSessionContent(content);

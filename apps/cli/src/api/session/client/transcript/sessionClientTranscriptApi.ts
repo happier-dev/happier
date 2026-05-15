@@ -50,11 +50,13 @@ import {
 } from './sessionMediaBridge';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
+type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
 
 type CommitSessionMessageParams = Readonly<{
     message: PlainOrEncryptedPayload;
     localId: string;
     sidechainId: string | null;
+    messageRole: SessionMessageRole;
     requireCommit: boolean;
     markAsUserMessage?: boolean;
 }>;
@@ -84,6 +86,7 @@ export type SessionClientTranscriptApiDeps = Readonly<{
         localId: string;
         sidechainId: string | null;
         logErrorMessage: string;
+        messageRole: SessionMessageRole;
         markAsUserMessage?: boolean;
     }>) => void;
     enqueueMessageCommit: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -187,7 +190,7 @@ export function createSessionClientTranscriptApi(
         body: ACPMessageData,
         opts: { localId: string; meta?: Record<string, unknown> },
     ): Promise<void> => {
-        const { normalizedBody, payload, localId, sidechainId } = prepareCommittedAgentMessageViaPort(
+        const { normalizedBody, payload, localId, sidechainId, messageRole } = prepareCommittedAgentMessageViaPort(
             getTranscriptSendPort(),
             provider,
             body,
@@ -199,7 +202,7 @@ export function createSessionClientTranscriptApi(
         }
 
         await deps.enqueueMessageCommit(() =>
-            deps.commitSessionMessage({ message: payload, localId, sidechainId, requireCommit: true }),
+            deps.commitSessionMessage({ message: payload, localId, sidechainId, messageRole, requireCommit: true }),
         );
         const extracted = extractAssistantTextSnapshotFromAcpMessage(provider, normalizedBody);
         if (extracted) {
@@ -254,6 +257,7 @@ export function createSessionClientTranscriptApi(
                     message: payload,
                     localId,
                     sidechainId: null,
+                    messageRole: 'user',
                     requireCommit: true,
                     markAsUserMessage: true,
                 }),

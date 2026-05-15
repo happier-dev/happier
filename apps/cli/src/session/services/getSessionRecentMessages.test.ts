@@ -83,4 +83,40 @@ describe('extractRecentMessagesFromTranscriptRows', () => {
 
     expect(result).toEqual([]);
   });
+
+  it('includes provider assistant messages when includeAssistant is true', () => {
+    const rows = [
+      {
+        seq: 1,
+        createdAt: 10,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'agent',
+            content: {
+              type: 'acp',
+              provider: 'codex',
+              data: {
+                type: 'message',
+                message: 'assistant provider text',
+              },
+            },
+            meta: {},
+          },
+        },
+      },
+    ] as const;
+
+    const result = extractRecentMessagesFromTranscriptRows({
+      rows,
+      ctx: { encryptionKey: new Uint8Array([1]), encryptionVariant: 'legacy' },
+      includeUser: true,
+      includeAssistant: true,
+      maxCharsPerMessage: null,
+    });
+
+    expect(result).toEqual([
+      { id: '1', createdAt: 10, role: 'agent', text: 'assistant provider text' },
+    ]);
+  });
 });

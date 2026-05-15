@@ -62,7 +62,7 @@ describe('ApiSessionClient socket message commits', () => {
     expect(sessionSocketStub.emitWithAck).toHaveBeenCalledTimes(1);
     expect(sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
       'message',
-      expect.objectContaining({ echoToSender: true }),
+      expect.objectContaining({ echoToSender: true, messageRole: 'user' }),
     );
   });
 });

@@ -626,6 +626,37 @@ describe('built-in Happier tools', () => {
     );
   });
 
+  it('passes approval origin metadata to action-backed tool execution', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ ok: true }));
+    const approvalOrigin = {
+      kind: 'transcript_tool_call' as const,
+      sessionId: 'sess-1',
+      toolCallId: 'tool-1',
+      toolName: 'session_list',
+      toolInput: { limit: 10 },
+    };
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'session_list',
+      args: { limit: 10 },
+      sessionId: 'sess-1',
+      surface: 'session_agent',
+      approvalOrigin,
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        executeActionByToolName,
+      },
+    });
+
+    expect(result).toEqual(ok({ ok: true }));
+    expect(executeActionByToolName).toHaveBeenCalledWith(
+      'session_list',
+      { limit: 10 },
+      'sess-1',
+      { approvalOrigin },
+    );
+  });
+
   it('allows action_execute to target plugin actions when the current registry exposes them on the surface', async () => {
     const executeActionByToolName = vi.fn(
       async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>

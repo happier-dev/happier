@@ -125,6 +125,38 @@ describe('repository checkpoint primitives', () => {
         });
     });
 
+    it('prunes namespace-contained rollback-backup refs older than the retention window', async () => {
+        const nowMs = Date.UTC(2026, 4, 4);
+        const scopeId = 'session-cleanup';
+        const refs = buildRepositoryCheckpointRefs({ scopeId, turnId: 'old' });
+        const encodedScope = refs.encodedScope;
+        const freshBackupRef = `refs/happier/checkpoints/${encodedScope}/rollback-backup/rb-fresh`;
+        const oldBackupRef = `refs/happier/checkpoints/${encodedScope}/rollback-backup/rb-old`;
+        const foreignBackupRef = `refs/happier/checkpoints/${
+            Buffer.from('other-session', 'utf8').toString('base64url')
+        }/rollback-backup/rb-old`;
+        const deletedRefs: string[] = [];
+
+        const result = await pruneRepositoryCheckpointRefs({
+            scopeId,
+            refs: [
+                { ref: freshBackupRef, committedAtMs: nowMs },
+                { ref: oldBackupRef, committedAtMs: nowMs - (31 * DAY_MS) },
+                { ref: foreignBackupRef, committedAtMs: nowMs - (31 * DAY_MS) },
+                { ref: 'refs/heads/user-branch', committedAtMs: nowMs - (31 * DAY_MS) },
+            ],
+            nowMs,
+            maxAgeMs: 30 * DAY_MS,
+            maxFinalizedTurns: 100,
+            deleteRef: async (ref) => {
+                deletedRefs.push(ref);
+            },
+        });
+
+        expect(result.success).toBe(true);
+        expect(deletedRefs).toEqual([oldBackupRef]);
+    });
+
     it('prunes only refs inside the requested checkpoint scope and retention window', async () => {
         const nowMs = Date.UTC(2026, 4, 4);
         const scopeId = 'session-cleanup';

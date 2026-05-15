@@ -15,8 +15,8 @@ import {
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import type { Credentials } from '@/persistence';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
-import { getSessionHistory } from '@/session/services/getSessionHistory';
-import { getSessionRecentMessages } from '@/session/services/getSessionRecentMessages';
+import { getSessionEvents } from '@/session/services/getSessionEvents';
+import { getSessionTranscript } from '@/session/services/getSessionTranscript';
 import { getSessionStatus } from '@/session/services/getSessionStatus';
 import { listSessions } from '@/session/services/listSessions';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
@@ -585,7 +585,7 @@ export function createCliActionDeps(params: Readonly<{
       return await getSessionStatus({ credentials: params.credentials, idOrPrefix: sessionId, live: live === true });
     },
 
-	    sessionHistoryGet: async ({ sessionId, limit, format, includeMeta, includeStructuredPayload }) => {
+    sessionHistoryGet: async ({ sessionId, limit, format, includeMeta, includeStructuredPayload }) => {
 	      if (!params.credentials) {
 	        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
 	      }
@@ -594,7 +594,7 @@ export function createCliActionDeps(params: Readonly<{
 	          ? Math.min(1000, Math.floor(limit))
 	          : 50;
 	      const normalizedFormat = format === 'raw' || format === 'compact' ? format : 'compact';
-	      return await getSessionHistory({
+	      return await getSessionEvents({
 	        credentials: params.credentials,
 	        idOrPrefix: sessionId,
 	        limit: normalizedLimit,
@@ -603,6 +603,84 @@ export function createCliActionDeps(params: Readonly<{
 	        includeStructuredPayload: includeStructuredPayload === true,
 	      });
 	    },
+
+    sessionTranscriptGet: async ({
+      sessionId,
+      limit,
+      cursor,
+      direction,
+      scope,
+      sidechainId,
+      roles,
+      includeTools,
+      includeReasoning,
+      includeEvents,
+      includeMeta,
+      includeRaw,
+      includeStructuredPayload,
+      maxCharsPerMessage,
+      maxRawPayloadChars,
+    }) => {
+      if (!params.credentials) {
+        return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
+      }
+      return await getSessionTranscript({
+        credentials: params.credentials,
+        idOrPrefix: sessionId,
+        ...(typeof limit === 'number' ? { limit } : {}),
+        ...(cursor !== undefined ? { cursor } : {}),
+        ...(direction ? { direction } : {}),
+        ...(scope ? { scope } : {}),
+        ...(sidechainId !== undefined ? { sidechainId } : {}),
+        ...(roles ? { roles } : {}),
+        ...(typeof includeTools === 'boolean' ? { includeTools } : {}),
+        ...(typeof includeReasoning === 'boolean' ? { includeReasoning } : {}),
+        ...(typeof includeEvents === 'boolean' ? { includeEvents } : {}),
+        ...(typeof includeMeta === 'boolean' ? { includeMeta } : {}),
+        ...(typeof includeRaw === 'boolean' ? { includeRaw } : {}),
+        ...(typeof includeStructuredPayload === 'boolean' ? { includeStructuredPayload } : {}),
+        ...(maxCharsPerMessage !== undefined ? { maxCharsPerMessage } : {}),
+        ...(maxRawPayloadChars !== undefined ? { maxRawPayloadChars } : {}),
+      });
+    },
+
+    sessionEventsGet: async ({
+      sessionId,
+      limit,
+      cursor,
+      direction,
+      scope,
+      sidechainId,
+      roles,
+      kinds,
+      format,
+      includeMeta,
+      includeRaw,
+      includeStructuredPayload,
+      maxTextChars,
+      maxPayloadChars,
+    }) => {
+      if (!params.credentials) {
+        return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
+      }
+      return await getSessionEvents({
+        credentials: params.credentials,
+        idOrPrefix: sessionId,
+        ...(typeof limit === 'number' ? { limit } : {}),
+        ...(cursor !== undefined ? { cursor } : {}),
+        ...(direction ? { direction } : {}),
+        ...(scope ? { scope } : {}),
+        ...(sidechainId !== undefined ? { sidechainId } : {}),
+        ...(roles ? { roles } : {}),
+        ...(kinds ? { kinds } : {}),
+        ...(format ? { format } : {}),
+        ...(typeof includeMeta === 'boolean' ? { includeMeta } : {}),
+        ...(typeof includeRaw === 'boolean' ? { includeRaw } : {}),
+        ...(typeof includeStructuredPayload === 'boolean' ? { includeStructuredPayload } : {}),
+        ...(typeof maxTextChars === 'number' ? { maxTextChars } : {}),
+        ...(typeof maxPayloadChars === 'number' ? { maxPayloadChars } : {}),
+      });
+    },
 
 	    sessionWaitIdle: async ({ sessionId, timeoutSeconds }) => {
 	      if (!params.credentials) {
@@ -784,7 +862,7 @@ export function createCliActionDeps(params: Readonly<{
       return { ok: true, sessionIds: trackedSessionIds };
     },
 
-    sessionList: async ({ limit, cursor, activeOnly, archivedOnly, includeSystem, resumableOnly }) => {
+    sessionList: async ({ limit, cursor, activeOnly, archivedOnly, includeSystem, resumableOnly, includeRows, includeLastMessagePreview }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
@@ -799,6 +877,8 @@ export function createCliActionDeps(params: Readonly<{
         archivedOnly: normalizedArchivedOnly,
         includeSystem: includeSystem === true,
         resumableOnly: resumableOnly === true,
+        includeRows: includeRows === true,
+        includeLastMessagePreview: includeLastMessagePreview === true,
         ...(typeof limit === 'number' ? { limit } : {}),
         ...(typeof cursor === 'string' && cursor.trim().length > 0 ? { cursor: cursor.trim() } : {}),
       });
@@ -832,13 +912,15 @@ export function createCliActionDeps(params: Readonly<{
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
       }
-      return await getSessionRecentMessages({
+      return await getSessionTranscript({
         credentials: params.credentials,
         idOrPrefix: sessionId,
         ...(typeof limit === 'number' ? { limit } : {}),
         ...(Object.prototype.hasOwnProperty.call({ cursor }, 'cursor') ? { cursor: cursor ?? null } : {}),
-        ...(typeof includeUser === 'boolean' ? { includeUser } : {}),
-        ...(typeof includeAssistant === 'boolean' ? { includeAssistant } : {}),
+        roles: [
+          ...(includeUser === false ? [] : ['user' as const]),
+          ...(includeAssistant === false ? [] : ['assistant' as const]),
+        ],
         ...(Object.prototype.hasOwnProperty.call({ maxCharsPerMessage }, 'maxCharsPerMessage') ? { maxCharsPerMessage: maxCharsPerMessage ?? null } : {}),
       });
     },

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
+import { sendCodexSessionClientMessage } from '@/backends/codex/session/sendMessage';
 import { sendClaudeSessionClientMessage } from '@/backends/claude/session/sendMessage';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -132,6 +133,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
       message: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'hi' } } },
       localId: 'l1',
       sidechainId: 'sc-1',
+      messageRole: 'agent',
       requireCommit: true,
     });
 
@@ -140,6 +142,43 @@ describe('ApiSessionClient transcript vNext transport', () => {
       'message',
       expect.objectContaining({ sidechainId: 'sc-1' }),
     );
+  });
+
+  it('requests reconnect when best-effort message commits queue while disconnected', async () => {
+    const socket = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async () => {
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+    const requestReconnect = vi.fn();
+    const runtime = createSessionClientCommitQueueRuntime({
+      sessionId: 's1',
+      transcriptStorage: 'persisted',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'dataKey',
+      getSocket: () => socket as never,
+      getClosed: () => false,
+      addPendingMaterializedLocalId: vi.fn(),
+      hasPendingMaterializedLocalId: vi.fn(() => false),
+      markCommittedLocalIdAwaitingEcho: vi.fn(),
+      deleteMaterializedLocalId: vi.fn(),
+      scheduleMaterializationRecovery: vi.fn(),
+      recoverMaterializedLocalId: vi.fn(async () => false),
+      observeCommittedAck: vi.fn(),
+      requestReconnect,
+    });
+
+    runtime.commitSessionMessageBestEffort({
+      message: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'queued' } } },
+      localId: 'queued-1',
+      sidechainId: null,
+      messageRole: 'agent',
+      logErrorMessage: '[test] failed',
+    });
+
+    await expect.poll(() => requestReconnect.mock.calls.length).toBe(1);
   });
 
   it('forwards Claude sidechainId on durable commits for imported sidechain messages', () => {
@@ -159,6 +198,39 @@ describe('ApiSessionClient transcript vNext transport', () => {
 
     expect(port.commitSessionMessageBestEffort).toHaveBeenCalledWith(
       expect.objectContaining({ sidechainId: 'tool_agent_1' }),
+    );
+  });
+
+  it('stamps Codex tool rows as event messages', () => {
+    const port = createTranscriptSendPort();
+
+    sendCodexSessionClientMessage(port, {
+      type: 'tool-call',
+      callId: 'call-1',
+      name: 'Bash',
+      input: { command: 'pwd' },
+    });
+
+    expect(port.commitSessionMessageBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ messageRole: 'event' }),
+    );
+  });
+
+  it('stamps Claude tool result rows as event messages', () => {
+    const port = createTranscriptSendPort();
+    const body = {
+      type: 'user',
+      uuid: 'claude-tool-result-1',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'done' }],
+      },
+    } satisfies RawJSONLines;
+
+    sendClaudeSessionClientMessage(port, body);
+
+    expect(port.commitSessionMessageBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ messageRole: 'event' }),
     );
   });
 
@@ -200,6 +272,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
         sid: 's1',
         message: expect.objectContaining({
           localId: 'segment-1',
+          messageRole: 'agent',
           sidechainId: 'sc-1',
           createdAt: 1_000,
           updatedAt: 1_025,
@@ -250,6 +323,27 @@ describe('ApiSessionClient transcript vNext transport', () => {
       normalizedText: 'Final answer',
       source: 'committed',
     });
+  });
+
+  it('stamps committed thinking snapshots as event messages', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 8, localId: 'thinking-1', didWrite: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', seq: 5 })));
+
+    await client.sendAgentMessageCommitted(
+      'codex' as any,
+      { type: 'thinking', text: 'checking' } as any,
+      { localId: 'thinking-1' },
+    );
+
+    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({ messageRole: 'event' }),
+    );
   });
 
   it('persists assistant session media through the central bridge before committing byte-free transcript metadata', async () => {

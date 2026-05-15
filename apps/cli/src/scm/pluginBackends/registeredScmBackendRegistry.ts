@@ -90,6 +90,13 @@ const EXECUTABLE_SUPPORTED_LEAVES: readonly SupportedLeaf[] = [
         hasHandler: (registration) => typeof registration.handlers.hosting?.repositoryDescribePublishTargets === 'function',
     },
     { key: 'hosting.repositoryPublish', hasHandler: (registration) => typeof registration.handlers.hosting?.repositoryPublish === 'function' },
+    {
+        key: 'hosting.pullRequestRead',
+        hasHandler: (registration) => (
+            typeof registration.handlers.hosting?.pullRequestList === 'function'
+            && typeof registration.handlers.hosting?.pullRequestGet === 'function'
+        ),
+    },
     { key: 'hosting.pullRequestStatus', hasHandler: (registration) => typeof registration.handlers.read?.statusSnapshot === 'function' },
     { key: 'hosting.pullRequestCreate', hasHandler: (registration) => typeof registration.handlers.hosting?.pullRequestOpenCompose === 'function' },
     { key: 'hosting.pullRequestReuse', hasHandler: (registration) => typeof registration.handlers.hosting?.pullRequestOpenOrReuse === 'function' },

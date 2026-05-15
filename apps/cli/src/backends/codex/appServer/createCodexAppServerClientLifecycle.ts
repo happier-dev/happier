@@ -171,6 +171,7 @@ export function createCodexAppServerClientLifecycle(params: Readonly<{
             directory: params.directory,
             options,
             currentModelId: params.getCurrentModelId(),
+            currentReasoningEffort: params.getCurrentReasoningEffort(),
             currentServiceTier: params.getCurrentServiceTier(),
             hasServiceTierOverride: params.hasServiceTierOverride(),
             resolveCurrentPolicy: params.resolveCurrentPolicy,

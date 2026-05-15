@@ -4,6 +4,7 @@ import type { Usage } from '@/api/types';
 import {
     prepareClaudeTranscriptDispatch,
 } from '@/api/session/outbound/providers/sessionTranscriptDispatch';
+import { resolveClaudeSessionMessageRole } from '@/api/session/messageRole';
 import {
     isToolTraceEnabled,
     recordClaudeToolTraceEvents,
@@ -42,6 +43,7 @@ export function sendClaudeSessionClientMessage(
         message: payload,
         localId: randomUUID(),
         sidechainId,
+        messageRole: resolveClaudeSessionMessageRole(body),
         logErrorMessage: '[SOCKET] Failed to commit Claude session message (non-fatal)',
     });
     const extracted = extractAssistantTextSnapshotFromSessionContent(content);

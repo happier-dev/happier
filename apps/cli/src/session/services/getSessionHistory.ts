@@ -1,13 +1,9 @@
 import type { Credentials } from '@/persistence';
-import { fetchEncryptedTranscriptMessages } from '@/session/replay/fetchEncryptedTranscriptMessages';
 
-import { resolveSessionTransportContext } from './resolveSessionTransportContext';
+import { getSessionEvents } from './getSessionEvents';
+import { fetchTranscriptSemanticPage } from './transcript/fetchTranscriptSemanticPage';
 
 import {
-  extractCompactRow,
-  extractRawRow,
-  isMemoryArtifactDecryptedRow,
-  tryResolveDecryptedTranscriptPayload,
   type CompactHistoryRow,
   type RawHistoryRow,
 } from './transcript/transcriptHistoryRows';
@@ -27,34 +23,29 @@ export async function readRawSessionHistoryRows(params: Readonly<{
   includeMeta?: boolean;
   includeStructuredPayload?: boolean;
 }>): Promise<readonly RawHistoryRow[]> {
-  const rows = await fetchEncryptedTranscriptMessages({
+  const page = await fetchTranscriptSemanticPage({
     token: params.token,
     sessionId: params.sessionId,
+    ctx: params.ctx,
     limit: params.limit,
+    rawPageLimit: Math.min(200, Math.max(1, params.limit)),
+    maxRawRowsToScan: Math.max(1, params.limit),
+    direction: 'before',
+    scope: 'all',
+    mode: 'events',
+    includeRaw: true,
+    includeStructuredPayload: params.includeStructuredPayload === true,
+    maxPayloadChars: 32768,
   });
 
-  const messages: RawHistoryRow[] = [];
-  for (let i = 0; i < rows.length; i += 1) {
-    const row = rows[i]!;
-    const decrypted = tryResolveDecryptedTranscriptPayload({
-      content: row.content,
-      ctx: params.ctx,
-    });
-    if (!decrypted) continue;
-    if (isMemoryArtifactDecryptedRow(decrypted)) continue;
-    const createdAt = typeof row.createdAt === 'number' ? row.createdAt : 0;
-    const id = typeof row.seq === 'number' || typeof row.seq === 'string' ? String(row.seq) : String(i);
-    const extracted = extractRawRow({
-      decrypted,
-      createdAt,
-      fallbackId: id,
-      includeMeta: params.includeMeta === true,
-      includeStructuredPayload: params.includeStructuredPayload === true,
-    });
-    if (extracted) messages.push(extracted);
-  }
-
-  return messages;
+  return page.items.map((item) => ({
+    id: item.id,
+    createdAt: item.createdAt,
+    role: item.storedMessageRole ?? item.semanticRole,
+    raw: item.raw && typeof item.raw === 'object' && !Array.isArray(item.raw)
+      ? item.raw as Record<string, unknown>
+      : { value: item.raw },
+  }));
 }
 
 export async function getSessionHistory(params: Readonly<{
@@ -65,65 +56,63 @@ export async function getSessionHistory(params: Readonly<{
   includeMeta: boolean;
   includeStructuredPayload: boolean;
 }>): Promise<GetSessionHistoryResult> {
-  const sessionTarget = await resolveSessionTransportContext({
-    credentials: params.credentials,
-    idOrPrefix: params.idOrPrefix,
-  });
-  if (!sessionTarget.ok) {
-    return {
-      ok: false,
-      code: sessionTarget.code,
-      ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
-    };
-  }
-
   if (params.format === 'raw') {
-    const messages = await readRawSessionHistoryRows({
-      token: params.credentials.token,
-      sessionId: sessionTarget.sessionId,
-      ctx: sessionTarget.ctx,
+    const events = await getSessionEvents({
+      credentials: params.credentials,
+      idOrPrefix: params.idOrPrefix,
       limit: params.limit,
+      includeRaw: true,
       includeMeta: params.includeMeta,
       includeStructuredPayload: params.includeStructuredPayload,
     });
+    if (!events.ok) {
+      return {
+        ok: false,
+        code: events.errorCode === 'session_id_ambiguous' ? 'session_id_ambiguous' : events.errorCode === 'session_not_found' ? 'session_not_found' : 'unsupported',
+        ...(events.candidates ? { candidates: events.candidates } : {}),
+      };
+    }
 
     return {
       ok: true,
-      sessionId: sessionTarget.sessionId,
+      sessionId: events.sessionId,
       format: 'raw',
-      messages,
+      messages: events.items.map((item) => ({
+        id: item.id,
+        createdAt: item.createdAt,
+        role: item.storedMessageRole ?? item.semanticRole,
+        raw: item.raw && typeof item.raw === 'object' && !Array.isArray(item.raw)
+          ? item.raw as Record<string, unknown>
+          : { value: item.raw },
+      })),
     };
   }
 
-  const rows = await fetchEncryptedTranscriptMessages({
-    token: params.credentials.token,
-    sessionId: sessionTarget.sessionId,
+  const events = await getSessionEvents({
+    credentials: params.credentials,
+    idOrPrefix: params.idOrPrefix,
     limit: params.limit,
+    includeMeta: params.includeMeta,
+    includeStructuredPayload: params.includeStructuredPayload,
   });
-
-  const messages: CompactHistoryRow[] = [];
-  for (let i = 0; i < rows.length; i += 1) {
-    const row = rows[i]!;
-    const decrypted = tryResolveDecryptedTranscriptPayload({
-      content: row.content,
-      ctx: sessionTarget.ctx,
-    });
-    if (!decrypted) continue;
-    if (isMemoryArtifactDecryptedRow(decrypted)) continue;
-    const createdAt = typeof row.createdAt === 'number' ? row.createdAt : 0;
-    const id = typeof row.seq === 'number' || typeof row.seq === 'string' ? String(row.seq) : String(i);
-    const extracted = extractCompactRow({
-      decrypted,
-      createdAt,
-      fallbackId: id,
-    });
-    if (extracted) messages.push(extracted);
+  if (!events.ok) {
+    return {
+      ok: false,
+      code: events.errorCode === 'session_id_ambiguous' ? 'session_id_ambiguous' : events.errorCode === 'session_not_found' ? 'session_not_found' : 'unsupported',
+      ...(events.candidates ? { candidates: events.candidates } : {}),
+    };
   }
 
   return {
     ok: true,
-    sessionId: sessionTarget.sessionId,
+    sessionId: events.sessionId,
     format: 'compact',
-    messages,
+    messages: events.items.map((item): CompactHistoryRow => ({
+      id: item.id,
+      createdAt: item.createdAt,
+      role: item.storedMessageRole ?? item.semanticRole,
+      kind: item.kind,
+      text: item.text ?? item.summary ?? item.kind,
+    })),
   };
 }

@@ -1,5 +1,5 @@
 import { REPOSITORY_CHECKPOINT_RECEIPT_IDS } from './receipts';
-import { parseRepositoryCheckpointRef } from './refs';
+import { isRepositoryCheckpointRollbackBackupRef, parseRepositoryCheckpointRef } from './refs';
 import type {
     RepositoryCheckpointCleanupRequest,
     RepositoryCheckpointCleanupResult,
@@ -41,6 +41,10 @@ export async function pruneRepositoryCheckpointRefs(
             parsed: NonNullable<ReturnType<typeof parseRepositoryCheckpointRef>>;
         } => entry.parsed !== null);
 
+    const rollbackBackupRefs = input.refs.filter((listedRef) =>
+        isRepositoryCheckpointRollbackBackupRef({ scopeId: input.scopeId, ref: listedRef.ref }),
+    );
+
     const finalizedRefs = parsedRefs
         .filter((entry) => entry.parsed.phase === 'turn-final')
         .slice()
@@ -66,11 +70,19 @@ export async function pruneRepositoryCheckpointRefs(
         return isOlderThan({ ref: entry.listedRef, nowMs, maxAgeMs });
     });
 
+    const rollbackBackupRefsToPrune = rollbackBackupRefs.filter((listedRef) =>
+        isOlderThan({ ref: listedRef, nowMs, maxAgeMs }),
+    );
+
     const prunedRefs: string[] = [];
-    for (const entry of refsToPrune) {
+    const allRefsToPrune: readonly RepositoryCheckpointListedRef[] = [
+        ...refsToPrune.map((entry) => entry.listedRef),
+        ...rollbackBackupRefsToPrune,
+    ];
+    for (const listedRef of allRefsToPrune) {
         try {
-            await input.deleteRef(entry.listedRef.ref);
-            prunedRefs.push(entry.listedRef.ref);
+            await input.deleteRef(listedRef.ref);
+            prunedRefs.push(listedRef.ref);
         } catch (error) {
             const receipts = prunedRefs.length > 0
                 ? [{

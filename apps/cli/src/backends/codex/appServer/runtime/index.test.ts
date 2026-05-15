@@ -696,6 +696,7 @@ describe('createCodexAppServerRuntime', () => {
             permissionMode: 'read-only',
         });
 
+        await runtime.setSessionConfigOption('reasoning_effort', 'high');
         await runtime.startOrLoad({ resumeId: 'resume-123', importHistory: false });
         await runtime.startOrLoad({ existingSessionId: 'existing-456' });
 
@@ -709,6 +710,9 @@ describe('createCodexAppServerRuntime', () => {
                         threadId: 'resume-123',
                         approvalPolicy: 'never',
                         sandbox: 'read-only',
+                        config: {
+                            model_reasoning_effort: 'high',
+                        },
                         persistExtendedHistory: true,
                     }),
                 }),
@@ -717,6 +721,9 @@ describe('createCodexAppServerRuntime', () => {
                         threadId: 'existing-456',
                         approvalPolicy: 'never',
                         sandbox: 'read-only',
+                        config: {
+                            model_reasoning_effort: 'high',
+                        },
                         persistExtendedHistory: true,
                     }),
                 }),
@@ -1952,7 +1959,7 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
-    it('includes preselected model and Fast service tier in fresh thread/start requests', async () => {
+    it('includes preselected model, reasoning, and Fast service tier in fresh thread/start requests', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-thread-start-overrides-');
 
         const runtime = createCodexAppServerRuntime({
@@ -1963,6 +1970,7 @@ describe('createCodexAppServerRuntime', () => {
 
         await runtime.setSessionModel('gpt-5.4');
         await runtime.setSessionConfigOption('service_tier', 'fast');
+        await runtime.setSessionConfigOption('reasoning_effort', 'high');
         await runtime.startOrLoad({});
 
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
@@ -1974,6 +1982,9 @@ describe('createCodexAppServerRuntime', () => {
                         cwd: root,
                         model: 'gpt-5.4',
                         serviceTier: 'fast',
+                        config: {
+                            model_reasoning_effort: 'high',
+                        },
                         persistExtendedHistory: true,
                     }),
                 }),

@@ -3,7 +3,7 @@ import type { Socket } from 'socket.io-client';
 import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
 
 import { createSessionScopedSocket } from '@/api/session/sockets';
-import type { SessionStoredMessageContent } from '@happier-dev/protocol';
+import type { SessionMessageRole, SessionStoredMessageContent } from '@happier-dev/protocol';
 import { resolveSessionControlSocketAckTimeoutMs, resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { emitSocketCallbackAck } from '@/session/transport/shared/socketAck';
 import { waitForSocketConnect } from './waitForSocketConnect';
@@ -17,6 +17,7 @@ export async function sendSessionMessageViaSocketCommitted(params: Readonly<{
   ackTimeoutMs?: number;
   sentFrom?: string;
   permissionMode?: string;
+  messageRole?: SessionMessageRole;
 }>): Promise<void> {
   const connectTimeoutMs =
     typeof params.connectTimeoutMs === 'number' && Number.isFinite(params.connectTimeoutMs) && params.connectTimeoutMs > 0
@@ -40,6 +41,7 @@ export async function sendSessionMessageViaSocketCommitted(params: Readonly<{
         sid: params.sessionId,
         message: params.content,
         localId: params.localId,
+        ...(params.messageRole ? { messageRole: params.messageRole } : {}),
         ...(params.sentFrom ? { sentFrom: params.sentFrom } : {}),
         ...(params.permissionMode ? { permissionMode: params.permissionMode } : {}),
       },

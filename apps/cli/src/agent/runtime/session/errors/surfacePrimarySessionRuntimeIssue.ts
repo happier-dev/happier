@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import { logger } from '@/ui/logger';
 import type {
   PrimaryTurnStatusV1,
   SessionRuntimeIssueV1,
@@ -39,6 +40,20 @@ function sendTurnLifecycleMessage(
   );
 }
 
+async function updatePrimaryTurnRuntimeStateBestEffort(
+  session: RuntimeIssueSession | null | undefined,
+  record: PrimarySessionRuntimeIssueRecord,
+): Promise<void> {
+  try {
+    await session?.updatePrimaryTurnRuntimeState?.(record);
+  } catch (error) {
+    logger.debug('[API] Failed to update primary turn runtime state (non-fatal)', {
+      latestTurnStatus: record.latestTurnStatus,
+      error,
+    });
+  }
+}
+
 export { classifyPrimarySessionRuntimeIssue };
 
 export async function surfacePrimarySessionRuntimeIssue(
@@ -46,7 +61,7 @@ export async function surfacePrimarySessionRuntimeIssue(
 ): Promise<SessionRuntimeIssueV1 | null> {
   if (input.cause === 'cancelled') {
     sendTurnLifecycleMessage(input.session, input.provider, 'turn_cancelled');
-    await input.session?.updatePrimaryTurnRuntimeState?.({
+    await updatePrimaryTurnRuntimeStateBestEffort(input.session, {
       latestTurnStatus: 'cancelled',
       lastRuntimeIssue: null,
     });
@@ -59,7 +74,7 @@ export async function surfacePrimarySessionRuntimeIssue(
     latestTurnStatus: 'failed',
     lastRuntimeIssue: issue,
   } satisfies PrimarySessionRuntimeIssueRecord;
-  await input.session?.updatePrimaryTurnRuntimeState?.(record);
+  await updatePrimaryTurnRuntimeStateBestEffort(input.session, record);
   await input.recordIssue?.(record);
   return issue;
 }
@@ -67,7 +82,7 @@ export async function surfacePrimarySessionRuntimeIssue(
 export async function recordPrimaryTurnInProgress(
   input: Readonly<{ session?: RuntimeIssueSession | null }>,
 ): Promise<void> {
-  await input.session?.updatePrimaryTurnRuntimeState?.({
+  await updatePrimaryTurnRuntimeStateBestEffort(input.session, {
     latestTurnStatus: 'in_progress',
   });
 }
@@ -75,7 +90,7 @@ export async function recordPrimaryTurnInProgress(
 export async function recordPrimaryTurnCompleted(
   input: Readonly<{ session?: RuntimeIssueSession | null }>,
 ): Promise<void> {
-  await input.session?.updatePrimaryTurnRuntimeState?.({
+  await updatePrimaryTurnRuntimeStateBestEffort(input.session, {
     latestTurnStatus: 'completed',
   });
 }

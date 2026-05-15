@@ -98,6 +98,7 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
       expect.objectContaining({
         sid: 's1',
         echoToSender: true,
+        messageRole: 'user',
       }),
     );
     expect(sessionSocketStub.emit).not.toHaveBeenCalledWith(
@@ -179,6 +180,7 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
         sid: 's1',
         localId: 'direct-1',
         echoToSender: true,
+        messageRole: 'user',
       }),
     );
   });

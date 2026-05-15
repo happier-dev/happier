@@ -5,9 +5,12 @@ import { configuration } from '@/configuration';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
 
 export type RawTranscriptRow = Readonly<{
+  id?: unknown;
   seq?: unknown;
   createdAt?: unknown;
   content?: unknown;
+  messageRole?: unknown;
+  sidechainId?: unknown;
 }>;
 
 export type FetchEncryptedTranscriptMessagesPageResult = Readonly<{
@@ -23,6 +26,10 @@ export async function fetchEncryptedTranscriptMessagesPage(params: Readonly<{
   limit: number;
   beforeSeq?: number;
   afterSeq?: number;
+  scope?: 'main' | 'sidechain' | 'all';
+  sidechainId?: string | null;
+  role?: 'user' | 'agent' | 'event' | 'unknown';
+  roles?: readonly ('user' | 'agent' | 'event' | 'unknown')[];
 }>): Promise<FetchEncryptedTranscriptMessagesPageResult> {
   const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
@@ -34,6 +41,10 @@ export async function fetchEncryptedTranscriptMessagesPage(params: Readonly<{
       limit: params.limit,
       ...(typeof params.beforeSeq === 'number' && Number.isFinite(params.beforeSeq) ? { beforeSeq: Math.max(0, Math.floor(params.beforeSeq)) } : {}),
       ...(typeof params.afterSeq === 'number' && Number.isFinite(params.afterSeq) ? { afterSeq: Math.max(0, Math.floor(params.afterSeq)) } : {}),
+      ...(params.scope ? { scope: params.scope } : {}),
+      ...(params.sidechainId ? { sidechainId: params.sidechainId } : {}),
+      ...(params.role ? { role: params.role } : {}),
+      ...(params.roles && params.roles.length > 0 ? { roles: params.roles.join(',') } : {}),
     },
     timeout: 10_000,
     validateStatus: () => true,
@@ -62,6 +73,10 @@ export async function fetchEncryptedTranscriptMessages(params: Readonly<{
   sessionId: string;
   limit: number;
   beforeSeq?: number;
+  scope?: 'main' | 'sidechain' | 'all';
+  sidechainId?: string | null;
+  role?: 'user' | 'agent' | 'event' | 'unknown';
+  roles?: readonly ('user' | 'agent' | 'event' | 'unknown')[];
 }>): Promise<RawTranscriptRow[]> {
   return (await fetchEncryptedTranscriptMessagesPage(params)).messages as RawTranscriptRow[];
 }

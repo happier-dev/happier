@@ -288,12 +288,12 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     turnId,
                 });
                 const attributionScope = resolveAttributionScope(binding);
-                const baseRef = refs.turnStart ?? refs.messageStart;
+                const baseRef = binding.refs.turnStart ?? binding.refs.messageStart;
                 const baseRefSource: RepositoryCheckpointDiffBaseRefSource = binding.unavailableReason
                     ? 'unavailable'
-                    : refs.turnStart
+                    : binding.refs.turnStart
                         ? 'turn_start'
-                        : refs.messageStart
+                        : binding.refs.messageStart
                             ? 'message_start'
                             : 'unavailable';
                 if (binding.unavailableReason || !binding.context) {

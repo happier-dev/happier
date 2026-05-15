@@ -28,6 +28,37 @@ function createTranscriptSendPort(snapshotStore = createTurnAssistantTextSnapsho
 }
 
 describe('session transcript assistant text snapshot observation', () => {
+  it('stamps durable ACP tool calls as event rows', () => {
+    const port = createTranscriptSendPort();
+
+    sendAgentMessageViaPort(port, 'codex', {
+      type: 'tool-call',
+      callId: 'call-1',
+      name: 'Bash',
+      input: { command: 'pwd' },
+    } as any);
+
+    expect(port.commitSessionMessageBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ messageRole: 'event' }),
+    );
+  });
+
+  it('stamps ephemeral ACP thinking segments as event rows', () => {
+    const port = createTranscriptSendPort();
+
+    sendAgentMessageEphemeralViaPort(port, 'codex', { type: 'thinking', text: 'checking' } as any, {
+      localId: 'thinking-1',
+      createdAt: 100,
+    });
+
+    expect(port.socket.emit).toHaveBeenCalledWith(
+      'transcript-stream-segment',
+      expect.objectContaining({
+        message: expect.objectContaining({ messageRole: 'event' }),
+      }),
+    );
+  });
+
   it('does not attribute unsequenced provider-dispatch text to the active turn', () => {
     const store = createTurnAssistantTextSnapshotStore({ maxTextChars: 200 });
     const port = createTranscriptSendPort(store);

@@ -1,5 +1,6 @@
 import {
   type ActionId,
+  type ApprovalRequestOriginV1,
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
 import { createActionToolNameToIdMap } from './actionToolCatalog';
@@ -15,7 +16,11 @@ type ActionExecutorLike = Readonly<{
   execute: (
     actionId: ActionId,
     input: unknown,
-    ctx: Readonly<{ defaultSessionId: string; surface: 'mcp' | 'cli' | 'session_agent' }>,
+    ctx: Readonly<{
+      defaultSessionId: string;
+      surface: 'mcp' | 'cli' | 'session_agent';
+      approvalOrigin?: ApprovalRequestOriginV1 | null;
+    }>,
   ) => Promise<ActionExecutorResult>;
 }>;
 
@@ -33,6 +38,10 @@ type DynamicActionOptionsResult = Readonly<{
 type DynamicActionOptionsBridgeResult =
   | Readonly<{ ok: true; result: DynamicActionOptionsResult }>
   | Readonly<{ ok: false; errorCode: string; error: string }>;
+
+export type ActionToolExecutionOptions = Readonly<{
+  approvalOrigin?: ApprovalRequestOriginV1 | null;
+}>;
 
 function normalizeActionExecutorResult(result: ActionExecutorResult): ActionToolBridgeResult {
   return result.ok
@@ -55,13 +64,34 @@ function normalizeActionToolResult(actionId: string, result: ActionExecutorResul
   return normalizeExecutionRunToolResult(result.result as Parameters<typeof normalizeExecutionRunToolResult>[0]);
 }
 
+function buildActionExecutorContext(params: Readonly<{
+  defaultSessionId: string;
+  surface: 'mcp' | 'cli' | 'session_agent';
+  options?: ActionToolExecutionOptions;
+}>): Readonly<{
+  defaultSessionId: string;
+  surface: 'mcp' | 'cli' | 'session_agent';
+  approvalOrigin?: ApprovalRequestOriginV1 | null;
+}> {
+  return {
+    defaultSessionId: params.defaultSessionId,
+    surface: params.surface,
+    ...(params.options?.approvalOrigin ? { approvalOrigin: params.options.approvalOrigin } : {}),
+  };
+}
+
 export function createActionToolExecutorBridge(params: Readonly<{
   executor: ActionExecutorLike;
   isActionEnabled?: (id: ActionId) => boolean;
   surface?: 'mcp' | 'cli' | 'session_agent';
   registry?: ResolvedContributionRegistry;
 }>): Readonly<{
-  executeActionByToolName: (toolName: string, toolArgs: unknown, defaultSessionId: string) => Promise<ActionToolBridgeResult>;
+  executeActionByToolName: (
+    toolName: string,
+    toolArgs: unknown,
+    defaultSessionId: string,
+    options?: ActionToolExecutionOptions,
+  ) => Promise<ActionToolBridgeResult>;
   resolveActionOptions: (args: Readonly<{
     actionId: ActionId | null;
     fieldPath: string | null;
@@ -77,7 +107,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
   const actionToolNameToId = createActionToolNameToIdMap({ surface, isActionEnabled, registry: params.registry });
 
   return {
-    executeActionByToolName: async (toolName, toolArgs, defaultSessionId) => {
+    executeActionByToolName: async (toolName, toolArgs, defaultSessionId, options) => {
       if (toolName === 'action_execute') {
         const actionId = typeof (toolArgs as any)?.actionId === 'string' ? String((toolArgs as any).actionId).trim() : '';
         if (!actionId) {
@@ -86,7 +116,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
         return normalizeActionToolResult(actionId, await params.executor.execute(
           actionId as ActionId,
           Object.prototype.hasOwnProperty.call(toolArgs ?? {}, 'input') ? (toolArgs as any).input : {},
-          { defaultSessionId, surface },
+          buildActionExecutorContext({ defaultSessionId, surface, options }),
         ));
       }
 
@@ -98,7 +128,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
       return normalizeActionToolResult(actionId, await params.executor.execute(
         actionId as ActionId,
         toolArgs,
-        { defaultSessionId, surface },
+        buildActionExecutorContext({ defaultSessionId, surface, options }),
       ));
     },
     resolveActionOptions: async (args, defaultSessionId) => {

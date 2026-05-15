@@ -142,3 +142,25 @@ export function parseRepositoryCheckpointRef(input: {
         ref: input.ref,
     };
 }
+
+/**
+ * Tests whether a ref is a CHKPT-4 rollback-backup ref under the requested scope.
+ * Rollback-backup refs intentionally use a separate phase outside the
+ * capture-phase whitelist (`message-start`/`turn-start`/`turn-final`), so they
+ * must be recognised separately for namespace-contained cleanup.
+ */
+export function isRepositoryCheckpointRollbackBackupRef(input: {
+    scopeId: string;
+    ref: string;
+}): boolean {
+    const encodedScope = encodeRepositoryCheckpointScope(input.scopeId);
+    const prefix = `${CHECKPOINT_REF_ROOT}/${encodedScope}/rollback-backup/`;
+    if (!input.ref.startsWith(prefix)) return false;
+    const rollbackId = input.ref.slice(prefix.length);
+    try {
+        assertSafeCheckpointId(rollbackId, 'rollbackId');
+        return true;
+    } catch {
+        return false;
+    }
+}

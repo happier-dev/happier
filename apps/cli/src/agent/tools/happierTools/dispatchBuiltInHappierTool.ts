@@ -1,4 +1,4 @@
-import { type ActionId, type ResolvedActionOption } from '@happier-dev/protocol';
+import { type ActionId, type ApprovalRequestOriginV1, type ResolvedActionOption } from '@happier-dev/protocol';
 import {
   getActionToolIdForToolName,
   getEquivalentActionIdForBuiltInTool,
@@ -20,7 +20,12 @@ import { reloadTrustedLocalPluginTool } from './reloadTrustedLocalPluginTool';
 
 type DispatchDeps = Readonly<{
   changeTitle: (sessionId: string, title: string) => Promise<unknown>;
-  executeActionByToolName: (toolName: string, args: unknown, defaultSessionId: string) => Promise<HappierBuiltInToolDispatchResult>;
+  executeActionByToolName: (
+    toolName: string,
+    args: unknown,
+    defaultSessionId: string,
+    options?: Readonly<{ approvalOrigin?: ApprovalRequestOriginV1 | null }>,
+  ) => Promise<HappierBuiltInToolDispatchResult>;
   reloadPlugin?: (pluginId: string) => Promise<HappierBuiltInToolDispatchResult>;
   resolveActionOptions?: (args: Readonly<{
     actionId: ActionId | null;
@@ -92,6 +97,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   args: unknown;
   sessionId: string;
   surface?: 'mcp' | 'cli' | 'session_agent';
+  approvalOrigin?: ApprovalRequestOriginV1 | null;
   registry?: import('@/plugins/projection/registry/types').ResolvedContributionRegistry;
   deps: DispatchDeps;
 }>): Promise<HappierBuiltInToolDispatchResult> {
@@ -150,7 +156,12 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
       return err('action_disabled', 'Action is disabled');
     }
 
-    return await params.deps.executeActionByToolName('execution_run_start', normalized.request, params.sessionId);
+    return await params.deps.executeActionByToolName(
+      'execution_run_start',
+      normalized.request,
+      params.sessionId,
+      ...(params.approvalOrigin ? [{ approvalOrigin: params.approvalOrigin }] : []),
+    );
   }
 
   if (params.toolName === 'action_options_resolve') {
@@ -178,6 +189,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
         ...(Object.prototype.hasOwnProperty.call(parsed.data, 'input') ? { input: parsed.data.input } : {}),
       },
       params.sessionId,
+      ...(params.approvalOrigin ? [{ approvalOrigin: params.approvalOrigin }] : []),
     );
   }
 
@@ -191,7 +203,12 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     })) {
       return err('action_disabled', 'Action is disabled');
     }
-    return await params.deps.executeActionByToolName(params.toolName, params.args, params.sessionId);
+    return await params.deps.executeActionByToolName(
+      params.toolName,
+      params.args,
+      params.sessionId,
+      ...(params.approvalOrigin ? [{ approvalOrigin: params.approvalOrigin }] : []),
+    );
   }
 
   return err('unknown_tool', `Unknown built-in Happier tool: ${params.toolName}`);

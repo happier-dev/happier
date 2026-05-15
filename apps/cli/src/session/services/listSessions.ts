@@ -5,19 +5,63 @@ import { summarizeSessionRow, type SessionSummary } from '@/cli/output/session/s
 import { buildCliSessionRowModel, type CliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { fetchSessionsPage } from '@/session/transport/http/sessionsHttp';
+import { getSessionTranscript } from './getSessionTranscript';
+import type { SemanticTranscriptItem } from './transcript/semanticTranscriptItem';
+
+const LIST_SESSION_PREVIEW_TEXT_LIMIT = 200;
+
+export type ListSessionsLastMessagePreview = Readonly<{
+  id: string;
+  createdAt: number;
+  role: 'user' | 'assistant';
+  text: string;
+  truncated?: boolean;
+}>;
 
 export type ListSessionsJsonSession = SessionSummary & Readonly<{
   agentId: CliSessionRowModel['agentId'];
   vendorResumeEligible: boolean;
   vendorResumeReasonCode?: VendorResumeEligibilityReasonCode;
+  lastMessagePreview?: ListSessionsLastMessagePreview;
 }>;
 
 export type ListSessionsResult = Readonly<{
-  rows: readonly CliSessionRowModel[];
+  rows?: readonly CliSessionRowModel[];
   sessions: readonly ListSessionsJsonSession[];
   nextCursor: string | null;
   hasNext: boolean;
 }>;
+
+function toLastMessagePreview(message: SemanticTranscriptItem | undefined): ListSessionsLastMessagePreview | undefined {
+  if (!message || !message.text) return undefined;
+  const text = message.text.slice(0, LIST_SESSION_PREVIEW_TEXT_LIMIT);
+  return {
+    id: message.id,
+    createdAt: message.createdAt,
+    role: message.role === 'user' ? 'user' : 'assistant',
+    text,
+    ...(message.text.length > text.length ? { truncated: true } : {}),
+  };
+}
+
+async function loadLastMessagePreview(params: Readonly<{
+  credentials: Credentials;
+  sessionId: string;
+}>): Promise<ListSessionsLastMessagePreview | undefined> {
+  try {
+    const res = await getSessionTranscript({
+      credentials: params.credentials,
+      idOrPrefix: params.sessionId,
+      limit: 1,
+      roles: ['user', 'assistant'],
+      maxCharsPerMessage: LIST_SESSION_PREVIEW_TEXT_LIMIT,
+    });
+    if (!res.ok) return undefined;
+    return toLastMessagePreview(res.items[0]);
+  } catch {
+    return undefined;
+  }
+}
 
 export async function listSessions(params: Readonly<{
   credentials: Credentials;
@@ -25,6 +69,8 @@ export async function listSessions(params: Readonly<{
   archivedOnly: boolean;
   includeSystem: boolean;
   resumableOnly: boolean;
+  includeRows?: boolean;
+  includeLastMessagePreview?: boolean;
   limit?: number;
   cursor?: string;
 }>): Promise<ListSessionsResult> {
@@ -55,7 +101,7 @@ export async function listSessions(params: Readonly<{
 
   const allowedSessionIds = params.resumableOnly ? new Set(filteredRows.map((row) => row.id)) : null;
   const rowById = new Map(filteredRows.map((row) => [row.id, row] as const));
-  const sessions = page.sessions
+  let sessions = page.sessions
     .map((row) => summarizeSessionRow({ credentials: params.credentials, row }))
     .filter((session) => params.includeSystem || session.isSystem !== true)
     .filter((session) => !allowedSessionIds || allowedSessionIds.has(session.id))
@@ -72,10 +118,22 @@ export async function listSessions(params: Readonly<{
       };
     });
 
+  if (params.includeLastMessagePreview === true) {
+    const previews = await Promise.all(sessions.map(async (session) => [
+      session.id,
+      await loadLastMessagePreview({ credentials: params.credentials, sessionId: session.id }),
+    ] as const));
+    const previewBySessionId = new Map(previews.filter((entry): entry is readonly [string, ListSessionsLastMessagePreview] => entry[1] !== undefined));
+    sessions = sessions.map((session) => {
+      const preview = previewBySessionId.get(session.id);
+      return preview ? { ...session, lastMessagePreview: preview } : session;
+    });
+  }
+
   return {
-    rows: filteredRows,
     sessions,
     nextCursor: page.nextCursor,
     hasNext: page.hasNext,
+    ...(params.includeRows === true ? { rows: filteredRows } : {}),
   };
 }

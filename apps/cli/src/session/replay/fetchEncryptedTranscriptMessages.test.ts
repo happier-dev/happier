@@ -33,6 +33,32 @@ describe('fetchEncryptedTranscriptMessages', () => {
     expect(call?.[1]?.params).toEqual({ limit: 10, beforeSeq: 123 });
   });
 
+  it('passes scope and role filters through to the server query params', async () => {
+    const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: { messages: [] },
+    } as any);
+
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+
+    await fetchEncryptedTranscriptMessagesPage({
+      token: 't',
+      sessionId: 'sess_1',
+      limit: 10,
+      scope: 'sidechain',
+      sidechainId: 'side-1',
+      roles: ['user', 'agent'],
+    });
+
+    const call = (getSpy as any).mock.calls[0];
+    expect(call?.[1]?.params).toEqual({
+      limit: 10,
+      scope: 'sidechain',
+      sidechainId: 'side-1',
+      roles: 'user,agent',
+    });
+  });
+
   it('exposes paging metadata via fetchEncryptedTranscriptMessagesPage', async () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({
       status: 200,

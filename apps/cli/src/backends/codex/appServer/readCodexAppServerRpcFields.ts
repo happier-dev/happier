@@ -165,3 +165,16 @@ export function buildThreadServiceTierParams(
     }
     return currentServiceTier === 'fast' ? { serviceTier: 'fast' } : { serviceTier: null };
 }
+
+export function buildThreadConfigOverrideParams(
+    currentReasoningEffort: string | null,
+): { config?: Record<string, string> } {
+    if (!currentReasoningEffort) {
+        return {};
+    }
+    return {
+        config: {
+            model_reasoning_effort: currentReasoningEffort,
+        },
+    };
+}

@@ -2,6 +2,7 @@ import type { CodexAppServerPolicy } from '../utils/permissionModePolicy';
 
 import type { DisposableCodexAppServerClient } from './client/createCodexAppServerClient';
 import {
+    buildThreadConfigOverrideParams,
     buildThreadServiceTierParams,
     readModelId,
     readServiceTier,
@@ -21,6 +22,7 @@ export async function startOrLoadCodexAppServerThread(params: Readonly<{
     directory: string;
     options?: CodexAppServerStartOrLoadOptions;
     currentModelId: string | null;
+    currentReasoningEffort: string | null;
     currentServiceTier: string | null;
     hasServiceTierOverride: boolean;
     resolveCurrentPolicy: () => CodexAppServerPolicy | null;
@@ -50,6 +52,7 @@ export async function startOrLoadCodexAppServerThread(params: Readonly<{
             threadId: resumeId,
             ...(params.currentModelId ? { model: params.currentModelId } : {}),
             ...buildThreadServiceTierParams(params.currentServiceTier, params.hasServiceTierOverride),
+            ...buildThreadConfigOverrideParams(params.currentReasoningEffort),
             ...policyFields,
             persistExtendedHistory: true,
         });
@@ -59,6 +62,7 @@ export async function startOrLoadCodexAppServerThread(params: Readonly<{
             threadId: existingSessionId,
             ...(params.currentModelId ? { model: params.currentModelId } : {}),
             ...buildThreadServiceTierParams(params.currentServiceTier, params.hasServiceTierOverride),
+            ...buildThreadConfigOverrideParams(params.currentReasoningEffort),
             ...policyFields,
             persistExtendedHistory: true,
         });
@@ -68,6 +72,7 @@ export async function startOrLoadCodexAppServerThread(params: Readonly<{
             cwd: params.directory,
             ...(params.currentModelId ? { model: params.currentModelId } : {}),
             ...buildThreadServiceTierParams(params.currentServiceTier, params.hasServiceTierOverride),
+            ...buildThreadConfigOverrideParams(params.currentReasoningEffort),
             ...policyFields,
             experimentalRawEvents: true,
             persistExtendedHistory: true,

@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { captureConsoleJsonOutput, captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
@@ -10,6 +10,11 @@ vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
 }));
 
 describe('happier session list (action executor)', () => {
+  beforeEach(() => {
+    execute.mockReset();
+    createCliActionExecutorFromCredentials.mockClear();
+  });
+
   it('routes through ActionExecutor with the expected action id and args', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
@@ -52,6 +57,52 @@ describe('happier session list (action executor)', () => {
           hasNext: false,
         },
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('requests terminal rows for human-readable output', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        sessions: [{ id: 'sess_1234567890', title: 'Session' }],
+        rows: [{
+          id: 'sess_1234567890',
+          agentId: 'claude',
+          createdAt: 1,
+          updatedAt: 2,
+          active: false,
+          activeAt: 0,
+          archivedAt: null,
+          tag: null,
+          title: 'Session',
+          path: null,
+          isSystem: false,
+          systemPurpose: null,
+          vendorResume: { eligible: false, reasonCode: 'vendor_resume_id_missing' },
+          encryptionMode: 'e2ee',
+        }],
+        nextCursor: null,
+      },
+    });
+
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+
+    const output = captureConsoleLogAndMuteStdout();
+    try {
+      await handleSessionCommand(['list'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenCalledWith(
+        'session.list',
+        { includeRows: true },
+        { surface: 'cli', defaultSessionId: null },
+      );
     } finally {
       output.restore();
     }

@@ -4,10 +4,12 @@ import type {
 } from '../../sessionMessageTypes';
 import { prepareAcpTranscriptDispatch } from '../../outbound/providers/sessionTranscriptDispatch';
 import { buildUserTextMessageContent } from '../../outbound/shared';
+import { resolveAcpSessionMessageRole } from '../../messageRole';
 
 import type { SessionClientTranscriptSendPort } from './sendMessages';
 
 type PlainOrEncryptedPayload = ReturnType<SessionClientTranscriptSendPort['buildOutboundSessionMessagePayload']>;
+type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
 
 export function prepareCommittedAgentMessageViaPort(
   port: SessionClientTranscriptSendPort,
@@ -19,6 +21,7 @@ export function prepareCommittedAgentMessageViaPort(
   localId: string;
   sidechainId: string | null;
   payload: PlainOrEncryptedPayload;
+  messageRole: SessionMessageRole;
 }> {
   const { normalizedBody, content, localId, sidechainId } = prepareAcpTranscriptDispatch({
     provider,
@@ -35,6 +38,7 @@ export function prepareCommittedAgentMessageViaPort(
     localId,
     sidechainId,
     payload: port.buildOutboundSessionMessagePayload(content),
+    messageRole: resolveAcpSessionMessageRole(normalizedBody),
   };
 }
 

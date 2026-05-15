@@ -29,6 +29,7 @@ function createCapabilities(input?: Readonly<{
     log?: 'supported' | 'unsupported';
     workspaceCheckoutMaterialization?: 'supported' | 'unsupported';
     lifecycleClone?: 'supported' | 'unsupported';
+    pullRequestRead?: 'supported' | 'unsupported';
 }>): ScmBackendContribution['capabilities'] {
     const supported = { support: 'supported' } as const;
     const unsupported = { support: 'unsupported', reason: 'not_implemented' } as const;
@@ -100,7 +101,7 @@ function createCapabilities(input?: Readonly<{
             providerDetection: unsupported,
             repositoryPublishTargets: unsupported,
             repositoryPublish: unsupported,
-            pullRequestRead: unsupported,
+            pullRequestRead: input?.pullRequestRead === 'supported' ? supported : unsupported,
             pullRequestStatus: unsupported,
             pullRequestCreate: unsupported,
             pullRequestReuse: unsupported,
@@ -683,6 +684,43 @@ describe('registered SCM backend registry', () => {
             expect.objectContaining({
                 code: 'plugin_scm_backend_activation_drift',
                 message: expect.stringContaining('lifecycle.clone'),
+            }),
+        ]);
+    });
+
+    it('rejects activation when pull request read is advertised without read handlers', () => {
+        const registration: ScmBackendRuntimeRegistration = {
+            id: 'acme-vcs',
+            handlers: {
+                detection: {
+                    detectRepo: async () => ({ isRepo: true, rootPath: '/repo', mode: '.git' }),
+                },
+                read: {
+                    statusSnapshot: async () => ({ success: true }),
+                    diffFile: async () => ({ success: true, diff: '' }),
+                },
+            },
+        };
+
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: [{
+                pluginId: 'acme.scm.backend',
+                contributionId: 'acme-vcs',
+                definition: createDefinition({
+                    capabilities: createCapabilities({ pullRequestRead: 'supported' }),
+                }),
+            }],
+            registrations: [{
+                pluginId: 'acme.scm.backend',
+                registration,
+            }],
+        });
+
+        expect(resolved.backends).toEqual([]);
+        expect(resolved.diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_scm_backend_activation_drift',
+                message: expect.stringContaining('hosting.pullRequestRead'),
             }),
         ]);
     });

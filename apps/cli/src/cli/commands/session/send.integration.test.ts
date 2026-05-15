@@ -1181,6 +1181,7 @@ describe('happier session send (integration)', () => {
         if (event !== 'message') {
           throw new Error(`Unexpected socket event: ${event}`);
         }
+        expect(payload).toEqual(expect.objectContaining({ messageRole: 'user' }));
         const content = payload?.message;
         if (content?.t === 'encrypted') {
           const decrypted = decryptWithDataKeyFn!(

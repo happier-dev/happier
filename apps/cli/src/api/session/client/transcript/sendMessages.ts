@@ -12,12 +12,17 @@ import {
     prepareAcpTranscriptDispatch,
 } from '../../outbound/providers/sessionTranscriptDispatch';
 import {
+    resolveAcpSessionMessageRole,
+    resolveSessionEventMessageRole,
+} from '../../messageRole';
+import {
     buildUserTextMessageContent,
 } from '../../outbound/shared';
 import { extractAssistantTextSnapshotFromAcpMessage } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
+type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
 
 function buildSessionEventContent(event: SessionEventMessage, id?: string): {
     role: 'agent';
@@ -41,6 +46,7 @@ type CommitSessionMessageParams = Readonly<{
     message: PlainOrEncryptedPayload;
     localId: string;
     sidechainId: string | null;
+    messageRole: SessionMessageRole;
     logErrorMessage: string;
     markAsUserMessage?: boolean;
 }>;
@@ -111,11 +117,13 @@ export function sendAgentMessageViaPort(
     });
     port.logSendWhileDisconnected(`${provider} ACP message`, { type: normalizedBody.type });
 
+    const messageRole = resolveAcpSessionMessageRole(normalizedBody);
     const payload = port.buildOutboundSessionMessagePayload(content);
     port.commitSessionMessageBestEffort({
         message: payload,
         localId,
         sidechainId,
+        messageRole,
         logErrorMessage: '[SOCKET] Failed to commit agent message (non-fatal)',
     });
     observeAcpAssistantText({
@@ -150,6 +158,7 @@ export function sendUserTextMessageViaPort(
         message: payload,
         localId,
         sidechainId: null,
+        messageRole: 'user',
         markAsUserMessage: true,
         logErrorMessage: '[SOCKET] Failed to commit user message (non-fatal)',
     });
@@ -165,7 +174,7 @@ export function sendAgentMessageEphemeralViaPort(
         return;
     }
 
-    const { content, localId, sidechainId } = prepareAcpTranscriptDispatch({
+    const { normalizedBody, content, localId, sidechainId } = prepareAcpTranscriptDispatch({
         provider,
         body,
         meta: opts.meta,
@@ -174,6 +183,7 @@ export function sendAgentMessageEphemeralViaPort(
         permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
         toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
     });
+    const messageRole = resolveAcpSessionMessageRole(normalizedBody);
     const payload = port.buildOutboundSessionMessagePayload(content);
     const createdAt =
         typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
@@ -199,6 +209,7 @@ export function sendAgentMessageEphemeralViaPort(
             message: {
                 localId,
                 ...(sidechainId ? { sidechainId } : {}),
+                messageRole,
                 content: payload,
                 createdAt,
                 updatedAt,
@@ -210,7 +221,7 @@ export function sendAgentMessageEphemeralViaPort(
     observeAcpAssistantText({
         store: port.turnAssistantTextSnapshotStore,
         provider,
-        body,
+        body: normalizedBody,
         localId,
         source: 'ephemeral',
     });
@@ -229,6 +240,7 @@ export function sendSessionEventViaPort(
         message: payload,
         localId: randomUUID(),
         sidechainId: null,
+        messageRole: resolveSessionEventMessageRole(),
         logErrorMessage: '[SOCKET] Failed to commit session event (non-fatal)',
     });
 }

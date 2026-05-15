@@ -92,6 +92,28 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
     });
   });
 
+  it('treats failed primary-turn runtime state persistence as non-fatal', async () => {
+    const sendAgentMessage = vi.fn();
+    const updatePrimaryTurnRuntimeState = vi.fn(async () => {
+      throw new Error('update-state socket is not connected');
+    });
+    const recordIssue = vi.fn();
+
+    const issue = await surfacePrimarySessionRuntimeIssue({
+      provider: 'acp',
+      cause: 'stream_error',
+      error: 'socket disconnected',
+      occurredAt: 375,
+      session: { sendAgentMessage, updatePrimaryTurnRuntimeState },
+      recordIssue,
+    });
+
+    expect(issue).not.toBeNull();
+    expect(recordIssue).toHaveBeenCalledWith(expect.objectContaining({
+      latestTurnStatus: 'failed',
+    }));
+  });
+
   it('emits turn_cancelled for intentional stops without recording a runtime issue', async () => {
     const sendAgentMessage = vi.fn();
     const updatePrimaryTurnRuntimeState = vi.fn();
@@ -116,6 +138,25 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
       lastRuntimeIssue: null,
     });
     expect(recordIssue).not.toHaveBeenCalled();
+  });
+
+  it('treats failed cancelled-turn runtime state persistence as non-fatal', async () => {
+    const sendAgentMessage = vi.fn();
+    const updatePrimaryTurnRuntimeState = vi.fn(async () => {
+      throw new Error('update-state socket is not connected');
+    });
+
+    await expect(surfacePrimarySessionRuntimeIssue({
+      provider: 'pi',
+      cause: 'cancelled',
+      error: 'user cancelled',
+      occurredAt: 425,
+      session: { sendAgentMessage, updatePrimaryTurnRuntimeState },
+    })).resolves.toBeNull();
+
+    expect(sendAgentMessage).toHaveBeenCalledWith('pi', expect.objectContaining({
+      type: 'turn_cancelled',
+    }));
   });
 
   it.each([

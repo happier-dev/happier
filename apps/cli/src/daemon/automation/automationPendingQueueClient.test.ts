@@ -30,6 +30,7 @@ describe('enqueueAndMaterializeAutomationPrompt', () => {
     expect(axiosPost).toHaveBeenCalledTimes(2);
     expect(axiosPost.mock.calls[0]?.[1]).toEqual({
       localId: expect.any(String),
+      messageRole: 'user',
       content: {
         t: 'plain',
         v: {

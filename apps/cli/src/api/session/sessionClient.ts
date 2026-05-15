@@ -321,6 +321,16 @@ export class ApiSessionClient extends EventEmitter {
             },
             recoverMaterializedLocalId: (localId, opts) => this.recoveryRuntime.recoverMaterializedLocalId(localId, opts),
             observeCommittedAck: (params) => this.updateRuntime.observeCommittedAck(params),
+            requestReconnect: (localId) => {
+                const supervisor = this.sessionConnectionSupervisor;
+                if (!supervisor) return;
+                void supervisor.start().catch((error) => {
+                    logger.debug('[API] Failed to restart session socket for queued message', {
+                        localId,
+                        error,
+                    });
+                });
+            },
         });
         this.transcriptApi = createSessionClientTranscriptApi({
             token: this.token,

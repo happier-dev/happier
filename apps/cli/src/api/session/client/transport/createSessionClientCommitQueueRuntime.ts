@@ -6,17 +6,20 @@ import type { Socket } from 'socket.io-client';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
+type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
 
 type QueuedDisconnectedSessionMessage = Readonly<{
     message: PlainOrEncryptedPayload;
     localId: string;
     sidechainId: string | null;
+    messageRole: SessionMessageRole;
 }>;
 
 type CommitSessionMessageParams = Readonly<{
     message: PlainOrEncryptedPayload;
     localId: string;
     sidechainId: string | null;
+    messageRole: SessionMessageRole;
     requireCommit: boolean;
     markAsUserMessage?: boolean;
 }>;
@@ -34,6 +37,7 @@ export type SessionClientCommitQueueRuntime = Readonly<{
         localId: string;
         sidechainId: string | null;
         logErrorMessage: string;
+        messageRole: SessionMessageRole;
         markAsUserMessage?: boolean;
     }>) => void;
     clearState: () => void;
@@ -55,6 +59,7 @@ export function createSessionClientCommitQueueRuntime(
         scheduleMaterializationRecovery: (localId: string) => void;
         recoverMaterializedLocalId: (localId: string, opts?: { maxWaitMs?: number }) => Promise<boolean>;
         observeCommittedAck: (params: { seq: number; markAsUserMessage?: boolean }) => void;
+        requestReconnect?: (localId: string) => void;
     }>,
 ): SessionClientCommitQueueRuntime {
     const queuedDisconnectedSessionMessages = new Map<string, QueuedDisconnectedSessionMessage>();
@@ -66,6 +71,7 @@ export function createSessionClientCommitQueueRuntime(
             message: PlainOrEncryptedPayload;
             localId: string;
             sidechainId: string | null;
+            messageRole: SessionMessageRole;
         }>,
     ) => {
         try {
@@ -78,6 +84,7 @@ export function createSessionClientCommitQueueRuntime(
                     localId: params.localId,
                     echoToSender: true,
                     sidechainId: params.sidechainId,
+                    messageRole: params.messageRole,
                 },
             });
 
@@ -91,6 +98,7 @@ export function createSessionClientCommitQueueRuntime(
     const queueSessionMessageUntilReconnect = (params: QueuedDisconnectedSessionMessage): void => {
         if (deps.getClosed()) return;
         queuedDisconnectedSessionMessages.set(params.localId, params);
+        deps.requestReconnect?.(params.localId);
     };
 
     const enqueueMessageCommit = <T>(fn: () => Promise<T>): Promise<T> => {
@@ -125,6 +133,7 @@ export function createSessionClientCommitQueueRuntime(
                     message: params.message,
                     localId,
                     sidechainId: params.sidechainId,
+                    messageRole: params.messageRole,
                     requireCommit: false,
                 }),
             ).catch(() => {
@@ -144,6 +153,7 @@ export function createSessionClientCommitQueueRuntime(
                 message: params.message,
                 localId,
                 sidechainId: params.sidechainId,
+                messageRole: params.messageRole,
             });
             return;
         }
@@ -156,6 +166,7 @@ export function createSessionClientCommitQueueRuntime(
             message: params.message,
             localId,
             sidechainId: params.sidechainId,
+            messageRole: params.messageRole,
         });
 
         if (ack && ack.ok === true) {
@@ -174,7 +185,7 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         if (!params.requireCommit) {
-            scheduleCommitRetry({ message: params.message, localId, sidechainId: params.sidechainId });
+            scheduleCommitRetry({ message: params.message, localId, sidechainId: params.sidechainId, messageRole: params.messageRole });
             return;
         }
 
@@ -191,6 +202,7 @@ export function createSessionClientCommitQueueRuntime(
                 message: params.message,
                 localId,
                 sidechainId: params.sidechainId,
+                messageRole: params.messageRole,
             });
             return;
         }
@@ -200,6 +212,7 @@ export function createSessionClientCommitQueueRuntime(
             message: params.message,
             localId,
             sidechainId: params.sidechainId,
+            messageRole: params.messageRole,
         });
 
         if (ack && ack.ok === true) {
@@ -227,7 +240,7 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         deps.scheduleMaterializationRecovery(localId);
-        scheduleCommitRetry({ message: params.message, localId, sidechainId: params.sidechainId });
+        scheduleCommitRetry({ message: params.message, localId, sidechainId: params.sidechainId, messageRole: params.messageRole });
     };
 
     const commitSessionMessage = async (params: CommitSessionMessageParams): Promise<void> => {
@@ -260,6 +273,7 @@ export function createSessionClientCommitQueueRuntime(
                     message: params.message,
                     localId: params.localId,
                     sidechainId: params.sidechainId,
+                    messageRole: params.messageRole,
                     requireCommit: false,
                 }),
             );
@@ -294,6 +308,7 @@ export function createSessionClientCommitQueueRuntime(
                     message: params.message,
                     localId: params.localId,
                     sidechainId: params.sidechainId,
+                    messageRole: params.messageRole,
                     requireCommit: false,
                     markAsUserMessage: params.markAsUserMessage,
                 }),

@@ -14,8 +14,8 @@ export type PendingQueueMaterializeNextResult = {
 };
 
 type PendingQueueWriteBody = Readonly<
-    | { localId: string; ciphertext: string }
-    | { localId: string; content: { t: 'plain'; v: unknown } }
+    | { localId: string; ciphertext: string; messageRole?: 'user' | 'agent' | 'event' | 'unknown' }
+    | { localId: string; content: { t: 'plain'; v: unknown }; messageRole?: 'user' | 'agent' | 'event' | 'unknown' }
 >;
 
 type PendingQueueSocketMaterializeResult =

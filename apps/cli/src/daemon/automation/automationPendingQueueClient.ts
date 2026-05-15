@@ -80,9 +80,11 @@ export async function enqueueAndMaterializeAutomationPrompt(params: {
             },
           },
         },
+        messageRole: 'user' as const,
       }
     : {
         localId,
+        messageRole: 'user' as const,
         ciphertext: buildPendingCiphertext({
           prompt,
           ...(displayText ? { displayText } : {}),

@@ -123,6 +123,37 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         }
     });
 
+    it('falls back to the message-start checkpoint when a runtime does not emit turn-start', async () => {
+        const repoRoot = await createGitRepo();
+        try {
+            const { session, messages } = createMessageCapturingSession('session-message-start-fallback');
+            const lifecycle = createRepositoryCheckpointPromptLifecycle({
+                session,
+                runtimeDirectory: repoRoot,
+                provider: 'codex',
+                protocol: 'codex',
+            });
+
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'message-1', prompt: 'change nothing' });
+            await lifecycle.onTurnFinal?.({ messageId: 'message-1', turnId: 'turn-1', status: 'completed' });
+
+            expect(readCheckpointMeta(messages)).toMatchObject({
+                contentConfidence: 'exact',
+                baseRefSource: 'message_start',
+                receipts: expect.arrayContaining([
+                    expect.objectContaining({ id: 'checkpoint.captured', phase: 'message-start' }),
+                    expect.objectContaining({ id: 'checkpoint.finalized', phase: 'turn-final' }),
+                    expect.objectContaining({ id: 'checkpoint.diff_computed' }),
+                ]),
+            });
+            expect(readCheckpointMeta(messages)?.receipts).not.toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: 'checkpoint.aliased', phase: 'turn-start' }),
+            ]));
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('projects alias failure checkpoint metadata when the message-start ref disappears', async () => {
         const repoRoot = await createGitRepo();
         try {

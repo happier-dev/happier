@@ -160,7 +160,7 @@ export interface ServerToClientEvents {
  */
 export interface ClientToServerEvents {
   message: (
-    data: { sid: string, message: string | SessionMessageContent, localId?: string | null, sidechainId?: string | null, echoToSender?: boolean },
+    data: { sid: string, message: string | SessionMessageContent, localId?: string | null, sidechainId?: string | null, messageRole?: 'user' | 'agent' | 'event' | 'unknown', echoToSender?: boolean },
     cb?: (answer: MessageAckResponse) => void
   ) => void
   'session-alive': (data: {
@@ -179,6 +179,7 @@ export interface ClientToServerEvents {
     message: {
       localId: string;
       sidechainId?: string | null;
+      messageRole?: 'user' | 'agent' | 'event' | 'unknown';
       content: string | SessionMessageContent;
       createdAt: number;
       updatedAt: number;

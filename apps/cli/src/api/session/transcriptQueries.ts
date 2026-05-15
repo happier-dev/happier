@@ -9,6 +9,7 @@ import { isAuthenticationError } from '../client/httpStatusError';
 
 import { decodeBase64, decrypt } from '../encryption';
 import { SessionMessageContentSchema, type PermissionMode } from '../types';
+import { extractSemanticTranscriptItem } from '@/session/services/transcript/extractSemanticTranscriptItem';
 
 export { pageSessionTranscript } from './pageSessionTranscript';
 export { readSessionTranscriptAfter } from './readSessionTranscriptAfter';
@@ -46,6 +47,7 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
       },
+      params: { limit: take, roles: 'user,agent' },
       timeout: 10_000,
     });
 
@@ -53,59 +55,28 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
     const raw = data && typeof data === 'object' ? (data as Record<string, unknown>).messages : null;
     if (!Array.isArray(raw)) return [];
 
-    const sliced = raw.slice(0, take);
     const items: Array<{ role: 'user' | 'agent'; text: string; createdAt: number }> = [];
 
-    for (const msg of sliced) {
-      const content = msg?.content;
-      const parsedContent = SessionMessageContentSchema.safeParse(content);
-      if (!parsedContent.success) continue;
-
-      let decrypted: unknown;
-      if (parsedContent.data.t === 'plain') {
-        decrypted = parsedContent.data.v;
-      } else {
-        decrypted = decrypt(
-          params.encryptionKey,
-          params.encryptionVariant,
-          decodeBase64(parsedContent.data.c),
-        );
-      }
-      const decryptedObj = decrypted && typeof decrypted === 'object' ? (decrypted as Record<string, unknown>) : null;
-      const role = decryptedObj?.role;
-      if (role !== 'user' && role !== 'agent') continue;
-
-      let text: string | null = null;
-      const body = decryptedObj?.content;
-      const bodyObj = body && typeof body === 'object' ? (body as Record<string, unknown>) : null;
-      const bodyType = bodyObj?.type;
-      if (role === 'user') {
-        if (bodyType === 'text') {
-          const rawText = bodyObj?.text;
-          if (typeof rawText === 'string') {
-            text = rawText;
-          }
-        }
-      } else if (bodyType === 'text') {
-        const rawText = bodyObj?.text;
-        if (typeof rawText === 'string') {
-          text = rawText;
-        }
-      } else if (bodyType === 'acp') {
-        const data = bodyObj?.data;
-        const dataObj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
-        const dataType = dataObj?.type;
-        const dataMessage = dataObj?.message;
-        if ((dataType === 'message' || dataType === 'reasoning') && typeof dataMessage === 'string') {
-          text = dataMessage;
-        }
-      }
-
-      if (!text || text.trim().length === 0) continue;
+    for (let index = 0; index < raw.length && items.length < take; index += 1) {
+      const msg = raw[index];
+      const extracted = extractSemanticTranscriptItem({
+        row: msg,
+        index,
+        ctx: {
+          encryptionKey: params.encryptionKey,
+          encryptionVariant: params.encryptionVariant,
+        },
+        options: {
+          mode: 'transcript',
+          transcriptRoles: ['user', 'assistant'],
+          maxTextChars: null,
+        },
+      }).item;
+      if (!extracted?.text || (extracted.role !== 'user' && extracted.role !== 'assistant')) continue;
       items.push({
-        role,
-        text,
-        createdAt: typeof msg.createdAt === 'number' ? msg.createdAt : 0,
+        role: extracted.role === 'user' ? 'user' : 'agent',
+        text: extracted.text,
+        createdAt: extracted.createdAt,
       });
     }
 
@@ -131,7 +102,7 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
       },
-      params: { limit: take },
+      params: { limit: take, role: 'user' },
       timeout: 10_000,
     });
 
@@ -161,6 +132,9 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
       }
       const decryptedObj = decrypted && typeof decrypted === 'object' ? (decrypted as Record<string, unknown>) : null;
       if (decryptedObj?.role !== 'user') continue;
+      const body = decryptedObj.content;
+      const bodyObj = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
+      if (bodyObj?.type !== 'text' || typeof bodyObj.text !== 'string' || bodyObj.text.trim().length === 0) continue;
 
       const meta = decryptedObj?.meta;
       const rawMode = meta && typeof meta === 'object' ? (meta as Record<string, unknown>).permissionMode : null;
