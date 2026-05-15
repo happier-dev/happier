@@ -24,6 +24,20 @@ vi.mock('react-native-mmkv', () => {
 });
 
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
+const apiSocketMock = vi.hoisted(() => ({
+    onMessage: vi.fn(),
+    onError: vi.fn(),
+    onReconnected: vi.fn(),
+    onStatusChange: vi.fn(() => () => {}),
+    onConnectionStateChange: vi.fn(() => () => {}),
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    initialize: vi.fn(),
+    request: vi.fn(async () => new Response('ok', { status: 200 })),
+}));
+const reachabilityMock = vi.hoisted(() => ({
+    invalidateAllServerReachabilitySupervisors: vi.fn(async () => {}),
+}));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -38,18 +52,16 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        onMessage: vi.fn(),
-        onError: vi.fn(),
-        onReconnected: vi.fn(),
-        onStatusChange: vi.fn(() => () => {}),
-        onConnectionStateChange: vi.fn(() => () => {}),
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-        request: vi.fn(async () => new Response('ok', { status: 200 })),
-    },
+    apiSocket: apiSocketMock,
 }));
+
+vi.mock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>();
+    return {
+        ...actual,
+        invalidateAllServerReachabilitySupervisors: reachabilityMock.invalidateAllServerReachabilitySupervisors,
+    };
+});
 
 vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -88,6 +100,9 @@ describe('sync endpoint online resume', () => {
         vi.resetModules();
         kvStore.clear();
         appStateAddListener.mockClear();
+        apiSocketMock.connect.mockClear();
+        apiSocketMock.disconnect.mockClear();
+        reachabilityMock.invalidateAllServerReachabilitySupervisors.mockClear();
     });
 
     it('triggers one consolidated resume pipeline when endpoint supervision returns online', async () => {
@@ -125,5 +140,32 @@ describe('sync endpoint online resume', () => {
         await new Promise<void>((resolve) => queueMicrotask(resolve));
 
         expect(resumeSpy).toHaveBeenCalledWith('endpoint-online');
+    });
+
+    it('manual retry forces reachability invalidation before resuming sync', async () => {
+        const { sync } = await import('./sync');
+        const resumeSpy = vi.fn(async () => {});
+        (sync as unknown as { resumeSync: (reason: string) => Promise<void> }).resumeSync = resumeSpy;
+
+        sync.retryNow();
+
+        expect(apiSocketMock.disconnect).toHaveBeenCalledTimes(1);
+        expect(apiSocketMock.connect).toHaveBeenCalledTimes(1);
+        expect(reachabilityMock.invalidateAllServerReachabilitySupervisors).toHaveBeenCalledTimes(1);
+        expect(resumeSpy).toHaveBeenCalledWith('manual');
+    });
+
+    it('manual retry still invalidates reachability when socket reconnect throws', async () => {
+        const { sync } = await import('./sync');
+        const resumeSpy = vi.fn(async () => {});
+        (sync as unknown as { resumeSync: (reason: string) => Promise<void> }).resumeSync = resumeSpy;
+        apiSocketMock.disconnect.mockImplementationOnce(() => {
+            throw new Error('disconnect failed');
+        });
+
+        sync.retryNow();
+
+        expect(reachabilityMock.invalidateAllServerReachabilitySupervisors).toHaveBeenCalledTimes(1);
+        expect(resumeSpy).toHaveBeenCalledWith('manual');
     });
 });

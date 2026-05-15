@@ -367,6 +367,37 @@ describe('ConnectionStatusControl (native popover config)', () => {
         expect(tree!.root.findAllByProps({ testID: 'connection-popover-machines' }).length).toBeGreaterThan(0);
     });
 
+    it('places an icon-only retry action next to the relay status badge when the server is unreachable', async () => {
+        connectionHealthState.kind = 'server_unreachable';
+        connectionHealthState.color = '#ff0000';
+        connectionHealthState.statusLabelKey = 'status.disconnected';
+        connectionHealthState.machineLabelKey = 'status.unknown';
+        connectionHealthState.endpointStatus = 'offline';
+
+        const ConnectionStatusControl = await importConnectionStatusControl();
+        let tree: renderer.ReactTestRenderer | undefined;
+        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+        tree = screen.tree;
+
+        const trigger = screen.findByProps({ accessibilityRole: 'button' });
+        await act(async () => {
+            await pressTestInstanceAsync(trigger);
+        });
+
+        const retryButton = screen.findByTestId('connection-popover-relay-retry');
+        expect(retryButton).toBeTruthy();
+
+        await act(async () => {
+            await pressTestInstanceAsync(retryButton);
+        });
+
+        expect(syncMocks.retryNow).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
     it('renders relay switching with a dropdown only when there are more than two targets', async () => {
         const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         const scope = `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;

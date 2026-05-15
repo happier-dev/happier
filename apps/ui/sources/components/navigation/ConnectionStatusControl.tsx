@@ -156,6 +156,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 6,
     },
+    statusRowRetryButton: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     popoverStatusPill: {
         flexShrink: 0,
     },
@@ -323,6 +330,7 @@ const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRo
     statusColor: string;
     dotColor: string;
     statusVariant: StatusPillVariant;
+    onRetry?: () => void;
 }>) {
     const styles = stylesheet;
     return (
@@ -342,6 +350,18 @@ const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRo
             </View>
             <View style={{ flex: 1 }} />
             <View style={styles.statusRowRight}>
+                {props.onRetry ? (
+                    <Pressable
+                        testID={`${props.testID}-retry`}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common.retry')}
+                        hitSlop={8}
+                        onPress={props.onRetry}
+                        style={styles.statusRowRetryButton}
+                    >
+                        <Ionicons name="refresh-outline" size={17} color={props.statusColor} />
+                    </Pressable>
+                ) : null}
                 <StatusPill
                     variant={props.statusVariant}
                     label={props.statusLabel}
@@ -666,13 +686,15 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                 </View>
 
                                 {(() => {
-                                    const endpointPresentation = resolveStatusPresentation(
-                                        theme,
-                                        resolveRelayStatusKey({
-                                            endpointStatus: (connectionHealth as any).endpointStatus,
-                                            connectionHealthKind: connectionHealth.kind,
-                                        }),
-                                    );
+                                    const relayStatusKey = resolveRelayStatusKey({
+                                        endpointStatus: (connectionHealth as any).endpointStatus,
+                                        connectionHealthKind: connectionHealth.kind,
+                                    });
+                                    const endpointPresentation = resolveStatusPresentation(theme, relayStatusKey);
+                                    const canRetryRelayConnection =
+                                        relayStatusKey === 'connecting'
+                                        || relayStatusKey === 'disconnected'
+                                        || relayStatusKey === 'error';
                                     const socketPresentation = resolveStatusPresentation(
                                         theme,
                                         resolveSocketStatusKey(socketStatus.status),
@@ -743,6 +765,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                                 statusColor={endpointPresentation.color}
                                                 dotColor={endpointPresentation.dotColor}
                                                 statusVariant={endpointPresentation.pillVariant}
+                                                onRetry={canRetryRelayConnection ? handleRetry : undefined}
                                             />
                                             <ConnectionPopoverStatusRow
                                                 testID="connection-popover-realtime"

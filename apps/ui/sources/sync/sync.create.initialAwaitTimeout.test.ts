@@ -392,4 +392,51 @@ describe('sync.create initial awaits', () => {
             endpointLastErrorMessage: 'HTTP 401',
         });
     });
+
+    it('resumes sync when server reachability returns online after an outage', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        const { sync, syncCreate, syncSwitchServer } = await import('./sync');
+        const resumeSpy = vi.fn(async () => {});
+        (sync as unknown as { resumeSync: (reason: string) => Promise<void> }).resumeSync = resumeSpy;
+
+        const credentials: AuthCredentials = {
+            token: buildTokenWithSub('server-reachable-again'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
+        };
+
+        await TokenStorage.setCredentials(credentials);
+
+        await syncSwitchServer(null);
+        const createPromise = syncCreate(credentials);
+        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
+        await createPromise;
+
+        publishConnectionState({
+            phase: 'offline',
+            reason: 'server_unreachable',
+            attempt: 2,
+            nextRetryAt: Date.now() + 1000,
+            lastConnectedAt: null,
+            lastDisconnectedAt: Date.now(),
+            lastErrorMessage: 'Network request failed',
+        });
+        expect(storage.getState().endpointStatus).toBe('offline');
+
+        publishConnectionState({
+            phase: 'online',
+            reason: null,
+            attempt: 2,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: Date.now() - 1000,
+            lastErrorMessage: null,
+        });
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+        expect(storage.getState().endpointStatus).toBe('online');
+        expect(resumeSpy).toHaveBeenCalledWith('server-reachable');
+    });
 });

@@ -15,7 +15,7 @@ import { PauseController } from '@/utils/timing/pauseController';
 import {
     assertServerReachabilityAuthenticated, invalidateAllServerReachabilitySupervisors, setServerReachabilityNetworkAllowed, stopServerReachabilitySupervisors, } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { acquireEndpointSupervisor, getEndpointSupervisorForServer } from '@/sync/runtime/connectivity/endpointSupervisorPool';
-import { applyEndpointConnectivityStateToRealtimeStore } from '@/sync/runtime/connectivity/bindEndpointSupervisorToRealtimeStore';
+import { bindEndpointConnectivityStateToRealtimeStore } from '@/sync/runtime/connectivity/bindEndpointSupervisorToRealtimeStore';
 import { applyInitialAppStateConnectivityGate } from '@/sync/runtime/connectivity/appStateConnectivityGate';
 import { createNotAuthenticatedError, isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/resolveSocketErrorClassification';
@@ -2855,10 +2855,17 @@ class Sync {
           } catch {
               // ignore
           }
+          try {
+              fireAndForget(invalidateAllServerReachabilitySupervisors(), {
+                  tag: 'Sync.invalidateAllServerReachabilitySupervisors.manual',
+              });
+          } catch {
+              // ignore
+          }
           fireAndForget(this.resumeSync('manual'), { tag: 'Sync.resumeSync.manual' });
       }
 
-      public resumeSync = (reason: 'app-foreground' | 'socket-reconnect' | 'manual' | 'endpoint-online'): Promise<void> => {
+      public resumeSync = (reason: 'app-foreground' | 'socket-reconnect' | 'manual' | 'endpoint-online' | 'server-reachable'): Promise<void> => {
           return runWithInFlightDedupe(
               {
                   get: () => this.resumeInFlight,
@@ -2868,7 +2875,7 @@ class Sync {
               },
               async () => {
                   const shouldContinue = this.createServerScopeGuard();
-                  if ((reason === 'socket-reconnect' || reason === 'endpoint-online') && !this.isForeground) {
+                  if ((reason === 'socket-reconnect' || reason === 'endpoint-online' || reason === 'server-reachable') && !this.isForeground) {
                       return;
                   }
                   if (this.pauseController.isPaused()) {
@@ -5015,8 +5022,13 @@ async function syncInit(credentials: AuthCredentials, restore: boolean) {
     apiSocket.onStatusChange((status) => {
         storage.getState().setSocketStatus(status);
     });
-    apiSocket.onConnectionStateChange((state) => {
-        applyEndpointConnectivityStateToRealtimeStore(state);
+    bindEndpointConnectivityStateToRealtimeStore({
+        subscribe: apiSocket.onConnectionStateChange,
+        onEndpointOnline: () => {
+            queueMicrotask(() => {
+                fireAndForget(sync.resumeSync('server-reachable'), { tag: 'Sync.resumeSync.server-reachable' });
+            });
+        },
     });
     apiSocket.onError((error) => {
         if (!error) {
