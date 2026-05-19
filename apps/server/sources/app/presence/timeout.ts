@@ -4,6 +4,8 @@ import { delay } from "@/utils/runtime/delay";
 import { forever } from "@/utils/runtime/forever";
 import { shutdownSignal } from "@/utils/process/shutdown";
 import { buildMachineActivityEphemeral, buildSessionActivityEphemeral, eventRouter } from "@/app/events/eventRouter";
+import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
+import { warn } from "@/utils/logging/log";
 
 export interface PresenceTimeoutConfig {
     sessionTimeoutMs: number;
@@ -23,58 +25,108 @@ export function resolvePresenceTimeoutConfig(env: NodeJS.ProcessEnv = process.en
     };
 }
 
+type TimedOutPresenceCandidate = {
+    id: string;
+    accountId: string;
+    lastActiveAt: Date;
+};
+
+type UpdateManyAndReturnDelegate = {
+    updateManyAndReturn?: (args: {
+        where: {
+            id: { in: string[] };
+            active: true;
+        };
+        data: { active: false };
+        select: { id: true; accountId: true; lastActiveAt: true };
+    }) => Promise<TimedOutPresenceCandidate[]>;
+    updateMany: (args: {
+        where: {
+            id: { in: string[] };
+            active: true;
+        };
+        data: { active: false };
+    }) => Promise<{ count: number }>;
+};
+
+async function markTimedOutRowsInactive(
+    delegate: UpdateManyAndReturnDelegate,
+    candidates: TimedOutPresenceCandidate[],
+): Promise<TimedOutPresenceCandidate[]> {
+    if (candidates.length === 0) return [];
+
+    const ids = candidates.map((candidate) => candidate.id);
+    const where = { id: { in: ids }, active: true } as const;
+    const data = { active: false } as const;
+
+    if (delegate.updateManyAndReturn) {
+        return await delegate.updateManyAndReturn({
+            where,
+            data,
+            select: { id: true, accountId: true, lastActiveAt: true },
+        });
+    }
+
+    const { count } = await delegate.updateMany({ where, data });
+    // Without RETURNING support, exact changed IDs are unknowable after a race. Emit only when
+    // every candidate was updated; otherwise stay conservative and let the next tick observe remaining active rows.
+    return count === candidates.length ? candidates : [];
+}
+
+export async function runPresenceTimeoutTick(timeoutConfig: PresenceTimeoutConfig): Promise<void> {
+    try {
+        const sessions = await db.session.findMany({
+            where: {
+                active: true,
+                lastActiveAt: {
+                    lte: new Date(Date.now() - timeoutConfig.sessionTimeoutMs)
+                }
+            },
+            select: { id: true, accountId: true, lastActiveAt: true },
+        });
+        const changedSessions = await markTimedOutRowsInactive(db.session, sessions);
+        for (const session of changedSessions) {
+            eventRouter.emitEphemeral({
+                userId: session.accountId,
+                payload: buildSessionActivityEphemeral(session.id, false, session.lastActiveAt.getTime(), false),
+                recipientFilter: { type: 'user-scoped-only' }
+            });
+        }
+    } catch (error) {
+        if (!isRetryableSqliteWriteError(error)) throw error;
+        warn({ module: "presence-timeout", error }, "Transient DB error while timing out sessions");
+        return;
+    }
+
+    try {
+        const machines = await db.machine.findMany({
+            where: {
+                active: true,
+                lastActiveAt: {
+                    lte: new Date(Date.now() - timeoutConfig.machineTimeoutMs)
+                }
+            },
+            select: { id: true, accountId: true, lastActiveAt: true },
+        });
+        const changedMachines = await markTimedOutRowsInactive(db.machine, machines);
+        for (const machine of changedMachines) {
+            eventRouter.emitEphemeral({
+                userId: machine.accountId,
+                payload: buildMachineActivityEphemeral(machine.id, false, machine.lastActiveAt.getTime()),
+                recipientFilter: { type: 'user-scoped-only' }
+            });
+        }
+    } catch (error) {
+        if (!isRetryableSqliteWriteError(error)) throw error;
+        warn({ module: "presence-timeout", error }, "Transient DB error while timing out machines");
+    }
+}
+
 export function startTimeout() {
     const timeoutConfig = resolvePresenceTimeoutConfig(process.env);
     forever('session-timeout', async () => {
         while (true) {
-            // Find timed out sessions
-            const sessions = await db.session.findMany({
-                where: {
-                    active: true,
-                    lastActiveAt: {
-                        lte: new Date(Date.now() - timeoutConfig.sessionTimeoutMs)
-                    }
-                }
-            });
-            for (const session of sessions) {
-                const { count } = await db.session.updateMany({
-                    where: { id: session.id, active: true },
-                    data: { active: false }
-                });
-                if (count === 0) {
-                    continue;
-                }
-                eventRouter.emitEphemeral({
-                    userId: session.accountId,
-                    payload: buildSessionActivityEphemeral(session.id, false, session.lastActiveAt.getTime(), false),
-                    recipientFilter: { type: 'user-scoped-only' }
-                });
-            }
-
-            // Find timed out machines
-            const machines = await db.machine.findMany({
-                where: {
-                    active: true,
-                    lastActiveAt: {
-                        lte: new Date(Date.now() - timeoutConfig.machineTimeoutMs)
-                    }
-                }
-            });
-            for (const machine of machines) {
-                const { count } = await db.machine.updateMany({
-                    where: { id: machine.id, active: true },
-                    data: { active: false }
-                });
-                if (count === 0) {
-                    continue;
-                }
-                eventRouter.emitEphemeral({
-                    userId: machine.accountId,
-                    payload: buildMachineActivityEphemeral(machine.id, false, machine.lastActiveAt.getTime()),
-                    recipientFilter: { type: 'user-scoped-only' }
-                });
-            }
-
+            await runPresenceTimeoutTick(timeoutConfig);
             await delay(timeoutConfig.tickMs, shutdownSignal);
         }
     });

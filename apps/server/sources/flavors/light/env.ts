@@ -5,6 +5,7 @@ import { dirname, join, win32 as win32Path } from 'node:path';
 import { homedir as defaultHomedir, tmpdir } from 'node:os';
 import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common/firstPartyRuntime';
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
+import { resolveLightSqliteDatabaseUrlOptionsFromEnv } from './sqliteConnectionConfig';
 
 export type LightEnv = NodeJS.ProcessEnv;
 
@@ -42,7 +43,11 @@ export function resolveLightDatabaseDir(env: LightEnv, dataDir: string): string 
     return join(dataDir, 'pglite');
 }
 
-export function resolveLightSqliteDatabaseUrl(dataDir: string, platform: NodeJS.Platform = process.platform): string {
+export function resolveLightSqliteDatabaseUrl(
+    dataDir: string,
+    platform: NodeJS.Platform = process.platform,
+    env: LightEnv = process.env,
+): string {
     const trimmed = String(dataDir ?? '').trim();
     if (!trimmed) {
         return '';
@@ -50,7 +55,11 @@ export function resolveLightSqliteDatabaseUrl(dataDir: string, platform: NodeJS.
     const dbPath = platform === 'win32'
         ? win32Path.join(trimmed, 'happier-server-light.sqlite')
         : join(trimmed, 'happier-server-light.sqlite');
-    return renderPrismaCompatibleSqliteDatabaseUrl({ dbPath, platform });
+    return renderPrismaCompatibleSqliteDatabaseUrl({
+        dbPath,
+        platform,
+        sqlite: resolveLightSqliteDatabaseUrlOptionsFromEnv(env),
+    });
 }
 
 export function resolveLightPublicUrl(env: LightEnv): string {
@@ -98,7 +107,7 @@ export function applyPackagedLightRuntimeSqliteDefaults(
     const dataDir = firstNonEmpty(env.HAPPIER_SERVER_LIGHT_DATA_DIR, env.HAPPY_SERVER_LIGHT_DATA_DIR);
     if (!dataDir) return;
 
-    env.DATABASE_URL = firstNonEmpty(env.DATABASE_URL, resolveLightSqliteDatabaseUrl(dataDir));
+    env.DATABASE_URL = firstNonEmpty(env.DATABASE_URL, resolveLightSqliteDatabaseUrl(dataDir, process.platform, env));
 
     const packagedMigrationsDir = resolvePackagedLightSqliteMigrationsDir(opts?.executablePath);
     if (!packagedMigrationsDir) return;

@@ -88,7 +88,7 @@ async function createServerLightProbeFixture(root) {
   return { serverDir, binDir };
 }
 
-test('ensureServerLightSchemaReady creates light data dirs before probing', async (t) => {
+test('ensureServerLightSchemaReady creates sqlite light data dirs before probing', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-startup-light-dirs-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
@@ -104,7 +104,6 @@ test('ensureServerLightSchemaReady creates light data dirs before probing', asyn
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
     HAPPIER_SERVER_LIGHT_FILES_DIR: filesDir,
-    HAPPIER_SERVER_LIGHT_DB_DIR: dbDir,
   };
 
   assert.equal(existsSync(dataDir), false);
@@ -115,5 +114,5 @@ test('ensureServerLightSchemaReady creates light data dirs before probing', asyn
 
   assert.equal(existsSync(dataDir), true);
   assert.equal(existsSync(filesDir), true);
-  assert.equal(existsSync(dbDir), true);
+  assert.equal(existsSync(dbDir), false);
 });

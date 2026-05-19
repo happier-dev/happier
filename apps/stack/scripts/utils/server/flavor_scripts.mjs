@@ -17,28 +17,32 @@ function hasScript(scripts, name) {
   return typeof scripts?.[name] === 'string' && scripts[name].trim().length > 0;
 }
 
-function detectServerLightDbFlavor({ serverDir }) {
+function normalizeLightDbProvider(provider) {
+  const raw = String(provider ?? '').trim().toLowerCase();
+  if (raw === 'pglite') return 'pglite';
+  if (raw === 'sqlite') return 'sqlite';
+  return '';
+}
+
+function detectServerLightDbFlavor({ serverDir, provider } = {}) {
+  const explicit = normalizeLightDbProvider(provider);
+  if (explicit) return explicit;
   const scripts = readScripts(serverDir);
-  if (hasScript(scripts, 'migrate:light:deploy')) {
-    // Current Happier "light" flavor uses embedded Postgres via PGlite.
-    return 'pglite';
-  }
-  // Legacy SQLite-era layouts (kept for old checkouts and potential future reintroduction).
   if (existsSync(join(serverDir, 'prisma', 'sqlite', 'schema.prisma'))) return 'sqlite';
   if (existsSync(join(serverDir, 'prisma', 'schema.sqlite.prisma'))) return 'sqlite';
+  if (hasScript(scripts, 'migrate:sqlite:deploy')) return 'sqlite';
+  if (hasScript(scripts, 'migrate:light:deploy')) return 'pglite';
   return 'unknown';
 }
 
 export function isUnifiedHappyServerLight({ serverDir }) {
   // "Unified" means the monorepo server package supports a first-class light flavor.
-  // Today that is PGlite-based.
-  return detectServerLightDbFlavor({ serverDir }) === 'pglite';
+  return detectServerLightDbFlavor({ serverDir }) !== 'unknown';
 }
 
-export function resolveServerLightPrismaSchemaArgs({ serverDir }) {
-  const flavor = detectServerLightDbFlavor({ serverDir });
+export function resolveServerLightPrismaSchemaArgs({ serverDir, provider }) {
+  const flavor = detectServerLightDbFlavor({ serverDir, provider });
   if (flavor === 'pglite') {
-    // Light flavor uses the main Postgres schema.
     return ['--schema', 'prisma/schema.prisma'];
   }
   if (flavor === 'sqlite') {
@@ -52,14 +56,13 @@ export function resolveServerLightPrismaSchemaArgs({ serverDir }) {
   return [];
 }
 
-export function resolveServerLightPrismaMigrateDeployArgs({ serverDir }) {
-  return ['migrate', 'deploy', ...resolveServerLightPrismaSchemaArgs({ serverDir })];
+export function resolveServerLightPrismaMigrateDeployArgs({ serverDir, provider }) {
+  return ['migrate', 'deploy', ...resolveServerLightPrismaSchemaArgs({ serverDir, provider })];
 }
 
-export function resolveServerLightPrismaClientImport({ serverDir }) {
-  const flavor = detectServerLightDbFlavor({ serverDir });
+export function resolveServerLightPrismaClientImport({ serverDir, provider }) {
+  const flavor = detectServerLightDbFlavor({ serverDir, provider });
   if (flavor === 'pglite') {
-    // Light flavor uses the standard Postgres Prisma client (schema.prisma).
     return '@prisma/client';
   }
   if (flavor === 'sqlite') {

@@ -138,7 +138,7 @@ export async function interactiveNew({ rootDir, rl, defaults, deps = {} }) {
     out.serverComponent = await promptSelectFn(rl, {
       title: `${sectionTitle('Server flavor')}\n${dim('Pick the backend this stack should run. You can switch later with `stack srv`.')}`,
       options: [
-        { label: `happier-server-light (${green('recommended')}) — simplest local install (PG_Light via embedded PGlite)`, value: 'happier-server-light' },
+        { label: `happier-server-light (${green('recommended')}) — simplest local install (SQLite)`, value: 'happier-server-light' },
         { label: `happier-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happier-server' },
       ],
       defaultIndex: 0,
@@ -214,7 +214,7 @@ export async function interactiveEdit({ rootDir, rl, stackName, existingEnv, def
   out.serverComponent = await promptSelectFn(rl, {
     title: `${sectionTitle('Server flavor')}\n${dim('Pick the backend this stack should run. You can switch again later.')}`,
     options: [
-      { label: `happier-server-light (${green('recommended')}) — simplest local install (PG_Light via embedded PGlite)`, value: 'happier-server-light' },
+      { label: `happier-server-light (${green('recommended')}) — simplest local install (SQLite)`, value: 'happier-server-light' },
       { label: `happier-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happier-server' },
     ],
     defaultIndex: (currentServer || 'happier-server-light') === 'happier-server' ? 1 : 0,

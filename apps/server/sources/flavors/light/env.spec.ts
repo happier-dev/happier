@@ -6,6 +6,7 @@ import {
   applyLightDefaultEnv,
   applyPackagedLightRuntimeSqliteDefaults,
   ensureHandyMasterSecret,
+  resolveLightSqliteDatabaseUrl,
 } from "./env";
 
 describe("light env helpers", () => {
@@ -61,6 +62,48 @@ describe("light env helpers", () => {
     expect(env.HAPPY_SERVER_LIGHT_DB_DIR).toBe("/Users/tester/server-light-db");
   });
 
+  it("resolveLightSqliteDatabaseUrl includes canonical sqlite URL params", () => {
+    expect(resolveLightSqliteDatabaseUrl("/tmp/happier-data", "linux")).toBe(
+      "file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30",
+    );
+  });
+
+  it("resolveLightSqliteDatabaseUrl honors explicit sqlite connection limit env", () => {
+    const render = resolveLightSqliteDatabaseUrl as (
+      dataDir: string,
+      platform?: NodeJS.Platform,
+      env?: NodeJS.ProcessEnv,
+    ) => string;
+
+    expect(render("/tmp/happier-data", "linux", { HAPPIER_SQLITE_CONNECTION_LIMIT: "1" })).toBe(
+      "file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1",
+    );
+  });
+
+  it("resolveLightSqliteDatabaseUrl ignores the PostgreSQL connection limit env", () => {
+    const render = resolveLightSqliteDatabaseUrl as (
+      dataDir: string,
+      platform?: NodeJS.Platform,
+      env?: NodeJS.ProcessEnv,
+    ) => string;
+
+    expect(render("/tmp/happier-data", "linux", { HAPPIER_DB_CONNECTION_LIMIT: "1" })).toBe(
+      "file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30",
+    );
+  });
+
+  it("resolveLightSqliteDatabaseUrl rejects invalid sqlite connection limit env", () => {
+    const render = resolveLightSqliteDatabaseUrl as (
+      dataDir: string,
+      platform?: NodeJS.Platform,
+      env?: NodeJS.ProcessEnv,
+    ) => string;
+
+    expect(() => render("/tmp/happier-data", "linux", { HAPPIER_SQLITE_CONNECTION_LIMIT: "0" })).toThrow(
+      /HAPPIER_SQLITE_CONNECTION_LIMIT/i,
+    );
+  });
+
   it("applyLightDefaultEnv falls back to default port when PORT is invalid", () => {
     const env: NodeJS.ProcessEnv = { PORT: "oops" };
     applyLightDefaultEnv(env, { homedir: "/home/test" });
@@ -89,7 +132,7 @@ describe("light env helpers", () => {
 
       applyPackagedLightRuntimeSqliteDefaults(env, { executablePath });
 
-      expect(env.DATABASE_URL).toBe("file:///tmp/happier-data/happier-server-light.sqlite");
+      expect(env.DATABASE_URL).toBe("file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30");
       expect(env.HAPPIER_SQLITE_AUTO_MIGRATE).toBe("1");
       expect(env.HAPPIER_SQLITE_MIGRATIONS_DIR).toBe(migrationsDir);
     } finally {

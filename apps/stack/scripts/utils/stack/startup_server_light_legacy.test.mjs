@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { ensureServerLightSchemaReady } from './startup.mjs';
 import { buildServerLightEnv, createServerLightFixture } from './startup_server_light_testkit.mjs';
@@ -45,7 +46,7 @@ test('ensureServerLightSchemaReady honors HAPPY_SERVER_LIGHT_DATA_DIR legacy fal
   const res = await ensureServerLightSchemaReady({ serverDir, env });
   assert.equal(res.ok, true);
   assert.equal(existsSync(dataDir), true);
-  assert.equal(env.DATABASE_URL, `file:${join(dataDir, 'happier-server-light.sqlite')}`);
+  assert.equal(env.DATABASE_URL, `${pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href}?socket_timeout=30`);
   assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
 });
 
@@ -74,6 +75,6 @@ test('ensureServerLightSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR whe
   const res = await ensureServerLightSchemaReady({ serverDir, env });
   assert.equal(res.ok, true);
   assert.equal(existsSync(dataDir), true);
-  assert.equal(env.DATABASE_URL, `file:${join(dataDir, 'happier-server-light.sqlite')}`);
+  assert.equal(env.DATABASE_URL, `${pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href}?socket_timeout=30`);
   assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
 });

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasServerSharedDepsOutputs,
   hasServerGeneratedProviderOutputs,
+  resolveServerLightDatabaseUrlEnv,
   resolveServerStartLaunchSpec,
   shouldRetryServerStartFromFailureContext,
   resolveSharedDepsBuildArgs,
@@ -37,6 +38,29 @@ describe("startServerLight planning helpers", () => {
 
   it("accepts mysql via HAPPIER_E2E_DB_PROVIDER", () => {
     expect(resolveTestDbProvider({ HAPPIER_E2E_DB_PROVIDER: "mysql" })).toBe("mysql");
+  });
+
+  it("preserves explicit sqlite DATABASE_URL for server launch env", () => {
+    expect(
+      resolveServerLightDatabaseUrlEnv({
+        dbProvider: "sqlite",
+        generatedSqliteUrl: "file:/generated.sqlite?connection_limit=1",
+        explicitDatabaseUrl: "file:/custom.sqlite?connection_limit=4",
+      }),
+    ).toEqual({
+      DATABASE_URL: "file:/custom.sqlite?connection_limit=4",
+    });
+  });
+
+  it("uses generated sqlite DATABASE_URL when no explicit DATABASE_URL is provided", () => {
+    expect(
+      resolveServerLightDatabaseUrlEnv({
+        dbProvider: "sqlite",
+        generatedSqliteUrl: "file:/generated.sqlite?connection_limit=1",
+      }),
+    ).toEqual({
+      DATABASE_URL: "file:/generated.sqlite?connection_limit=1",
+    });
   });
 
   it.each<[TestDbProvider, string]>([

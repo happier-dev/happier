@@ -125,8 +125,8 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
             await db.$disconnect();
         });
     }
-    onShutdown('activity-cache', async () => {
-        activityCache.shutdown();
+    onShutdown('keepAlive:activity-cache', async () => {
+        await activityCache.shutdown();
     });
     if (shouldEnableLocalPresenceDbFlush(process.env)) {
         activityCache.enableDbFlush();

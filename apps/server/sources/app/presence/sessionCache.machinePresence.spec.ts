@@ -64,8 +64,8 @@ describe("ActivityCache machine presence", () => {
         dbMocks.db.machine.updateMany.mockImplementation(async () => ({ count: 1 }));
     });
 
-    afterEach(() => {
-        activityCache?.shutdown?.();
+    afterEach(async () => {
+        await activityCache?.shutdown?.();
         activityCache = null;
         vi.useRealTimers();
     });
@@ -130,19 +130,7 @@ describe("ActivityCache machine presence", () => {
         expect(dbMocks.db.machine.findUnique).not.toHaveBeenCalled();
     });
 
-    it("does not issue concurrent machine update queries while flushing pending updates", async () => {
-        const { log } = await import("@/utils/logging/log");
-        let inFlight = 0;
-        dbMocks.db.machine.updateMany.mockImplementation(async () => {
-            inFlight += 1;
-            if (inFlight > 1) {
-                throw new Error("concurrent_machine_update");
-            }
-            await Promise.resolve();
-            inFlight -= 1;
-            return { count: 1 };
-        });
-
+    it("flushes multiple pending machines in one transaction batch", async () => {
         ({ activityCache } = await import("./sessionCache"));
         activityCache.enableDbFlush();
 
@@ -154,20 +142,20 @@ describe("ActivityCache machine presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
 
-        expect(log).not.toHaveBeenCalledWith(
-            expect.objectContaining({ level: "error" }),
-            expect.stringContaining("Error updating machines"),
-        );
+        expect(transactionMock.transaction).toHaveBeenCalledTimes(1);
+        expect(Array.isArray(transactionMock.transaction.mock.calls[0]?.[0])).toBe(true);
+        expect(transactionMock.transaction.mock.calls[0]?.[0]).toHaveLength(2);
+        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(2);
     });
 
-    it("continues flushing other machines and retries failed updates on the next flush", async () => {
+    it("keeps all pending machine updates when the batch fails and retries them on the next flush", async () => {
         const { log } = await import("@/utils/logging/log");
 
         let sawFailure = false;
         dbMocks.db.machine.updateMany.mockImplementation(async (args: any) => {
             if (args?.where?.id === "m1" && !sawFailure) {
                 sawFailure = true;
-                throw new Error("sqlite_busy");
+                throw new Error("write_failed");
             }
             return { count: 1 };
         });
@@ -183,22 +171,25 @@ describe("ActivityCache machine presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
 
-        // First flush attempts both machines (even though the first fails).
+        // First flush builds the full batch, but no cached entry is marked flushed when the transaction rejects.
         expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(2);
+        expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).not.toBeNull();
+        expect((activityCache as any).machineCache.get("m2")?.pendingUpdate).not.toBeNull();
 
-        // It should log the error, but not abort the full flush.
         expect(log).toHaveBeenCalledWith(
             expect.objectContaining({ level: "error" }),
-            expect.stringContaining("Error updating machine"),
+            expect.stringContaining("Error updating machines"),
         );
         expect(recordPresenceFlushRetry).toHaveBeenCalledWith({
             entityType: "machine",
             reason: "db-error",
         });
 
-        // Second flush retries m1 (now succeeds).
+        // Second flush retries the full batch.
         await (activityCache as any).flushPendingUpdates();
-        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(3);
+        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(4);
+        expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).toBeNull();
+        expect((activityCache as any).machineCache.get("m2")?.pendingUpdate).toBeNull();
     });
 
     it("does not drop a newer queued machine update that arrives while a flush is awaiting the DB", async () => {

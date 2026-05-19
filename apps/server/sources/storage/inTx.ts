@@ -1,8 +1,9 @@
-import { readDatabaseTransactionConfigFromEnv, resolveTransactionRetryDelayMs } from "@/config/databaseTransactions";
+import { readDatabaseTransactionConfigFromEnv, resolveTransactionRetryDelayMs, type DatabaseTransactionConfig } from "@/config/databaseTransactions";
 import { recordDatabaseTransactionRetry } from "@/app/monitoring/metrics/sessionWriteMetrics";
 import { delay } from "@/utils/runtime/delay";
 import { db } from "@/storage/db";
 import { getDbProviderFromEnv, isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
+import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
 
 export type Tx = TransactionClient;
 export type InTxOptions = Readonly<{
@@ -16,7 +17,7 @@ const symbol = Symbol();
 function errorMessage(err: unknown): string {
     if (err instanceof Error && typeof err.message === "string") return err.message;
     if (err && typeof err === "object" && "message" in err) {
-        const value = (err as any).message;
+        const value = (err as { message?: unknown }).message;
         if (typeof value === "string") return value;
     }
     return "";
@@ -25,20 +26,15 @@ function errorMessage(err: unknown): string {
 export function isRetryableTransactionError(params: Readonly<{ provider: string; err: unknown }>): boolean {
     if (isPrismaErrorCode(params.err, "P2034")) return true;
 
-    const message = errorMessage(params.err).toLowerCase();
-
     if (params.provider === "postgres") {
+        const message = errorMessage(params.err).toLowerCase();
         if (message.includes("could not serialize access")) return true;
         if (message.includes("serialization failure")) return true;
         if (message.includes("deadlock detected")) return true;
     }
 
     if (params.provider === "sqlite") {
-        if (isPrismaErrorCode(params.err, "P1008")) return true;
-        if (isPrismaErrorCode(params.err, "P2028")) return true;
-        if (message.includes("socket timeout")) return true;
-        if (message.includes("database is locked")) return true;
-        if (message.includes("sqlite_busy")) return true;
+        if (isRetryableSqliteWriteError(params.err)) return true;
     }
 
     return false;
@@ -57,10 +53,21 @@ export function afterTx(tx: Tx, callback: () => void) {
     callbacks.push(callback);
 }
 
+function canStartAnotherSqliteTransactionAttempt(params: Readonly<{
+    config: DatabaseTransactionConfig;
+    retryDelayMs: number;
+    startedAtMs: number;
+}>): boolean {
+    const elapsedMs = Date.now() - params.startedAtMs;
+    const nextAttemptBudgetMs = params.config.maxWaitMs + params.config.timeoutMs;
+    return elapsedMs + params.retryDelayMs + nextAttemptBudgetMs <= params.config.totalRetryBudgetMs;
+}
+
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions): Promise<T> {
     const provider = getDbProviderFromEnv(process.env, "postgres");
     const transactionConfig = readDatabaseTransactionConfigFromEnv(process.env, provider);
     let counter = 0;
+    const startedAtMs = Date.now();
     let wrapped = async (tx: Tx) => {
         (tx as any)[symbol] = [];
         let result = await fn(tx);
@@ -71,13 +78,16 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
         try {
             const txOpts =
                 provider === "sqlite"
-                    ? null
+                    ? {
+                          timeout: options?.timeoutMs ?? transactionConfig.timeoutMs,
+                          maxWait: options?.maxWaitMs ?? transactionConfig.maxWaitMs,
+                      }
                     : {
                           isolationLevel: options?.isolationLevel ?? "Serializable",
                           timeout: options?.timeoutMs ?? transactionConfig.timeoutMs,
                           maxWait: options?.maxWaitMs ?? transactionConfig.maxWaitMs,
                       };
-            let result = txOpts ? await db.$transaction(wrapped, txOpts) : await db.$transaction(wrapped);
+            let result = await db.$transaction(wrapped, txOpts);
             for (let callback of result.callbacks) {
                 try {
                     callback();
@@ -88,16 +98,26 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             return result.result;
         } catch (e) {
             if (isRetryableTransactionError({ provider, err: e }) && counter < transactionConfig.maxRetries) {
-                counter++;
+                const nextAttempt = counter + 1;
+                const retryDelayMs = resolveTransactionRetryDelayMs({
+                    attempt: nextAttempt,
+                    retryBaseDelayMs: transactionConfig.retryBaseDelayMs,
+                    retryMaxDelayMs: transactionConfig.retryMaxDelayMs,
+                    retryJitterFactor: transactionConfig.retryJitterFactor,
+                });
+                if (
+                    provider === "sqlite" &&
+                    !canStartAnotherSqliteTransactionAttempt({
+                        config: transactionConfig,
+                        retryDelayMs,
+                        startedAtMs,
+                    })
+                ) {
+                    throw e;
+                }
+                counter = nextAttempt;
                 recordDatabaseTransactionRetry(provider);
-                await delay(
-                    resolveTransactionRetryDelayMs({
-                        attempt: counter,
-                        retryBaseDelayMs: transactionConfig.retryBaseDelayMs,
-                        retryMaxDelayMs: transactionConfig.retryMaxDelayMs,
-                        retryJitterFactor: transactionConfig.retryJitterFactor,
-                    }),
-                );
+                await delay(retryDelayMs);
                 continue;
             }
             throw e;

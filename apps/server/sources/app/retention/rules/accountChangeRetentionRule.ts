@@ -1,4 +1,5 @@
 import { db } from '@/storage/db';
+import { inTx } from '@/storage/inTx';
 
 type AccountChangeRetentionCandidate = Readonly<{
     accountId: string;
@@ -71,7 +72,7 @@ export async function pruneAgedAccountChangesOnce(params: {
     }
 
     for (const [accountId, floor] of maxDeletedCursorByAccount.entries()) {
-        await db.account.updateMany({
+        await inTx(async (tx) => await tx.account.updateMany({
             where: {
                 id: accountId,
                 changesFloor: { lt: floor },
@@ -79,7 +80,7 @@ export async function pruneAgedAccountChangesOnce(params: {
             data: {
                 changesFloor: floor,
             },
-        });
+        }));
     }
 
     return { deleted };

@@ -1,0 +1,27 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { join } from 'node:path';
+
+import { applyServerLightEnvDefaults } from './apply_server_light_env_defaults.mjs';
+
+test('applyServerLightEnvDefaults defaults server-light to sqlite without a pglite db dir', () => {
+  const serverEnv = {};
+  applyServerLightEnvDefaults({ baseEnv: {}, serverEnv, baseDir: '/stack/demo' });
+
+  assert.equal(serverEnv.HAPPIER_DB_PROVIDER, 'sqlite');
+  assert.equal(serverEnv.HAPPIER_SERVER_LIGHT_DATA_DIR, join('/stack/demo', 'server-light'));
+  assert.equal(serverEnv.HAPPIER_SERVER_LIGHT_FILES_DIR, join('/stack/demo', 'server-light', 'files'));
+  assert.equal(serverEnv.HAPPIER_SERVER_LIGHT_DB_DIR, undefined);
+});
+
+test('applyServerLightEnvDefaults preserves explicit pglite opt-in db dir', () => {
+  const serverEnv = {};
+  applyServerLightEnvDefaults({
+    baseEnv: { HAPPIER_DB_PROVIDER: 'pglite' },
+    serverEnv,
+    baseDir: '/stack/demo',
+  });
+
+  assert.equal(serverEnv.HAPPIER_DB_PROVIDER, 'pglite');
+  assert.equal(serverEnv.HAPPIER_SERVER_LIGHT_DB_DIR, join('/stack/demo', 'server-light', 'pglite'));
+});

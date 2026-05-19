@@ -37,14 +37,13 @@ export function assertServerPrismaProviderMatches({ serverComponentName, serverD
   const provider = detectPrismaProvider(schemaText);
   if (!provider) return;
 
-  // Happier server flavors share a single server package in the monorepo.
-  // Both the full server and the current light server use a Postgres schema (light runs via embedded PGlite).
+  // Happier server-light supports SQLite by default and still supports explicit PGlite opt-in.
   if (serverComponentName === 'happier-server-light') {
-    if (provider !== 'postgresql') {
+    if (provider !== 'postgresql' && provider !== 'sqlite') {
       throw new Error(
-        `[server] happier-server-light expects Prisma datasource provider \"postgresql\", but found \"${provider}\" in:\n` +
+        `[server] happier-server-light expects Prisma datasource provider \"sqlite\" or \"postgresql\", but found \"${provider}\" in:\n` +
           `- ${schemaPath}\n` +
-          `Fix: point happier-server-light at a checkout that includes the current light flavor implementation (PGlite) and uses the Postgres schema.`
+          `Fix: point happier-server-light at a checkout that includes the current light flavor implementation.`
       );
     }
     return;

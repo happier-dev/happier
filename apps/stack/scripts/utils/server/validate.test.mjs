@@ -48,10 +48,10 @@ test('assertServerPrismaProviderMatches accepts happier-server-light when schema
   });
 });
 
-test('assertServerPrismaProviderMatches rejects happier-server-light when schema.prisma is sqlite', async () => {
+test('assertServerPrismaProviderMatches accepts happier-server-light when schema.prisma is sqlite', async () => {
   await withValidateDir(async (dir) => {
     await writeSchemas({ dir, schemaPrisma: SQLITE_SCHEMA, schemaSqlitePrisma: SQLITE_SCHEMA });
-    assert.throws(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server-light', serverDir: dir }));
+    assert.doesNotThrow(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server-light', serverDir: dir }));
   });
 });
 

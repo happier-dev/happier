@@ -60,10 +60,20 @@ test('resolveServer*Script returns start for happier-server', async () => {
   });
 });
 
-test('resolveServerLightPrismaMigrateDeployArgs adds --schema when unified light flavor is detected', async () => {
+test('resolveServerLightPrismaMigrateDeployArgs prefers sqlite schema for default light flavor', async () => {
+  await withServerDir(async (dir) => {
+    await writeServerScriptsPackageJson(dir, { 'migrate:light:deploy': 'node z', 'migrate:sqlite:deploy': 'node sqlite' });
+    await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
+    await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
+
+    assert.deepEqual(resolveServerLightPrismaMigrateDeployArgs({ serverDir: dir }), ['migrate', 'deploy', '--schema', 'prisma/sqlite/schema.prisma']);
+  });
+});
+
+test('resolveServerLightPrismaMigrateDeployArgs supports explicit pglite light flavor', async () => {
   await withServerDir(async (dir) => {
     await writeServerScriptsPackageJson(dir, { 'migrate:light:deploy': 'node z' });
-    assert.deepEqual(resolveServerLightPrismaMigrateDeployArgs({ serverDir: dir }), ['migrate', 'deploy', '--schema', 'prisma/schema.prisma']);
+    assert.deepEqual(resolveServerLightPrismaMigrateDeployArgs({ serverDir: dir, provider: 'pglite' }), ['migrate', 'deploy', '--schema', 'prisma/schema.prisma']);
   });
 });
 
@@ -76,10 +86,22 @@ test('resolveServerLightPrismaMigrateDeployArgs supports legacy schema.sqlite.pr
   });
 });
 
-test('resolveServerLightPrismaClientImport returns @prisma/client for pglite light flavor', async () => {
+test('resolveServerLightPrismaClientImport returns file URL for sqlite default light flavor', async () => {
+  await withServerDir(async (dir) => {
+    await writeServerScriptsPackageJson(dir, { 'migrate:light:deploy': 'node z', 'migrate:sqlite:deploy': 'node sqlite' });
+    await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
+    await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
+    const spec = resolveServerLightPrismaClientImport({ serverDir: dir });
+    assert.equal(typeof spec, 'string');
+    assert.ok(spec.startsWith('file:'), `expected file: URL import spec, got: ${spec}`);
+    assert.ok(spec.endsWith('/generated/sqlite-client/index.js'), `unexpected import spec: ${spec}`);
+  });
+});
+
+test('resolveServerLightPrismaClientImport returns @prisma/client for explicit pglite light flavor', async () => {
   await withServerDir(async (dir) => {
     await writeServerScriptsPackageJson(dir, { 'migrate:light:deploy': 'node z' });
-    assert.equal(resolveServerLightPrismaClientImport({ serverDir: dir }), '@prisma/client');
+    assert.equal(resolveServerLightPrismaClientImport({ serverDir: dir, provider: 'pglite' }), '@prisma/client');
   });
 });
 
@@ -94,17 +116,21 @@ test('resolveServerLightPrismaClientImport returns file URL for sqlite light fla
   });
 });
 
-test('resolvePrismaClientImportForServerComponent returns @prisma/client for pglite server-light', async () => {
+test('resolvePrismaClientImportForServerComponent returns sqlite client for default server-light', async () => {
   await withServerDir(async (dir) => {
-    await writeServerScriptsPackageJson(dir, { 'migrate:light:deploy': 'node z' });
-    assert.equal(resolvePrismaClientImportForServerComponent({ serverComponentName: 'happier-server-light', serverDir: dir }), '@prisma/client');
+    await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
+    await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
+    const spec = resolvePrismaClientImportForServerComponent({ serverComponentName: 'happier-server-light', serverDir: dir });
+    assert.ok(spec.startsWith('file:'), `expected file: URL import spec, got: ${spec}`);
   });
 });
 
 test('resolvePrismaClientImportForServerComponent accepts serverComponent alias (back-compat)', async () => {
   await withServerDir(async (dir) => {
-    await writeServerScriptsPackageJson(dir, { 'migrate:light:deploy': 'node z' });
-    assert.equal(resolvePrismaClientImportForServerComponent({ serverComponent: 'happier-server-light', serverDir: dir }), '@prisma/client');
+    await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
+    await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
+    const spec = resolvePrismaClientImportForServerComponent({ serverComponent: 'happier-server-light', serverDir: dir });
+    assert.ok(spec.startsWith('file:'), `expected file: URL import spec, got: ${spec}`);
   });
 });
 

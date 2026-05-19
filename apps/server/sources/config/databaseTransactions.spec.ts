@@ -11,6 +11,7 @@ describe("databaseTransactions", () => {
             retryJitterFactor: 0.25,
             timeoutMs: 15_000,
             maxWaitMs: 10_000,
+            totalRetryBudgetMs: 600_000,
         });
     });
 
@@ -22,6 +23,7 @@ describe("databaseTransactions", () => {
             retryJitterFactor: 0,
             timeoutMs: 10_000,
             maxWaitMs: 5_000,
+            totalRetryBudgetMs: 25_000,
         });
     });
 
@@ -35,6 +37,7 @@ describe("databaseTransactions", () => {
                     HAPPIER_DB_TX_RETRY_JITTER_FACTOR: "0.4",
                     HAPPIER_DB_TX_TIMEOUT_MS: "15000",
                     HAPPIER_DB_TX_MAX_WAIT_MS: "7000",
+                    HAPPIER_DB_TX_TOTAL_RETRY_BUDGET_MS: "30000",
                 },
                 "postgres",
             ),
@@ -45,6 +48,7 @@ describe("databaseTransactions", () => {
             retryJitterFactor: 0.4,
             timeoutMs: 15_000,
             maxWaitMs: 7_000,
+            totalRetryBudgetMs: 30_000,
         });
     });
 

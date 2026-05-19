@@ -104,6 +104,11 @@ const STACK_REPO_OVERRIDE_SCRIPT_BY_COMMAND = new Map([
   ['review', resolveTopLevelNodeScriptFile('review') || 'review.mjs'],
 ]);
 
+function resolveServerLightDbProviderFromEnv(env) {
+  const raw = (getEnvValue(env, 'HAPPIER_DB_PROVIDER') ?? getEnvValue(env, 'HAPPY_DB_PROVIDER') ?? '').toString().trim().toLowerCase();
+  return raw === 'pglite' ? 'pglite' : 'sqlite';
+}
+
 async function cmdNew({ rootDir, argv, emit = true }) {
   const { flags, kv } = parseArgs(argv);
   const positionals = argv.filter((a) => !a.startsWith('--'));
@@ -453,11 +458,15 @@ async function cmdEdit({ rootDir, argv }) {
   }
 
   if (serverComponent === 'happier-server-light') {
+    const dbProvider = resolveServerLightDbProviderFromEnv(existingEnv);
     const dataDir = join(baseDir, 'server-light');
+    next.HAPPIER_DB_PROVIDER = dbProvider;
     next.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
     next.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-    next.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
-    // Light flavor manages its own embedded pglite connection string at runtime.
+    if (dbProvider === 'pglite') {
+      next.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
+    }
+    // Light flavor manages its own local connection string at runtime.
     // Do not persist DATABASE_URL in the stack env.
     delete next.DATABASE_URL;
   }
@@ -607,9 +616,9 @@ async function cmdAudit({ rootDir, argv }) {
 
       if (serverComponent === 'happier-server-light') {
         const dataDir = join(baseDir, 'server-light');
+        nextEnv.HAPPIER_DB_PROVIDER = 'sqlite';
         nextEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
         nextEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-        nextEnv.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
       }
 
       await writeStackEnv({ stackName, env: nextEnv });
@@ -696,9 +705,7 @@ async function cmdAudit({ rootDir, argv }) {
       const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR');
       const filesDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_FILES_DIR');
       const dbDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DB_DIR');
-      const rawDbProvider =
-        (getEnvValue(env, 'HAPPIER_DB_PROVIDER') ?? getEnvValue(env, 'HAPPY_DB_PROVIDER') ?? '').toString().trim().toLowerCase();
-      const dbProvider = rawDbProvider === 'pglite' ? 'pglite' : 'sqlite';
+      const dbProvider = resolveServerLightDbProviderFromEnv(env);
       const expectedDataDir = join(baseDir, 'server-light');
       const expectedFilesDir = join(expectedDataDir, 'files');
       const expectedDbDir = join(expectedDataDir, 'pglite');
@@ -747,12 +754,16 @@ async function cmdAudit({ rootDir, argv }) {
         const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR');
         const filesDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_FILES_DIR');
         const dbDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DB_DIR');
+        const dbProvider = resolveServerLightDbProviderFromEnv(env);
         const expectedDataDir = join(baseDir, 'server-light');
         const expectedFilesDir = join(expectedDataDir, 'files');
         const expectedDbDir = join(expectedDataDir, 'pglite');
+        if (!getEnvValue(env, 'HAPPIER_DB_PROVIDER')) updates.push({ key: 'HAPPIER_DB_PROVIDER', value: dbProvider });
         if (!dataDir || (fixPaths && dataDir !== expectedDataDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_DATA_DIR', value: expectedDataDir });
         if (!filesDir || (fixPaths && filesDir !== expectedFilesDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_FILES_DIR', value: expectedFilesDir });
-        if (!dbDir || (fixPaths && dbDir !== expectedDbDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_DB_DIR', value: expectedDbDir });
+        if (dbProvider === 'pglite' && (!dbDir || (fixPaths && dbDir !== expectedDbDir))) {
+          updates.push({ key: 'HAPPIER_SERVER_LIGHT_DB_DIR', value: expectedDbDir });
+        }
       }
 
       if (fixWorkspace) {
@@ -777,13 +788,14 @@ async function cmdAudit({ rootDir, argv }) {
         await ensureEnvFileUpdated({ envPath, updates });
       }
 
-      // Light stacks no longer persist DATABASE_URL in the env file (light uses embedded PGlite).
-      // For legacy SQLite-era stacks, prune it when fixing paths so future commands don't accidentally
-      // treat the stack as SQLite-backed.
+      // Light stacks derive local connection strings at runtime.
       if (isServerLight && fixPaths) {
         const legacyDbUrl = getEnvValue(env, 'DATABASE_URL');
         if (legacyDbUrl) {
           await ensureEnvFilePruned({ envPath, removeKeys: ['DATABASE_URL'] });
+        }
+        if (resolveServerLightDbProviderFromEnv(env) === 'sqlite') {
+          await ensureEnvFilePruned({ envPath, removeKeys: ['HAPPIER_SERVER_LIGHT_DB_DIR', 'HAPPY_SERVER_LIGHT_DB_DIR'] });
         }
       }
     }

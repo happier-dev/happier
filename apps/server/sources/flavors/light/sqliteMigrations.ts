@@ -60,12 +60,13 @@ export function resolveSqliteDatabaseFilePath(databaseUrl: string): string {
   if (!raw.startsWith('file:')) return '';
   const value = raw.slice('file:'.length);
   if (!value) return '';
+  const valueWithoutQuery = value.replace(/[?#].*$/, '');
   const shouldPreserveRelativePath =
-    !value.startsWith('/') &&
-    !value.startsWith('//') &&
-    !/^[A-Za-z]:[\\/]/.test(value);
+    !valueWithoutQuery.startsWith('/') &&
+    !valueWithoutQuery.startsWith('//') &&
+    !/^[A-Za-z]:[\\/]/.test(valueWithoutQuery);
   if (shouldPreserveRelativePath) {
-    return value;
+    return valueWithoutQuery;
   }
   try {
     const url = new URL(raw);
@@ -74,7 +75,7 @@ export function resolveSqliteDatabaseFilePath(databaseUrl: string): string {
     return fileURLToPath(url);
   } catch {
     // Prisma accepts file:/path and file:relative forms; treat them as best-effort paths.
-    return value.startsWith('//') ? value.replace(/^\/+/, '/') : value;
+    return valueWithoutQuery.startsWith('//') ? valueWithoutQuery.replace(/^\/+/, '/') : valueWithoutQuery;
   }
 }
 

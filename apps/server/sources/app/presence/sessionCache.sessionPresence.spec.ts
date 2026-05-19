@@ -70,9 +70,10 @@ describe("ActivityCache session presence", () => {
         dbMocks.db.machine.updateMany.mockImplementation(async () => ({ count: 1 }));
     });
 
-    afterEach(() => {
-        activityCache?.shutdown?.();
+    afterEach(async () => {
+        await activityCache?.shutdown?.();
         activityCache = null;
+        vi.unstubAllEnvs();
         vi.useRealTimers();
     });
 
@@ -100,19 +101,7 @@ describe("ActivityCache session presence", () => {
         expect(queuedAgain).toBe(false);
     });
 
-    it("does not issue concurrent session update queries while flushing pending updates", async () => {
-        const { log } = await import("@/utils/logging/log");
-        let inFlight = 0;
-        dbMocks.db.session.updateMany.mockImplementation(async () => {
-            inFlight += 1;
-            if (inFlight > 1) {
-                throw new Error("concurrent_session_update");
-            }
-            await Promise.resolve();
-            inFlight -= 1;
-            return { count: 1 };
-        });
-
+    it("flushes multiple pending sessions in one transaction batch", async () => {
         ({ activityCache } = await import("./sessionCache"));
         activityCache.enableDbFlush();
 
@@ -124,20 +113,20 @@ describe("ActivityCache session presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
 
-        expect(log).not.toHaveBeenCalledWith(
-            expect.objectContaining({ level: "error" }),
-            expect.stringContaining("Error updating sessions"),
-        );
+        expect(transactionMock.transaction).toHaveBeenCalledTimes(1);
+        expect(Array.isArray(transactionMock.transaction.mock.calls[0]?.[0])).toBe(true);
+        expect(transactionMock.transaction.mock.calls[0]?.[0]).toHaveLength(2);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(2);
     });
 
-    it("continues flushing other sessions and retries failed updates on the next flush", async () => {
+    it("keeps all pending session updates when the batch fails and retries them on the next flush", async () => {
         const { log } = await import("@/utils/logging/log");
 
         let sawFailure = false;
         dbMocks.db.session.updateMany.mockImplementation(async (args: any) => {
             if (args?.where?.id === "s1" && !sawFailure) {
                 sawFailure = true;
-                throw new Error("sqlite_busy");
+                throw new Error("write_failed");
             }
             return { count: 1 };
         });
@@ -153,22 +142,56 @@ describe("ActivityCache session presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
 
-        // First flush attempts both sessions (even though the first fails).
+        // First flush builds the full batch, but no cached entry is marked flushed when the transaction rejects.
         expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(2);
+        expect((activityCache as any).sessionCache.get("s1:u1")?.pendingUpdate).not.toBeNull();
+        expect((activityCache as any).sessionCache.get("s2:u1")?.pendingUpdate).not.toBeNull();
 
-        // It should log the error, but not abort the full flush.
         expect(log).toHaveBeenCalledWith(
             expect.objectContaining({ level: "error" }),
-            expect.stringContaining("Error updating session"),
+            expect.stringContaining("Error updating sessions"),
         );
         expect(recordPresenceFlushRetry).toHaveBeenCalledWith({
             entityType: "session",
             reason: "db-error",
         });
 
-        // Second flush retries s1 (now succeeds).
+        // Second flush retries the full batch.
         await (activityCache as any).flushPendingUpdates();
-        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(3);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(4);
+        expect((activityCache as any).sessionCache.get("s1:u1")?.pendingUpdate).toBeNull();
+        expect((activityCache as any).sessionCache.get("s2:u1")?.pendingUpdate).toBeNull();
+    });
+
+    it("backs off the entire flush when a session batch hits P2024", async () => {
+        let callCount = 0;
+        dbMocks.db.session.updateMany.mockImplementation(async () => {
+            callCount += 1;
+            if (callCount === 1) {
+                throw Object.assign(new Error("pool exhausted"), { code: "P2024" });
+            }
+            return { count: 1 };
+        });
+
+        ({ activityCache } = await import("./sessionCache"));
+
+        await activityCache.isSessionValid("s1", "u1");
+        expect(activityCache.queueSessionUpdate("s1", "u1", Date.now())).toBe(true);
+
+        await (activityCache as any).flushPendingUpdates();
+
+        expect(transactionMock.transaction).toHaveBeenCalledTimes(1);
+        expect(recordPresenceFlushRetry).toHaveBeenCalledWith({
+            entityType: "session",
+            reason: "db-backoff",
+        });
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(transactionMock.transaction).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(30_000);
+        await (activityCache as any).flushPendingUpdates();
+        expect(transactionMock.transaction).toHaveBeenCalledTimes(2);
     });
 
     it("backs off the entire flush when a session update hits a DB-busy error", async () => {
@@ -198,7 +221,7 @@ describe("ActivityCache session presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
 
-        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
+        expect(transactionMock.transaction).toHaveBeenCalledTimes(1);
         expect(dbMocks.db.machine.updateMany).not.toHaveBeenCalled();
         expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).toBe(machineTimestamp);
         expect(recordPresenceFlushRetry).toHaveBeenCalledWith({
@@ -207,14 +230,14 @@ describe("ActivityCache session presence", () => {
         });
 
         await (activityCache as any).flushPendingUpdates();
-        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
+        expect(transactionMock.transaction).toHaveBeenCalledTimes(1);
         expect(dbMocks.db.machine.updateMany).not.toHaveBeenCalled();
         expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).toBe(machineTimestamp);
 
         await vi.advanceTimersByTimeAsync(30_000);
 
         await (activityCache as any).flushPendingUpdates();
-        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(2);
+        expect(transactionMock.transaction).toHaveBeenCalledTimes(3);
     });
 
     it("does not start an overlapping timer-driven flush while a previous flush is still in-flight", async () => {
@@ -277,6 +300,73 @@ describe("ActivityCache session presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
         expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(2);
+    });
+
+    it("waits for the final shutdown flush before clearing cached session entries", async () => {
+        let resolveFinalWrite: () => void = () => {
+            throw new Error("resolveFinalWrite not initialized");
+        };
+        const finalWriteBarrier = new Promise<void>((resolve) => {
+            resolveFinalWrite = () => resolve();
+        });
+
+        dbMocks.db.session.updateMany.mockImplementation(async () => {
+            await finalWriteBarrier;
+            return { count: 1 };
+        });
+
+        ({ activityCache } = await import("./sessionCache"));
+        activityCache.enableDbFlush();
+
+        await activityCache.isSessionValid("s1", "u1");
+        expect(activityCache.queueSessionUpdate("s1", "u1", Date.now())).toBe(true);
+
+        const shutdownPromise = activityCache.shutdown();
+        try {
+            await Promise.resolve();
+
+            expect(transactionMock.transaction).toHaveBeenCalledTimes(1);
+            expect((activityCache as any).sessionCache.size).toBe(1);
+        } finally {
+            resolveFinalWrite();
+            await shutdownPromise;
+        }
+
+        expect((activityCache as any).sessionCache.size).toBe(0);
+    });
+
+    it("bounds the final shutdown flush wait with the configured timeout", async () => {
+        vi.stubEnv("HAPPIER_PRESENCE_SHUTDOWN_FLUSH_TIMEOUT_MS", "25");
+
+        ({ activityCache } = await import("./sessionCache"));
+        activityCache.enableDbFlush();
+
+        await activityCache.isSessionValid("s1", "u1");
+        expect(activityCache.queueSessionUpdate("s1", "u1", Date.now())).toBe(true);
+
+        let resolveBlockedWrite: () => void = () => {};
+        dbMocks.db.session.updateMany.mockImplementation(async () => await new Promise((resolve) => {
+            resolveBlockedWrite = () => resolve({ count: 1 });
+        }));
+
+        const shutdownPromise = activityCache.shutdown();
+        try {
+            await Promise.resolve();
+
+            expect(transactionMock.transaction).toHaveBeenCalledTimes(1);
+            expect((activityCache as any).sessionCache.size).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(24);
+            expect((activityCache as any).sessionCache.size).toBe(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+            await shutdownPromise;
+        } finally {
+            resolveBlockedWrite();
+            await shutdownPromise;
+        }
+
+        expect((activityCache as any).sessionCache.size).toBe(0);
     });
 
     it("does not drop a newer queued session update that arrives while a flush is awaiting the DB", async () => {

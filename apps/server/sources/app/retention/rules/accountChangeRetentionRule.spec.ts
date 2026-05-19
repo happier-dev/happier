@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDbMocks, installDbModuleMock } from '../../api/testkit/dbMocks';
+import { createDbMocks, createDbTransactionMock, installDbModuleMock } from '../../api/testkit/dbMocks';
 
 const findMany = vi.fn();
 const deleteMany = vi.fn();
@@ -10,16 +10,18 @@ const dbMocks = createDbMocks({
     accountChange: ["findMany", "deleteMany"],
     account: ["updateMany"],
 } as const);
+const dbTransactionMock = createDbTransactionMock(() => dbMocks.db);
 
 dbMocks.db.accountChange.findMany.mockImplementation((...args: any[]) => findMany(...args));
 dbMocks.db.accountChange.deleteMany.mockImplementation((...args: any[]) => deleteMany(...args));
 dbMocks.db.account.updateMany.mockImplementation((...args: any[]) => updateMany(...args));
 
-installDbModuleMock({ db: dbMocks.db });
+installDbModuleMock({ db: dbTransactionMock.wrapDb(dbMocks.db) });
 
 describe('accountChangeRetentionRule', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        dbTransactionMock.transaction.mockClear();
     });
 
     it('advances changesFloor only to the highest cursor that was actually deleted', async () => {
@@ -68,5 +70,6 @@ describe('accountChangeRetentionRule', () => {
                 changesFloor: 1,
             },
         });
+        expect(dbTransactionMock.transaction).toHaveBeenCalledTimes(1);
     });
 });

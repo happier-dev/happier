@@ -103,9 +103,13 @@ export type {
 
 export {
   applyEnvOverridesToEnvText,
+  appendPrismaSqliteConnectionParams,
+  DEFAULT_PRISMA_SQLITE_BUSY_TIMEOUT_MS,
   parseEnvText,
   renderPrismaCompatibleSqliteDatabaseUrl,
   renderSelfHostServerEnvText,
+  resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
 } from './selfHostServerEnv.js';
+export type { PrismaSqliteDatabaseUrlOptions } from './selfHostServerEnv.js';
 
 export { installOrUpdateRelayRuntimeLocal } from './relayRuntimeInstall.js';

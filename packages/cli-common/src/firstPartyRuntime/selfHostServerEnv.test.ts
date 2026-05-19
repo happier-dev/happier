@@ -2,10 +2,22 @@ import { describe, expect, it } from 'vitest';
 
 import {
     applyEnvOverridesToEnvText,
+    appendPrismaSqliteConnectionParams,
     mergeSelfHostServerEnvText,
+    renderPrismaCompatibleSqliteDatabaseUrl,
     renderSelfHostServerEnvText,
+    resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
     resolveConfiguredSelfHostBaseUrl,
 } from './selfHostServerEnv.js';
+
+type RenderSqliteUrl = (params: Readonly<{
+    dbPath: string;
+    platform: string;
+    sqlite?: Readonly<{
+        busyTimeoutMs?: number;
+        connectionLimit?: number;
+    }>;
+}>) => string;
 
 describe('applyEnvOverridesToEnvText', () => {
     it('rejects env override keys with newlines', () => {
@@ -106,7 +118,118 @@ describe('renderSelfHostServerEnvText', () => {
         });
 
         expect(rendered).toContain(
-            'DATABASE_URL=file:C:/Users/me/Happier%20QA/self-host/data/happier-server-light.sqlite',
+            'DATABASE_URL=file:C:/Users/me/Happier%20QA/self-host/data/happier-server-light.sqlite?socket_timeout=30',
         );
+    });
+
+    it('applies sqlite URL params from process env when rendering generated DATABASE_URL', () => {
+        const previousBusyTimeout = process.env.HAPPIER_SQLITE_BUSY_TIMEOUT_MS;
+        const previousConnectionLimit = process.env.HAPPIER_SQLITE_CONNECTION_LIMIT;
+        process.env.HAPPIER_SQLITE_BUSY_TIMEOUT_MS = '500';
+        process.env.HAPPIER_SQLITE_CONNECTION_LIMIT = '1';
+        try {
+            const rendered = renderSelfHostServerEnvText({
+                port: 3005,
+                host: '127.0.0.1',
+                dataDir: '/tmp/happier-data',
+                filesDir: '/tmp/happier-data/files',
+                dbDir: '/tmp/happier-data/pglite',
+                platform: 'darwin',
+            });
+
+            expect(rendered).toContain(
+                'DATABASE_URL=file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=1&connection_limit=1',
+            );
+        } finally {
+            if (typeof previousBusyTimeout === 'string') {
+                process.env.HAPPIER_SQLITE_BUSY_TIMEOUT_MS = previousBusyTimeout;
+            } else {
+                delete process.env.HAPPIER_SQLITE_BUSY_TIMEOUT_MS;
+            }
+            if (typeof previousConnectionLimit === 'string') {
+                process.env.HAPPIER_SQLITE_CONNECTION_LIMIT = previousConnectionLimit;
+            } else {
+                delete process.env.HAPPIER_SQLITE_CONNECTION_LIMIT;
+            }
+        }
+    });
+});
+
+describe('renderPrismaCompatibleSqliteDatabaseUrl', () => {
+    const render = renderPrismaCompatibleSqliteDatabaseUrl as RenderSqliteUrl;
+
+    it('adds canonical socket_timeout and omits connection_limit by default', () => {
+        expect(render({ dbPath: '/tmp/happier-data/happier-server-light.sqlite', platform: 'linux' })).toBe(
+            'file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30',
+        );
+    });
+
+    it('adds connection_limit only when helper options explicitly request it', () => {
+        expect(render({
+            dbPath: '/tmp/happier-data/happier-server-light.sqlite',
+            platform: 'linux',
+            sqlite: { connectionLimit: 1 },
+        })).toBe('file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1');
+    });
+
+    it('keeps Windows drive-letter URLs Prisma-compatible when appending query params', () => {
+        expect(render({
+            dbPath: 'C:\\Users\\me\\Happier QA\\self-host\\data\\happier-server-light.sqlite',
+            platform: 'win32',
+        })).toBe('file:C:/Users/me/Happier%20QA/self-host/data/happier-server-light.sqlite?socket_timeout=30');
+    });
+
+    it('converts busy timeout milliseconds to Prisma socket_timeout seconds without rounding down', () => {
+        expect(render({
+            dbPath: '/tmp/happier-data/happier-server-light.sqlite',
+            platform: 'linux',
+            sqlite: { busyTimeoutMs: 500 },
+        })).toBe('file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=1');
+    });
+
+    it('omits socket_timeout when busyTimeoutMs is explicitly zero', () => {
+        expect(render({
+            dbPath: '/tmp/happier-data/happier-server-light.sqlite',
+            platform: 'linux',
+            sqlite: { busyTimeoutMs: 0 },
+        })).toBe('file:///tmp/happier-data/happier-server-light.sqlite');
+    });
+
+    it('treats literal question marks in dbPath as filesystem path characters', () => {
+        expect(render({
+            dbPath: '/tmp/happier?data/happier-server-light.sqlite',
+            platform: 'linux',
+        })).toBe('file:///tmp/happier%3Fdata/happier-server-light.sqlite?socket_timeout=30');
+    });
+});
+
+describe('appendPrismaSqliteConnectionParams', () => {
+    it('preserves existing query params and replaces sqlite connection params without duplicates', () => {
+        expect(appendPrismaSqliteConnectionParams({
+            databaseUrl: 'file:///tmp/happier-data/happier-server-light.sqlite?mode=rw&socket_timeout=5&connection_limit=9',
+            busyTimeoutMs: 2500,
+            connectionLimit: 1,
+        })).toBe('file:///tmp/happier-data/happier-server-light.sqlite?mode=rw&socket_timeout=3&connection_limit=1');
+    });
+});
+
+describe('resolvePrismaSqliteDatabaseUrlOptionsFromEnv', () => {
+    it('resolves sqlite URL options from Happier env keys', () => {
+        expect(resolvePrismaSqliteDatabaseUrlOptionsFromEnv({
+            HAPPIER_SQLITE_BUSY_TIMEOUT_MS: '500',
+            HAPPIER_SQLITE_CONNECTION_LIMIT: '1',
+        })).toEqual({ busyTimeoutMs: 500, connectionLimit: 1 });
+    });
+
+    it('does not treat the PostgreSQL connection-limit env as a SQLite connection limit', () => {
+        expect(resolvePrismaSqliteDatabaseUrlOptionsFromEnv({
+            HAPPIER_DB_CONNECTION_LIMIT: '1',
+        })).toEqual({ busyTimeoutMs: 30000, connectionLimit: undefined });
+    });
+
+    it('rejects invalid sqlite connection limits', () => {
+        expect(() => resolvePrismaSqliteDatabaseUrlOptionsFromEnv({
+            HAPPIER_SQLITE_CONNECTION_LIMIT: '0',
+        })).toThrow(/HAPPIER_SQLITE_CONNECTION_LIMIT/i);
     });
 });

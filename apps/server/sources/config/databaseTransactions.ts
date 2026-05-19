@@ -10,6 +10,7 @@ export type DatabaseTransactionConfig = Readonly<{
     retryJitterFactor: number;
     timeoutMs: number;
     maxWaitMs: number;
+    totalRetryBudgetMs: number;
 }>;
 
 function getDefaultMaxRetries(provider: DbProvider): number {
@@ -40,6 +41,11 @@ function getDefaultTimeoutMs(provider: DbProvider): number {
 function getDefaultMaxWaitMs(provider: DbProvider): number {
     if (provider === "sqlite") return 5_000;
     return 10_000;
+}
+
+function getDefaultTotalRetryBudgetMs(provider: DbProvider): number {
+    if (provider === "sqlite") return 25_000;
+    return 600_000;
 }
 
 export function readDatabaseTransactionConfigFromEnv(
@@ -80,6 +86,11 @@ export function readDatabaseTransactionConfigFromEnv(
             env.HAPPIER_DB_TX_MAX_WAIT_MS ?? env.HAPPY_DB_TX_MAX_WAIT_MS,
             getDefaultMaxWaitMs(provider),
             { min: 1_000, max: 600_000 },
+        ),
+        totalRetryBudgetMs: parseIntEnv(
+            env.HAPPIER_DB_TX_TOTAL_RETRY_BUDGET_MS ?? env.HAPPY_DB_TX_TOTAL_RETRY_BUDGET_MS,
+            getDefaultTotalRetryBudgetMs(provider),
+            { min: 1, max: 600_000 },
         ),
     };
 }

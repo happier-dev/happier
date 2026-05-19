@@ -58,19 +58,29 @@ test('importPrismaClientFromGeneratedSqlite imports PrismaClient from generated/
   });
 });
 
-test('importPrismaClientForHappyServerLight uses node_modules Prisma client even if legacy sqlite artifacts exist', async () => {
+test('importPrismaClientForHappyServerLight uses generated sqlite client when sqlite artifacts exist', async () => {
   await withPrismaFixture(async (dir) => {
     await writeModulePackageJson(dir);
     await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
     await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
 
     await mkdir(join(dir, 'generated', 'sqlite-client'), { recursive: true });
-    await writeFile(join(dir, 'generated', 'sqlite-client', 'index.js'), 'export class PrismaClient {}\n', 'utf-8');
+    await writeFile(join(dir, 'generated', 'sqlite-client', 'index.js'), 'export class PrismaClient { static which = "sqlite"; }\n', 'utf-8');
 
-    // Also create a node_modules PrismaClient; the light flavor should use it.
     await writePrismaNodeModule(dir, 'export class PrismaClient { static which = "node_modules"; }\n');
 
     const PrismaClient = await importPrismaClientForHappyServerLight({ serverDir: dir });
+    assert.equal(typeof PrismaClient, 'function');
+    assert.equal(PrismaClient.name, 'PrismaClient');
+    assert.equal(PrismaClient.which, 'sqlite');
+  });
+});
+
+test('importPrismaClientForHappyServerLight preserves explicit pglite node_modules client import', async () => {
+  await withPrismaFixture(async (dir) => {
+    await writePrismaNodeModule(dir, 'export class PrismaClient { static which = "node_modules"; }\n');
+
+    const PrismaClient = await importPrismaClientForHappyServerLight({ serverDir: dir, provider: 'pglite' });
     assert.equal(typeof PrismaClient, 'function');
     assert.equal(PrismaClient.name, 'PrismaClient');
     assert.equal(PrismaClient.which, 'node_modules');

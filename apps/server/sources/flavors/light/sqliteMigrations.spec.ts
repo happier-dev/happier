@@ -105,6 +105,8 @@ describe('light sqlite migrations (unit)', () => {
     expect(resolveSqliteDatabaseFilePath('file:///tmp/happier.sqlite')).toBe('/tmp/happier.sqlite');
     expect(resolveSqliteDatabaseFilePath('file:///tmp/happy%20server%20%23light/happier.sqlite')).toBe('/tmp/happy server #light/happier.sqlite');
     expect(resolveSqliteDatabaseFilePath('file:relative.sqlite')).toBe('relative.sqlite');
+    expect(resolveSqliteDatabaseFilePath('file:relative.sqlite?socket_timeout=30')).toBe('relative.sqlite');
+    expect(resolveSqliteDatabaseFilePath('file:/tmp/%zz.sqlite?socket_timeout=30#fragment')).toBe('/tmp/%zz.sqlite');
   });
 
   it('listSqliteMigrations returns migration.sql entries in directory name order', async () => {

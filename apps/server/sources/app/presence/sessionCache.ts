@@ -2,6 +2,7 @@ import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { sessionCacheCounter, databaseUpdatesSkippedCounter, recordPresenceFlushRetry } from "@/app/monitoring/metrics/index";
 import { checkSessionAccess } from "@/app/share/accessControl";
+import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
 
 interface SessionCacheEntry {
     validUntil: number;
@@ -26,12 +27,20 @@ type ActivityValiditySeed = Readonly<{
     lastActiveAt: Date | null;
 }>;
 
-function readErrorCode(error: unknown): string | null {
-    if (!error || typeof error !== 'object') {
-        return null;
+const DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS = 5_000;
+
+function readShutdownFlushTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+    const raw = env.HAPPIER_PRESENCE_SHUTDOWN_FLUSH_TIMEOUT_MS;
+    if (raw === undefined || raw.trim() === "") {
+        return DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS;
     }
-    const { code } = error as { code?: unknown };
-    return typeof code === 'string' ? code : null;
+
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS;
+    }
+
+    return parsed;
 }
 
 class ActivityCache {
@@ -143,16 +152,7 @@ class ActivityCache {
     }
 
     private shouldBackoffDbFlush(error: unknown): boolean {
-        const code = readErrorCode(error);
-        if (code === 'SQLITE_BUSY' || code === 'P1008' || code === 'P2028') {
-            return true;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        return (
-            message.includes("Socket timeout") ||
-            message.includes("database failed to respond") ||
-            message.includes("SQLITE_BUSY")
-        );
+        return isRetryableSqliteWriteError(error);
     }
 
     private maybeCleanup(now: number): void {
@@ -419,16 +419,17 @@ class ActivityCache {
         // Flush session presence updates (best-effort).
         if (sessionUpdatesById.size > 0) {
             let okCount = 0;
-            for (const [sessionId, update] of sessionUpdatesById.entries()) {
-                const { timestamp, entries } = update;
-                try {
-                    // On SQLite, concurrent write bursts can trigger busy contention and delay unrelated
-                    // control-plane requests (e.g. machine registration). Flush sequentially to reduce lock pressure.
-                    await db.session.updateMany({
+            try {
+                const operations = Array.from(sessionUpdatesById.entries()).map(([sessionId, update]) =>
+                    db.session.updateMany({
                         where: { id: sessionId },
-                        data: { lastActiveAt: new Date(timestamp), active: true }
-                    });
+                        data: { lastActiveAt: new Date(update.timestamp), active: true }
+                    }),
+                );
+                await db.$transaction(operations);
 
+                for (const update of sessionUpdatesById.values()) {
+                    const { timestamp, entries } = update;
                     for (const entry of entries) {
                         entry.lastUpdateSent = timestamp;
                         // Preserve newer queued updates that arrived while awaiting the DB write.
@@ -437,25 +438,27 @@ class ActivityCache {
                         entry.pendingUpdate = pending !== null && pending > timestamp ? pending : null;
                         entry.active = true;
                     }
-                    okCount += 1;
-                } catch (error) {
-                    // Keep the pending update so the next flush can retry.
-                    for (const entry of entries) {
-                        entry.pendingUpdate = Math.max(entry.pendingUpdate ?? 0, timestamp);
+                }
+                okCount = sessionUpdatesById.size;
+            } catch (error) {
+                const shouldBackoff = this.shouldBackoffDbFlush(error);
+                // Keep every pending update in the failed transaction so the next flush retries the full batch.
+                for (const update of sessionUpdatesById.values()) {
+                    for (const entry of update.entries) {
+                        entry.pendingUpdate = Math.max(entry.pendingUpdate ?? 0, update.timestamp);
                     }
-                    recordPresenceFlushRetry({
-                        entityType: "session",
-                        reason: this.shouldBackoffDbFlush(error) ? "db-backoff" : "db-error",
-                    });
-                    log(
-                        { module: 'session-cache', level: 'error', sessionId },
-                        `Error updating session: ${error}`,
-                    );
-                    if (this.shouldBackoffDbFlush(error)) {
-                        this.dbFlushBackoffUntil = Date.now() + this.DB_FLUSH_BACKOFF_INTERVAL;
-                        shouldAbortFlush = true;
-                        break;
-                    }
+                }
+                recordPresenceFlushRetry({
+                    entityType: "session",
+                    reason: shouldBackoff ? "db-backoff" : "db-error",
+                });
+                log(
+                    { module: 'session-cache', level: 'error' },
+                    `Error updating sessions: ${error}`,
+                );
+                if (shouldBackoff) {
+                    this.dbFlushBackoffUntil = Date.now() + this.DB_FLUSH_BACKOFF_INTERVAL;
+                    shouldAbortFlush = true;
                 }
             }
 
@@ -469,10 +472,9 @@ class ActivityCache {
         // Flush machine presence updates (best-effort).
         if (machineUpdates.length > 0) {
             let okCount = 0;
-            for (const update of machineUpdates) {
-                try {
-                    // See sessions flush above: keep presence updates sequential to reduce lock contention.
-                    await db.machine.updateMany({
+            try {
+                const operations = machineUpdates.map((update) =>
+                    db.machine.updateMany({
                         where: {
                             accountId: update.entry.userId,
                             id: update.machineId,
@@ -480,34 +482,66 @@ class ActivityCache {
                             replacedByMachineId: null,
                         },
                         data: { lastActiveAt: new Date(update.timestamp), active: true }
-                    });
+                    }),
+                );
+                await db.$transaction(operations);
 
+                for (const update of machineUpdates) {
                     update.entry.lastUpdateSent = update.timestamp;
                     // Preserve newer queued updates that arrived while awaiting the DB write.
                     const pending = update.entry.pendingUpdate;
                     update.entry.pendingUpdate = pending !== null && pending > update.timestamp ? pending : null;
                     update.entry.active = true;
-                    okCount += 1;
-                } catch (error) {
-                    // Keep the pending update so the next flush can retry.
+                }
+                okCount = machineUpdates.length;
+            } catch (error) {
+                const shouldBackoff = this.shouldBackoffDbFlush(error);
+                // Keep every pending update in the failed transaction so the next flush retries the full batch.
+                for (const update of machineUpdates) {
                     update.entry.pendingUpdate = Math.max(update.entry.pendingUpdate ?? 0, update.timestamp);
-                    recordPresenceFlushRetry({
-                        entityType: "machine",
-                        reason: this.shouldBackoffDbFlush(error) ? "db-backoff" : "db-error",
-                    });
-                    log(
-                        { module: 'session-cache', level: 'error', machineId: update.machineId },
-                        `Error updating machine: ${error}`,
-                    );
-                    if (this.shouldBackoffDbFlush(error)) {
-                        this.dbFlushBackoffUntil = Date.now() + this.DB_FLUSH_BACKOFF_INTERVAL;
-                        shouldAbortFlush = true;
-                        break;
-                    }
+                }
+                recordPresenceFlushRetry({
+                    entityType: "machine",
+                    reason: shouldBackoff ? "db-backoff" : "db-error",
+                });
+                log(
+                    { module: 'session-cache', level: 'error' },
+                    `Error updating machines: ${error}`,
+                );
+                if (shouldBackoff) {
+                    this.dbFlushBackoffUntil = Date.now() + this.DB_FLUSH_BACKOFF_INTERVAL;
                 }
             }
 
             log({ module: 'session-cache' }, `Flushed ${okCount}/${machineUpdates.length} machine updates`);
+        }
+    }
+
+    private async flushPendingUpdatesForShutdown(timeoutMs: number): Promise<void> {
+        const flushPromise = this.flushPendingUpdates();
+        let timeout: ReturnType<typeof setTimeout> | null = null;
+
+        try {
+            const result = await Promise.race([
+                flushPromise.then(() => "flushed" as const),
+                new Promise<"timed-out">((resolve) => {
+                    timeout = setTimeout(() => resolve("timed-out"), timeoutMs);
+                    timeout.unref?.();
+                }),
+            ]);
+
+            if (result === "timed-out") {
+                log(
+                    { module: 'session-cache', level: 'warn' },
+                    `Timed out waiting ${timeoutMs}ms for final presence flush during shutdown`,
+                );
+            }
+        } catch (error) {
+            log({ module: 'session-cache', level: 'error' }, `Error flushing final updates: ${error}`);
+        } finally {
+            if (timeout) {
+                clearTimeout(timeout);
+            }
         }
     }
 
@@ -527,7 +561,7 @@ class ActivityCache {
         }
     }
 
-    shutdown(): void {
+    async shutdown(): Promise<void> {
         if (this.batchTimer) {
             clearInterval(this.batchTimer);
             this.batchTimer = null;
@@ -536,18 +570,17 @@ class ActivityCache {
         this.dbFlushEnabled = false;
         this.dbFlushBackoffUntil = 0;
         this.nextCleanupAt = 0;
-        
-        // Flush any remaining updates
-        if (shouldFlush) {
-            this.flushPendingUpdates().catch(error => {
-                log({ module: 'session-cache', level: 'error' }, `Error flushing final updates: ${error}`);
-            });
+        try {
+            // Flush any remaining updates, but do not let shutdown hang forever behind a stuck DB write.
+            if (shouldFlush) {
+                await this.flushPendingUpdatesForShutdown(readShutdownFlushTimeoutMs());
+            }
+        } finally {
+            // Ensure shutdown is a hard stop: cache entries must not leak across lifetimes
+            // (and tests should not share state through the singleton).
+            this.sessionCache.clear();
+            this.machineCache.clear();
         }
-
-        // Ensure shutdown is a hard stop: cache entries must not leak across lifetimes
-        // (and tests should not share state through the singleton).
-        this.sessionCache.clear();
-        this.machineCache.clear();
     }
 }
 

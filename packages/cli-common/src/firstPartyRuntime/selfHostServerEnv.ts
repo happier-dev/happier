@@ -2,6 +2,10 @@ import { existsSync } from 'node:fs';
 import { join, win32 as win32Path } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+export const DEFAULT_PRISMA_SQLITE_BUSY_TIMEOUT_MS = 30_000;
+const PRISMA_SQLITE_BUSY_TIMEOUT_MS_MAX = 600_000;
+const PRISMA_SQLITE_CONNECTION_LIMIT_MAX = 64;
+
 const SELF_HOST_SERVER_ENV_MANAGED_KEYS = new Set<string>([
     'DATABASE_URL',
     'HAPPIER_DB_PROVIDER',
@@ -93,6 +97,7 @@ export function renderSelfHostServerEnvText(params: Readonly<{
     const databaseUrl = renderPrismaCompatibleSqliteDatabaseUrl({
         dbPath,
         platform,
+        sqlite: resolvePrismaSqliteDatabaseUrlOptionsFromEnv(process.env),
     });
 
     const prismaEngineCandidates: string[] = [];
@@ -130,7 +135,12 @@ export function renderSelfHostServerEnvText(params: Readonly<{
     });
 }
 
-export function renderPrismaCompatibleSqliteDatabaseUrl(params: Readonly<{
+export type PrismaSqliteDatabaseUrlOptions = Readonly<{
+    busyTimeoutMs?: number;
+    connectionLimit?: number;
+}>;
+
+function renderPrismaCompatibleSqliteFileUrl(params: Readonly<{
     dbPath: string;
     platform: string;
 }>): string {
@@ -144,6 +154,129 @@ export function renderPrismaCompatibleSqliteDatabaseUrl(params: Readonly<{
     }
 
     return `file:${fileUrl.pathname.replace(/^\/(?=[A-Za-z]:\/)/, '')}`;
+}
+
+function resolvePrismaSqliteSocketTimeoutSeconds(busyTimeoutMs: number): number | null {
+    if (!Number.isFinite(busyTimeoutMs) || busyTimeoutMs < 0) {
+        throw new Error(`Invalid SQLite busy timeout: ${busyTimeoutMs}`);
+    }
+    if (busyTimeoutMs === 0) {
+        return null;
+    }
+    return Math.ceil(busyTimeoutMs / 1000);
+}
+
+function resolvePrismaSqliteConnectionLimit(connectionLimit: number): number {
+    if (!Number.isInteger(connectionLimit) || connectionLimit < 1) {
+        throw new Error(`Invalid SQLite connection limit: ${connectionLimit}`);
+    }
+    return connectionLimit;
+}
+
+function firstConfiguredEnvValue(env: Readonly<Record<string, unknown>>, primaryKey: string, legacyKey: string): string {
+    const primary = String(env[primaryKey] ?? '').trim();
+    if (primary) return primary;
+    return String(env[legacyKey] ?? '').trim();
+}
+
+function parsePrismaSqliteIntegerEnv(params: Readonly<{
+    raw: string;
+    name: string;
+    min: number;
+    max: number;
+}>): number {
+    if (!/^\d+$/.test(params.raw)) {
+        throw new Error(`Invalid ${params.name}: ${params.raw}`);
+    }
+    const parsed = Number.parseInt(params.raw, 10);
+    if (!Number.isSafeInteger(parsed) || parsed < params.min || parsed > params.max) {
+        throw new Error(`Invalid ${params.name}: ${params.raw}`);
+    }
+    return parsed;
+}
+
+export function resolvePrismaSqliteDatabaseUrlOptionsFromEnv(
+    env: Readonly<Record<string, unknown>>,
+): PrismaSqliteDatabaseUrlOptions {
+    const busyTimeoutRaw = firstConfiguredEnvValue(
+        env,
+        'HAPPIER_SQLITE_BUSY_TIMEOUT_MS',
+        'HAPPY_SQLITE_BUSY_TIMEOUT_MS',
+    );
+    const connectionLimitRaw = firstConfiguredEnvValue(
+        env,
+        'HAPPIER_SQLITE_CONNECTION_LIMIT',
+        'HAPPY_SQLITE_CONNECTION_LIMIT',
+    );
+    return {
+        busyTimeoutMs: busyTimeoutRaw
+            ? parsePrismaSqliteIntegerEnv({
+                raw: busyTimeoutRaw,
+                name: 'HAPPIER_SQLITE_BUSY_TIMEOUT_MS/HAPPY_SQLITE_BUSY_TIMEOUT_MS',
+                min: 0,
+                max: PRISMA_SQLITE_BUSY_TIMEOUT_MS_MAX,
+            })
+            : DEFAULT_PRISMA_SQLITE_BUSY_TIMEOUT_MS,
+        connectionLimit: connectionLimitRaw
+            ? parsePrismaSqliteIntegerEnv({
+                raw: connectionLimitRaw,
+                name: 'HAPPIER_SQLITE_CONNECTION_LIMIT/HAPPY_SQLITE_CONNECTION_LIMIT',
+                min: 1,
+                max: PRISMA_SQLITE_CONNECTION_LIMIT_MAX,
+            })
+            : undefined,
+    };
+}
+
+export function appendPrismaSqliteConnectionParams(params: Readonly<{
+    databaseUrl: string;
+    busyTimeoutMs?: number;
+    connectionLimit?: number;
+}>): string {
+    const rawUrl = String(params.databaseUrl ?? '').trim();
+    if (!rawUrl) return '';
+
+    const hashIndex = rawUrl.indexOf('#');
+    const beforeHash = hashIndex >= 0 ? rawUrl.slice(0, hashIndex) : rawUrl;
+    const hash = hashIndex >= 0 ? rawUrl.slice(hashIndex) : '';
+    const queryIndex = beforeHash.indexOf('?');
+    const base = queryIndex >= 0 ? beforeHash.slice(0, queryIndex) : beforeHash;
+    const query = queryIndex >= 0 ? beforeHash.slice(queryIndex + 1) : '';
+    const searchParams = new URLSearchParams(query);
+
+    const socketTimeoutSeconds = resolvePrismaSqliteSocketTimeoutSeconds(
+        params.busyTimeoutMs ?? DEFAULT_PRISMA_SQLITE_BUSY_TIMEOUT_MS,
+    );
+    if (socketTimeoutSeconds === null) {
+        searchParams.delete('socket_timeout');
+    } else {
+        searchParams.set('socket_timeout', String(socketTimeoutSeconds));
+    }
+
+    if (typeof params.connectionLimit === 'number') {
+        searchParams.set('connection_limit', String(resolvePrismaSqliteConnectionLimit(params.connectionLimit)));
+    } else {
+        searchParams.delete('connection_limit');
+    }
+
+    const renderedQuery = searchParams.toString();
+    return `${base}${renderedQuery ? `?${renderedQuery}` : ''}${hash}`;
+}
+
+export function renderPrismaCompatibleSqliteDatabaseUrl(params: Readonly<{
+    dbPath: string;
+    platform: string;
+    sqlite?: PrismaSqliteDatabaseUrlOptions;
+}>): string {
+    const fileUrl = renderPrismaCompatibleSqliteFileUrl({
+        dbPath: params.dbPath,
+        platform: params.platform,
+    });
+    return appendPrismaSqliteConnectionParams({
+        databaseUrl: fileUrl,
+        busyTimeoutMs: params.sqlite?.busyTimeoutMs,
+        connectionLimit: params.sqlite?.connectionLimit,
+    });
 }
 
 export function resolveSelfHostSqliteAutoMigrateValue(): '1' {

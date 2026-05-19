@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForServerComponent } from '../server/flavor_scripts.mjs';
 import { findAnyCredentialPathInCliHome } from '../auth/credentials_paths.mjs';
+import {
+  renderPrismaCompatibleSqliteDatabaseUrl,
+  resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
+} from '@happier-dev/cli-common/firstPartyRuntime';
 
 function looksLikeMissingTableError(msg) {
   const s = String(msg ?? '').toLowerCase();
@@ -24,6 +28,14 @@ function resolveLightDbProviderFromEnv(env) {
   const raw = (env?.HAPPIER_DB_PROVIDER ?? env?.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
   if (raw === 'pglite') return 'pglite';
   return 'sqlite';
+}
+
+function resolveSqliteDatabaseUrlForDataDir({ dataDir, env }) {
+  return renderPrismaCompatibleSqliteDatabaseUrl({
+    dbPath: join(dataDir, 'happier-server-light.sqlite'),
+    platform: process.platform,
+    sqlite: resolvePrismaSqliteDatabaseUrlOptionsFromEnv(env ?? {}),
+  });
 }
 
 async function probeAccountCount({ serverComponentName, serverDir, env, lightDbProvider = 'sqlite' }) {
@@ -93,7 +105,7 @@ async function probeAccountCount({ serverComponentName, serverDir, env, lightDbP
       const dataDirLegacy = (process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
       const dataDir = dataDirPrimary || dataDirLegacy;
       const fromEnv = (process.env.DATABASE_URL ?? '').toString().trim();
-      const url = fromEnv || (dataDir ? \`file:\${dataDir}/happier-server-light.sqlite\` : '');
+      const url = fromEnv;
       if (!url) throw new Error('Missing DATABASE_URL and HAPPIER_SERVER_LIGHT_DATA_DIR or HAPPY_SERVER_LIGHT_DATA_DIR for sqlite probe');
       process.env.DATABASE_URL = url;
 		  db = new PrismaClient();
@@ -166,10 +178,21 @@ export async function probeExistingAccountCountForServerComponent({
       serverComponentName === 'happier-server-light'
         ? resolveLightDbProviderFromEnv(env)
         : 'sqlite';
+    const probeEnv = { ...env };
+    if (
+      serverComponentName === 'happier-server-light' &&
+      lightDbProvider === 'sqlite' &&
+      !(probeEnv.DATABASE_URL ?? '').toString().trim()
+    ) {
+      const dataDir = firstNonEmptyEnv(probeEnv.HAPPIER_SERVER_LIGHT_DATA_DIR, probeEnv.HAPPY_SERVER_LIGHT_DATA_DIR);
+      if (dataDir) {
+        probeEnv.DATABASE_URL = resolveSqliteDatabaseUrlForDataDir({ dataDir, env: probeEnv });
+      }
+    }
     const accountCount = await probeAccountCount({
       serverComponentName,
       serverDir,
-      env,
+      env: probeEnv,
       lightDbProvider,
     });
     return { ok: true, accountCount };
@@ -211,7 +234,10 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
   const lightDbProvider = resolveLightDbProviderFromEnv(env);
   const dataDir = firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_DATA_DIR, env?.HAPPY_SERVER_LIGHT_DATA_DIR);
   const filesDir = firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_FILES_DIR, dataDir ? join(dataDir, 'files') : '');
-  const dbDir = firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_DB_DIR, env?.HAPPY_SERVER_LIGHT_DB_DIR, dataDir ? join(dataDir, 'pglite') : '');
+  const dbDir =
+    lightDbProvider === 'pglite'
+      ? firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_DB_DIR, env?.HAPPY_SERVER_LIGHT_DB_DIR, dataDir ? join(dataDir, 'pglite') : '')
+      : '';
   if (dataDir) {
     try {
       await mkdir(dataDir, { recursive: true });
@@ -226,7 +252,7 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
       // best-effort
     }
   }
-  if (dbDir) {
+  if (lightDbProvider === 'pglite' && dbDir) {
     try {
       await mkdir(dbDir, { recursive: true });
       env.HAPPIER_SERVER_LIGHT_DB_DIR = env.HAPPIER_SERVER_LIGHT_DB_DIR ?? dbDir;
@@ -241,7 +267,7 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
     dataDir &&
     !(env?.DATABASE_URL ?? '').toString().trim()
   ) {
-    env.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+    env.DATABASE_URL = resolveSqliteDatabaseUrlForDataDir({ dataDir, env });
   }
 
   const probe = async () =>

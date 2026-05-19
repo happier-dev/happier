@@ -97,7 +97,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            pathToFileURL(join("/tmp/happy server #light", "happier-server-light.sqlite")).href,
+            `${pathToFileURL(join("/tmp/happy server #light", "happier-server-light.sqlite")).href}?socket_timeout=30`,
         );
     });
 
@@ -111,7 +111,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            pathToFileURL(join("/Users/tester/happy-server-light", "happier-server-light.sqlite")).href,
+            `${pathToFileURL(join("/Users/tester/happy-server-light", "happier-server-light.sqlite")).href}?socket_timeout=30`,
         );
     });
 
@@ -125,7 +125,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            pathToFileURL(join("/tmp/happier-preferred-dir", "happier-server-light.sqlite")).href,
+            `${pathToFileURL(join("/tmp/happier-preferred-dir", "happier-server-light.sqlite")).href}?socket_timeout=30`,
         );
         expect(applySqliteMigrationsIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
             dataDir: "/tmp/happier-preferred-dir",
@@ -145,7 +145,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            pathToFileURL(join(expectedDataDir, "happier-server-light.sqlite")).href,
+            `${pathToFileURL(join(expectedDataDir, "happier-server-light.sqlite")).href}?socket_timeout=30`,
         );
         expect(applySqliteMigrationsIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
             dataDir: expectedDataDir,

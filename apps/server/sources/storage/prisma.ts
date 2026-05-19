@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
+import { resolveLightSqliteBusyTimeoutMsFromEnv } from "@/flavors/light/sqliteConnectionConfig";
 export type TransactionClient = PrismaNamespace.TransactionClient;
 export type PrismaClientType = PrismaClientInstance;
 
@@ -324,13 +325,7 @@ function resolveSqliteSynchronousModeFromEnv(env: NodeJS.ProcessEnv): SqliteSync
 }
 
 function resolveSqliteBusyTimeoutMsFromEnv(env: NodeJS.ProcessEnv): number {
-    const raw = String(env.HAPPIER_SQLITE_BUSY_TIMEOUT_MS ?? env.HAPPY_SQLITE_BUSY_TIMEOUT_MS ?? "").trim();
-    if (!raw) return 5000;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 600_000) {
-        throw new Error(`Invalid HAPPIER_SQLITE_BUSY_TIMEOUT_MS/HAPPY_SQLITE_BUSY_TIMEOUT_MS: ${raw}`);
-    }
-    return parsed;
+    return resolveLightSqliteBusyTimeoutMsFromEnv(env);
 }
 
 export function resolveSqliteRuntimePragmasFromEnv(env: NodeJS.ProcessEnv): SqliteRuntimePragmas {

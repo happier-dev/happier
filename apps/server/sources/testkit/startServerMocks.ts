@@ -1,6 +1,4 @@
 import { vi } from 'vitest'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues, type EnvValues } from './env'
 
 export { applyEnvValues, restoreEnvValues, snapshotEnvValues, type EnvValues } from './env'
@@ -45,7 +43,6 @@ export function installStartServerCommonWiringMocks(): void {
     return {
       ...actual,
       ensureHandyMasterSecret: vi.fn(async () => {}),
-      resolveLightSqliteDatabaseUrl: vi.fn((dataDir: string) => pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href),
     }
   })
   vi.mock('@/modules/encrypt', () => ({ initEncrypt: vi.fn(async () => {}) }))
