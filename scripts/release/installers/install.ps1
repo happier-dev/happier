@@ -143,6 +143,27 @@ function Read-InstallerMarkerFile {
   return ([string]$value).Trim()
 }
 
+function Test-InstallerPayloadDirectCopyFallbackSafe {
+  $installRoot = Join-Path $InstallDir (Resolve-CliInstallRootName)
+  $currentVersionMarkerPath = Join-Path $installRoot "current.version"
+  $currentPointerPath = Join-Path $installRoot "current"
+  $managedShimPath = Join-Path $BinDir "$((Resolve-CliShimName)).exe"
+
+  $currentVersion = Read-InstallerMarkerFile -Path $currentVersionMarkerPath
+  $currentPointerExists = Test-Path $currentPointerPath -PathType Container
+  $managedShimExists = Test-Path $managedShimPath -PathType Leaf
+
+  if (-not $currentVersion -and -not $currentPointerExists) {
+    return $true
+  }
+
+  if (-not $managedShimExists -and -not $currentPointerExists) {
+    return $true
+  }
+
+  return $false
+}
+
 function Set-InstallerDirectoryPointer {
   param (
     [Parameter(Mandatory = $true)] [string] $Path,
@@ -1204,11 +1225,11 @@ function Invoke-NativeCommandCapturingOutput {
 function Resolve-InstallerPayloadPromotionTimeoutMs {
   $raw = [string]$env:HAPPIER_INSTALLER_PAYLOAD_PROMOTION_TIMEOUT_MS
   if (-not $raw) {
-    return 180000
+    return 120000
   }
   $parsed = 0
   if (-not [int]::TryParse($raw.Trim(), [ref]$parsed)) {
-    return 180000
+    return 120000
   }
   if ($parsed -lt 30000) {
     return 30000
@@ -1217,6 +1238,201 @@ function Resolve-InstallerPayloadPromotionTimeoutMs {
     return 600000
   }
   return $parsed
+}
+
+function Normalize-InstallerLockHygienePathNeedle {
+  param (
+    [string] $Value
+  )
+
+  if (-not $Value) {
+    return ""
+  }
+
+  return ([string]$Value).Trim().Replace('\', '/').ToLowerInvariant()
+}
+
+function Resolve-InstallerLockHygieneWaitMs {
+  $raw = [string]$env:HAPPIER_INSTALLER_LOCK_HYGIENE_WAIT_MS
+  if (-not $raw) {
+    return 30000
+  }
+
+  $parsed = 0
+  if (-not [int]::TryParse($raw.Trim(), [ref]$parsed)) {
+    return 30000
+  }
+  if ($parsed -lt 5000) {
+    return 5000
+  }
+  if ($parsed -gt 120000) {
+    return 120000
+  }
+  return $parsed
+}
+
+function Get-InstallerLockHygieneMatchNeedles {
+  param (
+    [Parameter(Mandatory = $true)] [string] $InstallHomeDir
+  )
+
+  $cliInstallRoot = Join-Path $InstallHomeDir (Resolve-CliInstallRootName)
+  $versionsRoot = Join-Path $cliInstallRoot "versions"
+  $managedBinDir = Join-Path $InstallHomeDir "bin"
+  $shimName = Resolve-CliShimName
+
+  $candidates = @(
+    $InstallHomeDir
+    $cliInstallRoot
+    $versionsRoot
+    $managedBinDir
+    (Join-Path $managedBinDir "$shimName.exe")
+    (Join-Path $managedBinDir "$shimName")
+    (Join-Path $managedBinDir "happier.exe")
+    (Join-Path $managedBinDir "hprev.exe")
+    (Join-Path $managedBinDir "hdev.exe")
+  )
+
+  $needles = New-Object System.Collections.Generic.List[string]
+  foreach ($candidate in $candidates) {
+    $normalized = Normalize-InstallerLockHygienePathNeedle -Value $candidate
+    if ($normalized -and -not $needles.Contains($normalized)) {
+      $needles.Add($normalized)
+    }
+  }
+
+  return @($needles)
+}
+
+function Get-InstallerScopedHappierProcesses {
+  param (
+    [Parameter(Mandatory = $true)] [string[]] $MatchNeedles
+  )
+
+  $happierProcessNames = @("happier", "hprev", "hdev")
+  $processes = Get-CimInstance Win32_Process -Filter "Name='happier.exe' OR Name='hprev.exe' OR Name='hdev.exe'" -ErrorAction SilentlyContinue
+  if (-not $processes) {
+    return @()
+  }
+
+  $matched = New-Object System.Collections.Generic.List[object]
+  foreach ($process in $processes) {
+    if ($null -eq $process -or $process.ProcessId -eq $PID) {
+      continue
+    }
+
+    $rawName = [string]$process.Name
+    $normalizedName = $rawName.ToLowerInvariant()
+    if ($normalizedName.EndsWith(".exe")) {
+      $normalizedName = $normalizedName.Substring(0, $normalizedName.Length - 4)
+    }
+    if (-not ($happierProcessNames -contains $normalizedName)) {
+      continue
+    }
+
+    $commandLine = Normalize-InstallerLockHygienePathNeedle -Value ([string]$process.CommandLine)
+    $executablePath = Normalize-InstallerLockHygienePathNeedle -Value ([string]$process.ExecutablePath)
+    $searchText = "$commandLine $executablePath"
+
+    $matchesScope = $false
+    foreach ($needle in $MatchNeedles) {
+      if ($needle -and $searchText.Contains($needle)) {
+        $matchesScope = $true
+        break
+      }
+    }
+
+    if ($matchesScope) {
+      $matched.Add($process)
+    }
+  }
+
+  return @($matched)
+}
+
+function Wait-InstallerLockHygieneProcessesToExit {
+  param (
+    [Parameter(Mandatory = $true)] [string[]] $MatchNeedles,
+    [Parameter(Mandatory = $true)] [int] $WaitMs
+  )
+
+  $deadline = (Get-Date).AddMilliseconds($WaitMs)
+  while ((Get-Date) -lt $deadline) {
+    $remaining = Get-InstallerScopedHappierProcesses -MatchNeedles $MatchNeedles
+    if ($remaining.Count -eq 0) {
+      return @()
+    }
+    Start-Sleep -Milliseconds 250
+  }
+
+  return Get-InstallerScopedHappierProcesses -MatchNeedles $MatchNeedles
+}
+
+function Remove-StaleInstallerVersionBackups {
+  param (
+    [Parameter(Mandatory = $true)] [string] $InstallHomeDir
+  )
+
+  $versionsDir = Join-Path (Join-Path $InstallHomeDir (Resolve-CliInstallRootName)) "versions"
+  if (-not (Test-Path $versionsDir -PathType Container)) {
+    return
+  }
+
+  $backupDirectories = @(
+    Get-ChildItem -Path $versionsDir -Directory -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match '\.bak-' }
+  )
+
+  foreach ($backupDirectory in $backupDirectories) {
+    try {
+      Remove-Item -Path $backupDirectory.FullName -Recurse -Force -ErrorAction Stop
+    }
+    catch {
+      Write-Warning "Failed to remove stale backup directory $($backupDirectory.FullName): $($_.Exception.Message)"
+    }
+  }
+}
+
+function Invoke-InstallerPreInstallLockHygiene {
+  param (
+    [Parameter(Mandatory = $true)] [string] $InstallHomeDir
+  )
+
+  $matchNeedles = Get-InstallerLockHygieneMatchNeedles -InstallHomeDir $InstallHomeDir
+  $existingInvoker = Resolve-InstalledCliInvoker
+  if ($existingInvoker) {
+    foreach ($commandArgs in @(
+        @("service", "stop", "--json"),
+        @("daemon", "stop", "--all", "--kill-sessions", "--json")
+      )) {
+      try {
+        [void](Invoke-NativeCommandCapturingOutput {
+          Invoke-InstallerCommandWithDaemonServiceContext -CliPath $existingInvoker -CommandArgs $commandArgs -HomeDir $InstallHomeDir
+        })
+      }
+      catch {
+        Write-Warning "Pre-install lock hygiene command failed ($($commandArgs -join ' ')): $($_.Exception.Message)"
+      }
+    }
+  }
+
+  $matchingProcesses = Get-InstallerScopedHappierProcesses -MatchNeedles $matchNeedles
+  foreach ($process in $matchingProcesses) {
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+
+  $waitMs = Resolve-InstallerLockHygieneWaitMs
+  $remainingProcesses = Wait-InstallerLockHygieneProcessesToExit -MatchNeedles $matchNeedles -WaitMs $waitMs
+  if ($remainingProcesses.Count -gt 0) {
+    $details = $remainingProcesses |
+      ForEach-Object {
+        "$($_.ProcessId):$([string]$_.Name)"
+      } |
+      Sort-Object -Unique
+    throw "Pre-install lock hygiene failed to quiesce managed runtime holders within $waitMs ms: $($details -join ', ')"
+  }
+
+  Remove-StaleInstallerVersionBackups -InstallHomeDir $InstallHomeDir
 }
 
 function Invoke-InstallerPayloadPromotionWithTimeout {
@@ -1229,39 +1445,52 @@ function Invoke-InstallerPayloadPromotionWithTimeout {
   )
 
   $timeoutMs = Resolve-InstallerPayloadPromotionTimeoutMs
-  $timeoutSeconds = [Math]::Ceiling($timeoutMs / 1000)
+  $runToken = [System.Guid]::NewGuid().ToString("N")
+  $runnerScriptPath = Join-Path $env:TEMP "happier-payload-promotion-$runToken.ps1"
+  $stdoutPath = Join-Path $env:TEMP "happier-payload-promotion-$runToken.stdout.log"
+  $stderrPath = Join-Path $env:TEMP "happier-payload-promotion-$runToken.stderr.log"
 
-  $job = Start-Job -ScriptBlock {
-    param($jobBinaryPath, $jobPayloadRoot, $jobVersion, $jobChannel, $jobInstallHomeDir)
+  $escapeSingleQuotedLiteral = {
+    param([string] $Value)
+    return $Value.Replace("'", "''")
+  }
 
-    $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
-    try {
-      $env:HAPPIER_HOME_DIR = $jobInstallHomeDir
-      $output = & $jobBinaryPath self __install-payload --component happier-cli --payload-root $jobPayloadRoot --version $jobVersion --channel $jobChannel 2>&1 | Out-String
-      $exitCode = $LASTEXITCODE
-      if ($null -eq $exitCode) {
-        $exitCode = 1
-      }
-      return @{
-        ExitCode = $exitCode
-        Output = if ($null -eq $output) { "" } else { $output }
-        TimedOut = $false
-      }
-    }
-    finally {
-      if ($null -eq $previousHappyHomeDir) {
-        Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
-      }
-      else {
-        $env:HAPPIER_HOME_DIR = $previousHappyHomeDir
-      }
-    }
-  } -ArgumentList @($BinaryPath, $PayloadRoot, $Version, $ChannelValue, $InstallHomeDir)
+  $runnerScript = @"
+`$ErrorActionPreference = 'Stop'
+`$previousHappyHomeDir = `$env:HAPPIER_HOME_DIR
+try {
+  `$env:HAPPIER_HOME_DIR = '$(& $escapeSingleQuotedLiteral $InstallHomeDir)'
+  & '$(& $escapeSingleQuotedLiteral $BinaryPath)' self __install-payload --component happier-cli --payload-root '$(& $escapeSingleQuotedLiteral $PayloadRoot)' --version '$(& $escapeSingleQuotedLiteral $Version)' --channel '$(& $escapeSingleQuotedLiteral $ChannelValue)'
+  `$exitCode = `$LASTEXITCODE
+  if (`$null -eq `$exitCode) {
+    `$exitCode = 1
+  }
+  exit `$exitCode
+}
+finally {
+  if (`$null -eq `$previousHappyHomeDir) {
+    Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
+  }
+  else {
+    `$env:HAPPIER_HOME_DIR = `$previousHappyHomeDir
+  }
+}
+"@
 
   try {
-    $completed = Wait-Job -Job $job -Timeout $timeoutSeconds
+    Set-Content -Path $runnerScriptPath -Value $runnerScript -Encoding utf8
+
+    $process = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScriptPath) -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden
+
+    $completed = $process.WaitForExit($timeoutMs)
     if (-not $completed) {
-      Stop-Job -Job $job -ErrorAction SilentlyContinue | Out-Null
+      try {
+        $process.Kill($true)
+      }
+      catch {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      }
+
       return @{
         ExitCode = 124
         Output = "Payload promotion timed out after $timeoutMs ms."
@@ -1269,18 +1498,20 @@ function Invoke-InstallerPayloadPromotionWithTimeout {
       }
     }
 
-    $jobResult = Receive-Job -Job $job -ErrorAction SilentlyContinue
-    if ($jobResult -is [System.Array]) {
-      $jobResult = $jobResult | Select-Object -First 1
-    }
+    $stdout = if (Test-Path $stdoutPath -PathType Leaf) { Get-Content -Path $stdoutPath -Raw -ErrorAction SilentlyContinue } else { "" }
+    $stderr = if (Test-Path $stderrPath -PathType Leaf) { Get-Content -Path $stderrPath -Raw -ErrorAction SilentlyContinue } else { "" }
+    $output = @($stdout, $stderr) -join ""
+
     return @{
-      ExitCode = if ($null -eq $jobResult.ExitCode) { 1 } else { [int]$jobResult.ExitCode }
-      Output = [string]$jobResult.Output
-      TimedOut = [bool]$jobResult.TimedOut
+      ExitCode = [int]$process.ExitCode
+      Output = [string]$output
+      TimedOut = $false
     }
   }
   finally {
-    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue | Out-Null
+    Remove-Item -Path $runnerScriptPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $stdoutPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $stderrPath -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -1449,20 +1680,22 @@ try {
   New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
   $target = Join-Path $BinDir "$((Resolve-CliShimName)).exe"
 
+  Invoke-InstallerPreInstallLockHygiene -InstallHomeDir $InstallDir
   $promotionResult = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath $binary -PayloadRoot $payloadRoot -Version $version -ChannelValue $Channel -InstallHomeDir $InstallDir
   if ($promotionResult.ExitCode -ne 0) {
     $promotionOutput = if ($promotionResult.Output) { $promotionResult.Output.Trim() } else { "" }
+    $payloadPromotionFallbackSafe = Test-InstallerPayloadDirectCopyFallbackSafe
     $legacyFallbackCompatible = $promotionOutput -match 'Unknown self subcommand:\s+__install-payload'
-    $unsafeDirectCopySignature = $promotionOutput -match '(ENOENT: no such file or directory, open|timed out after|ETIMEDOUT)'
+    $longPathOrMissingSourceSignature = $promotionOutput -match '(ENOENT: no such file or directory, copyfile|ENOENT: no such file or directory, open|ENAMETOOLONG|name too long|path too long|timed out after|ETIMEDOUT)'
 
-    if ($legacyFallbackCompatible) {
+    if ($payloadPromotionFallbackSafe -and ($legacyFallbackCompatible -or $longPathOrMissingSourceSignature)) {
       Write-Warning "Payload promotion is unsupported by this CLI build, falling back to legacy direct binary copy."
       if ($promotionOutput) {
         Write-Warning $promotionOutput
       }
       Copy-Item -Path $binary -Destination $target -Force
     }
-    elseif ($unsafeDirectCopySignature) {
+    elseif ($longPathOrMissingSourceSignature) {
       if ($promotionOutput) {
         Write-Warning $promotionOutput
       }
