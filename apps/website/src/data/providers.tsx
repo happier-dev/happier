@@ -4,6 +4,7 @@ export type ProviderId =
     | 'claude'
     | 'codex'
     | 'opencode'
+    | 'cursor'
     | 'gemini'
     | 'copilot'
     | 'qwen'
@@ -41,6 +42,12 @@ const OpenCode = (
     <svg viewBox="0 0 240 300" aria-hidden>
         <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M0 0H240V300H0V0ZM60 60H180V240H60V60Z" />
         <path fill="currentColor" opacity="0.55" d="M60 120H180V240H60V120Z" />
+    </svg>
+);
+
+const Cursor = (
+    <svg viewBox="0 0 332 378" aria-hidden>
+        <path d="M325.348 87.5751L173.844 0.105221C168.979 -2.70498 162.976 -2.70498 158.111 0.105221L6.6146 87.5751C2.52487 89.9367 0 94.3034 0 99.0337V275.417C0 280.147 2.52487 284.514 6.6146 286.876L158.118 374.345C162.983 377.155 168.986 377.155 173.851 374.345L325.355 286.876C329.445 284.514 331.97 280.147 331.97 275.417V99.0337C331.97 94.3034 329.445 89.9367 325.355 87.5751H325.348ZM315.831 106.103L169.577 359.422C168.588 361.129 165.978 360.432 165.978 358.455V192.584C165.978 189.27 164.207 186.204 161.333 184.54L17.689 101.608C15.982 100.619 16.679 98.0089 18.656 98.0089H311.166C315.319 98.0089 317.915 102.511 315.838 106.11L315.831 106.103Z" fill="currentColor" />
     </svg>
 );
 
@@ -108,6 +115,7 @@ export const PROVIDERS: ReadonlyArray<Provider> = [
     { id: 'claude', name: 'Claude Code', logo: Claude },
     { id: 'codex', name: 'Codex', logo: Codex },
     { id: 'opencode', name: 'OpenCode', logo: OpenCode },
+    { id: 'cursor', name: 'Cursor', logo: Cursor },
     { id: 'gemini', name: 'Gemini', logo: Gemini },
     { id: 'copilot', name: 'Copilot', logo: Copilot },
     { id: 'qwen', name: 'Qwen', logo: Qwen },

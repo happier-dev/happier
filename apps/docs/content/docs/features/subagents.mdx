@@ -13,6 +13,8 @@ In one session, you can have:
 
 The **Agents** surface is the place to launch them, watch their status, reopen their transcript, and take actions when the runtime supports them.
 
+This page describes Happier-managed agent work. Some providers also expose their own native subagent or delegation tools to the session agent. When you explicitly want provider-native subagents, use those provider-native tools when they are available. Happier review, plan, and delegate actions create product-managed execution runs that Happier can list, route, approve, and reopen consistently.
+
 ## Plan run vs plan mode
 
 Happier intentionally separates:
@@ -157,6 +159,8 @@ Backend selection here uses the same backend catalog as the rest of Happier. Tha
 
 - built-in providers such as Claude, Codex, Gemini, or Kiro
 - configured **Custom ACP** backends that you added in **ACP Backends**
+
+Backend selection chooses the provider/backend that should run the Happier-managed execution run. Selecting multiple different backend targets intentionally starts one run for each selected provider/backend. It is not a capacity pool or a requirement for parallelism; for homogeneous parallel work, start multiple runs with the same backend or use provider-native subagent tooling when that is what you want.
 
 If the session already has agents, the launch section stays collapsed by default so the roster remains visible first.
 

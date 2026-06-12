@@ -52,7 +52,7 @@ export function AlternatingFeatures() {
                                     <RevealText
                                         as="h3"
                                         text={feature.title}
-                                        className="font-display text-[28px] font-normal leading-[1.08] tracking-[-0.025em] md:text-[36px] lg:text-[44px]"
+                                        className="font-display text-[36px] font-normal leading-[1.06] tracking-[-0.025em] md:text-[48px] lg:text-[56px]"
                                         stagger={50}
                                     />
                                     <p

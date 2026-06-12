@@ -1,0 +1,195 @@
+// Stress Test Results Schema for Prisma
+// Designed for PostgreSQL with comprehensive querying and aggregation support
+//
+// Usage:
+// 1. Add this to your main schema.prisma file OR create a separate prisma file
+// 2. Run: yarn prisma migrate dev --name add_stress_test_schema
+// 3. Verify with: yarn prisma db push
+
+// ==============================================================================
+// Main table: Stress test run results
+// ==============================================================================
+model StressTestRun {
+  id              BigInt                  @id @default(autoincrement())
+  testId          String                  @unique @default(cuid())
+
+  // Temporal data (required)
+  startTime       DateTime                @db.Timestamptz
+  endTime         DateTime                @db.Timestamptz
+
+  // Duration in milliseconds (stored for query efficiency)
+  totalDurationMs Int                     @db.Integer
+
+  // Core metrics (required)
+  bashCommandsExecuted   Int              @default(0)
+  filesCreated           Int              @default(0)
+  subagentsSpawned       Int              @default(0)
+  webSearchesPerformed   Int              @default(0)
+
+  // Success tracking
+  successRate            Decimal          @db.Decimal(5, 2) // 0.0 to 100.0
+  successfulOperations   Int              @default(0)
+  totalOperations        Int              @default(0)
+
+  // Operation type breakdowns
+  bashSuccessCount       Int              @default(0)
+  subagentSuccessCount   Int              @default(0)
+
+  // Metadata
+  environment            String           @default("test") // 'test', 'staging', 'production'
+  testName               String?          @db.VarChar(255)
+  testVersion            String?          @db.VarChar(50)
+
+  // Audit fields
+  createdAt              DateTime         @default(now()) @db.Timestamptz
+  updatedAt              DateTime         @updatedAt @db.Timestamptz
+
+  // Relations
+  operations             StressTestOperation[]
+  dailyMetrics           StressTestMetricsDaily[]
+
+  // Indexes
+  @@index([startTime(sort: Desc)])
+  @@index([startTime, endTime])
+  @@index([testId])
+  @@index([createdAt(sort: Desc)])
+  @@index([startTime(sort: Desc), environment])
+  @@index([environment, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)], map: "idx_stress_test_run_failed", where: "successRate < 100.0")
+  @@map("stress_test_run")
+}
+
+// ==============================================================================
+// Detailed operation tracking (optional, for granular analysis)
+// ==============================================================================
+model StressTestOperation {
+  id              BigInt                  @id @default(autoincrement())
+
+  // Foreign key
+  testRunId       BigInt
+  testRun         StressTestRun           @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+
+  // Operation details
+  operationType   String                  @db.VarChar(50) // 'bash_command', 'file_create', 'subagent_spawn', 'web_search'
+  operationIndex  Int
+  operationLabel  String?                 @db.VarChar(255)
+
+  // Timing
+  startTime       DateTime                @db.Timestamptz
+  endTime         DateTime                @db.Timestamptz
+  durationMs      Int                     @db.Integer
+
+  // Result tracking
+  success         Boolean
+  errorMessage    String?                 @db.Text
+
+  // Flexible metadata storage (operation-specific details)
+  metadata        Json?
+
+  // Audit
+  createdAt       DateTime                @default(now()) @db.Timestamptz
+
+  // Indexes
+  @@index([testRunId])
+  @@index([operationType])
+  @@index([testRunId, success])
+  @@index([operationType, startTime(sort: Desc)])
+  @@map("stress_test_operation")
+}
+
+// ==============================================================================
+// Aggregated daily metrics (for performance optimization)
+// ==============================================================================
+model StressTestMetricsDaily {
+  id              BigInt                  @id @default(autoincrement())
+
+  // Date grouping (UTC)
+  dateUtc         DateTime                @db.Date
+  environment     String                  @db.VarChar(50)
+
+  // Aggregated counts
+  totalRuns       Int                     @default(0)
+  totalDurationMsSum BigInt               @default(0)
+
+  totalBashCommands       Int             @default(0)
+  totalFilesCreated       Int             @default(0)
+  totalSubagentsSpawned   Int             @default(0)
+  totalWebSearches        Int             @default(0)
+
+  // Statistics (derived from stress_test_run aggregations)
+  avgSuccessRate  Decimal                 @db.Decimal(5, 2) @default(0.0)
+  minSuccessRate  Decimal?                @db.Decimal(5, 2) @default(100.0)
+  maxSuccessRate  Decimal?                @db.Decimal(5, 2) @default(100.0)
+
+  avgDurationMs   Decimal?                @db.Decimal(12, 2)
+  minDurationMs   Int?
+  maxDurationMs   Int?
+
+  // Audit
+  createdAt       DateTime                @default(now()) @db.Timestamptz
+  updatedAt       DateTime                @updatedAt @db.Timestamptz
+
+  // Relations
+  stressTestRuns  StressTestRun[]
+
+  // Unique constraint ensures one row per date per environment
+  @@unique([dateUtc, environment])
+  @@index([dateUtc(sort: Desc)])
+  @@index([environment, dateUtc(sort: Desc)])
+  @@map("stress_test_metrics_daily")
+}
+
+// ==============================================================================
+// QUERIES REFERENCE
+// ==============================================================================
+//
+// Find a specific test by ID:
+//   const test = await prisma.stressTestRun.findUnique({
+//     where: { testId: 'some-test-id' }
+//   });
+//
+// Get all tests from the last 24 hours:
+//   const recentTests = await prisma.stressTestRun.findMany({
+//     where: {
+//       startTime: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+//     },
+//     orderBy: { startTime: 'desc' }
+//   });
+//
+// Get metrics for a date range with aggregation:
+//   const metrics = await prisma.$queryRaw`
+//     SELECT
+//       DATE(start_time AT TIME ZONE 'UTC') AS date_utc,
+//       environment,
+//       COUNT(*) AS total_runs,
+//       AVG(success_rate) AS avg_success_rate,
+//       AVG(total_duration_ms) AS avg_duration_ms
+//     FROM stress_test_run
+//     WHERE start_time >= ${startDate} AND start_time <= ${endDate}
+//     GROUP BY DATE(start_time AT TIME ZONE 'UTC'), environment
+//     ORDER BY date_utc DESC, environment
+//   `;
+//
+// Find failed tests:
+//   const failedTests = await prisma.stressTestRun.findMany({
+//     where: { successRate: { lt: 100 } },
+//     orderBy: { createdAt: 'desc' },
+//     take: 50
+//   });
+//
+// Get operation breakdown for a specific test:
+//   const operations = await prisma.stressTestOperation.groupBy({
+//     by: ['operationType'],
+//     where: { testRunId: runId },
+//     _count: { id: true },
+//     _avg: { durationMs: true }
+//   });
+//
+// Get daily metrics:
+//   const dailyMetrics = await prisma.stressTestMetricsDaily.findMany({
+//     where: {
+//       dateUtc: { gte: startDate, lte: endDate },
+//       environment: 'production'
+//     },
+//     orderBy: { dateUtc: 'desc' }
+//   });

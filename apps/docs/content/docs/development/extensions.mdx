@@ -168,8 +168,6 @@ Current host API methods:
 - `registerAction(...)`
 - `registerTool(...)`
 - `registerCommand(...)`
-- `registerResource(...)`
-- `registerUiDescriptor(...)`
 - `registerHook(...)`
 - `registerLifecycleHandler(...)`
 - `registerRuntimeAdapter(...)`
@@ -199,8 +197,8 @@ These families are live in the current CLI/runtime:
 | Hooks | Manifest V1 compatibility bridge and activation-time `registerHook` | Hook coverage is real but still narrower than the long-term plan. |
 | Tools | Activation-time `registerTool` | Tool registrations are daemon-hosted and require the `tools` runtime capability plus `tools.register`. |
 | Commands | Activation-time `registerCommand` | Command registrations are daemon-hosted and require the `commands` runtime capability plus `commands.register`. |
-| Resources | Activation-time `registerResource`; static `contributions.resources` is also read by the CLI loader | Activation-time registrations require the `resources` runtime capability plus `resources.register`. |
-| UI descriptors | Activation-time `registerUiDescriptor`; static `contributions.uiDescriptors` is also read by the CLI loader | UI descriptors are host-rendered, not executable plugin UI, and require the `uiDescriptors` runtime capability plus `ui.descriptors`. |
+| Resources | Static `contributions.resources` / `contributes.resources` manifest data | Resources are descriptor-only projection data and are not created by activation-time API calls. |
+| UI descriptors | Static `contributions.uiDescriptors` / `contributes.uiDescriptors` manifest data | UI descriptors are host-rendered descriptor-only projection data and are not created by activation-time API calls. |
 
 ### Not supported yet
 

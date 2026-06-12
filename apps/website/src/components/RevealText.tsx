@@ -72,7 +72,7 @@ export function RevealText({
         return () => observer.disconnect();
     }, [inView, armed]);
 
-    const lines = text.split('\n');
+    const lines = text.replace(/\s*~~~\s*/g,String.fromCharCode(160)).split('\n');
 
     return (
         <Tag ref={ref as never} className={clsx('text-balance', className)}>

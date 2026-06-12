@@ -1,6 +1,7 @@
 import { ThemeProvider } from './components/ThemeContext';
 import { TerminalBackground } from './components/TerminalBackground';
 import { Hero } from './sections/Hero';
+import { HeroShowcase } from './sections/HeroShowcase';
 import { AlternatingFeatures } from './sections/AlternatingFeatures';
 import { CallToAction } from './sections/CallToAction';
 import { Footer } from './sections/Footer';
@@ -16,6 +17,7 @@ export function App() {
                 {/* Nav lives inside the Hero so it floats over the planet background. */}
                 <main className="relative z-[2]">
                     <Hero />
+                    <HeroShowcase />
                     <AlternatingFeatures />
                     <CallToAction />
                 </main>

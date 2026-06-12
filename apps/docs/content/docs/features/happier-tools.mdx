@@ -12,6 +12,14 @@ That surface includes:
 
 You do not need to think about those as two different systems. Happier delivers them through the best transport the current provider supports.
 
+Happier also separates three related ideas:
+
+- **Action availability**: whether an action is allowed on a surface at all.
+- **Action discovery**: whether an agent or client can find the action through `action_spec_search` / `action_spec_get` and execute it through `action_execute`.
+- **Direct tool exposure**: whether the action is registered as its own named tool, such as `session_title_set`.
+
+An action can be available and discoverable without being exposed as a direct tool. That mode is called **discoverable-only**.
+
 ## What “Happier tools” means
 
 Happier tools are the actions and external tools that an agent can use through Happier itself.
@@ -45,6 +53,7 @@ Current native-MCP providers include:
 - Claude
 - Codex
 - OpenCode
+- Gemini
 - Kiro
 - Custom ACP providers that expose native MCP support
 
@@ -54,7 +63,6 @@ For providers that can execute shell commands but do not use native MCP directly
 
 Current shell-bridge providers include:
 
-- Gemini
 - Auggie
 - Qwen
 - Kimi
@@ -104,6 +112,8 @@ That means Happier can reuse the same source of truth across:
 - MCP delivery
 - CLI bridge delivery
 
+For session agents, most first-party action-backed tools default to discoverable-only. The session still gets a small direct bootstrap set for action discovery and generic execution, and the larger action catalog stays available through that bootstrap path. This keeps provider-native tool inventories focused while preserving access to Happier workflows.
+
 ### Custom MCP tools
 
 Custom MCP tools are still configured the same way as before:
@@ -113,6 +123,8 @@ Custom MCP tools are still configured the same way as before:
 - preview what a session will see
 
 Once configured, they join the same Happier tools surface as built-in actions.
+
+The direct/discoverable-only exposure setting applies to built-in action-backed tools. Configured custom MCP tools keep their normal direct MCP delivery behavior and are controlled from **Settings → MCP servers** unless a separate custom-tool discovery path is added later.
 
 ## Surfaces and approvals
 
@@ -131,6 +143,14 @@ In the app, this lives under **Settings → Actions**.
 
 When an action is approval-gated, callers do not execute it immediately. Instead, Happier creates an approval request and surfaces it in **Inbox** for review and execution.
 
+Eligible tool-backed action surfaces also have a **tool exposure** setting:
+
+- **Use default** follows Happier’s default for that action and surface.
+- **Discoverable only** keeps the action available through discovery and `action_execute`, but does not register a named direct tool on that surface.
+- **Direct tool** registers the action as its own named tool when the action is otherwise enabled on that surface.
+
+The exposure setting is independent from approval mode. A direct tool can still require approval, and a discoverable-only action can still require approval when it is executed through `action_execute`.
+
 User guide: [Inbox and approvals](./inbox-and-approvals)
 
 ## Discovery-first behavior
@@ -148,11 +168,13 @@ The built-in discovery flow is:
 
 This reduces prompt overload and keeps the available tool surface aligned with the real current runtime.
 
+This is the default posture for in-session agents. Happier-managed review, plan, delegate, and execution-run launch actions stay discoverable, but they are not promoted into the session agent’s direct tool list unless the default or your settings make them direct. External MCP clients and CLI workflows keep direct named tools by default where those tools are configured, so existing automations can continue to use them.
+
 ## Hot-path actions
 
 Happier still keeps a small dynamic hot path for common actions.
 
-This hot path is **not** a hard-coded documentation list. It is derived from the canonical `ActionSpec` metadata, so when an action’s voice/tool metadata changes, the hot path changes with it.
+This hot path is **not** a hard-coded documentation list. It is derived from the canonical `ActionSpec` metadata and the current exposure policy, so when an action’s voice/tool metadata or direct/discoverable setting changes, the hot path changes with it.
 
 In practice, that means common actions like review, plan, delegate, request responses, and session targeting stay easy to reach without maintaining a second parallel registry.
 
@@ -245,6 +267,8 @@ Use a plan subagent only when you want parallel planning work rather than changi
 Configure the tool once in Happier.
 
 If the provider supports native MCP, Happier uses that. If not, Happier uses the shell bridge automatically when supported.
+
+If you are asking an agent for provider-native parallel subagents, use the provider-native subagent/delegation tools when that provider exposes them. Happier review, plan, and delegate actions are Happier-managed execution runs; they are available through the action catalog and can be surfaced directly when that is the intended product workflow.
 
 ### I want voice to do structured work reliably
 

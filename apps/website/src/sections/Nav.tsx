@@ -12,7 +12,7 @@ import { ThemeToggle } from '../components/ThemeToggle';
 export function Nav() {
     return (
         <header className="absolute inset-x-0 top-0 z-30">
-            <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 pt-5 md:px-10 md:pt-7">
+            <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 pt-5 md:px-3 md:pt-7">
                 <HappierMark />
 
                 <div className="flex items-center gap-4 md:gap-5">

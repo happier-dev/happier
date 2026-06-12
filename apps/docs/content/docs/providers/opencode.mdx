@@ -140,11 +140,11 @@ For the full switching workflow, see [Features → Attach to a running session](
 OpenCode can reuse connected services profiles when spawned by Happier (for example):
 
 - `openai-codex` (subscription OAuth) or `openai` (API key) for OpenAI-backed usage
-- `anthropic` (API key) for Anthropic-backed usage
+- `claude-subscription` setup-token profiles or `anthropic` (API key) for Anthropic-backed usage
 
 If multiple compatible profiles exist, Happier will let you pick one when starting a new session.
 
-OpenCode does not currently accept `claude-subscription` profiles in Happier.
+OpenCode accepts `claude-subscription` only for setup-token profiles. Claude subscription OAuth profiles are hidden from OpenCode selection and require Claude itself.
 
 See: [Connected services](/docs/features/connected-services)
 

@@ -14,6 +14,16 @@ Happier can run its own **external MCP server** so other MCP hosts (editors, age
 
 This is separate from **MCP servers you manage inside Happier** (Playwright, GitHub, etc). Those are documented under [MCP servers](/docs/features/mcp-servers).
 
+The external MCP server uses the same action catalog as the app, CLI, voice, and session-agent surfaces. An action can be:
+
+- available on a surface,
+- discoverable through `action_spec_search` / `action_spec_get`,
+- exposed as its own direct named MCP tool.
+
+Those are separate controls. External MCP and CLI surfaces keep direct named tools by default for compatibility, while in-session agents default to a smaller discovery-first direct tool set.
+
+This direct/discoverable exposure model is for Happier action-backed tools. It does not make tools from MCP servers managed inside Happier discoverable-only; those custom tools remain controlled from **Settings → MCP servers**.
+
 ## Run the server
 
 The external MCP server is a **stdio MCP server** (meant to be spawned by an MCP host):
@@ -190,7 +200,7 @@ Call `session_permission_mode_set`:
 
 ### Start an execution run (plan/review/delegate/voice agent)
 
-Call `execution_run_start` to start a structured run in a session. It requires an `intent` plus a backend target.
+Call `execution_run_start` to start a structured Happier-managed run in a session. It requires an `intent` plus a backend target.
 
 Example:
 
@@ -202,6 +212,8 @@ Example:
   "instructions": "Plan a safe refactor and list risks."
 }
 ```
+
+The backend target selects which provider/backend runs the execution run. It is not a capacity slot. If you choose multiple backend targets through an action that supports that shape, Happier starts one managed run per selected provider/backend.
 
 ## What tools you get
 
@@ -237,7 +249,7 @@ Execution run tool:
 
 - `execution_run_start`
 
-The exact set depends on what your account has enabled (and on which surfaces). See “Approvals and enablement”.
+The exact set depends on what your account has enabled, which surfaces are enabled, and whether the action is configured as a direct tool or discoverable-only for that surface. See “Approvals, enablement, and exposure”.
 
 ## Session context and tool variants
 
@@ -307,7 +319,7 @@ This is also the path to advanced approval actions such as:
 
 Those approval actions are available through the action catalog, but they are not advertised as separate named MCP tools. Use `action_execute` when you need them.
 
-## Approvals and enablement
+## Approvals, enablement, and exposure
 
 Happier treats **actions** as a single catalog that can be enabled/disabled per “surface”, including:
 
@@ -324,6 +336,7 @@ For each action + surface, you can:
 
 - enable/disable the action
 - optionally require approval (approval-gated execution)
+- choose direct tool exposure for eligible tool-backed surfaces
 
 If a tool is approval-gated, the MCP tool call returns an `approval_request_created` payload (with an `artifactId`).
 This applies both to generic `action_execute` calls and to built-in aliases such as `session_title_set`, because they share the same action + surface policy.
@@ -349,6 +362,16 @@ Example:
 ```
 
 That executes the same approval object you can review in the app Inbox. The same generic approval model works regardless of whether the request came from the CLI, an external MCP host, a session agent, or another Happier surface.
+
+### Direct tool exposure
+
+For eligible action-backed tools, **Settings → Actions** can set tool exposure per surface:
+
+- **Use default** follows Happier’s default for that action and surface.
+- **Discoverable only** keeps the action callable through `action_execute`, but removes the named direct tool from that surface.
+- **Direct tool** exposes the named tool when the action is otherwise enabled.
+
+This is useful when you want a smaller direct tool list but still want the action available through discovery and generic execution.
 
 ## Troubleshooting
 
@@ -382,5 +405,7 @@ happier daemon install
 
 Tool visibility is driven by the action spec catalog and your account settings. Check:
 
-- **Settings → Actions** (surface enablement + approvals)
+- **Settings → Actions** (surface enablement, approvals, and direct/discoverable exposure)
 - **Settings → MCP servers** (if you expected a *custom MCP server* tool, not a Happier action tool)
+
+If an action is discoverable-only on the MCP surface, it will not appear as a named direct tool. Use `action_spec_search`, `action_spec_get`, and `action_execute`, or change the action’s MCP exposure setting to **Direct tool**.

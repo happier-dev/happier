@@ -3,6 +3,7 @@ import { RevealText } from '../components/RevealText';
 import { HeroHeadline } from '../components/HeroHeadline';
 import { InstallCommand } from '../components/InstallCommand';
 import { DownloadBadges } from '../components/DownloadBadges';
+import { ProviderMarkRow } from '../components/ProviderMarkRow';
 import { Nav } from './Nav';
 import { HeroStage } from './HeroStage';
 
@@ -29,7 +30,7 @@ export function Hero() {
                         alt=""
                         aria-hidden
                         className="absolute inset-0 h-full w-full object-cover"
-                        style={{ objectPosition: '80% center' }}
+                        style={{ objectPosition: '80% 20%' }}
                     />
                     <div
                         className="absolute inset-y-0 left-0 w-full md:w-[58%]"
@@ -53,17 +54,10 @@ export function Hero() {
                         alt=""
                         aria-hidden
                         className="absolute inset-0 h-full w-full object-cover"
-                        style={{ objectPosition: '80% center', filter: 'saturate(0.95)' }}
+                        style={{ objectPosition: '80% 20%', filter: 'saturate(1.1)' }}
                     />
                     <div
-                        className="absolute inset-y-0 left-0 w-full md:w-[58%]"
-                        style={{
-                            background:
-                                'linear-gradient(to right, #F7F5F0 0%, rgba(247,245,240,0.92) 35%, rgba(247,245,240,0.45) 70%, rgba(247,245,240,0) 100%)',
-                        }}
-                    />
-                    <div
-                        className="absolute inset-x-0 bottom-0 h-1/3"
+                        className="absolute inset-x-0 bottom-0 h-1/4"
                         style={{ background: 'linear-gradient(to bottom, transparent 0%, #F7F5F0 100%)' }}
                     />
                 </div>
@@ -71,7 +65,7 @@ export function Hero() {
 
             <Nav />
 
-            <div className="relative mx-auto grid min-h-[85vh] max-w-[1400px] grid-cols-1 content-center items-center gap-10 px-6 pb-20 pt-28 md:grid-cols-12 md:px-10 md:pb-24 md:pt-24">
+            <div className="relative mx-auto grid min-h-[78vh] max-w-[1460px] grid-cols-1 content-center items-center gap-10 px-6 pb-0 pt-20 md:grid-cols-12 md:gap-6 md:px-10 md:pb-0 md:pt-24">
                 {/* Left — copy */}
                 <div className="md:col-span-6 lg:col-span-6">
                     <HeroHeadline />
@@ -79,11 +73,15 @@ export function Hero() {
                     <div className="mt-7 max-w-[560px] text-[16px] leading-[1.55] md:text-[17px] lg:text-[18px]" style={{ color: 'var(--muted)' }}>
                         <RevealText
                             as="p"
-                            text={'The mobile companion for your AI agents.\nOpen-source. End-to-end encrypted. Self-hostable.'}
-                            delay={720}
-                            stagger={30}
+                            text={'The perfect client for your AI agents.\nOpen-source. End-to-end ~~~ encrypted. Self-hostable.'}
+                            delay={525}
+                            stagger={45}
                             className="font-sans tracking-normal"
                         />
+                    </div>
+
+                    <div className="mt-5 md:hidden">
+                        <ProviderMarkRow size={18} />
                     </div>
 
                     <div className="mt-8 flex flex-col items-start gap-3 2xl:flex-row 2xl:items-center 2xl:gap-4">
@@ -91,7 +89,7 @@ export function Hero() {
                             href="https://app.happier.dev/"
                             target="_blank"
                             rel="noreferrer"
-                            className="group inline-flex items-center gap-2 rounded-2xl px-5 py-2.5 text-[14px] font-semibold transition-transform hover:-translate-y-[1px]"
+                            className="group inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-[14px] font-semibold transition-transform hover:-translate-y-[1px]"
                             style={{
                                 background: 'var(--fg)',
                                 color: 'var(--bg)',
@@ -103,7 +101,7 @@ export function Hero() {
                                 transition: 'box-shadow 700ms ease',
                             }}
                         >
-                            <span>Open the web app</span>
+                            <span>Web app</span>
                             <svg viewBox="0 0 16 16" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="M3 8h10" />
                                 <path d="M9 4l4 4-4 4" />
@@ -115,9 +113,9 @@ export function Hero() {
                     <DownloadBadges />
                 </div>
 
-                {/* Right (md+) / below text (mobile) — device stage. */}
-                <div className="md:col-span-6 lg:col-span-6">
-                    <div className="relative mx-auto aspect-square w-full max-w-[440px] md:max-w-[620px] md:-translate-y-10 md:-translate-x-6 lg:max-w-[680px]">
+                {/* Right — provider cloud over the planet. */}
+                <div className="hidden md:col-span-6 md:block lg:col-span-6">
+                    <div className="relative mx-auto aspect-[1.08] w-full max-w-[520px] md:max-w-[760px] md:-translate-y-6 lg:-translate-x-2 lg:max-w-[860px]">
                         <HeroStage />
                     </div>
                 </div>

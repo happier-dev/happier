@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useTheme } from './ThemeContext';
 
 /**
@@ -138,6 +139,8 @@ export function DownloadBadges() {
     const [archDetected, setArchDetected] = useState(false);
     const [popoverOpen, setPopoverOpen] = useState(false);
     const desktopWrapperRef = useRef<HTMLDivElement | null>(null);
+    const popoverRef = useRef<HTMLDivElement | null>(null);
+    const [popoverPos, setPopoverPos] = useState<{ left: number; top: number } | null>(null);
 
     useEffect(() => {
         setOs(detectOs());
@@ -168,11 +171,15 @@ export function DownloadBadges() {
         }
     }, []);
 
-    // Click-outside to dismiss the popover.
+    // Click-outside to dismiss the popover. The popover is portaled to
+    // document.body, so we check both the anchor and the popover itself.
     useEffect(() => {
         if (!popoverOpen) return;
         function handleClickOutside(event: MouseEvent) {
-            if (desktopWrapperRef.current && !desktopWrapperRef.current.contains(event.target as Node)) {
+            const target = event.target as Node;
+            const insideAnchor = desktopWrapperRef.current?.contains(target);
+            const insidePopover = popoverRef.current?.contains(target);
+            if (!insideAnchor && !insidePopover) {
                 setPopoverOpen(false);
             }
         }
@@ -184,6 +191,28 @@ export function DownloadBadges() {
         return () => {
             document.removeEventListener('mousedown', handleClickOutside);
             document.removeEventListener('keydown', handleEscape);
+        };
+    }, [popoverOpen]);
+
+    // Track the anchor button's viewport position so the portaled popover
+    // stays glued to it on scroll/resize.
+    useLayoutEffect(() => {
+        if (!popoverOpen) {
+            setPopoverPos(null);
+            return;
+        }
+        function updatePos() {
+            const anchor = desktopWrapperRef.current;
+            if (!anchor) return;
+            const rect = anchor.getBoundingClientRect();
+            setPopoverPos({ left: rect.left, top: rect.bottom + 8 });
+        }
+        updatePos();
+        window.addEventListener('scroll', updatePos, true);
+        window.addEventListener('resize', updatePos);
+        return () => {
+            window.removeEventListener('scroll', updatePos, true);
+            window.removeEventListener('resize', updatePos);
         };
     }, [popoverOpen]);
 
@@ -289,11 +318,16 @@ export function DownloadBadges() {
                     </button>
                 </div>
 
-                {popoverOpen && (
+                {popoverOpen && popoverPos && createPortal(
                     <div
+                        ref={popoverRef}
                         role="menu"
-                        className="absolute left-0 top-full z-50 mt-2 min-w-[260px] rounded-2xl border p-1.5"
+                        className="min-w-[260px] rounded-2xl border p-1.5"
                         style={{
+                            position: 'fixed',
+                            left: popoverPos.left,
+                            top: popoverPos.top,
+                            zIndex: 100,
                             background: isDark ? 'rgba(15,15,18,0.92)' : 'rgba(252,250,245,0.96)',
                             borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(10,10,11,0.08)',
                             backdropFilter: 'blur(24px)',
@@ -353,7 +387,8 @@ export function DownloadBadges() {
                                 </a>
                             );
                         })}
-                    </div>
+                    </div>,
+                    document.body,
                 )}
             </div>
         </div>
