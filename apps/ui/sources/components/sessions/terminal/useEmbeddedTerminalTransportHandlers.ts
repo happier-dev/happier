@@ -15,31 +15,36 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
 
     const pendingInputRef = React.useRef('');
     const inputFlushTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const flushPendingInput = React.useCallback(() => {
-        if (!params.machineId) {
-            return;
-        }
+    const inputDrainTailRef = React.useRef<Promise<void>>(Promise.resolve());
 
-        const terminalId = params.terminalIdRef.current;
-        if (!terminalId) {
-            return;
-        }
+    // Terminal input must be serialized per terminal instance: async encryption happens before
+    // socket emission, so parallel machineTerminalInput calls can otherwise reach the daemon out of order.
+    const sendBufferedInput = React.useCallback(() => {
+        inputDrainTailRef.current = inputDrainTailRef.current.then(async () => {
+            while (true) {
+                if (!params.machineId) return;
+                const terminalId = params.terminalIdRef.current;
+                if (!terminalId) return;
 
-        const data = pendingInputRef.current;
-        pendingInputRef.current = '';
-        if (!data) {
-            return;
-        }
+                const data = pendingInputRef.current;
+                pendingInputRef.current = '';
+                if (!data) return;
 
-        void machineTerminalInput(params.machineId, { terminalId, data }).catch(() => {
-            // The read-loop owns error surfaces; ignore transient input failures.
+                try {
+                    await machineTerminalInput(params.machineId, { terminalId, data });
+                } catch {
+                    // The read-loop owns error surfaces; ignore transient failures, but keep draining future input.
+                }
+            }
+        }).catch(() => {
+            // Preserve drain chain after a rejected send.
         });
     }, [params.machineId, params.terminalIdRef]);
-    const flushPendingInputRef = React.useRef(flushPendingInput);
+    const sendBufferedInputRef = React.useRef(sendBufferedInput);
 
     React.useEffect(() => {
-        flushPendingInputRef.current = flushPendingInput;
-    }, [flushPendingInput]);
+        sendBufferedInputRef.current = sendBufferedInput;
+    }, [sendBufferedInput]);
 
     const onInput = React.useCallback((data: string) => {
         if (!data) return;
@@ -51,16 +56,16 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
 
         inputFlushTimeoutRef.current = safeTimeoutSet(() => {
             inputFlushTimeoutRef.current = null;
-            flushPendingInput();
+            void sendBufferedInput();
         }, 0);
-    }, [flushPendingInput]);
+    }, [sendBufferedInput]);
 
     React.useEffect(() => {
         if (!params.machineId) return;
         if (!params.terminalIdRef.current) return;
         if (!pendingInputRef.current) return;
-        flushPendingInput();
-    }, [flushPendingInput, params.machineId, params.terminalIdRef]);
+        void sendBufferedInput();
+    }, [params.machineId, params.terminalIdRef, sendBufferedInput]);
 
     const resizeDebounceTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingResizeRef = React.useRef<TerminalSize | null>(null);
@@ -99,7 +104,7 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
     React.useEffect(() => {
         return () => {
             if (pendingInputRef.current) {
-                flushPendingInputRef.current();
+                void sendBufferedInputRef.current();
             }
             safeTimeoutClear(inputFlushTimeoutRef.current);
             inputFlushTimeoutRef.current = null;

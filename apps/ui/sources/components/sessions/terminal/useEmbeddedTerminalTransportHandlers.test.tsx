@@ -86,4 +86,58 @@ describe('useEmbeddedTerminalTransportHandlers', () => {
         expect(inputSpy).toHaveBeenCalledTimes(1);
         expect(inputSpy).toHaveBeenCalledWith('machine-1', { terminalId: 'term-1', data: 'buffered' });
     });
+
+    it('does not start a second terminal input send while the previous send is still in flight', async () => {
+        let resolveFirst: (() => void) | undefined;
+        inputSpy
+            .mockImplementationOnce(() => new Promise<undefined>((resolve) => {
+                resolveFirst = () => resolve(undefined);
+            }))
+            .mockResolvedValueOnce(undefined);
+
+        const { useEmbeddedTerminalTransportHandlers } = await import('./useEmbeddedTerminalTransportHandlers');
+        const terminalIdRef: TerminalIdRef = { current: 'term-1' };
+        const hook = await renderHook(() =>
+            useEmbeddedTerminalTransportHandlers({ machineId: 'machine-1', terminalIdRef }),
+        );
+
+        hook.getCurrent().onInput('g');
+        await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
+        expect(inputSpy).toHaveBeenNthCalledWith(1, 'machine-1', { terminalId: 'term-1', data: 'g' });
+
+        hook.getCurrent().onInput('it status');
+        await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
+        expect(inputSpy).toHaveBeenCalledTimes(1);
+
+        resolveFirst!();
+        await flushHookEffects({ cycles: 3, turns: 3, runOnlyPendingTimers: true });
+
+        expect(inputSpy).toHaveBeenNthCalledWith(2, 'machine-1', { terminalId: 'term-1', data: 'it status' });
+    });
+
+    it('continues draining later buffered input after a send failure', async () => {
+        let rejectFirst: ((error?: unknown) => void) | undefined;
+        inputSpy
+            .mockImplementationOnce(() => new Promise<undefined>((_resolve, reject) => {
+                rejectFirst = reject;
+            }))
+            .mockResolvedValueOnce(undefined);
+
+        const { useEmbeddedTerminalTransportHandlers } = await import('./useEmbeddedTerminalTransportHandlers');
+        const terminalIdRef: TerminalIdRef = { current: 'term-1' };
+        const hook = await renderHook(() =>
+            useEmbeddedTerminalTransportHandlers({ machineId: 'machine-1', terminalIdRef }),
+        );
+
+        hook.getCurrent().onInput('git ');
+        await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
+        expect(inputSpy).toHaveBeenCalledTimes(1);
+
+        hook.getCurrent().onInput('status');
+        rejectFirst!(new Error('transient'));
+        await flushHookEffects({ cycles: 3, turns: 3, runOnlyPendingTimers: true });
+
+        expect(inputSpy).toHaveBeenCalledTimes(2);
+        expect(inputSpy).toHaveBeenLastCalledWith('machine-1', { terminalId: 'term-1', data: 'status' });
+    });
 });
