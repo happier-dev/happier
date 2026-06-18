@@ -21,23 +21,21 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
     // socket emission, so parallel machineTerminalInput calls can otherwise reach the daemon out of order.
     const sendBufferedInput = React.useCallback(() => {
         inputDrainTailRef.current = inputDrainTailRef.current.then(async () => {
-            while (true) {
-                if (!params.machineId) return;
-                const terminalId = params.terminalIdRef.current;
-                if (!terminalId) return;
+            if (!params.machineId) return;
+            const terminalId = params.terminalIdRef.current;
+            if (!terminalId) return;
 
-                const data = pendingInputRef.current;
-                pendingInputRef.current = '';
-                if (!data) return;
+            const data = pendingInputRef.current;
+            pendingInputRef.current = '';
+            if (!data) return;
 
-                try {
-                    await machineTerminalInput(params.machineId, { terminalId, data });
-                } catch {
-                    // The read-loop owns error surfaces; ignore transient failures, but keep draining future input.
-                }
+            try {
+                await machineTerminalInput(params.machineId, { terminalId, data });
+            } catch {
+                // The read-loop owns error surfaces; ignore transient input failures.
             }
         }).catch(() => {
-            // Preserve drain chain after a rejected send.
+            // Defensive: keep the drain chain alive if surrounding logic unexpectedly throws.
         });
     }, [params.machineId, params.terminalIdRef]);
     const sendBufferedInputRef = React.useRef(sendBufferedInput);
