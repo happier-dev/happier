@@ -109,7 +109,8 @@ describe('useEmbeddedTerminalTransportHandlers', () => {
         await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
         expect(inputSpy).toHaveBeenCalledTimes(1);
 
-        resolveFirst!();
+        expect(resolveFirst).toBeDefined();
+        resolveFirst?.();
         await flushHookEffects({ cycles: 3, turns: 3, runOnlyPendingTimers: true });
 
         expect(inputSpy).toHaveBeenNthCalledWith(2, 'machine-1', { terminalId: 'term-1', data: 'it status' });
@@ -168,7 +169,8 @@ describe('useEmbeddedTerminalTransportHandlers', () => {
         await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
         expect(inputSpy).toHaveBeenCalledTimes(1);
 
-        resolveFirst!();
+        expect(resolveFirst).toBeDefined();
+        resolveFirst?.();
         await flushHookEffects({ cycles: 3, turns: 3, runOnlyPendingTimers: true });
 
         expect(inputSpy).toHaveBeenNthCalledWith(2, 'machine-2', { terminalId: 'term-1', data: 'status' });
