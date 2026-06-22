@@ -282,6 +282,7 @@ export type SqliteRuntimePragmas = Readonly<{
     journalMode: SqliteJournalMode;
     synchronous: SqliteSynchronousMode;
     busyTimeoutMs: number;
+    journalSizeLimitBytes: number;
 }>;
 
 export type SqliteDatabaseUrlConnectionLimitStatus = "configured" | "missing" | "invalid";
@@ -291,10 +292,16 @@ export type SqliteStartupDiagnostics = Readonly<{
     journalMode: SqliteJournalMode;
     synchronous: SqliteSynchronousMode;
     busyTimeoutMs: number;
+    journalSizeLimitBytes: number;
     databaseUrlSocketTimeoutSeconds: number | null;
     databaseUrlConnectionLimit: number | null;
     databaseUrlConnectionLimitStatus: SqliteDatabaseUrlConnectionLimitStatus;
 }>;
+
+// Cap the WAL file retained after a checkpoint. SQLite's default (-1) means "no limit",
+// which is what allows the WAL to grow without bound between checkpoints. This bounds
+// retained WAL size as a safety net alongside the active checkpoint worker.
+const DEFAULT_SQLITE_JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
 
 function resolveSqliteJournalModeFromEnv(env: NodeJS.ProcessEnv): SqliteJournalMode {
     const raw = String(env.HAPPIER_SQLITE_JOURNAL_MODE ?? env.HAPPY_SQLITE_JOURNAL_MODE ?? "").trim();
@@ -320,11 +327,31 @@ function resolveSqliteBusyTimeoutMsFromEnv(env: NodeJS.ProcessEnv): number {
     return resolveLightSqliteBusyTimeoutMsFromEnv(env);
 }
 
+function resolveSqliteJournalSizeLimitBytesFromEnv(env: NodeJS.ProcessEnv): number {
+    const raw = String(
+        env.HAPPIER_SQLITE_JOURNAL_SIZE_LIMIT_BYTES ?? env.HAPPY_SQLITE_JOURNAL_SIZE_LIMIT_BYTES ?? "",
+    ).trim();
+    if (!raw) return DEFAULT_SQLITE_JOURNAL_SIZE_LIMIT_BYTES;
+    if (!/^\d+$/.test(raw)) {
+        throw new Error(
+            `Invalid HAPPIER_SQLITE_JOURNAL_SIZE_LIMIT_BYTES/HAPPY_SQLITE_JOURNAL_SIZE_LIMIT_BYTES: ${raw}`,
+        );
+    }
+    const parsed = Number(raw);
+    if (!Number.isSafeInteger(parsed)) {
+        throw new Error(
+            `Invalid HAPPIER_SQLITE_JOURNAL_SIZE_LIMIT_BYTES/HAPPY_SQLITE_JOURNAL_SIZE_LIMIT_BYTES: ${raw}`,
+        );
+    }
+    return parsed;
+}
+
 export function resolveSqliteRuntimePragmasFromEnv(env: NodeJS.ProcessEnv): SqliteRuntimePragmas {
     return {
         journalMode: resolveSqliteJournalModeFromEnv(env),
         synchronous: resolveSqliteSynchronousModeFromEnv(env),
         busyTimeoutMs: resolveSqliteBusyTimeoutMsFromEnv(env),
+        journalSizeLimitBytes: resolveSqliteJournalSizeLimitBytesFromEnv(env),
     };
 }
 
@@ -358,6 +385,7 @@ export function resolveSqliteStartupDiagnosticsFromEnv(env: NodeJS.ProcessEnv): 
         journalMode: pragmas.journalMode,
         synchronous: pragmas.synchronous,
         busyTimeoutMs: pragmas.busyTimeoutMs,
+        journalSizeLimitBytes: pragmas.journalSizeLimitBytes,
         databaseUrlSocketTimeoutSeconds: parsePositiveInteger(readSqliteDatabaseUrlSearchParam(env, "socket_timeout")),
         databaseUrlConnectionLimit,
         databaseUrlConnectionLimitStatus,
@@ -371,6 +399,7 @@ export async function applySqliteRuntimePragmas(client: PrismaClientType, env: N
     await client.$queryRawUnsafe(`PRAGMA journal_mode=${pragmas.journalMode};`);
     await client.$queryRawUnsafe(`PRAGMA synchronous=${pragmas.synchronous};`);
     await client.$queryRawUnsafe(`PRAGMA busy_timeout=${pragmas.busyTimeoutMs};`);
+    await client.$queryRawUnsafe(`PRAGMA journal_size_limit=${pragmas.journalSizeLimitBytes};`);
 }
 
 export async function shutdownDbPglite(): Promise<void> {

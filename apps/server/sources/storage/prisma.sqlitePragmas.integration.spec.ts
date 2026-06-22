@@ -35,6 +35,9 @@ describe("storage/prisma sqlite pragmas", () => {
         const [{ timeout }] = await db.$queryRawUnsafe<Array<{ timeout: number | bigint }>>(
             "SELECT timeout FROM pragma_busy_timeout;",
         );
+        const [{ journal_size_limit: journalSizeLimit }] = await db.$queryRawUnsafe<
+            Array<{ journal_size_limit: number | bigint }>
+        >("SELECT journal_size_limit FROM pragma_journal_size_limit;");
         const timeoutRows = await Promise.all(
             Array.from({ length: 16 }, () =>
                 db.$queryRawUnsafe<Array<{ timeout: number | bigint }>>("SELECT timeout FROM pragma_busy_timeout;"),
@@ -44,6 +47,7 @@ describe("storage/prisma sqlite pragmas", () => {
         expect(journalMode.toLowerCase()).toBe("wal");
         expect(Number(synchronous)).toBe(1); // NORMAL
         expect(Number(timeout)).toBe(30000);
+        expect(Number(journalSizeLimit)).toBe(64 * 1024 * 1024);
         expect(timeoutRows.flat().map((row) => Number(row.timeout))).toEqual(Array.from({ length: 16 }, () => 30000));
     });
 
@@ -92,6 +96,7 @@ describe("storage/prisma sqlite pragmas", () => {
             journalMode: "DELETE",
             synchronous: "FULL",
             busyTimeoutMs: 45000,
+            journalSizeLimitBytes: 64 * 1024 * 1024,
             databaseUrlSocketTimeoutSeconds: 45,
             databaseUrlConnectionLimit: 1,
             databaseUrlConnectionLimitStatus: "configured",

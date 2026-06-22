@@ -8,6 +8,7 @@ import { initEncrypt } from '@/modules/encrypt';
 import { initGithub } from '@/app/auth/providers/github/webhooks';
 import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/blob/files';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres, initDbPglite, initDbSqlite, shutdownDbPglite } from '@/storage/db';
+import { resolveSqliteWalCheckpointIntervalMsFromEnv, startSqliteWalCheckpointWorker } from '@/storage/sqliteWalCheckpoint';
 import { log } from '@/utils/logging/log';
 import { awaitShutdown, onShutdown } from '@/utils/process/shutdown';
 import {
@@ -127,6 +128,19 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
         onShutdown('db', async () => {
             await db.$disconnect();
         });
+    }
+    if (dbProvider === 'sqlite') {
+        // Actively checkpoint the WAL so it cannot be starved by long-lived readers
+        // and grow without bound (which slows queries until they hit the Prisma timeout).
+        const walCheckpointWorker = startSqliteWalCheckpointWorker({
+            client: db,
+            intervalMs: resolveSqliteWalCheckpointIntervalMsFromEnv(process.env),
+        });
+        if (walCheckpointWorker) {
+            onShutdown('db:sqlite-wal-checkpoint', async () => {
+                await walCheckpointWorker.stop();
+            });
+        }
     }
     onShutdown('keepAlive:activity-cache', async () => {
         await activityCache.shutdown();
