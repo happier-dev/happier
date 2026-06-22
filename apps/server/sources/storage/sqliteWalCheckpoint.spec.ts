@@ -28,6 +28,21 @@ describe("resolveSqliteWalCheckpointIntervalMsFromEnv", () => {
     it("rejects non-numeric values", () => {
         expect(() => resolveSqliteWalCheckpointIntervalMsFromEnv({ HAPPIER_SQLITE_WAL_CHECKPOINT_INTERVAL_MS: "soon" })).toThrow();
     });
+
+    it("rejects values that are not safe integers", () => {
+        expect(() =>
+            resolveSqliteWalCheckpointIntervalMsFromEnv({ HAPPIER_SQLITE_WAL_CHECKPOINT_INTERVAL_MS: "99999999999999999999" }),
+        ).toThrow();
+    });
+
+    it("rejects intervals beyond the 32-bit setInterval bound", () => {
+        expect(resolveSqliteWalCheckpointIntervalMsFromEnv({ HAPPIER_SQLITE_WAL_CHECKPOINT_INTERVAL_MS: "2147483647" })).toBe(
+            2_147_483_647,
+        );
+        expect(() =>
+            resolveSqliteWalCheckpointIntervalMsFromEnv({ HAPPIER_SQLITE_WAL_CHECKPOINT_INTERVAL_MS: "2147483648" }),
+        ).toThrow();
+    });
 });
 
 describe("startSqliteWalCheckpointWorker", () => {

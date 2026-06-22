@@ -1,6 +1,5 @@
+import type { PrismaClientType } from "@/storage/prisma";
 import { log } from "@/utils/logging/log";
-
-import type { PrismaClientType } from "./prisma";
 
 // Active WAL checkpoint cadence for the light/sqlite server.
 //
@@ -11,6 +10,10 @@ import type { PrismaClientType } from "./prisma";
 // the server looks "crashed" while the CPU sits idle. An actively-driven
 // `wal_checkpoint(TRUNCATE)` keeps the WAL bounded regardless of reader pressure.
 const DEFAULT_WAL_CHECKPOINT_INTERVAL_MS = 60_000;
+
+// `setInterval` stores its delay in a 32-bit signed int. A larger value is silently
+// coerced to 1ms (with a TimeoutOverflowWarning), which would turn this into a hot loop.
+const MAX_TIMER_INTERVAL_MS = 2_147_483_647;
 
 export type SqliteWalCheckpointResult = Readonly<{
     // SQLite returns 1 when the checkpoint could not run to completion because the
@@ -46,6 +49,11 @@ export function resolveSqliteWalCheckpointIntervalMsFromEnv(env: NodeJS.ProcessE
             `Invalid HAPPIER_SQLITE_WAL_CHECKPOINT_INTERVAL_MS/HAPPY_SQLITE_WAL_CHECKPOINT_INTERVAL_MS: ${raw}`,
         );
     }
+    if (parsed > MAX_TIMER_INTERVAL_MS) {
+        throw new Error(
+            `HAPPIER_SQLITE_WAL_CHECKPOINT_INTERVAL_MS/HAPPY_SQLITE_WAL_CHECKPOINT_INTERVAL_MS must be <= ${MAX_TIMER_INTERVAL_MS}: ${raw}`,
+        );
+    }
     return parsed;
 }
 
@@ -54,17 +62,19 @@ export function resolveSqliteWalCheckpointIntervalMsFromEnv(env: NodeJS.ProcessE
  * Returns SQLite's `(busy, log, checkpointed)` triple.
  */
 export async function checkpointSqliteWal(client: PrismaClientType): Promise<SqliteWalCheckpointResult> {
-    // `PRAGMA wal_checkpoint(TRUNCATE)` returns exactly three integer columns in the
-    // order (busy, log, checkpointed). Read positionally so we do not depend on the
-    // driver's column-naming of pragma results.
+    // `PRAGMA wal_checkpoint(TRUNCATE)` returns three integer columns documented as
+    // (busy, log, checkpointed). Prefer SQLite's documented column names, falling back
+    // to positional order, so we are robust to driver-specific result shaping either way.
     const rows = await client.$queryRawUnsafe<Array<Record<string, number | bigint>>>(
         "PRAGMA wal_checkpoint(TRUNCATE);",
     );
-    const values = rows[0] ? Object.values(rows[0]).map((value) => Number(value)) : [];
+    const row = rows[0] ?? {};
+    const positional = Object.values(row);
+    const read = (name: string, index: number): number => Number(row[name] ?? positional[index] ?? 0);
     return {
-        busy: values[0] ?? 0,
-        logFrames: values[1] ?? 0,
-        checkpointedFrames: values[2] ?? 0,
+        busy: read("busy", 0),
+        logFrames: read("log", 1),
+        checkpointedFrames: read("checkpointed", 2),
     };
 }
 
