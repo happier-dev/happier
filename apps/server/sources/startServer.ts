@@ -116,31 +116,36 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
         throw new Error(`Unsupported HAPPY_FILES_BACKEND/HAPPIER_FILES_BACKEND: ${String(filesBackend)}`);
     }
 
+    const sqliteWalCheckpointIntervalMs = dbProvider === 'sqlite'
+        ? resolveSqliteWalCheckpointIntervalMsFromEnv(process.env)
+        : null;
+
     // Storage
     await db.$connect();
+    // Actively checkpoint the SQLite WAL so it cannot be starved by long-lived
+    // readers and grow without bound, which slows queries until they hit the
+    // Prisma timeout.
+    const sqliteWalCheckpointWorker = sqliteWalCheckpointIntervalMs === null
+        ? null
+        : startSqliteWalCheckpointWorker({
+            client: db,
+            intervalMs: sqliteWalCheckpointIntervalMs,
+        });
     if (dbProvider === 'pglite') {
         // When using embedded pglite, ensure Prisma disconnect happens before stopping the socket server.
         onShutdown('db', async () => {
             await db.$disconnect();
             await shutdownDbPglite();
         });
+    } else if (dbProvider === 'sqlite') {
+        onShutdown('db', async () => {
+            await sqliteWalCheckpointWorker?.stop();
+            await db.$disconnect();
+        });
     } else {
         onShutdown('db', async () => {
             await db.$disconnect();
         });
-    }
-    if (dbProvider === 'sqlite') {
-        // Actively checkpoint the WAL so it cannot be starved by long-lived readers
-        // and grow without bound (which slows queries until they hit the Prisma timeout).
-        const walCheckpointWorker = startSqliteWalCheckpointWorker({
-            client: db,
-            intervalMs: resolveSqliteWalCheckpointIntervalMsFromEnv(process.env),
-        });
-        if (walCheckpointWorker) {
-            onShutdown('db:sqlite-wal-checkpoint', async () => {
-                await walCheckpointWorker.stop();
-            });
-        }
     }
     onShutdown('keepAlive:activity-cache', async () => {
         await activityCache.shutdown();
