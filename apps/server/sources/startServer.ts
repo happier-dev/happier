@@ -7,8 +7,22 @@ import { startTimeout } from '@/app/presence/timeout';
 import { initEncrypt } from '@/modules/encrypt';
 import { initGithub } from '@/app/auth/providers/github/webhooks';
 import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/blob/files';
-import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres, initDbPglite, initDbSqlite, shutdownDbPglite } from '@/storage/db';
-import { resolveSqliteWalCheckpointIntervalMsFromEnv, startSqliteWalCheckpointWorker } from '@/storage/sqliteWalCheckpoint';
+import {
+    applySqliteRuntimePragmas,
+    createDbSqliteMaintenanceClient,
+    db,
+    getDbProviderFromEnv,
+    initDbMysql,
+    initDbPostgres,
+    initDbPglite,
+    initDbSqlite,
+    shutdownDbPglite,
+} from '@/storage/db';
+import {
+    resolveSqliteWalCheckpointBusyTimeoutMsFromEnv,
+    resolveSqliteWalCheckpointIntervalMsFromEnv,
+    startSqliteWalCheckpointWorker,
+} from '@/storage/sqliteWalCheckpoint';
 import { log } from '@/utils/logging/log';
 import { awaitShutdown, onShutdown } from '@/utils/process/shutdown';
 import {
@@ -119,18 +133,40 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     const sqliteWalCheckpointIntervalMs = dbProvider === 'sqlite'
         ? resolveSqliteWalCheckpointIntervalMsFromEnv(process.env)
         : null;
+    const shouldStartSqliteWalCheckpointWorker =
+        sqliteWalCheckpointIntervalMs !== null && sqliteWalCheckpointIntervalMs > 0;
+    const sqliteWalCheckpointBusyTimeoutMs = shouldStartSqliteWalCheckpointWorker
+        ? resolveSqliteWalCheckpointBusyTimeoutMsFromEnv(process.env)
+        : null;
 
     // Storage
     await db.$connect();
+    let sqliteWalCheckpointClient: typeof db | null = null;
+    try {
+        if (shouldStartSqliteWalCheckpointWorker) {
+            sqliteWalCheckpointClient = await createDbSqliteMaintenanceClient();
+            await sqliteWalCheckpointClient.$connect();
+            await applySqliteRuntimePragmas(sqliteWalCheckpointClient, {
+                ...process.env,
+                HAPPIER_SQLITE_BUSY_TIMEOUT_MS: String(sqliteWalCheckpointBusyTimeoutMs),
+                HAPPY_SQLITE_BUSY_TIMEOUT_MS: String(sqliteWalCheckpointBusyTimeoutMs),
+            });
+        }
+    } catch (error) {
+        await sqliteWalCheckpointClient?.$disconnect().catch(() => {});
+        await db.$disconnect().catch(() => {});
+        throw error;
+    }
     // Actively checkpoint the SQLite WAL so it cannot be starved by long-lived
     // readers and grow without bound, which slows queries until they hit the
     // Prisma timeout.
-    const sqliteWalCheckpointWorker = sqliteWalCheckpointIntervalMs === null
-        ? null
-        : startSqliteWalCheckpointWorker({
-            client: db,
+    let sqliteWalCheckpointWorker: ReturnType<typeof startSqliteWalCheckpointWorker> = null;
+    if (sqliteWalCheckpointClient && sqliteWalCheckpointIntervalMs !== null) {
+        sqliteWalCheckpointWorker = startSqliteWalCheckpointWorker({
+            client: sqliteWalCheckpointClient,
             intervalMs: sqliteWalCheckpointIntervalMs,
         });
+    }
     if (dbProvider === 'pglite') {
         // When using embedded pglite, ensure Prisma disconnect happens before stopping the socket server.
         onShutdown('db', async () => {
@@ -140,7 +176,11 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     } else if (dbProvider === 'sqlite') {
         onShutdown('db', async () => {
             await sqliteWalCheckpointWorker?.stop();
-            await db.$disconnect();
+            try {
+                await sqliteWalCheckpointClient?.$disconnect();
+            } finally {
+                await db.$disconnect();
+            }
         });
     } else {
         onShutdown('db', async () => {

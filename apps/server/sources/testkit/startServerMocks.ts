@@ -76,6 +76,16 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
   const initDbPglite = vi.fn()
   const initDbMysql = vi.fn()
   const initDbSqlite = vi.fn()
+  const sqliteMaintenanceClientConnect = vi.fn()
+  const sqliteMaintenanceClientDisconnect = vi.fn()
+  const sqliteMaintenanceClientQueryRawUnsafe = vi.fn()
+  const sqliteMaintenanceClient = {
+    $connect: (...args: any[]) => sqliteMaintenanceClientConnect(...args),
+    $disconnect: (...args: any[]) => sqliteMaintenanceClientDisconnect(...args),
+    $queryRawUnsafe: (...args: any[]) => sqliteMaintenanceClientQueryRawUnsafe(...args),
+  }
+  const createDbSqliteMaintenanceClient = vi.fn()
+  const applySqliteRuntimePragmas = vi.fn()
   const shutdownDbPglite = vi.fn()
   const getDbProviderFromEnv = vi.fn<StartServerDbProviderReader>()
   const simpleCacheFindUnique = vi.fn()
@@ -92,6 +102,11 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
     initDbPglite.mockReset().mockImplementation(async () => {})
     initDbMysql.mockReset().mockImplementation(async () => {})
     initDbSqlite.mockReset().mockImplementation(async () => {})
+    sqliteMaintenanceClientConnect.mockReset().mockImplementation(async () => {})
+    sqliteMaintenanceClientDisconnect.mockReset().mockImplementation(async () => {})
+    sqliteMaintenanceClientQueryRawUnsafe.mockReset().mockImplementation(async () => [])
+    createDbSqliteMaintenanceClient.mockReset().mockImplementation(async () => sqliteMaintenanceClient)
+    applySqliteRuntimePragmas.mockReset().mockImplementation(async () => {})
     shutdownDbPglite.mockReset().mockImplementation(async () => {})
     getDbProviderFromEnv.mockReset().mockImplementation(options.getDbProviderFromEnv ?? ((_env, fallback) => fallback))
     simpleCacheFindUnique.mockReset().mockResolvedValue(null)
@@ -118,6 +133,8 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
       initDbPglite: (...args: any[]) => initDbPglite(...args),
       initDbMysql: (...args: any[]) => initDbMysql(...args),
       initDbSqlite: (...args: any[]) => initDbSqlite(...args),
+      createDbSqliteMaintenanceClient: (...args: any[]) => createDbSqliteMaintenanceClient(...args),
+      applySqliteRuntimePragmas: (...args: any[]) => applySqliteRuntimePragmas(...args),
       shutdownDbPglite: (...args: any[]) => shutdownDbPglite(...args),
       isPrismaErrorCode: (...args: [unknown, string]) => isPrismaErrorCode(...args),
     },
@@ -131,6 +148,12 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
     initDbPglite,
     initDbMysql,
     initDbSqlite,
+    sqliteMaintenanceClient,
+    sqliteMaintenanceClientConnect,
+    sqliteMaintenanceClientDisconnect,
+    sqliteMaintenanceClientQueryRawUnsafe,
+    createDbSqliteMaintenanceClient,
+    applySqliteRuntimePragmas,
     shutdownDbPglite,
     isPrismaErrorCode,
     reset,

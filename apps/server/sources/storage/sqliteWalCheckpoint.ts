@@ -6,14 +6,18 @@ import { log } from "@/utils/logging/log";
 // Passive autocheckpoint can be starved indefinitely by long-lived / overlapping
 // read transactions (e.g. session-message subscriptions). When that happens the
 // WAL grows without bound, every read slows down as it scans WAL frames, and writes
-// eventually exceed Prisma's query timeout and surface as `Socket timeout` errors —
-// the server looks "crashed" while the CPU sits idle. An actively-driven
-// `wal_checkpoint(TRUNCATE)` keeps the WAL bounded regardless of reader pressure.
+// can eventually exceed Prisma's query timeout and surface as `Socket timeout`
+// errors. An actively-driven `wal_checkpoint(TRUNCATE)` gives the server a
+// best-effort maintenance loop that truncates the WAL whenever SQLite can get a
+// reader gap.
 const DEFAULT_WAL_CHECKPOINT_INTERVAL_MS = 60_000;
+const DEFAULT_WAL_CHECKPOINT_BUSY_TIMEOUT_MS = 5_000;
 
 // `setInterval` stores its delay in a 32-bit signed int. A larger value is silently
 // coerced to 1ms (with a TimeoutOverflowWarning), which would turn this into a hot loop.
 const MAX_TIMER_INTERVAL_MS = 2_147_483_647;
+// SQLite's busy timeout API also takes a signed 32-bit millisecond value.
+const MAX_SQLITE_BUSY_TIMEOUT_MS = 2_147_483_647;
 
 export type SqliteWalCheckpointResult = Readonly<{
     // SQLite returns 1 when the checkpoint could not run to completion because the
@@ -52,6 +56,38 @@ export function resolveSqliteWalCheckpointIntervalMsFromEnv(env: NodeJS.ProcessE
     if (parsed > MAX_TIMER_INTERVAL_MS) {
         throw new Error(
             `HAPPIER_SQLITE_WAL_CHECKPOINT_INTERVAL_MS/HAPPY_SQLITE_WAL_CHECKPOINT_INTERVAL_MS must be <= ${MAX_TIMER_INTERVAL_MS}: ${raw}`,
+        );
+    }
+    return parsed;
+}
+
+/**
+ * Resolve how long a TRUNCATE checkpoint may wait for reader/writer gaps.
+ *
+ * Env: `HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS` / `HAPPY_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS`
+ *  - unset            -> default (5s)
+ *  - "0"              -> opportunistic only
+ *  - positive integer -> that many ms
+ */
+export function resolveSqliteWalCheckpointBusyTimeoutMsFromEnv(env: NodeJS.ProcessEnv): number {
+    const raw = String(
+        env.HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS ?? env.HAPPY_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS ?? "",
+    ).trim();
+    if (!raw) return DEFAULT_WAL_CHECKPOINT_BUSY_TIMEOUT_MS;
+    if (!/^\d+$/.test(raw)) {
+        throw new Error(
+            `Invalid HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS/HAPPY_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS: ${raw}`,
+        );
+    }
+    const parsed = Number(raw);
+    if (!Number.isSafeInteger(parsed)) {
+        throw new Error(
+            `Invalid HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS/HAPPY_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS: ${raw}`,
+        );
+    }
+    if (parsed > MAX_SQLITE_BUSY_TIMEOUT_MS) {
+        throw new Error(
+            `HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS/HAPPY_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS must be <= ${MAX_SQLITE_BUSY_TIMEOUT_MS}: ${raw}`,
         );
     }
     return parsed;
@@ -125,7 +161,6 @@ export function startSqliteWalCheckpointWorker(
                 inFlight = null;
             }
         })();
-        await inFlight;
     };
 
     const timer = setInterval(() => {

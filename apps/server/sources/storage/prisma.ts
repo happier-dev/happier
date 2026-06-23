@@ -152,6 +152,11 @@ async function initDbFromGeneratedClient(provider: "mysql" | "sqlite"): Promise<
     if (_db || _pglite || _pgliteServer) {
         throw new Error("Database client is already initialized.");
     }
+    _provider = provider;
+    _db = await createGeneratedPrismaClient(provider);
+}
+
+async function createGeneratedPrismaClient(provider: "mysql" | "sqlite"): Promise<PrismaClientType> {
     const entrypoint =
         provider === "mysql"
             ? resolveGeneratedClientEntrypoint("../../generated/mysql-client")
@@ -173,8 +178,11 @@ async function initDbFromGeneratedClient(provider: "mysql" | "sqlite"): Promise<
     if (!mod?.PrismaClient) {
         throw new Error(`Invalid generated Prisma client module: ${entrypoint}`);
     }
-    _provider = provider;
-    _db = new mod.PrismaClient() as PrismaClientType;
+    return new mod.PrismaClient() as PrismaClientType;
+}
+
+export async function createDbSqliteMaintenanceClient(): Promise<PrismaClientType> {
+    return createGeneratedPrismaClient("sqlite");
 }
 
 export async function initDbMysql(): Promise<void> {
@@ -332,7 +340,7 @@ function resolveSqliteJournalSizeLimitBytesFromEnv(env: NodeJS.ProcessEnv): numb
         env.HAPPIER_SQLITE_JOURNAL_SIZE_LIMIT_BYTES ?? env.HAPPY_SQLITE_JOURNAL_SIZE_LIMIT_BYTES ?? "",
     ).trim();
     if (!raw) return DEFAULT_SQLITE_JOURNAL_SIZE_LIMIT_BYTES;
-    if (!/^\d+$/.test(raw)) {
+    if (!/^-?\d+$/.test(raw)) {
         throw new Error(
             `Invalid HAPPIER_SQLITE_JOURNAL_SIZE_LIMIT_BYTES/HAPPY_SQLITE_JOURNAL_SIZE_LIMIT_BYTES: ${raw}`,
         );
@@ -343,6 +351,7 @@ function resolveSqliteJournalSizeLimitBytesFromEnv(env: NodeJS.ProcessEnv): numb
             `Invalid HAPPIER_SQLITE_JOURNAL_SIZE_LIMIT_BYTES/HAPPY_SQLITE_JOURNAL_SIZE_LIMIT_BYTES: ${raw}`,
         );
     }
+    // SQLite treats negative values as "no limit"; 0 is an explicit minimum-size limit.
     return parsed;
 }
 

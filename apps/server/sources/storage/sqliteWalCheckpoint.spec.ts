@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PrismaClientType } from "@/storage/prisma";
 import {
+    checkpointSqliteWal,
+    resolveSqliteWalCheckpointBusyTimeoutMsFromEnv,
     resolveSqliteWalCheckpointIntervalMsFromEnv,
     startSqliteWalCheckpointWorker,
     type SqliteWalCheckpointResult,
@@ -42,6 +44,71 @@ describe("resolveSqliteWalCheckpointIntervalMsFromEnv", () => {
         expect(() =>
             resolveSqliteWalCheckpointIntervalMsFromEnv({ HAPPIER_SQLITE_WAL_CHECKPOINT_INTERVAL_MS: "2147483648" }),
         ).toThrow();
+    });
+});
+
+describe("resolveSqliteWalCheckpointBusyTimeoutMsFromEnv", () => {
+    it("defaults to a bounded wait for reader gaps", () => {
+        expect(resolveSqliteWalCheckpointBusyTimeoutMsFromEnv({})).toBe(5_000);
+    });
+
+    it("reads an explicit timeout and the HAPPY_ alias", () => {
+        expect(resolveSqliteWalCheckpointBusyTimeoutMsFromEnv({
+            HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS: "2500",
+        })).toBe(2500);
+        expect(resolveSqliteWalCheckpointBusyTimeoutMsFromEnv({
+            HAPPY_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS: "1500",
+        })).toBe(1500);
+    });
+
+    it("allows 0 for an explicitly opportunistic checkpoint", () => {
+        expect(resolveSqliteWalCheckpointBusyTimeoutMsFromEnv({
+            HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS: "0",
+        })).toBe(0);
+    });
+
+    it("rejects invalid or unsafe timeout values", () => {
+        expect(() =>
+            resolveSqliteWalCheckpointBusyTimeoutMsFromEnv({
+                HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS: "soon",
+            }),
+        ).toThrow();
+        expect(() =>
+            resolveSqliteWalCheckpointBusyTimeoutMsFromEnv({
+                HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS: "99999999999999999999",
+            }),
+        ).toThrow();
+        expect(() =>
+            resolveSqliteWalCheckpointBusyTimeoutMsFromEnv({
+                HAPPIER_SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT_MS: "2147483648",
+            }),
+        ).toThrow();
+    });
+});
+
+describe("checkpointSqliteWal", () => {
+    it("reads documented SQLite column names first", async () => {
+        const fakeClient = {
+            $queryRawUnsafe: vi.fn(async () => [{ busy: 1n, log: 7n, checkpointed: 3n }]),
+        } as unknown as PrismaClientType;
+
+        await expect(checkpointSqliteWal(fakeClient)).resolves.toEqual({
+            busy: 1,
+            logFrames: 7,
+            checkpointedFrames: 3,
+        });
+    });
+
+    it("falls back to positional column order for driver-shaped rows", async () => {
+        const fakeClient = {
+            $queryRawUnsafe: vi.fn(async () => [{ 0: 0, 1: 11, 2: 9 }]),
+        } as unknown as PrismaClientType;
+
+        await expect(checkpointSqliteWal(fakeClient)).resolves.toEqual({
+            busy: 0,
+            logFrames: 11,
+            checkpointedFrames: 9,
+        });
     });
 });
 
