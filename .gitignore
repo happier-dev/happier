@@ -56,6 +56,7 @@ apps/server/output/
 
 # typescript
 *.tsbuildinfo
+packages/*/.tsconfig.build.*.json
 packages/protocol/src/features/embeddedFeaturePolicies.generated.ts
 
 .claude/settings.local.json
@@ -64,7 +65,11 @@ packages/protocol/src/features/embeddedFeaturePolicies.generated.ts
 CLAUDE.local.md
 
 .dev/worktree/*
-.project/
+.project/*
+!.project/plans/
+.project/plans/*
+!.project/plans/runtime-unification-v2/
+!.project/plans/runtime-unification-v2/**
 
 # Development planning notes (keep local, don't commit)
 notes/
@@ -85,6 +90,7 @@ notes/
 .project/qa/score-history/
 .happier/local/
 /output
+/apps/ui/.agent-device/
 
 # Claude Code cache
 .claude/cache/
@@ -112,9 +118,22 @@ _.env.pipeline.production.local
 
 # Local QA screenshots
 /authoring-qa-*.png
+/authenticated-*-connected-services.png
+/browser-qa-*.png
+/claude-session-*-error.png
+/codex-usage-limit-*.png
+/connected-services-*.png
+/full-audit-*.log
+/full-audit-*.png
+/onboarding-remote-*.png
+/opencode-auth-picker-*.png
+/runtime-status-session-before-reload.png
+/ui-postfix-review-snapshot.md
 /.codex-tmp
 /apps/stack/output
 /apps/ui/src-tauri/vendor
 
 /cli/.dist*
 /packages/cli-common/.dist*
+/.clawpatch
+/apply_fix.py

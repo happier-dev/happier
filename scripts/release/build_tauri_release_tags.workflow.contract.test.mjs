@@ -42,6 +42,12 @@ test('build-tauri keeps the public manual workflow surface on dev while retainin
   assert.doesNotMatch(raw, /inputs\.environment\s*==\s*'publicdev'/);
 });
 
+test('build-tauri enables Expo Router web modal support for desktop UI builds', async () => {
+  const raw = await loadWorkflow('build-tauri.yml');
+
+  assert.match(raw, /EXPO_UNSTABLE_WEB_MODAL:\s*"1"/);
+});
+
 test('build-tauri latest.json generator uses ui-desktop-* release tags and publish assets are namespaced', async () => {
   const raw = await loadWorkflow('build-tauri.yml');
 

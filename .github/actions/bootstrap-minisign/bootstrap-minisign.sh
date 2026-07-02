@@ -106,7 +106,7 @@ if [[ -z "${bin_path}" && ( "${os}" == msys* || "${os}" == mingw* || "${os}" == 
   windows_arch=""
   case "${arch}" in
     x86_64|amd64)
-      windows_arch="x86_64"
+      windows_arch="x64"
       ;;
     aarch64|arm64)
       windows_arch="aarch64"

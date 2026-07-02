@@ -26,6 +26,7 @@ test('expo native-build cloud mode emits heartbeat while waiting for EAS respons
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       'sleep 0.25',
+      'echo "Resolved Expo config for android"',
       'printf \'[{"id":"build-123","platform":"android","status":"IN_QUEUE","buildDetailsPageUrl":"https://expo.dev/accounts/happier-dev/projects/happier/builds/build-123"}]\\n\'',
       'exit 0',
       '',

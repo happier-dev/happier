@@ -46,6 +46,11 @@ test('workspace build and typecheck scripts use the shared Node-safe TypeScript 
     'agents build should use the shared TypeScript wrapper'
   );
   assert.match(
+    String(agentsPkg?.scripts?.build ?? ''),
+    /fs\.rmSync\('dist', \{ recursive: true, force: true \}\)/,
+    'agents build should clean stale dist output before compiling'
+  );
+  assert.match(
     String(agentsPkg?.scripts?.typecheck ?? ''),
     /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
     'agents typecheck should use the shared TypeScript wrapper'
@@ -54,6 +59,11 @@ test('workspace build and typecheck scripts use the shared Node-safe TypeScript 
     String(protocolPkg?.scripts?.build ?? ''),
     /scripts\/workspaces\/runTypeScriptCli\.mjs -p tsconfig\.json\b/,
     'protocol build should use the shared TypeScript wrapper'
+  );
+  assert.match(
+    String(protocolPkg?.scripts?.build ?? ''),
+    /fs\.rmSync\('dist', \{ recursive: true, force: true \}\)/,
+    'protocol build should clean stale dist output before compiling'
   );
   assert.match(
     String(protocolPkg?.scripts?.typecheck ?? ''),

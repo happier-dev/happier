@@ -101,6 +101,9 @@ concurrency:
   group: build-ui-mobile-local-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  EXPO_UNSTABLE_WEB_MODAL: "1"
+
 jobs:
   release_actor_guard:
     name: Release actor guard
@@ -187,7 +190,7 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         uses: ./.github/actions/install-yarn-dependencies

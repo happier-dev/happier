@@ -1,0 +1,14 @@
+{
+    "ignore_dirs": [
+        "node_modules",
+        ".project",
+        "graphify-out",
+        ".expo",
+        ".cache",
+        ".turbo",
+        ".nyc_output",
+        "coverage",
+        "playwright-report",
+        "test-results"
+    ]
+}

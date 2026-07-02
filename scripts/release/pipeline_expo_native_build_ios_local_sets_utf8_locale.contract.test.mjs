@@ -29,6 +29,10 @@ test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', () => 
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
+      'if printf "%s\\n" "$*" | grep -q "fingerprint:generate"; then',
+      '  printf \'{"hash":"fp-ios-locale-test","sources":[],"fileHookTransformConfig":{}}\\n\'',
+      '  exit 0',
+      'fi',
       'echo "LANG=$LANG"',
       'echo "LC_ALL=$LC_ALL"',
       'if [ "${LANG:-}" != "en_US.UTF-8" ]; then echo "BAD_LANG" >&2; exit 1; fi',

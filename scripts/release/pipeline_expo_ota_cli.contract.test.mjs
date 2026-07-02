@@ -135,7 +135,7 @@ test('pipeline CLI forwards explicit interactive setting to Expo OTA', async () 
   assert.match(out, /--interactive\"?\s+\"?false\b/);
 });
 
-test('pipeline CLI forwards an explicit runtime version to Expo OTA dry-runs', async () => {
+test('pipeline CLI splits explicit runtime-version OTA dry-runs across concrete platforms', async () => {
   const out = execFileSync(
     process.execPath,
     [
@@ -165,4 +165,6 @@ test('pipeline CLI forwards an explicit runtime version to Expo OTA dry-runs', a
 
   assert.match(out, /scripts\/pipeline\/expo\/ota-update\.mjs/);
   assert.match(out, /--runtime-version\"?\s+\"?18\b/);
+  assert.match(out, /--platform\"?\s+\"?android\b/);
+  assert.match(out, /--platform\"?\s+\"?ios\b/);
 });

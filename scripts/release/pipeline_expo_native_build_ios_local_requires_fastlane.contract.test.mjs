@@ -17,7 +17,21 @@ test('expo native-build local iOS fails fast when fastlane is missing', () => {
   fs.mkdirSync(binDir, { recursive: true });
 
   // Provide an npx stub so the test doesn't accidentally invoke real EAS CLI if the preflight regresses.
-  writeExecutable(path.join(binDir, 'npx'), ['#!/usr/bin/env bash', 'echo "NPX $*"', 'exit 0', ''].join('\n'));
+  writeExecutable(
+    path.join(binDir, 'npx'),
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'if [[ "$*" == *"fingerprint:generate"* ]]; then',
+      '  echo "NPX $*"',
+      '  printf \'{"hash":"fp-ios-fastlane-test","sources":[],"fileHookTransformConfig":{}}\\n\'',
+      '  exit 0',
+      'fi',
+      'echo "NPX $*"',
+      'exit 0',
+      '',
+    ].join('\n'),
+  );
 
   const env = {
     ...process.env,

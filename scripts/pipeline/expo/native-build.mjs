@@ -15,6 +15,12 @@ import { shouldStageRepoForEasLocalBuild } from './should-stage-eas-local-build-
 import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
 import { resolveEasBuildProfileEnv } from './resolve-eas-build-profile-env.mjs';
 import { createCanonicalFingerprintFromExpoFingerprint } from './canonical-fingerprint.mjs';
+import {
+  parseEasBuildFromCommandOutput,
+  parseEasBuildListFromCommandOutput,
+  parseEasBuildsFromCommandOutput,
+  parseExpoFingerprintFromCommandOutput,
+} from './parse-json-from-command-output.mjs';
 import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
 import {
   normalizeMobileReleaseEnvironment,
@@ -367,7 +373,7 @@ function fetchCloudBuildList({ opts, uiDir, easCliVersion, platform, profile, gi
     ],
     { cwd: uiDir, env: withEasGitCaseSensitiveEnv(process.env), stdio: 'pipe', timeoutMs: 5 * 60_000 },
   ).trim();
-  return normalizeBuilds(JSON.parse(listJson));
+  return normalizeBuilds(parseEasBuildListFromCommandOutput(listJson, 'eas build:list'));
 }
 
 /**
@@ -403,7 +409,7 @@ function fetchLatestFinishedCloudBuildFingerprint({ opts, uiDir, easCliVersion, 
     { cwd: uiDir, env, stdio: 'pipe', timeoutMs: 5 * 60_000 },
   ).trim();
 
-  const builds = normalizeBuilds(JSON.parse(listJson))
+  const builds = normalizeBuilds(parseEasBuildListFromCommandOutput(listJson, 'eas build:list --status finished'))
     .filter((b) => b && typeof b === 'object')
     .sort((a, b) => (getBuildCreatedAtMs(b) ?? 0) - (getBuildCreatedAtMs(a) ?? 0));
   if (builds.length === 0) return null;
@@ -451,7 +457,7 @@ function fetchLatestCloudBuildForFingerprint({ opts, uiDir, easCliVersion, platf
     { cwd: uiDir, env, stdio: 'pipe', timeoutMs: 5 * 60_000 },
   ).trim();
 
-  const builds = normalizeBuilds(JSON.parse(listJson))
+  const builds = normalizeBuilds(parseEasBuildListFromCommandOutput(listJson, 'eas build:list --fingerprint-hash'))
     .filter((b) => b && typeof b === 'object')
     .sort((a, b) => (getBuildCreatedAtMs(b) ?? 0) - (getBuildCreatedAtMs(a) ?? 0));
   if (builds.length === 0) return null;
@@ -493,7 +499,7 @@ async function generateCurrentProjectFingerprintHash({ opts, uiDir, easCliVersio
     )
   ).trim();
   if (!fpJson) return '';
-  const parsed = JSON.parse(fpJson);
+  const parsed = parseExpoFingerprintFromCommandOutput(fpJson, `eas fingerprint:generate (${platform})`);
   const canonical = createCanonicalFingerprintFromExpoFingerprint(parsed);
   const rawHash = String(parsed?.hash ?? parsed?.fingerprintHash ?? '').trim();
   if (canonical.hash && rawHash && canonical.hash !== rawHash) {
@@ -551,7 +557,7 @@ function fetchBuildViewJson({ opts, uiDir, easCliVersion, buildId }) {
     ['--yes', `eas-cli@${easCliVersion}`, 'build:view', String(buildId), '--json'],
     { cwd: uiDir, env: withEasGitCaseSensitiveEnv(process.env), stdio: 'pipe', timeoutMs: 5 * 60_000 },
   ).trim();
-  const viewParsed = JSON.parse(viewJson);
+  const viewParsed = parseEasBuildFromCommandOutput(viewJson, `eas build:view ${buildId}`);
   return Array.isArray(viewParsed) ? viewParsed[0] : viewParsed;
 }
 
@@ -714,7 +720,12 @@ async function main() {
     console.log(`[pipeline] expo native build: profile APP_ENV=${profileAppEnv}`);
   }
   const artifactOut = String(values['artifact-out'] ?? '').trim();
-  const easCommandEnv = withEasGitCaseSensitiveEnv({ ...process.env, ...easProfileEnv });
+  const expoWebModalEnv = { EXPO_UNSTABLE_WEB_MODAL: '1' };
+  const easCommandEnv = withEasGitCaseSensitiveEnv({
+    ...process.env,
+    ...easProfileEnv,
+    ...expoWebModalEnv,
+  });
 
   if (buildMode === 'local') {
     if (platform === 'all') {
@@ -758,7 +769,7 @@ async function main() {
 
           // Dagger secret args use `env://NAME` indirections. Ensure the dagger CLI process
           // environment contains the referenced vars so they don't resolve as Missing.
-          const daggerEnv = { ...process.env, EXPO_TOKEN: expoToken };
+          const daggerEnv = { ...process.env, ...expoWebModalEnv, EXPO_TOKEN: expoToken };
           if (sentryAuthToken) daggerEnv.SENTRY_AUTH_TOKEN = sentryAuthToken;
 
 	        run(
@@ -835,7 +846,7 @@ async function main() {
     const absOut = path.resolve(repoRoot, artifactOut);
     if (!dryRun) fs.mkdirSync(path.dirname(absOut), { recursive: true });
 
-    const baseEnv = /** @type {Record<string, string>} */ ({ ...process.env, ...easProfileEnv });
+    const baseEnv = /** @type {Record<string, string>} */ ({ ...process.env, ...easProfileEnv, ...expoWebModalEnv });
     const buildEnvBase = withUtf8LocaleDefaults(baseEnv);
     const buildEnv = createEasLocalBuildEnv({ baseEnv: buildEnvBase, platform });
     const canonicalFingerprintHash = await generateCurrentProjectFingerprintHash({
@@ -1054,7 +1065,7 @@ async function main() {
 
       if (dryRun) return;
 
-      scheduled.push(...normalizeBuilds(JSON.parse(easJson)));
+      scheduled.push(...normalizeBuilds(parseEasBuildsFromCommandOutput(easJson, 'eas build')));
     }
 
     builds = scheduled;

@@ -33,6 +33,16 @@ test('ui tauri workflows build the bootstrap sidecar before dev/build and cargo 
         /ensure:workspace:built/,
         'ui start script should ensure internal workspace dist outputs exist before Metro/Tauri import them'
     );
+    assert.match(
+        String(uiPackageJson?.scripts?.['test:unit'] ?? ''),
+        /ensure:workspace:built/,
+        'ui unit test script should ensure internal workspace dist outputs exist before Vitest config imports workspace package exports'
+    );
+    assert.match(
+        String(uiPackageJson?.scripts?.['test:integration'] ?? ''),
+        /ensure:workspace:built/,
+        'ui integration test script should ensure internal workspace dist outputs exist before Vitest config imports workspace package exports'
+    );
 
     assert.match(
         String(uiPackageJson?.scripts?.['tauri:prepare:sidecar'] ?? ''),

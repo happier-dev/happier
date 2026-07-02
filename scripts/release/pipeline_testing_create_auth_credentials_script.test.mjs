@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'testing', 'create-auth-credentials.mjs');
+const ambientServerId = 'stack_repo-dev-test__id_default';
 
 /**
  * @param {{ token: string }} opts
@@ -78,13 +79,19 @@ function startAuthServer({ token }) {
 
 /**
  * @param {string[]} args
+ * @param {{ env?: Record<string, string | undefined> }} [opts]
  * @returns {Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>}
  */
-function runScript(args) {
+function runScript(args, opts = {}) {
   return new Promise((resolvePromise) => {
+    const env = { ...process.env };
+    for (const [key, value] of Object.entries(opts.env ?? {})) {
+      if (value === undefined) delete env[key];
+      else env[key] = value;
+    }
     const child = spawn(process.execPath, [scriptPath, ...args], {
       cwd: repoRoot,
-      env: { ...process.env },
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -117,7 +124,7 @@ test('create-auth-credentials writes access.key for repo root and server-scoped 
       homeDir,
       '--secret-base64',
       Buffer.alloc(32, 7).toString('base64'),
-    ]);
+    ], { env: { HAPPIER_ACTIVE_SERVER_ID: undefined } });
 
     assert.equal(res.code, 0, `expected exit 0, got ${res.code} stderr=${res.stderr}`);
     assert.ok(server.requests.length === 1, 'script should call /v1/auth exactly once');
@@ -136,6 +143,7 @@ test('create-auth-credentials writes access.key for repo root and server-scoped 
     const serversDir = path.join(homeDir, 'servers');
     const entries = await readdir(serversDir);
     assert.ok(entries.length >= 1, 'script should create a server-scoped credentials directory');
+    assert.ok(!entries.includes('cloud'), 'script should not create a fallback cloud scoped credential without an ambient cloud server');
 
     const scopedCredsPath = path.join(serversDir, entries[0], 'access.key');
     const scopedStat = await stat(scopedCredsPath);
@@ -145,6 +153,41 @@ test('create-auth-credentials writes access.key for repo root and server-scoped 
     assert.equal(scopedCreds.token, 'test-token-123');
     assert.equal(scopedCreds.secret, Buffer.alloc(32, 7).toString('base64'));
   } finally {
+    await server.close();
+  }
+});
+
+test('create-auth-credentials does not seed unrelated ambient active-server-id scopes', async () => {
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'happier-auth-creds-compat-'));
+  const server = await startAuthServer({ token: 'test-token-compat' });
+  const previousActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
+  process.env.HAPPIER_ACTIVE_SERVER_ID = ambientServerId;
+
+  try {
+    const res = await runScript(
+      [
+        '--server-url',
+        server.url,
+        '--home-dir',
+        homeDir,
+        '--active-server-id',
+        '127.0.0.1-52753',
+        '--secret-base64',
+        Buffer.alloc(32, 9).toString('base64'),
+      ],
+    );
+
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code} stderr=${res.stderr}`);
+
+    const explicitScopedPath = path.join(homeDir, 'servers', '127.0.0.1-52753', 'access.key');
+    const explicitScopedCreds = JSON.parse(await readFile(explicitScopedPath, 'utf8'));
+    assert.equal(explicitScopedCreds.token, 'test-token-compat');
+
+    const ambientScopedPath = path.join(homeDir, 'servers', ambientServerId, 'access.key');
+    await assert.rejects(readFile(ambientScopedPath, 'utf8'), /ENOENT/);
+  } finally {
+    if (previousActiveServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+    else process.env.HAPPIER_ACTIVE_SERVER_ID = previousActiveServerId;
     await server.close();
   }
 });

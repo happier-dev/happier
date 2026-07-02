@@ -34,6 +34,7 @@ test("webapp-builder stage exports PostHog + Sentry public env and supports opti
   assert.match(section, /\bENV EXPO_PUBLIC_POSTHOG_HOST=\$POSTHOG_HOST\b/);
   assert.match(section, /\bENV EXPO_PUBLIC_SENTRY_DSN=\$SENTRY_DSN\b/);
   assert.match(section, /\bENV EXPO_PUBLIC_SENTRY_RELEASE=\$SENTRY_RELEASE\b/);
+  assert.match(section, /\bENV EXPO_UNSTABLE_WEB_MODAL=1\b/);
   assert.doesNotMatch(section, /\bENV EXPO_PUBLIC_POSTHOG_API_KEY=\$POSTHOG_API_KEY\b/);
 
   assert.match(section, /\bRUN if \[ -n "\$SENTRY_AUTH_TOKEN" \]; then\b/);

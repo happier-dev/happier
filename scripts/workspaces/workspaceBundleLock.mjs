@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -24,6 +24,15 @@ function parseLockOwner(raw) {
   }
 }
 
+function readLockOwnerSnapshot(lockPath) {
+  try {
+    const raw = readFileSync(lockPath, 'utf8');
+    return { exists: true, raw, owner: parseLockOwner(raw) };
+  } catch {
+    return { exists: false, raw: null, owner: { pid: null, createdAtMs: null } };
+  }
+}
+
 function isRunningPid(pid) {
   try {
     process.kill(pid, 0);
@@ -34,14 +43,47 @@ function isRunningPid(pid) {
   }
 }
 
-function shouldReclaimLock(lockPath, staleAfterMs, nowMs) {
+function shouldReclaimLockSnapshot(snapshot, staleAfterMs, nowMs) {
+  if (!snapshot.exists) return true;
+  const { owner } = snapshot;
+  if (owner.pid == null && owner.createdAtMs == null) return true;
+  if (owner.pid != null && !isRunningPid(owner.pid)) return true;
+  if (owner.createdAtMs != null && nowMs - owner.createdAtMs > staleAfterMs) return true;
+  return false;
+}
+
+function reclaimLockSnapshot(lockPath, expectedRaw) {
+  if (expectedRaw == null) return true;
+  const reclaimPath = `${lockPath}.reclaim-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
-    const owner = parseLockOwner(readFileSync(lockPath, 'utf8'));
-    if (owner.pid == null && owner.createdAtMs == null) return true;
-    if (owner.pid != null && !isRunningPid(owner.pid)) return true;
-    if (owner.createdAtMs != null && nowMs - owner.createdAtMs > staleAfterMs) return true;
+    renameSync(lockPath, reclaimPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return true;
+    return false;
+  }
+
+  let movedRaw = null;
+  try {
+    movedRaw = readFileSync(reclaimPath, 'utf8');
   } catch {
+    // Leave the quarantined path in place rather than deleting an owner we cannot verify.
+    return false;
+  }
+
+  if (movedRaw === expectedRaw) {
+    try {
+      unlinkSync(reclaimPath);
+    } catch {
+      // ignore
+    }
     return true;
+  }
+
+  try {
+    writeFileSync(lockPath, movedRaw, { encoding: 'utf8', flag: 'wx' });
+    unlinkSync(reclaimPath);
+  } catch {
+    // Another owner already has the lock path. Keep the quarantined file for diagnostics.
   }
   return false;
 }
@@ -61,23 +103,23 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
 
   let fd = null;
   let heartbeatTimer = null;
+  let ownLockRaw = null;
   while (true) {
     try {
+      ownLockRaw = serializeLockOwner(Date.now());
       fd = openSync(lockPath, 'wx');
-      writeFileSync(fd, serializeLockOwner(Date.now()), 'utf8');
+      writeFileSync(fd, ownLockRaw, 'utf8');
       break;
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
-      if (shouldReclaimLock(lockPath, staleAfterMs, Date.now())) {
-        try {
-          unlinkSync(lockPath);
-        } catch {
-          // ignore
-        }
+      ownLockRaw = null;
+      const snapshot = readLockOwnerSnapshot(lockPath);
+      if (shouldReclaimLockSnapshot(snapshot, staleAfterMs, Date.now())) {
+        reclaimLockSnapshot(lockPath, snapshot.raw);
         continue;
       }
       if (Date.now() - startedAt > timeoutMs) {
-        const owner = parseLockOwner(readFileSync(lockPath, 'utf8'));
+        const { owner } = readLockOwnerSnapshot(lockPath);
         const ownerLabel =
           owner.pid != null
             ? `pid=${owner.pid}, createdAtMs=${owner.createdAtMs ?? 'unknown'}`
@@ -95,7 +137,10 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
       const heartbeatIntervalMs = Math.max(250, Math.min(5_000, Math.floor(staleAfterMs / 4) || 250));
       heartbeatTimer = setInterval(() => {
         try {
-          writeFileSync(lockPath, serializeLockOwner(Date.now()), 'utf8');
+          const snapshot = readLockOwnerSnapshot(lockPath);
+          if (snapshot.raw !== ownLockRaw) return;
+          ownLockRaw = serializeLockOwner(Date.now());
+          writeFileSync(lockPath, ownLockRaw, 'utf8');
         } catch {
           // Best-effort lease heartbeat only.
         }
@@ -112,10 +157,10 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
       // ignore
     }
     try {
-      unlinkSync(lockPath);
+      const snapshot = readLockOwnerSnapshot(lockPath);
+      if (snapshot.raw === ownLockRaw) unlinkSync(lockPath);
     } catch {
       // ignore
     }
   }
 }
-

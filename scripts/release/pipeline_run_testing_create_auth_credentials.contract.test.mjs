@@ -13,14 +13,19 @@ const repoRoot = resolve(here, '..', '..');
 
 /**
  * @param {string[]} args
- * @param {Record<string, string>} [env]
+ * @param {Record<string, string | undefined>} [env]
  * @returns {Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>}
  */
 function run(args, env = {}) {
   return new Promise((resolvePromise) => {
+    const childEnv = { ...process.env };
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) delete childEnv[key];
+      else childEnv[key] = value;
+    }
     const child = spawn(process.execPath, [path.join(repoRoot, 'scripts', 'pipeline', 'run.mjs'), ...args], {
       cwd: repoRoot,
-      env: { ...process.env, ...env },
+      env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -99,6 +104,7 @@ test('pipeline run exposes testing-create-auth-credentials and writes access key
         '--secret-base64',
         secretBase64,
       ],
+      { HAPPIER_ACTIVE_SERVER_ID: undefined },
     );
     assert.equal(res.code, 0, `expected exit 0, got ${res.code} stderr=${res.stderr}`);
 
@@ -110,8 +116,9 @@ test('pipeline run exposes testing-create-auth-credentials and writes access key
     assert.ok(typeof rootData === 'object');
     const serversDir = join(homeDir, 'servers');
     const entries = await readdir(serversDir, { withFileTypes: true });
-    const serverEntry = entries.find((e) => e.isDirectory());
-    assert.ok(serverEntry, 'expected an active server id directory under homeDir/servers');
+    const serverDirs = entries.filter((e) => e.isDirectory());
+    assert.equal(serverDirs.length, 1, 'expected exactly one active server id directory under homeDir/servers');
+    const [serverEntry] = serverDirs;
 
     const scopedData = JSON.parse(await readFile(join(serversDir, serverEntry.name, 'access.key'), 'utf8'));
     assert.equal(scopedData.token, 'test-token');

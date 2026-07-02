@@ -142,6 +142,7 @@ export class HappierPipeline {
     container = container
       .withEnvVariable("npm_config_registry", "https://registry.npmjs.org")
       .withEnvVariable("NPM_CONFIG_REGISTRY", "https://registry.npmjs.org")
+      .withEnvVariable("ONNXRUNTIME_NODE_INSTALL_CUDA", "skip")
       .withMountedCache("/root/.cache/yarn", dag.cacheVolume("happier-yarn-cache"))
       .withMountedCache("/root/.gradle", dag.cacheVolume("happier-gradle-cache"))
       .withExec([

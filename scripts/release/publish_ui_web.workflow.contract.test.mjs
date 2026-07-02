@@ -62,5 +62,10 @@ test('publish-ui-web embeds build feature policy defaults and exports production
     /EXPO_UPDATES_CHANNEL:\s*\$\{\{\s*steps\.channel_meta\.outputs\.expo_updates_channel\s*\}\}/,
     'ui web publishing should set EXPO_UPDATES_CHANNEL so updates headers match stable, preview, and dev channels',
   );
+  assert.match(
+    raw,
+    /EXPO_UNSTABLE_WEB_MODAL:\s*"1"/,
+    'ui web publishing should enable Expo Router web modal support for exported bundles',
+  );
   assert.doesNotMatch(raw, /inputs\.channel\s*==\s*'publicdev'/);
 });

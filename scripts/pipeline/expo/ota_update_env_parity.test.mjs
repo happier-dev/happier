@@ -21,3 +21,18 @@ test('ota-update merges EAS build profile env so fingerprint-based runtimeVersio
 
   assert.match(src, /\.\.\.easProfileEnv/, 'expected ota-update.mjs to spread easProfileEnv into the EAS command env');
 });
+
+test('ota-update routes fingerprint JSON through the shared noisy-output parser', () => {
+  const src = readRepoFile('scripts/pipeline/expo/ota-update.mjs');
+
+  assert.match(
+    src,
+    /parseJsonFromCommandOutput/,
+    'expected ota-update.mjs to use the shared JSON-output parser for eas fingerprint:generate output',
+  );
+  assert.doesNotMatch(
+    src,
+    /const parsed = JSON\.parse\(fpJson\);/,
+    'expected ota-update.mjs to avoid raw JSON.parse(fpJson) for fingerprint output',
+  );
+});

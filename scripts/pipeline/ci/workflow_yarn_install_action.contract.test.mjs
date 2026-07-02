@@ -14,6 +14,11 @@ test('GitHub workflows route dependency installs through the shared install-yarn
     /scripts\/ci\/yarn-install-with-retry\.sh/,
     'expected install-yarn-dependencies action to invoke the shared retrying installer script',
   );
+  assert.match(
+    actionRaw,
+    /ONNXRUNTIME_NODE_INSTALL_CUDA:\s*skip/,
+    'expected install-yarn-dependencies action to skip optional ONNX Runtime CUDA downloads in CI',
+  );
 
   const workflowFiles = fs
     .readdirSync(workflowsDir)

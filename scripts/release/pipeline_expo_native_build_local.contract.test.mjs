@@ -23,7 +23,17 @@ test('expo native-build allows local iOS dry-runs without requiring fastlane or 
   const npxPath = path.join(binDir, 'npx');
   writeExecutable(
     npxPath,
-    ['#!/bin/sh', 'set -eu', 'echo "NPX $*"', 'exit 0', ''].join('\n'),
+    [
+      '#!/bin/sh',
+      'set -eu',
+      'echo "NPX $*"',
+      'if printf "%s\\n" "$*" | grep -q "fingerprint:generate"; then',
+      '  echo \'{"hash":"fp-local-dry-run-test","sources":[],"fileHookTransformConfig":{}}\'',
+      '  exit 0',
+      'fi',
+      'exit 0',
+      '',
+    ].join('\n'),
   );
 
   const stdout = execFileSync(
@@ -76,6 +86,10 @@ test('expo native-build treats local builds as successful when EAS cleanup fails
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       'echo "NPX $*"',
+      'if printf "%s\\n" "$*" | grep -q "fingerprint:generate"; then',
+      '  echo \'{"hash":"fp-local-cleanup-test","sources":[],"fileHookTransformConfig":{}}\'',
+      '  exit 0',
+      'fi',
       'out=""',
       'for ((i=1;i<=$#;i++)); do',
       '  if [ "${!i}" = "--output" ]; then',

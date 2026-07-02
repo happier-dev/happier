@@ -12,6 +12,8 @@ runs:
   steps:
     - name: Install dependencies with retry
       shell: bash
+      env:
+        ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       run: |
         set -euo pipefail
         bash scripts/ci/yarn-install-with-retry.sh ${{ inputs.args }} --network-timeout 600000 --prefer-offline --non-interactive

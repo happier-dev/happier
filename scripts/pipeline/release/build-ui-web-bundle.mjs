@@ -39,6 +39,7 @@ async function main() {
       env: {
         ...process.env,
         CI: process.env.CI ?? '1',
+        EXPO_UNSTABLE_WEB_MODAL: '1',
       },
     });
 
@@ -51,6 +52,7 @@ async function main() {
         env: {
           ...process.env,
           CI: process.env.CI ?? '1',
+          EXPO_UNSTABLE_WEB_MODAL: '1',
         },
       },
     );

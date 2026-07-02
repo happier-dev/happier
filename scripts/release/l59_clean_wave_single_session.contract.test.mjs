@@ -50,6 +50,27 @@ test('L59 clean-wave harness preflights stale installer holders before each inst
   );
 });
 
+test('L59 clean-wave harness falls back to taskkill when preflight stop-process fails', async () => {
+  const raw = await readFile(harnessScriptPath, 'utf8');
+  const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
+
+  assert.match(
+    trimmed,
+    /function\s+Stop-InstallerHolderProcess/i,
+    'expected harness to centralize stale-holder termination in a helper',
+  );
+  assert.match(
+    trimmed,
+    /Stop-InstallerHolderProcess[\s\S]*Stop-Process[\s\S]*taskkill\.exe/i,
+    'expected stale-holder termination to fall back to taskkill.exe after Stop-Process failures',
+  );
+  assert.match(
+    trimmed,
+    /Stop-InstallerHolderProcess\s+-ProcessId\s+\$proc\.ProcessId\s+-ProcessName\s+\$proc\.Name/i,
+    'expected preflight cleanup to route matching stale holders through the termination helper',
+  );
+});
+
 test('L59 clean-wave harness emits a compact final row-status summary', async () => {
   const raw = await readFile(harnessScriptPath, 'utf8');
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();

@@ -9,6 +9,7 @@ import { applyExpoNodeHeapEnv } from '../../expo/expoNodeHeapEnv.mjs';
 import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
 import { resolveEasBuildProfileEnv } from './resolve-eas-build-profile-env.mjs';
 import { createCanonicalFingerprintFromExpoFingerprint } from './canonical-fingerprint.mjs';
+import { parseExpoFingerprintFromCommandOutput } from './parse-json-from-command-output.mjs';
 import {
   MOBILE_RELEASE_PROFILES,
   MOBILE_RELEASE_ENVIRONMENT_CHOICES,
@@ -24,6 +25,7 @@ const OTA_IDENTITY_ENV_KEYS = Object.freeze([
   'EXPO_ANDROID_PACKAGE',
   'EXPO_APP_SCHEME',
 ]);
+const EAS_CAPTURE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 function fail(message) {
   console.error(message);
@@ -103,6 +105,7 @@ function run(opts, cmd, args, extra) {
     env: { ...process.env, ...(extra?.env ?? {}) },
     encoding: 'utf8',
     stdio: extra?.stdio ?? 'inherit',
+    maxBuffer: EAS_CAPTURE_MAX_BUFFER_BYTES,
     timeout: 30 * 60_000,
   });
 }
@@ -173,7 +176,7 @@ function generateCanonicalOtaFingerprintHash({ opts, uiDir, easCliVersion, platf
     { cwd: uiDir, env, stdio: 'pipe' },
   ).trim();
   if (!fpJson) return '';
-  const parsed = JSON.parse(fpJson);
+  const parsed = parseExpoFingerprintFromCommandOutput(fpJson, `eas fingerprint:generate (${platform})`);
   const canonical = createCanonicalFingerprintFromExpoFingerprint(parsed);
   const rawHash = String(parsed?.hash ?? parsed?.fingerprintHash ?? '').trim();
   if (canonical.hash && rawHash && canonical.hash !== rawHash) {
@@ -300,6 +303,7 @@ function main() {
       NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment,
       EXPO_UPDATES_CHANNEL: process.env.EXPO_UPDATES_CHANNEL ?? updateLane,
       ...injectedEnv,
+      EXPO_UNSTABLE_WEB_MODAL: '1',
     }, {
       envKey: 'HAPPIER_PIPELINE_EXPO_MAX_OLD_SPACE_SIZE_MB',
     }),
@@ -327,7 +331,16 @@ function main() {
     cwd: uiDir,
     env: { ...process.env, APP_ENV: process.env.APP_ENV ?? appEnvironment, NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment },
   });
-  run(opts, 'yarn', ['typecheck'], { cwd: uiDir });
+  run(opts, 'yarn', ['typecheck'], {
+    cwd: uiDir,
+    env: applyExpoNodeHeapEnv({
+      ...process.env,
+      APP_ENV: process.env.APP_ENV ?? appEnvironment,
+      NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment,
+    }, {
+      envKey: 'HAPPIER_PIPELINE_EXPO_MAX_OLD_SPACE_SIZE_MB',
+    }),
+  });
 
   const message = resolvePreviewMessage(normalizedEnvironment, values.message, opts);
   if (!message) fail(`Missing Expo update message for ${normalizedEnvironment} OTA update.`);

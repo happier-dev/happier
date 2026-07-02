@@ -97,6 +97,7 @@ jobs:
     environment: release-shared
     env:
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      EXPO_UNSTABLE_WEB_MODAL: "1"
       # Ensure desktop release bundles always bootstrap against Happier Cloud unless explicitly overridden
       # by runtime server profile switching inside the app.
       EXPO_PUBLIC_HAPPIER_SERVER_URL: https://api.happier.dev

@@ -1,11 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+test('tauri build-updater-artifacts script enables Expo Router web modal support', () => {
+  const script = fs.readFileSync(resolve(repoRoot, 'scripts', 'pipeline', 'tauri', 'build-updater-artifacts.mjs'), 'utf8');
+
+  assert.match(script, /EXPO_UNSTABLE_WEB_MODAL:\s*'1'/);
+});
 
 test('tauri build-updater-artifacts script supports preview dry-run', async () => {
   const out = execFileSync(

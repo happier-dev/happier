@@ -49,6 +49,7 @@ function createExpoOtaStubEnvironment(prefix) {
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       `echo "$*" >> ${JSON.stringify(paths.yarnLogPath)}`,
+      `echo "NODE_OPTIONS=${'${NODE_OPTIONS:-}'}" >> ${JSON.stringify(paths.yarnLogPath)}`,
       'exit 0',
       '',
     ].join('\n'),
@@ -77,6 +78,7 @@ function createExpoOtaStubEnvironment(prefix) {
 function runExpoOtaUpdateWithStubbedCommands({
   environment = 'internaldev',
   message = 'internaldev OTA case env test',
+  extraArgs = [],
   extraEnv = {},
   prefix,
 }) {
@@ -91,6 +93,7 @@ function runExpoOtaUpdateWithStubbedCommands({
       'true',
       '--message',
       message,
+      ...extraArgs,
     ],
     {
       cwd: repoRoot,
@@ -127,6 +130,26 @@ test('expo ota update passes case-sensitive git config to EAS on macOS', () => {
   }
 });
 
+test('expo ota update rejects explicit runtime overrides across all platforms', () => {
+  let error;
+  assert.throws(() => {
+    try {
+      runExpoOtaUpdateWithStubbedCommands({
+        prefix: 'happier-pipeline-eas-ota-runtime-all-platform-',
+        extraArgs: ['--runtime-version', '18'],
+      });
+    } catch (caught) {
+      error = caught;
+      throw caught;
+    }
+  });
+
+  assert.match(
+    String(error.stderr ?? ''),
+    /--runtime-version requires --platform ios or --platform android/,
+  );
+});
+
 test('expo ota update raises the Node heap limit for EAS update by default', () => {
   const stub = runExpoOtaUpdateWithStubbedCommands({
     prefix: 'happier-pipeline-eas-ota-heap-default-',
@@ -134,6 +157,15 @@ test('expo ota update raises the Node heap limit for EAS update by default', () 
 
   const npxLog = fs.readFileSync(stub.npxLogPath, 'utf8');
   assert.match(npxLog, /NODE_OPTIONS=.*--max-old-space-size=8192/);
+});
+
+test('expo ota update raises the Node heap limit for UI typecheck by default', () => {
+  const stub = runExpoOtaUpdateWithStubbedCommands({
+    prefix: 'happier-pipeline-eas-ota-typecheck-heap-default-',
+  });
+
+  const yarnLog = fs.readFileSync(stub.yarnLogPath, 'utf8');
+  assert.match(yarnLog, /typecheck\nNODE_OPTIONS=.*--max-old-space-size=8192/);
 });
 
 test('expo ota update respects explicit Expo heap overrides for EAS update', () => {

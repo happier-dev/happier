@@ -72,6 +72,7 @@ concurrency:
 
 env:
   EAS_CLI_VERSION: "18.0.1"
+  EXPO_UNSTABLE_WEB_MODAL: "1"
 
 jobs:
   release_actor_guard:

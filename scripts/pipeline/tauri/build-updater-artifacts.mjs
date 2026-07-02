@@ -488,6 +488,7 @@ function main() {
   const baseTauriEnv = {
     CI: 'true',
     APP_ENV: environment,
+    EXPO_UNSTABLE_WEB_MODAL: '1',
     ...(process.platform === 'linux' ? resolveLinuxTauriBundlerEnvOverrides(process.env) : {}),
     ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
     ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),
