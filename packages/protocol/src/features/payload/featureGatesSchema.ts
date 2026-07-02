@@ -58,9 +58,16 @@ export const FeatureGatesSchema = z.object({
     .object({
       enabled: z.boolean(),
       quotas: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      accountGroups: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      accountFallback: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
     })
     .optional()
-    .default({ enabled: false, quotas: DEFAULT_GATE_DISABLED }),
+    .default({
+      enabled: false,
+      quotas: DEFAULT_GATE_DISABLED,
+      accountGroups: DEFAULT_GATE_DISABLED,
+      accountFallback: DEFAULT_GATE_DISABLED,
+    }),
   channelBridges: z
     .object({
       enabled: z.boolean(),
@@ -98,9 +105,15 @@ export const FeatureGatesSchema = z.object({
         .optional()
         .default({ enabled: false }),
       folders: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      usageLimitRecovery: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
     })
     .optional()
-    .default({ enabled: false, handoff: { enabled: false }, folders: DEFAULT_GATE_DISABLED }),
+    .default({
+      enabled: false,
+      handoff: { enabled: false },
+      folders: DEFAULT_GATE_DISABLED,
+      usageLimitRecovery: DEFAULT_GATE_DISABLED,
+    }),
   machines: z
     .object({
       enabled: z.boolean(),
@@ -153,6 +166,46 @@ export const FeatureGatesSchema = z.object({
       tunnel: { enabled: false, directPeer: DEFAULT_GATE_DISABLED, serverRouted: DEFAULT_GATE_DISABLED },
       liveStream: { enabled: false, directPeer: DEFAULT_GATE_DISABLED, serverRouted: DEFAULT_GATE_DISABLED },
       rpc: { enabled: false, directPeer: DEFAULT_GATE_DISABLED },
+    }),
+  localServices: z
+    .object({
+      enabled: z.boolean(),
+      inventory: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      managed: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      preview: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      publicPreview: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({
+      enabled: false,
+      inventory: DEFAULT_GATE_DISABLED,
+      managed: DEFAULT_GATE_DISABLED,
+      preview: DEFAULT_GATE_DISABLED,
+      publicPreview: DEFAULT_GATE_DISABLED,
+    }),
+  browser: z
+    .object({
+      enabled: z.boolean(),
+      viewTargets: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      internal: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      sidecar: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({
+      enabled: false,
+      viewTargets: DEFAULT_GATE_DISABLED,
+      internal: DEFAULT_GATE_DISABLED,
+      sidecar: DEFAULT_GATE_DISABLED,
+    }),
+  devices: z
+    .object({
+      enabled: z.boolean(),
+      simulatorPreview: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({
+      enabled: false,
+      simulatorPreview: DEFAULT_GATE_DISABLED,
     }),
   setup: z
     .object({

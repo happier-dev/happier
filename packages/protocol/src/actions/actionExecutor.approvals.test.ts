@@ -251,6 +251,52 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
+  it('links policy-created cross-session approvals to the requesting session', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      sessionSendMessage,
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'session_agent',
+    } as any);
+
+    const res = await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 'target-session', message: 'hello target' },
+      {
+        surface: 'session_agent',
+        defaultSessionId: 'requesting-session',
+        approvalOrigin: {
+          kind: 'transcript_tool_call',
+          sessionId: 'requesting-session',
+          toolCallId: 'tool-cross-session',
+          toolName: 'session_message_send',
+          toolInput: { sessionId: 'target-session', message: 'hello target' },
+        },
+      } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        actionId: 'session.message.send',
+        actionArgs: expect.objectContaining({ sessionId: 'target-session' }),
+        createdBy: expect.objectContaining({
+          surface: 'session_agent',
+          sessionId: 'requesting-session',
+        }),
+        origin: expect.objectContaining({
+          kind: 'transcript_tool_call',
+          sessionId: 'requesting-session',
+          toolCallId: 'tool-cross-session',
+          toolName: 'session_message_send',
+        }),
+      }),
+    }));
+  });
+
   it('records createdBy.surface=cli when approvals are created from the CLI surface', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
@@ -722,26 +768,39 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
-  it('forces approval.request.create createdBy.sessionId to match actionArgs.sessionId when present', async () => {
+  it('links approval.request.create cross-session approvals to the requesting session', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
 
     const executor = createExecutor({ approvalsCreate });
 
     const res = await executor.execute('approval.request.create' as any, {
       actionId: 'session.message.send',
-      actionArgs: { sessionId: 's2', message: 'hello' },
+      actionArgs: { sessionId: 'target-session', message: 'hello' },
       summary: 'Send message',
-      createdBy: { surface: 'cli', sessionId: 's1' },
+      createdBy: { surface: 'cli', sessionId: 'injected-session' },
     }, {
       surface: 'mcp',
+      defaultSessionId: 'requesting-session',
+      approvalOrigin: {
+        kind: 'transcript_tool_call',
+        sessionId: 'requesting-session',
+        toolCallId: 'tool-create-cross-session',
+        toolName: 'approval_request_create',
+        toolInput: { actionId: 'session.message.send' },
+      },
     });
 
     expect(res.ok).toBe(true);
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
+        actionArgs: expect.objectContaining({ sessionId: 'target-session' }),
         createdBy: expect.objectContaining({
           surface: 'mcp',
-          sessionId: 's2',
+          sessionId: 'requesting-session',
+        }),
+        origin: expect.objectContaining({
+          sessionId: 'requesting-session',
+          toolCallId: 'tool-create-cross-session',
         }),
       }),
     }));

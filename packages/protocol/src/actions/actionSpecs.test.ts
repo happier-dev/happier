@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import * as protocol from '../index.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc.js';
 import { ExecutionRunIntentSchema } from '../executionRuns.js';
 import { serializeActionSpec } from './actionCatalog.js';
@@ -27,6 +28,11 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'agents.backends.list',
   'agents.models.list',
   'session.status.get',
+  'session.work_state.get',
+  'session.goal.get',
+  'session.usageLimit.checkNow',
+  'session.vendor_plugin_catalog.list',
+  'session.skill_catalog.list',
   'session.history.get',
   'session.transcript.get',
   'session.events.get',
@@ -48,6 +54,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'bugreport.getLogTail',
   'approval.request.list',
   'approval.request.get',
+  'plugins.permissions.grants.list',
   'session.log.tail',
   'transcript.page',
   'transcript.readAfter',
@@ -71,6 +78,10 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'session.model.set',
   'session.archive',
   'session.unarchive',
+  'session.goal.set',
+  'session.goal.clear',
+  'session.usageLimit.waitResume.enable',
+  'session.usageLimit.waitResume.cancel',
   'ui.voice_global.reset',
   'ui.pet.choose',
   'prompt_doc.update',
@@ -79,6 +90,20 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'prompt_registry.install',
   'approval.request.create',
   'approval.request.decide',
+  'plugins.permissions.grants.request',
+  'plugins.permissions.grants.grant',
+  'plugins.permissions.grants.revoke',
+  'plugins.permissions.grants.dismissRequest',
+  'reviews.comments.create',
+  'reviews.comments.list',
+  'reviews.comments.get',
+  'reviews.comments.transition',
+  'reviews.comments.edit',
+  'reviews.comments.reply',
+  'reviews.comments.redact',
+  'reviews.comments.setDisposition',
+  'reviews.comments.attachEvidence',
+  'reviews.comments.bulkTransition',
 ] as const;
 
 const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
@@ -102,6 +127,8 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'session.continue_with_replay',
   'session.rollback',
   'session.checkpoint_code_rollback',
+  'session.checkpoint',
+  'session.restore',
   'session.handoff',
   'session.handoff.prepare_target',
   'session.handoff.commit',
@@ -121,8 +148,8 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'bugreport.uploadArtifact',
   'transcript.import',
   'sessions.external.link.ensure',
-  'sessions.external.attach',
-  'sessions.external.detach',
+  'sessions.external.follow',
+  'sessions.external.unfollow',
   'sessions.external.followPolicy.set',
   'sessions.external.takeover',
   'scm.pullRequest.openOrReuse',
@@ -164,6 +191,54 @@ describe('Action Spec Registry', () => {
       mcp: false,
       cli: false,
     })).toThrow();
+  });
+
+  it('validates ActionSpec tool exposure metadata only for supported tool surfaces', () => {
+    const base = {
+      id: 'review.start',
+      title: 'Start review',
+      safety: 'safe',
+      approval: { result: 'optional', flow: 'deferred' },
+      placements: [],
+      surfaces: {
+        ui: true,
+        voice: true,
+        session_agent: true,
+        mcp: true,
+        cli: true,
+        rpc: false,
+        sdk: false,
+      },
+      bindings: { mcpToolName: 'review_start' },
+      outputSchema: z.unknown(),
+      inputSchema: z.object({}).strict(),
+    } as const;
+
+    expect(ActionSpecSchema.parse({
+      ...base,
+      toolExposure: {
+        session_agent: 'discoverable_only',
+        mcp: 'direct',
+        cli: 'direct',
+      },
+    }).toolExposure).toEqual({
+      session_agent: 'discoverable_only',
+      mcp: 'direct',
+      cli: 'direct',
+    });
+
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      toolExposure: {
+        session_agent: 'hidden',
+      },
+    }).success).toBe(false);
+    expect(ActionSpecSchema.safeParse({
+      ...base,
+      toolExposure: {
+        voice: 'direct',
+      },
+    }).success).toBe(false);
   });
 
   it('exposes stable action specs', () => {
@@ -260,6 +335,35 @@ describe('Action Spec Registry', () => {
     expect(serialized.approval).toEqual({ result: 'required' });
   });
 
+  it('serializes tool exposure metadata in action catalog entries', () => {
+    const parsed = ActionSpecSchema.parse({
+      id: 'review.start',
+      title: 'Start review',
+      safety: 'safe',
+      approval: { result: 'optional', flow: 'deferred' },
+      placements: [],
+      surfaces: {
+        ui: true,
+        voice: true,
+        session_agent: true,
+        mcp: true,
+        cli: true,
+        rpc: false,
+        sdk: false,
+      },
+      bindings: { mcpToolName: 'review_start' },
+      outputSchema: z.unknown(),
+      inputSchema: z.object({}).strict(),
+      toolExposure: {
+        session_agent: 'discoverable_only',
+      },
+    });
+
+    expect(serializeActionSpec(parsed).toolExposure).toEqual({
+      session_agent: 'discoverable_only',
+    });
+  });
+
   it('does not reuse MCP tool bindings across action specs', () => {
     const ownersByToolName = new Map<string, string>();
 
@@ -352,10 +456,206 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.history.get').description).toContain('DEPRECATED: use session_events_get');
   });
 
+  it('defines session work-state, goal, and catalog action specs', () => {
+    expect(getActionSpec('session.work_state.get' as any).bindings?.mcpToolName).toBe('session_work_state_get');
+    expect(getActionSpec('session.goal.get' as any).bindings?.mcpToolName).toBe('session_goal_get');
+    expect(getActionSpec('session.goal.set' as any).bindings?.mcpToolName).toBe('session_goal_set');
+    expect(getActionSpec('session.goal.clear' as any).bindings?.mcpToolName).toBe('session_goal_clear');
+    expect(getActionSpec('session.vendor_plugin_catalog.list' as any).bindings?.mcpToolName).toBe(
+      'session_vendor_plugin_catalog_list',
+    );
+    expect(getActionSpec('session.skill_catalog.list' as any).bindings?.mcpToolName).toBe('session_skill_catalog_list');
+
+    const goalSetSchema = getActionSpec('session.goal.set' as any).inputSchema;
+    expect(goalSetSchema.parse({ sessionId: 's1', status: 'paused' })).toEqual({
+      sessionId: 's1',
+      status: 'paused',
+    });
+    expect(goalSetSchema.parse({ sessionId: 's1', tokenBudget: null })).toEqual({
+      sessionId: 's1',
+      tokenBudget: null,
+    });
+    expect(() => goalSetSchema.parse({ sessionId: 's1' })).toThrow();
+  });
+
+  it('validates catalog action output schemas with runtime catalog contracts', () => {
+    const vendorOutputSchema = getActionSpec('session.vendor_plugin_catalog.list' as any).outputSchema;
+    expect(vendorOutputSchema.parse({
+      supported: true,
+      vendorPlugins: [
+        {
+          v: 1,
+          backendId: 'codex',
+          vendorPluginRef: 'plugin://gmail@openai-curated',
+          displayName: 'Gmail',
+          installed: true,
+          enabled: true,
+        },
+      ],
+      catalog: {
+        v: 1,
+        backendId: 'codex',
+        updatedAt: 1,
+        items: [
+          {
+            v: 1,
+            backendId: 'codex',
+            vendorPluginRef: 'plugin://gmail@openai-curated',
+            displayName: 'Gmail',
+            installed: true,
+            enabled: true,
+          },
+        ],
+      },
+    })).toMatchObject({
+      vendorPlugins: [
+        expect.objectContaining({
+          backendId: 'codex',
+          mentionable: true,
+        }),
+      ],
+    });
+    expect(() => vendorOutputSchema.parse({ vendorPlugins: [{ v: 1, backendId: 'codex' }] })).toThrow();
+
+    const skillOutputSchema = getActionSpec('session.skill_catalog.list' as any).outputSchema;
+    expect(skillOutputSchema.parse({
+      supported: true,
+      skills: [
+        {
+          v: 1,
+          id: 'vendor:codex:review',
+          origin: 'vendor',
+          name: 'review',
+          backendId: 'codex',
+          path: '/skills/review/SKILL.md',
+        },
+      ],
+      catalog: {
+        v: 1,
+        backendId: 'codex',
+        updatedAt: 1,
+        items: [
+          {
+            v: 1,
+            id: 'vendor:codex:review',
+            origin: 'vendor',
+            name: 'review',
+            backendId: 'codex',
+            path: '/skills/review/SKILL.md',
+          },
+        ],
+      },
+    })).toMatchObject({
+      skills: [
+        expect.objectContaining({
+          id: 'vendor:codex:review',
+          origin: 'vendor',
+        }),
+      ],
+    });
+    expect(() => skillOutputSchema.parse({ skills: [{ v: 1, origin: 'vendor' }] })).toThrow();
+  });
+
+  it('declares usage-limit recovery action specs with conservative session-agent settings', () => {
+    const enable = getActionSpec('session.usageLimit.waitResume.enable' as any);
+    const cancel = getActionSpec('session.usageLimit.waitResume.cancel' as any);
+    const checkNow = getActionSpec('session.usageLimit.checkNow' as any);
+
+    expect(enable.inputSchema).toBe((protocol as any).SessionUsageLimitWaitResumeEnableRequestV1Schema);
+    expect(cancel.inputSchema).toBe((protocol as any).SessionUsageLimitWaitResumeCancelRequestV1Schema);
+    expect(checkNow.inputSchema).toBe((protocol as any).SessionUsageLimitCheckNowRequestV1Schema);
+    expect(enable.bindings?.mcpToolName).toBe('session_usage_limit_wait_resume_enable');
+    expect(cancel.bindings?.mcpToolName).toBe('session_usage_limit_wait_resume_cancel');
+    expect(checkNow.bindings?.mcpToolName).toBe('session_usage_limit_check_now');
+    expect(enable.approval).toEqual({ result: 'none', flow: 'deferred' });
+    expect(cancel.approval).toEqual({ result: 'none', flow: 'deferred' });
+    expect(checkNow.approval.result).toBe('required');
+    expect(enable.surfaces.session_agent).toBe(true);
+    expect(cancel.surfaces.session_agent).toBe(true);
+    expect(checkNow.surfaces.session_agent).toBe(true);
+    expect(enable.inputHints?.fields.find((field) => field.path === 'resumePromptMode')).toMatchObject({
+      options: expect.arrayContaining([
+        expect.objectContaining({ value: 'custom' }),
+      ]),
+    });
+    expect(checkNow.inputHints?.fields.find((field) => field.path === 'provider')).toMatchObject({
+      path: 'provider',
+      widget: 'text',
+    });
+    expect(checkNow.inputHints?.fields.find((field) => field.path === 'operation')).toMatchObject({
+      widget: 'select',
+      options: expect.arrayContaining([
+        expect.objectContaining({ value: 'check_now' }),
+        expect.objectContaining({ value: 'switch_account_now' }),
+      ]),
+    });
+    expect(checkNow.inputHints?.fields.find((field) => field.path === 'resumePromptMode')).toMatchObject({
+      widget: 'select',
+      options: expect.arrayContaining([
+        expect.objectContaining({ value: 'standard' }),
+        expect.objectContaining({ value: 'off' }),
+        expect.objectContaining({ value: 'custom' }),
+      ]),
+    });
+    expect(enable.inputSchema.parse({
+      sessionId: 's1',
+      issueFingerprint: 'usage-limit:s1:123',
+      remember: true,
+      resumePromptMode: 'off',
+    })).toEqual({
+      sessionId: 's1',
+      issueFingerprint: 'usage-limit:s1:123',
+      remember: true,
+      resumePromptMode: 'off',
+    });
+    expect(enable.inputSchema.safeParse({
+      sessionId: 's1',
+      resumePromptMode: 'invalid',
+    }).success).toBe(false);
+    expect(enable.inputSchema.parse({
+      sessionId: 's1',
+      issueFingerprint: 'usage-limit:s1:123',
+      rememberPreference: true,
+    })).toEqual({
+      sessionId: 's1',
+      issueFingerprint: 'usage-limit:s1:123',
+      rememberPreference: true,
+    });
+    expect(cancel.inputSchema.parse({
+      sessionId: 's1',
+      issueFingerprint: null,
+    })).toEqual({
+      sessionId: 's1',
+      issueFingerprint: null,
+    });
+  });
+
   it('declares session events MCP examples with provider event kind filters', () => {
     expect(getActionSpec('session.events.get' as ActionId).examples?.mcp?.argsExample).toBe(
       '{"sessionId":"{{sessionId}}","limit":50,"kinds":["tool_call","tool_result"]}',
     );
+  });
+
+  it('declares session transcript full-text defaults and optional truncation metadata', () => {
+    const transcript = getActionSpec('session.transcript.get' as ActionId);
+
+    expect(transcript.examples?.mcp?.argsExample).toBe('{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"],"maxCharsPerMessage":null}');
+    expect(transcript.examples?.voice?.argsExample).toBe('{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"],"maxCharsPerMessage":null}');
+    expect(transcript.inputHints?.fields.find((field) => field.path === 'maxCharsPerMessage')).toEqual({
+      path: 'maxCharsPerMessage',
+      title: 'Message truncation chars',
+      description: 'Optional per-message truncation budget. Omit or pass null for full message text.',
+      widget: 'text',
+    });
+    expect(transcript.inputSchema.parse({ sessionId: 's1', maxCharsPerMessage: null })).toEqual({
+      sessionId: 's1',
+      maxCharsPerMessage: null,
+    });
+    expect(transcript.inputSchema.parse({ sessionId: 's1', maxCharsPerMessage: 50_000 })).toEqual({
+      sessionId: 's1',
+      maxCharsPerMessage: 50_000,
+    });
+    expect(() => transcript.inputSchema.parse({ sessionId: 's1', maxCharsPerMessage: 50_001 })).toThrow();
   });
 
   it('surfaces approval actions on external mcp and cli (power user/internal)', () => {
@@ -371,6 +671,23 @@ describe('Action Spec Registry', () => {
       ['approval.request.get', 'approval.request.get'],
       ['approval.request.create', 'approval.request.create'],
       ['approval.request.decide', 'approval.request.decide'],
+    ]);
+
+    for (const [actionId, rpcMethod] of expectedBindings) {
+      const spec = getActionSpec(actionId as any);
+
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+    }
+  });
+
+  it('binds plugin permission grant RPC wire methods to ActionSpec rows', () => {
+    const expectedBindings = new Map([
+      ['plugins.permissions.grants.list', 'plugins.permissions.grants.list'],
+      ['plugins.permissions.grants.request', 'plugins.permissions.grants.request'],
+      ['plugins.permissions.grants.grant', 'plugins.permissions.grants.grant'],
+      ['plugins.permissions.grants.revoke', 'plugins.permissions.grants.revoke'],
+      ['plugins.permissions.grants.dismissRequest', 'plugins.permissions.grants.dismissRequest'],
     ]);
 
     for (const [actionId, rpcMethod] of expectedBindings) {
@@ -526,8 +843,8 @@ describe('Action Spec Registry', () => {
     const expected: readonly [ActionId, string, string, string | null, 'read' | 'write' | 'danger'][] = [
       ['sessions.external.candidates.list', RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST, RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY, 'sessions.external.listCandidates', 'read'],
       ['sessions.external.link.ensure', RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE, RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE_LEGACY, null, 'write'],
-      ['sessions.external.attach', RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY, null, 'write'],
-      ['sessions.external.detach', RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY, null, 'write'],
+      ['sessions.external.follow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY, null, 'write'],
+      ['sessions.external.unfollow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY, null, 'write'],
       ['sessions.external.followPolicy.set', RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET, RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY, null, 'write'],
       ['sessions.external.status.get', RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET, RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY, null, 'read'],
       ['sessions.external.transcript.page', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY, 'sessions.external.pageTranscript', 'read'],
@@ -1011,6 +1328,34 @@ describe('Action Spec Registry', () => {
     }).success).toBe(false);
   });
 
+  it('exposes product checkpoint and restore as source-qualified lifecycle actions', () => {
+    const checkpoint = getActionSpec('session.checkpoint' as any);
+    const restore = getActionSpec('session.restore' as any);
+
+    expect(checkpoint.bindings?.rpcMethod).toBe('session.checkpoint');
+    expect(restore.bindings?.rpcMethod).toBe('session.restore');
+    expect(checkpoint.safety).toBe('danger');
+    expect(restore.safety).toBe('danger');
+    expect(restore.inputSchema.safeParse({
+      v: 1,
+      sessionId: 'session-1',
+      scopes: ['workspace'],
+      candidate: {
+        source: 'happier_scm',
+        checkpointRef: 'refs/happier/checkpoints/scope/turn-final/turn-1',
+      },
+      confirmation: {
+        sourceChoiceConfirmed: true,
+      },
+    }).success).toBe(true);
+    expect(restore.inputSchema.safeParse({
+      v: 1,
+      sessionId: 'session-1',
+      scopes: ['workspace'],
+      checkpointId: 'checkpoint-1',
+    }).success).toBe(false);
+  });
+
   it('exposes session open action spec', () => {
     const spec = getActionSpec('session.open');
     expect(spec.id).toBe('session.open');
@@ -1027,6 +1372,8 @@ describe('Action Spec Registry', () => {
       ['session.continue_with_replay', 'session.continueWithReplay'],
       ['session.rollback', 'session.rollback'],
       ['session.checkpoint_code_rollback', 'session.checkpointCodeRollback'],
+      ['session.checkpoint', 'session.checkpoint'],
+      ['session.restore', 'session.restore'],
       ['session.handoff', 'daemon.sessionHandoff.start'],
       ['session.handoff.prepare_target', 'daemon.sessionHandoff.prepareTarget'],
       ['session.handoff.prepare_target_result.get', 'daemon.sessionHandoff.prepareTargetResult.get'],
@@ -1319,6 +1666,31 @@ describe('Action Spec Registry', () => {
     expect(planFields.map((f: any) => f.path)).toContain('instructions');
     expect(delegateFields.map((f: any) => f.path)).toContain('backendTargetKeys');
     expect(delegateFields.map((f: any) => f.path)).toContain('instructions');
+  });
+
+  it('describes backendTargetKeys as provider/backend selection, not parallel capacity', () => {
+    const plan = getActionSpec('subagents.plan.start');
+    const delegate = getActionSpec('subagents.delegate.start');
+    const voiceAgent = getActionSpec('voice_agent.start');
+
+    const planText = [
+      plan.inputHints?.description ?? '',
+      ...(plan.inputHints?.fields ?? []).map((field) => field.description ?? ''),
+    ].join(' ');
+    const delegateText = [
+      delegate.inputHints?.description ?? '',
+      ...(delegate.inputHints?.fields ?? []).map((field) => field.description ?? ''),
+    ].join(' ');
+    const voiceText = [
+      voiceAgent.inputHints?.description ?? '',
+      ...(voiceAgent.inputHints?.fields ?? []).map((field) => field.description ?? ''),
+    ].join(' ');
+
+    for (const text of [planText, delegateText, voiceText]) {
+      expect(text).toContain('provider/backend');
+      expect(text).toContain('not parallelism capacity');
+      expect(text).not.toContain('Each backend runs as its own execution run');
+    }
   });
 
   it('defaults delegate start permission mode to workspace_write', () => {

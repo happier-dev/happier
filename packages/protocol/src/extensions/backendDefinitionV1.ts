@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { LooseJsonObjectSchema, OptionalStringSchema, StringArraySchema } from './_shared.js';
-import { BackendRuntimeAdapterV1Schema } from './backendRuntimeAdapterV1.js';
+import { BackendSurfaceDeclarationV1Schema } from '../plugins/backendSurfaceDeclarationV1.js';
 
 /**
  * Plugin-extension wire contract.
@@ -38,7 +38,7 @@ export const BackendProbeV1Schema = z.object({
 }).passthrough();
 export type BackendProbeV1 = z.infer<typeof BackendProbeV1Schema>;
 
-export const BackendDefinitionV1Schema = z.object({
+export const BackendDefinitionV1BaseSchema = z.object({
   kindVersion: z.literal(1).default(1),
   id: z.string().trim().min(1),
   providerId: z.string().trim().min(1),
@@ -51,12 +51,26 @@ export const BackendDefinitionV1Schema = z.object({
   launch: BackendLaunchV1Schema.optional(),
   install: BackendInstallV1Schema.optional(),
   capabilities: z.record(z.string(), z.boolean()).default({}),
-  // Runtime-adapter ids remain an internal host dispatch seam in this wave.
-  // Keep this field additive for compatibility readers, but do not treat it as
-  // a stable external plugin ABI contract yet.
-  runtimeAdapters: z.array(BackendRuntimeAdapterV1Schema).default([]),
+  surfaceHandlers: z.array(BackendSurfaceDeclarationV1Schema).default([]),
   runtimeOptionsSchema: LooseJsonObjectSchema.optional(),
   probe: BackendProbeV1Schema.optional(),
   acp: LooseJsonObjectSchema.optional(),
 }).passthrough();
+
+export const BackendDefinitionV1Schema = BackendDefinitionV1BaseSchema.superRefine((value, ctx) => {
+  if (Object.prototype.hasOwnProperty.call(value, 'runtimeAdapters')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['runtimeAdapters'],
+      message: 'Backend surface declarations must use surfaceHandlers; runtimeAdapters is not final SDK vocabulary.',
+    });
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'runtimeCoreHooks')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['runtimeCoreHooks'],
+      message: 'Backend surface declarations must use surfaceHandlers; runtimeCoreHooks is not final SDK vocabulary.',
+    });
+  }
+});
 export type BackendDefinitionV1 = z.infer<typeof BackendDefinitionV1Schema>;

@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 import { ActionUiPlacementSchema } from '../actions/actionUiPlacements.js';
 import { ActionApprovalSchema } from '../actions/actionApprovalMetadata.js';
-import { ActionInputHintsSchema, ActionSafetySchema, ActionSurfaceSchema } from '../actions/actionSpecs.js';
+import {
+  ActionInputHintsSchema,
+  ActionSafetySchema,
+  ActionSurfaceSchema,
+  ActionToolExposureSchema,
+} from '../actions/actionSpecs.js';
 import { LooseJsonObjectSchema, OptionalStringSchema } from './_shared.js';
 
 export const ActionDefinitionIdV1Schema = z.string().trim().min(1);
@@ -90,6 +95,7 @@ export const ActionDefinitionSummaryV1Schema = z
     bindings: ActionDefinitionBindingsV1Schema,
     examples: ActionDefinitionExamplesV1Schema,
     surfaces: ActionSurfaceSchema,
+    toolExposure: ActionToolExposureSchema.optional(),
     inputHints: ActionInputHintsSchema.nullable(),
     outputSchema: LooseJsonObjectSchema.optional(),
     execution: ActionExecutionDescriptorV1Schema.optional(),

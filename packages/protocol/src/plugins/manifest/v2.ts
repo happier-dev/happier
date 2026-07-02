@@ -24,11 +24,14 @@ export const PluginTargetsV2Schema = z.object({
 export type PluginTargetsV2 = z.infer<typeof PluginTargetsV2Schema>;
 
 const PLUGIN_CAPABILITIES_PERMISSIONS_FIELD = 'permissions' as const;
+const PLUGIN_CAPABILITIES_OPTIONAL_PERMISSIONS_FIELD = 'optionalPermissions' as const;
 
 export const PluginCapabilitiesV2Schema = z.object({
   [PLUGIN_CAPABILITIES_PERMISSIONS_FIELD]: z.array(PluginPermissionDeclarationV1Schema).default([]),
-}).passthrough().default({ permissions: [] });
-export type PluginCapabilitiesV2 = z.infer<typeof PluginCapabilitiesV2Schema>;
+  [PLUGIN_CAPABILITIES_OPTIONAL_PERMISSIONS_FIELD]: z.array(PluginPermissionDeclarationV1Schema).default([]),
+}).passthrough().default({ permissions: [], optionalPermissions: [] });
+export type PluginCapabilitiesV2 = z.input<typeof PluginCapabilitiesV2Schema>;
+export type ParsedPluginCapabilitiesV2 = z.output<typeof PluginCapabilitiesV2Schema>;
 
 export const PluginManifestV2Schema = z.object({
   schemaVersion: z.literal(2),
@@ -44,4 +47,5 @@ export const PluginManifestV2Schema = z.object({
   source: PluginSourceSpecV1Schema.optional(),
   marketplace: PluginManifestMarketplaceMetadataV1Schema.optional(),
 }).strict();
-export type PluginManifestV2 = z.infer<typeof PluginManifestV2Schema>;
+export type PluginManifestV2 = z.input<typeof PluginManifestV2Schema>;
+export type ParsedPluginManifestV2 = z.output<typeof PluginManifestV2Schema>;

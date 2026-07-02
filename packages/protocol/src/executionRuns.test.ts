@@ -303,26 +303,26 @@ describe('executionRuns protocol', () => {
       runClass: 'bounded',
       ioMode: 'request_response',
       resumeHandle: {
-        kind: 'vendor_session.v1',
+        kind: 'provider_session.v1',
         backendTarget: {
           kind: 'backend',
           backendId: 'review-bot',
           configuredBackendId: 'review-bot',
           sourceKind: 'configured',
         },
-        vendorSessionId: 'vendor_1',
+        providerSessionId: 'vendor_1',
       },
     }) as any;
 
     expect(parsed.resumeHandle).toMatchObject({
-      kind: 'vendor_session.v1',
+      kind: 'provider_session.v1',
       backendTarget: {
         kind: 'backend',
         backendId: 'review-bot',
         configuredBackendId: 'review-bot',
         sourceKind: 'configured',
       },
-      vendorSessionId: 'vendor_1',
+      providerSessionId: 'vendor_1',
     });
   });
 
@@ -396,7 +396,7 @@ describe('executionRuns protocol', () => {
       retentionPolicy: 'resumable',
       runClass: 'bounded',
       ioMode: 'request_response',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } },
     })).toThrow();
 
     const parsed = ExecutionRunStartRequestSchema.parse({
@@ -408,12 +408,57 @@ describe('executionRuns protocol', () => {
       runClass: 'bounded',
       ioMode: 'request_response',
       resumeHandle: {
-        kind: 'vendor_session.v1',
+        kind: 'provider_session.v1',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-        vendorSessionId: 'vendor_1',
+        providerSessionId: 'vendor_1',
       },
     }) as any;
-    expect(parsed.resumeHandle?.kind).toBe('vendor_session.v1');
+    expect(parsed.resumeHandle?.kind).toBe('provider_session.v1');
+  });
+
+  it('accepts legacy vendorSessionId input on resume handles as provider session identity compatibility', () => {
+    const parsed = ExecutionRunStartRequestSchema.parse({
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      resumeHandle: {
+        kind: 'provider_session.v1',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        vendorSessionId: 'legacy-provider-session',
+      },
+    });
+
+    expect(parsed.resumeHandle).toMatchObject({
+      kind: 'provider_session.v1',
+      providerSessionId: 'legacy-provider-session',
+    });
+    expect(Object.prototype.hasOwnProperty.call(parsed.resumeHandle, 'vendorSessionId')).toBe(false);
+  });
+
+  it('accepts legacy vendor_session.v1 resume handle kind as provider_session.v1 read compatibility', () => {
+    const parsed = ExecutionRunStartRequestSchema.parse({
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      resumeHandle: {
+        kind: 'vendor_session.v1',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        providerSessionId: 'legacy-kind-session',
+      },
+    });
+
+    expect(parsed.resumeHandle).toMatchObject({
+      kind: 'provider_session.v1',
+      providerSessionId: 'legacy-kind-session',
+    });
   });
 
   it('accepts legacy backendId fields in resume handles', () => {
@@ -426,16 +471,16 @@ describe('executionRuns protocol', () => {
       runClass: 'bounded',
       ioMode: 'request_response',
       resumeHandle: {
-        kind: 'vendor_session.v1',
+        kind: 'provider_session.v1',
         backendId: 'codex',
-        vendorSessionId: 'vendor_1',
+        providerSessionId: 'vendor_1',
       },
     }) as any;
 
     expect(parsed.resumeHandle).toMatchObject({
-      kind: 'vendor_session.v1',
+      kind: 'provider_session.v1',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      vendorSessionId: 'vendor_1',
+      providerSessionId: 'vendor_1',
     });
   });
 
@@ -449,23 +494,23 @@ describe('executionRuns protocol', () => {
       runClass: 'bounded',
       ioMode: 'request_response',
       resumeHandle: {
-        kind: 'vendor_session.v1',
+        kind: 'provider_session.v1',
         backendId: 'review-bot',
         sourceKind: 'configured',
         configuredBackendId: 'review-bot',
-        vendorSessionId: 'vendor_1',
+        providerSessionId: 'vendor_1',
       },
     }) as any;
 
     expect(parsed.resumeHandle).toMatchObject({
-      kind: 'vendor_session.v1',
+      kind: 'provider_session.v1',
       backendTarget: {
         kind: 'backend',
         backendId: 'review-bot',
         configuredBackendId: 'review-bot',
         sourceKind: 'configured',
       },
-      vendorSessionId: 'vendor_1',
+      providerSessionId: 'vendor_1',
     });
   });
 
@@ -480,9 +525,9 @@ describe('executionRuns protocol', () => {
         runClass: 'bounded',
         ioMode: 'request_response',
         resumeHandle: {
-          kind: 'vendor_session.v1',
+          kind: 'provider_session.v1',
           backendId: 'customAcp',
-          vendorSessionId: 'vendor_1',
+          providerSessionId: 'vendor_1',
         },
       }),
     ).toThrow();
@@ -499,9 +544,9 @@ describe('executionRuns protocol', () => {
         runClass: 'bounded',
         ioMode: 'request_response',
         resumeHandle: {
-          kind: 'vendor_session.v1',
+          kind: 'provider_session.v1',
           backendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
-          vendorSessionId: 'vendor_1',
+          providerSessionId: 'vendor_1',
         },
       }),
     ).toThrow();

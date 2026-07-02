@@ -46,6 +46,46 @@ function isSensitiveMcpDescriptorKey(key: string): boolean {
     || normalized.endsWith('secret');
 }
 
+function rejectCredentialBearingMcpUrl(url: string, ctx: z.RefinementCtx): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (parsed.username.length > 0 || parsed.password.length > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['url'],
+      message: 'Plugin MCP descriptor URLs must not embed credentials.',
+    });
+    return;
+  }
+  for (const [key, value] of parsed.searchParams.entries()) {
+    if (isSensitiveMcpDescriptorKey(key) || MCP_BEARER_VALUE_PATTERN.test(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['url'],
+        message: 'Plugin MCP descriptor URLs must reference host-owned credential material instead of embedding raw query credentials.',
+      });
+      return;
+    }
+  }
+  const fragment = parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash;
+  if (fragment.length > 0) {
+    for (const [key, value] of new URLSearchParams(fragment).entries()) {
+      if (isSensitiveMcpDescriptorKey(key) || MCP_BEARER_VALUE_PATTERN.test(value)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['url'],
+          message: 'Plugin MCP descriptor URLs must not embed credential fragments.',
+        });
+        return;
+      }
+    }
+  }
+}
+
 function rejectRawMcpSecretMaterial(value: unknown, ctx: z.RefinementCtx, path: readonly (string | number)[] = []): void {
   if (Array.isArray(value)) {
     value.forEach((entry, index) => rejectRawMcpSecretMaterial(entry, ctx, [...path, index]));
@@ -108,6 +148,8 @@ export const PluginMcpServerContributionV1Schema = PluginDescriptorBaseV1Schema.
       path: ['url'],
       message: 'remote MCP descriptors require url.',
     });
+  } else if ((value.transport === 'http' || value.transport === 'sse') && typeof value.url === 'string') {
+    rejectCredentialBearingMcpUrl(value.url, ctx);
   }
 });
 export type PluginMcpServerContributionV1 = z.infer<typeof PluginMcpServerContributionV1Schema>;

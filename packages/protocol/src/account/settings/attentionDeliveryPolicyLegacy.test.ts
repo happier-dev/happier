@@ -108,6 +108,33 @@ describe('attentionDeliveryPolicyV1 legacy backfill', () => {
     });
   });
 
+  it('backfills connected-service notification topic toggles into attention events', () => {
+    const parsed = accountSettingsParse({
+      notificationChannelsV1: [
+        {
+          v: 1,
+          id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
+          kind: 'expo_push',
+          enabled: true,
+          topics: {
+            ready: true,
+            permissionRequest: true,
+            userActionRequest: true,
+            connectedServiceAccountSwitch: false,
+            connectedServiceQuotaBlocked: false,
+            connectedServiceQuotaRecovered: true,
+          },
+        },
+      ],
+    });
+
+    expect(parsed.attentionDeliveryPolicyV1.channels.expo_push.events).toMatchObject({
+      connected_service_account_switch: { enabled: false },
+      connected_service_quota_blocked: { enabled: false },
+      connected_service_quota_recovered: { enabled: true },
+    });
+  });
+
   it('aggregates webhook channels instead of leaving the canonical webhook policy enabled after removal', () => {
     const withoutWebhooks = accountSettingsParse({
       notificationChannelsV1: [

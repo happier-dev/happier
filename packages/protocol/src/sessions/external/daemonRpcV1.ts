@@ -7,7 +7,7 @@ import {
   ExternalSessionsSourceSchema,
   type ExternalSessionsProviderId,
   type ExternalSessionsSource,
-} from '../../providers/externalSessionsCatalog.js';
+} from './sourceCatalog.js';
 
 export {
   ExternalSessionsProviderIdSchema,
@@ -18,6 +18,9 @@ export type {
   ExternalSessionsSource,
 };
 
+export const ExternalSessionsSearchModeSchema = z.enum(['fast', 'full']);
+export type ExternalSessionsSearchMode = z.infer<typeof ExternalSessionsSearchModeSchema>;
+
 export const ExternalSessionsCandidatesListRequestSchema = z
   .object({
     machineId: z.string().min(1),
@@ -26,6 +29,7 @@ export const ExternalSessionsCandidatesListRequestSchema = z
     cursor: z.string().min(1).optional(),
     limit: z.number().int().min(1).max(500).optional(),
     searchTerm: z.string().min(1).max(2000).optional(),
+    searchMode: ExternalSessionsSearchModeSchema.optional(),
   })
   .passthrough();
 export type ExternalSessionsCandidatesListRequest = z.infer<typeof ExternalSessionsCandidatesListRequestSchema>;
@@ -36,6 +40,7 @@ export const ExternalSessionsCandidatesListResponseSchema = z.union([
       ok: z.literal(true),
       candidates: z.array(z.lazy(() => ExternalSessionCandidateV1Schema)),
       nextCursor: z.string().min(1).nullish(),
+      searchIncomplete: z.boolean().optional(),
     })
     .passthrough(),
   z

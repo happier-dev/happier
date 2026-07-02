@@ -52,4 +52,27 @@ describe('executionRunsGuidanceV1', () => {
     expect(capped.text).not.toContain('more rules in settings');
     expect(capped.text.length).toBeLessThanOrEqual(ruleTwoStart);
   });
+
+  it('uses discovery-first Happier-managed run guidance when rules are present', () => {
+    const result = buildExecutionRunsGuidanceBlockV1({
+      entries: [
+        {
+          id: '1',
+          description: 'Delegate reviews to a review run',
+          suggestedIntent: 'review',
+        },
+      ],
+      maxChars: 10_000,
+    });
+
+    expect(result.text).toContain('Happier-Managed Execution Runs');
+    expect(result.text).toContain('action_spec_search');
+    expect(result.text).toContain('action_spec_get');
+    expect(result.text).toContain('action_options_resolve');
+    expect(result.text).toContain('action_execute');
+    expect(result.text).toContain('provider/backend');
+    expect(result.text).toContain('not parallelism slots');
+    expect(result.text).not.toContain('execution_run_start');
+    expect(result.text).not.toContain('## Delegating via MCP');
+  });
 });

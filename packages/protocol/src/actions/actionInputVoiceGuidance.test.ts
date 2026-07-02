@@ -11,8 +11,11 @@ describe('actionInputVoiceGuidance', () => {
     const workflowNotes = getActionVoiceWorkflowNotes('subagents.plan.start').join(' ');
 
     expect(fieldNotes).toContain('backendTargetKeys');
+    expect(fieldNotes).toContain('provider/backend targets');
+    expect(fieldNotes).toContain('not as parallelism capacity');
     expect(fieldNotes).not.toContain('backendIds');
     expect(workflowNotes).toContain('backendTargetKeys');
+    expect(workflowNotes).toContain('provider/backend targets');
     expect(workflowNotes).not.toContain('backendIds');
   });
 

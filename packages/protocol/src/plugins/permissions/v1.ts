@@ -7,6 +7,7 @@ export const PluginPermissionCapabilityV1Schema = z.enum([
   'filesystem.write',
   'env',
   'network',
+  'network.intercept',
   'process.spawn',
   'agent.request.mutate',
   'actions.register',
@@ -17,10 +18,17 @@ export const PluginPermissionCapabilityV1Schema = z.enum([
   'ui.descriptors',
   'notifications.register',
   'hooks.register',
-  'events.subscribe',
-  'runtime.subscribe',
-  'lifecycle.subscribe',
-  'session.subscribe',
+  'events.runtime.subscribe',
+  'events.lifecycle.subscribe',
+  'events.session.subscribe',
+  'events.plugin.subscribe',
+  'reviews.comments.write.direct',
+  'session.hooks.control',
+  'terminal.host.control',
+  'secrets.read',
+  'secrets.write',
+  'storage.local',
+  'storage.synced',
   'reload',
 ]);
 export type PluginPermissionCapabilityV1 = z.infer<typeof PluginPermissionCapabilityV1Schema>;
@@ -31,3 +39,6 @@ export const PluginPermissionDeclarationV1Schema = z.object({
   scope: PluginOptionalStringSchema,
 }).strict();
 export type PluginPermissionDeclarationV1 = z.infer<typeof PluginPermissionDeclarationV1Schema>;
+
+export * from './grants.js';
+export * from './actions.js';

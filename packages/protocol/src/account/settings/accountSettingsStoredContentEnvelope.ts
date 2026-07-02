@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
-import { AccountSettingsSchema } from './accountSettings.js';
+import { AccountSettingsPersistedObjectSchema } from './accountSettings.js';
 
 export const AccountSettingsStoredContentEnvelopeSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
-    v: AccountSettingsSchema,
+    v: AccountSettingsPersistedObjectSchema,
   }),
   z.object({
     t: z.literal('encrypted'),
@@ -14,4 +14,3 @@ export const AccountSettingsStoredContentEnvelopeSchema = z.discriminatedUnion('
 ]);
 
 export type AccountSettingsStoredContentEnvelope = z.infer<typeof AccountSettingsStoredContentEnvelopeSchema>;
-

@@ -5,19 +5,121 @@ import {
   ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamStartResponseSchema,
 } from '../executionRuns.js';
+import { TurnIdSchema } from '../sessions/idsV1.js';
 import { SubAgentRunResultV2Schema } from '../tools/v2/index.js';
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
 import { ActionDefinitionIdV1Schema, ActionDefinitionSummaryV1Schema } from '../extensions/actionDefinitionV1.js';
 import {
   PrimaryTurnStatusV1Schema,
+  SessionRuntimeTemporaryThrottleDetailsV1Schema,
+  SessionRuntimeUsageLimitDetailsV1Schema,
   SessionRuntimeIssueV1Schema,
 } from '../sessions/control/runtimeIssueV1.js';
+import {
+  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
+  SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID,
+  SessionUsageLimitRecoveryAuthSelectionV1Schema,
+  SessionUsageLimitRecoveryResumePromptModeV1Schema,
+  SessionUsageLimitRecoveryStatusV1Schema,
+  SessionUsageLimitRecoveryV1Schema,
+} from '../session/state/valueSchemas/usageLimitRecovery.js';
+import {
+  CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_METADATA_KEY,
+  createConnectedServiceMaterializationIdentityV1Schema,
+} from '../sessionMetadata/connectedServiceMaterializationIdentityV1.js';
+import {
+  SESSION_CONTINUATION_RECOVERY_METADATA_KEY,
+  SessionContinuationRecoveryV1Schema,
+} from '../sessionMetadata/sessionContinuationRecoveryV1.js';
+import {
+  SESSION_PENDING_QUEUE_HOLD_METADATA_KEY,
+  SessionPendingQueueHoldV1Schema,
+} from '../sessionMetadata/sessionPendingQueueHoldV1.js';
+import {
+  PROVIDER_ACCOUNT_USAGE_REFS_METADATA_KEY,
+  ProviderAccountUsageRefsV1Schema,
+} from '../sessionMetadata/providerAccountUsageRefsV1.js';
+export {
+  SessionTurnLifecycleStatusV1Schema,
+  SessionTurnMutationActionV1Schema,
+  SessionTurnMutationV1Schema,
+  SessionTurnRollbackStateV1Schema,
+  SessionTurnTranscriptAnchorsV1Schema,
+  type SessionTurnLifecycleStatusV1,
+  type SessionTurnMutationActionV1,
+  type SessionTurnMutationV1,
+  type SessionTurnRollbackStateV1,
+  type SessionTurnTranscriptAnchorsV1,
+} from '../sessions/turns/sessionTurnMutationV1.js';
+export {
+  SessionTurnRollbackV1Schema,
+  SessionTurnV1Schema,
+  SessionTurnsProjectionV1Schema,
+  type SessionTurnRollbackV1,
+  type SessionTurnV1,
+  type SessionTurnsProjectionV1,
+} from '../sessions/turns/sessionTurnV1.js';
+import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
+export {
+  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
+  SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID,
+  SessionUsageLimitRecoveryAuthSelectionV1Schema,
+  SessionUsageLimitRecoveryResumePromptModeV1Schema,
+  SessionUsageLimitRecoveryStatusV1Schema,
+  SessionUsageLimitRecoveryV1Schema,
+  type SessionUsageLimitRecoveryAuthSelectionV1,
+  type SessionUsageLimitRecoveryResumePromptModeV1,
+  type SessionUsageLimitRecoveryStatusV1,
+  type SessionUsageLimitRecoveryV1,
+} from '../session/state/valueSchemas/usageLimitRecovery.js';
+export {
+  SESSION_USAGE_LIMIT_RECOVERY_OPERATION_RESULT_ERROR_STATUSES_V1,
+  SESSION_USAGE_LIMIT_RECOVERY_OPERATION_RESULT_OK_STATUSES_V1,
+  SessionUsageLimitRecoveryOperationResultErrorStatusV1Schema,
+  SessionUsageLimitRecoveryOperationResultOkStatusV1Schema,
+  SessionUsageLimitRecoveryOperationResultV1Schema,
+  isSessionUsageLimitRecoveryOperationResultV1,
+  normalizeSessionUsageLimitRecoveryOperationResultV1,
+  type NormalizeSessionUsageLimitRecoveryOperationResultV1Options,
+  type SessionUsageLimitRecoveryOperationResultErrorStatusV1,
+  type SessionUsageLimitRecoveryOperationResultOkStatusV1,
+  type SessionUsageLimitRecoveryOperationResultV1,
+} from './sessionUsageLimitRecoveryOperationResultV1.js';
+export {
+  SESSION_CONTINUATION_RECOVERY_METADATA_KEY,
+  SessionContinuationRecoveryAttemptStatusV1Schema,
+  SessionContinuationRecoveryAttemptV1Schema,
+  SessionContinuationRecoveryV1Schema,
+  SessionContinuationResumePromptModeV1Schema,
+  isSessionContinuationRecoveryBlockingPendingDrain,
+  readSessionContinuationRecoveryFromMetadata,
+  type SessionContinuationRecoveryAttemptStatusV1,
+  type SessionContinuationRecoveryAttemptV1,
+  type SessionContinuationRecoveryV1,
+  type SessionContinuationResumePromptModeV1,
+} from '../sessionMetadata/sessionContinuationRecoveryV1.js';
+export {
+  SESSION_PENDING_QUEUE_HOLD_METADATA_KEY,
+  SessionPendingQueueHoldEntryV1Schema,
+  SessionPendingQueueHoldV1Schema,
+  isSessionPendingQueueHoldBlockingPendingDrain,
+  readSessionPendingQueueHoldV1FromMetadata,
+  removeSessionPendingQueueHoldV1FromMetadata,
+  writeSessionPendingQueueHoldV1ToMetadata,
+  type SessionPendingQueueHoldEntryV1,
+  type SessionPendingQueueHoldV1,
+  type WriteSessionPendingQueueHoldV1Input,
+} from '../sessionMetadata/sessionPendingQueueHoldV1.js';
 export {
   PrimaryTurnStatusV1Schema,
+  SessionRuntimeTemporaryThrottleDetailsV1Schema,
   SessionRuntimeIssueSourceV1Schema,
+  SessionRuntimeUsageLimitDetailsV1Schema,
   SessionRuntimeIssueV1Schema,
   TurnTerminalStatusV1Schema,
   type PrimaryTurnStatusV1,
+  type SessionRuntimeTemporaryThrottleDetailsV1,
+  type SessionRuntimeUsageLimitDetailsV1,
   type SessionRuntimeIssueSourceV1,
   type SessionRuntimeIssueV1,
   type TurnTerminalStatusV1,
@@ -114,8 +216,11 @@ export const SessionSummarySchema = z.object({
   encryption: z.object({
     type: z.enum(['legacy', 'dataKey']),
   }).passthrough(),
+  latestTurnId: TurnIdSchema.nullable().optional(),
   latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
+  latestTurnStatusObservedAt: z.number().int().nonnegative().nullable().optional(),
   lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
+  rollbackEligibleTurnStarts: z.array(z.number().int().nonnegative()).optional(),
 }).passthrough();
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -139,6 +244,12 @@ export function createSessionMetadataSchema(zod: typeof z) {
   return zod
     .object({
       systemSessionV1: createSessionSystemSessionV1Schema(zod).optional(),
+      [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: SessionUsageLimitRecoveryV1Schema.optional(),
+      [SESSION_CONTINUATION_RECOVERY_METADATA_KEY]: SessionContinuationRecoveryV1Schema.optional(),
+      [SESSION_PENDING_QUEUE_HOLD_METADATA_KEY]: SessionPendingQueueHoldV1Schema.optional(),
+      [PROVIDER_ACCOUNT_USAGE_REFS_METADATA_KEY]: ProviderAccountUsageRefsV1Schema.optional(),
+      [CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_METADATA_KEY]:
+        createConnectedServiceMaterializationIdentityV1Schema(zod).optional(),
     })
     .passthrough();
 }
@@ -189,6 +300,7 @@ export const V2SessionRecordSchema = z
     seq: z.number().int().nonnegative(),
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
+    meaningfulActivityAt: z.number().int().nonnegative().optional(),
     active: z.boolean(),
     activeAt: z.number().int().nonnegative(),
     archivedAt: z.number().int().nonnegative().nullable().optional(),
@@ -200,12 +312,20 @@ export const V2SessionRecordSchema = z
     lastViewedSessionSeq: z.number().int().nonnegative().nullable().optional(),
     pendingPermissionRequestCount: z.number().int().min(0).optional(),
     pendingUserActionRequestCount: z.number().int().min(0).optional(),
+    pendingRequestObservedAt: z.number().int().nonnegative().nullable().optional(),
     pendingCount: z.number().int().min(0).optional(),
     pendingVersion: z.number().int().min(0).optional(),
     dataEncryptionKey: z.string().nullable(),
     share: SessionShareSchema.nullable().optional(),
+    latestTurnId: TurnIdSchema.nullable().optional(),
     latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
+    latestTurnStatusObservedAt: z.number().int().nonnegative().nullable().optional(),
     lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
+    rollbackEligibleTurnStarts: z.array(z.number().int().nonnegative()).optional(),
+    latestReadyEventSeq: z.number().int().nonnegative().nullable().optional(),
+    latestReadyEventAt: z.number().int().nonnegative().nullable().optional(),
+    thinking: z.boolean().optional(),
+    thinkingAt: z.number().int().nonnegative().nullable().optional(),
   })
   .passthrough();
 export type V2SessionRecord = z.infer<typeof V2SessionRecordSchema>;
@@ -220,6 +340,9 @@ export const V2SessionListResponseSchema = z
 export type V2SessionListResponse = z.infer<typeof V2SessionListResponseSchema>;
 
 export const V2_SESSION_LIST_CURSOR_V1_PREFIX = 'cursor_v1_' as const;
+export const V2_SESSION_LIST_CURSOR_V2_PREFIX = 'cursor_v2_' as const;
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 export function encodeV2SessionListCursorV1(sessionId: string): string {
   return `${V2_SESSION_LIST_CURSOR_V1_PREFIX}${sessionId}`;
@@ -230,6 +353,37 @@ export function decodeV2SessionListCursorV1(cursor: string): string | null {
   if (!cursor.startsWith(V2_SESSION_LIST_CURSOR_V1_PREFIX)) return null;
   const sessionId = cursor.slice(V2_SESSION_LIST_CURSOR_V1_PREFIX.length);
   return sessionId.length > 0 ? sessionId : null;
+}
+
+export type V2SessionListCursorV2 = Readonly<{
+  sessionId: string;
+  meaningfulActivityAt: number;
+}>;
+
+export function encodeV2SessionListCursorV2(cursor: V2SessionListCursorV2): string {
+  const payload = JSON.stringify({
+    sessionId: cursor.sessionId,
+    meaningfulActivityAt: cursor.meaningfulActivityAt,
+  });
+  return `${V2_SESSION_LIST_CURSOR_V2_PREFIX}${encodeBase64(textEncoder.encode(payload), 'base64url')}`;
+}
+
+export function decodeV2SessionListCursorV2(cursor: string): V2SessionListCursorV2 | null {
+  if (typeof cursor !== 'string') return null;
+  if (!cursor.startsWith(V2_SESSION_LIST_CURSOR_V2_PREFIX)) return null;
+  try {
+    const payload = cursor.slice(V2_SESSION_LIST_CURSOR_V2_PREFIX.length);
+    const decoded = JSON.parse(textDecoder.decode(decodeBase64(payload, 'base64url')));
+    if (!decoded || typeof decoded !== 'object') return null;
+    const sessionId = typeof decoded.sessionId === 'string' ? decoded.sessionId : '';
+    const meaningfulActivityAt = (decoded as { meaningfulActivityAt?: unknown }).meaningfulActivityAt;
+    if (!sessionId || typeof meaningfulActivityAt !== 'number' || !Number.isFinite(meaningfulActivityAt) || meaningfulActivityAt < 0) {
+      return null;
+    }
+    return { sessionId, meaningfulActivityAt: Math.trunc(meaningfulActivityAt) };
+  } catch {
+    return null;
+  }
 }
 
 export const V2SessionByIdResponseSchema = z

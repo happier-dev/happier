@@ -190,6 +190,68 @@ describe('MachineLiveStreamV1 schemas', () => {
     expect(parsed.message.kind).toBe('frame');
   });
 
+  it('accepts typed input sideband control envelopes', () => {
+    const parsed = MachineLiveStreamRelayEnvelopeV1Schema.parse({
+      v: 1,
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      message: {
+        kind: 'sideband_control',
+        control: {
+          v: 1,
+          streamId: 'stream_1',
+          sourceId: 'source_1',
+          eventId: 'event_1',
+          leaseId: 'lease_1',
+          kind: 'tap',
+          x: 0.5,
+          y: 0.25,
+        },
+      },
+    });
+
+    expect(parsed.message.kind).toBe('sideband_control');
+    expect(MachineLiveStreamRelayEnvelopeV1Schema.safeParse({
+      v: 1,
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      message: {
+        kind: 'sideband_control',
+        control: {
+          v: 1,
+          streamId: 'stream_1',
+          sourceId: 'source_1',
+          eventId: 'event_1',
+          kind: 'tap',
+          x: 1.5,
+          y: 0.25,
+        },
+      },
+    }).success).toBe(false);
+  });
+
+  it('rejects untyped fields on sideband control relay messages', () => {
+    expect(MachineLiveStreamRelayEnvelopeV1Schema.safeParse({
+      v: 1,
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      message: {
+        kind: 'sideband_control',
+        payload: { arbitrary: true },
+        control: {
+          v: 1,
+          streamId: 'stream_1',
+          sourceId: 'source_1',
+          eventId: 'event_1',
+          leaseId: 'lease_1',
+          kind: 'tap',
+          x: 0.5,
+          y: 0.25,
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it('supports start responses and rejects unsafe metering payload details', () => {
     expect(MachineLiveStreamRelayEnvelopeV1Schema.safeParse({
       v: 1,

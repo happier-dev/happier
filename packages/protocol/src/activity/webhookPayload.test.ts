@@ -31,8 +31,8 @@ describe('buildActivityWebhookPayload', () => {
       createdAt: 456,
       topic: 'permission_request',
       content: {
-        title: 'Permission Request',
-        body: 'Approval needed for: Bash\nCommand: git',
+        title: 'Deploy fix',
+        body: 'Claude asks permission to use Bash\nCommand: git',
       },
       session: {
         sessionId: 'session-2',
@@ -49,5 +49,30 @@ describe('buildActivityWebhookPayload', () => {
     expect(ActivityWebhookPayloadV1Schema.parse(payload)).toEqual(payload);
     expect(payload.navigation).toEqual({ sessionId: 'session-2', requestId: 'request-1' });
     expect(JSON.stringify(payload)).not.toContain('toolInput');
+  });
+
+  it('accepts connected-service quota and account-switch webhook topics', () => {
+    for (const topic of [
+      'connected_service_account_switch',
+      'connected_service_credential_health',
+      'connected_service_quota_blocked',
+      'connected_service_quota_recovered',
+    ] as const) {
+      const payload = buildActivityWebhookPayload({
+        channelId: 'webhook-primary',
+        createdAt: 789,
+        topic,
+        content: {
+          title: 'Provider account updated',
+          body: 'A provider account state changed.',
+        },
+        session: {
+          sessionId: 'session-3',
+          title: 'Quota recovery',
+        },
+      });
+
+      expect(ActivityWebhookPayloadV1Schema.parse(payload).topic).toBe(topic);
+    }
   });
 });

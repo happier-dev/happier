@@ -73,12 +73,51 @@ describe('buildAppendSystemPromptBaseV1', () => {
     expect(out).toContain('# Attachments');
   });
 
+  it('uses start-only session title instructions for initial title updates', () => {
+    const out = buildAppendSystemPromptBaseV1({
+      settings: {
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'initial',
+          responseOptions: 'disabled',
+        },
+      },
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: false,
+    });
+
+    expect(out).toContain('# Session title');
+    expect(out).toContain('first user message');
+    expect(out).toContain('MUST call the change_title tool once');
+    expect(out).not.toContain('task changes significantly');
+    expect(out).not.toContain('# Options');
+  });
+
+  it('uses ongoing session title instructions for ongoing title updates', () => {
+    const out = buildAppendSystemPromptBaseV1({
+      settings: {
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'ongoing',
+          responseOptions: 'disabled',
+        },
+      },
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: false,
+    });
+
+    expect(out).toContain('# Session title');
+    expect(out).toContain('first user message');
+    expect(out).toContain('task changes significantly');
+    expect(out).not.toContain('# Options');
+  });
+
   it('omits options instructions when coding prompt response options are disabled', () => {
     const out = buildAppendSystemPromptBaseV1({
       settings: {
         codingPromptBehaviorV1: {
           v: 1,
-          sessionTitleUpdates: 'agent',
+          sessionTitleUpdates: 'ongoing',
           responseOptions: 'disabled',
         },
       },

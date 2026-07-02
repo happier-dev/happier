@@ -104,6 +104,13 @@ const ConnectedAccountUiProjectionDescriptorSchema = z.object({
     connectCommand: z.string().trim().min(1),
     oauthPasteCopyKeyPrefix: z.string().trim().min(1).optional(),
     oauthAddActionModes: z.array(ConnectedAccountOauthAddActionModeSchema).default([]),
+    /**
+     * Short, brand-only name for compact surfaces (auth chips, account-switch transcript rows),
+     * so they read "Codex" / "Claude" instead of the longer localized service titles. Brand proper
+     * nouns are identical across locales, so this is intentionally not a translation key. Consumers
+     * must fall back to the localized display name when absent.
+     */
+    shortName: z.string().trim().min(1).optional(),
 }).strict();
 
 const ConnectedAccountMaterializationDescriptorSchema = z.object({
@@ -250,6 +257,7 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
         ui: {
             connectCommand: 'happier connect codex',
             oauthAddActionModes: ['device', 'paste', 'browser'],
+            shortName: 'Codex',
         },
         materialization: {
             materializationKinds: ['agent_runtime_env'],
@@ -279,6 +287,7 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
         ui: {
             connectCommand: 'happier connect codex --api-key',
             oauthAddActionModes: [],
+            shortName: 'OpenAI',
         },
         materialization: {
             materializationKinds: ['agent_runtime_env'],
@@ -305,6 +314,7 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
         ui: {
             connectCommand: 'happier connect claude --api-key',
             oauthAddActionModes: [],
+            shortName: 'Anthropic',
         },
         materialization: {
             materializationKinds: ['agent_runtime_env'],
@@ -336,7 +346,13 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
             authorization: {
                 endpointUrl: 'https://claude.ai/oauth/authorize',
                 defaultRedirectUri: 'https://platform.claude.com/oauth/code/callback',
-                scopes: ['user:inference', 'user:profile'],
+                scopes: [
+                    'user:inference',
+                    'user:profile',
+                    'user:sessions:claude_code',
+                    'user:mcp_servers',
+                    'user:file_upload',
+                ],
                 pkce: true,
                 query: {
                     responseType: 'code',
@@ -363,6 +379,7 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
             connectCommand: 'happier connect claude',
             oauthPasteCopyKeyPrefix: 'connectedServices.oauthPaste.providerOverrides.claudeSubscription',
             oauthAddActionModes: ['paste', 'browser'],
+            shortName: 'Claude',
         },
         materialization: {
             materializationKinds: ['agent_runtime_env'],
@@ -426,6 +443,7 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
         ui: {
             connectCommand: 'happier connect gemini',
             oauthAddActionModes: ['paste', 'browser'],
+            shortName: 'Gemini',
         },
         materialization: {
             materializationKinds: ['agent_runtime_env'],
@@ -467,6 +485,7 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
         ui: {
             connectCommand: 'happier connect github --token',
             oauthAddActionModes: [],
+            shortName: 'GitHub',
         },
         materialization: {
             materializationKinds: ['scm_hosting_token'],

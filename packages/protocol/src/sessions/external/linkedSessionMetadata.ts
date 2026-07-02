@@ -5,7 +5,7 @@ import { CODEX_BACKEND_MODES } from '../../providers/codex/backendMode.js';
 import {
   ExternalSessionsProviderIdSchema,
   ExternalSessionsSourceSchema,
-} from '../../providers/externalSessionsCatalog.js';
+} from './sourceCatalog.js';
 import type { ExternalSessionTranscriptRawMessageV1 } from './daemonRpcV1.js';
 
 export type ExternalSessionFollowPolicy = 'attached_only' | 'background_follow';

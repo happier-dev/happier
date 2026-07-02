@@ -87,6 +87,9 @@ describe('FeaturesResponseSchema', () => {
       disabledByBuildPolicy: false,
     });
     expect(parsed.capabilities.machines.transfer).toEqual(DEFAULT_MACHINE_TRANSFER_CAPABILITIES);
+    expect(readOptionalPath(parsed, ['capabilities', 'localServices', 'preview', 'enabled'])).toBe(false);
+    expect(readOptionalPath(parsed, ['capabilities', 'localServices', 'publicPreview', 'enabled'])).toBe(false);
+    expect(readOptionalPath(parsed, ['capabilities', 'browser', 'viewTargets', 'enabled'])).toBe(false);
     expect(parsed.capabilities.oauth.providers).toEqual({});
     expect(parsed.capabilities.encryption).toEqual({
       storagePolicy: 'required_e2ee',

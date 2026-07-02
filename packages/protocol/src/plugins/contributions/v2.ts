@@ -7,7 +7,7 @@ import {
   HookExecutionKindV1Schema,
 } from '../../hooks/hookExecutionSemantics.js';
 import { AgentDefinitionV1Schema } from '../agentDefinitionV1.js';
-import { PluginBackendDefinitionV1Schema } from '../backendDefinitionV1.js';
+import { PluginBackendDefinitionV1BaseSchema } from '../backendDefinitionV1.js';
 import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../_shared.js';
 import {
   PluginActionContributionV2Schema,
@@ -34,11 +34,49 @@ import {
   PluginMcpContributesV1Schema,
 } from './mcp.js';
 import {
+  PluginRequestInterceptorContributionV1Schema,
+} from '../requestInterceptors/v1.js';
+import {
   PluginSettingsContributionV2Schema,
 } from './settings.js';
 import {
   PluginExecutionRunProfileContributionV2Schema,
 } from './executionRunProfiles.js';
+import {
+  PluginEventContributionV1Schema,
+} from './events.js';
+import {
+  PluginHookIdV1Schema,
+  PluginHookScopeV1Schema,
+  type PluginHookScopeV1,
+} from '../hooks/catalog.js';
+import {
+  PluginSystemToolContributionV1Schema,
+} from './systemTools.js';
+import {
+  PluginPromptAssetContributionV1Schema,
+} from './promptAssets.js';
+import {
+  PluginUiTranslationsContributionV1Schema,
+} from './ui/i18n.js';
+import {
+  PluginStructuredMessageDescriptorV1Schema,
+} from './ui/structuredMessages.js';
+import {
+  PluginSessionSurfaceDescriptorV1Schema,
+} from './ui/sessionSurfaces.js';
+import {
+  PluginSessionHeaderActionDescriptorV1Schema,
+} from './ui/sessionHeaderActions.js';
+import {
+  PluginHostedWebContributionV1Schema,
+} from './ui/hostedWeb.js';
+import {
+  PluginReactNativeBundleContributionV1Schema,
+} from './ui/reactNativeBundles.js';
+import {
+  PluginUiArtifactContributionV1Schema,
+} from './ui/artifacts.js';
 import {
   buildPluginContributionFamilySchemaV2,
   definePluginContributionFamilyV2,
@@ -196,10 +234,16 @@ export const PluginBackendEngineV2Schema = z.discriminatedUnion('kind', [
 });
 export type PluginBackendEngineV2 = z.infer<typeof PluginBackendEngineV2Schema>;
 
-export const PluginBackendContributionV2Schema = PluginBackendDefinitionV1Schema.extend({
+export const PluginBackendContributionV2Schema = PluginBackendDefinitionV1BaseSchema.extend({
   engine: PluginBackendEngineV2Schema,
   target: PluginBackendTargetV2Schema.optional(),
 }).passthrough().superRefine((value, ctx) => {
+  if (hasOwn(value, 'runtimeAdapters')) {
+    rejectForbiddenKey(ctx, 'runtimeAdapters', 'Backend surface declarations must use surfaceHandlers; runtimeAdapters is not final SDK vocabulary.');
+  }
+  if (hasOwn(value, 'runtimeCoreHooks')) {
+    rejectForbiddenKey(ctx, 'runtimeCoreHooks', 'Backend surface declarations must use surfaceHandlers; runtimeCoreHooks is not final SDK vocabulary.');
+  }
   if (hasOwn(value, 'providerId')) {
     rejectForbiddenKey(ctx, 'providerId', 'Plugin backend manifests must use agentId.');
   }
@@ -213,7 +257,8 @@ export const PluginBackendContributionV2Schema = PluginBackendDefinitionV1Schema
     rejectForbiddenKey(ctx, 'acp', 'Plugin backend manifests must use backends[].engine.kind = acp; loose .acp wire is not supported.');
   }
 });
-export type PluginBackendContributionV2 = z.infer<typeof PluginBackendContributionV2Schema>;
+export type PluginBackendContributionV2 = z.input<typeof PluginBackendContributionV2Schema>;
+export type ParsedPluginBackendContributionV2 = z.output<typeof PluginBackendContributionV2Schema>;
 
 export const PluginCommandVisibilityV2Schema = z.enum(['default', 'advanced', 'internal']);
 export type PluginCommandVisibilityV2 = z.infer<typeof PluginCommandVisibilityV2Schema>;
@@ -308,21 +353,10 @@ export const PluginUiDescriptorContributionV2Schema = z.object({
 }).strict();
 export type PluginUiDescriptorContributionV2 = z.infer<typeof PluginUiDescriptorContributionV2Schema>;
 
-export const PluginHookScopeV1Schema = z.enum([
-  'machine',
-  'project',
-  'session',
-  'backend',
-  'agent',
-  'daemon',
-  'tool',
-  'resource',
-  'plugin',
-]);
-export type PluginHookScopeV1 = z.infer<typeof PluginHookScopeV1Schema>;
+export { PluginHookScopeV1Schema, type PluginHookScopeV1 };
 
 export const PluginHookContributionV2Schema = z.object({
-  id: z.string().trim().min(1),
+  id: PluginHookIdV1Schema,
   hookApiVersion: z.literal(1).default(1),
   category: HookCategoryV1Schema,
   scope: PluginHookScopeV1Schema,
@@ -358,7 +392,15 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'tools', schema: PluginToolContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'resources', schema: PluginResourceContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'uiDescriptors', schema: PluginUiDescriptorContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: 'uiTranslations', schema: PluginUiTranslationsContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'structuredMessages', schema: PluginStructuredMessageDescriptorV1Schema }),
+  definePluginContributionFamilyV2({ family: 'sessionSurfaces', schema: PluginSessionSurfaceDescriptorV1Schema }),
+  definePluginContributionFamilyV2({ family: 'sessionHeaderActions', schema: PluginSessionHeaderActionDescriptorV1Schema }),
+  definePluginContributionFamilyV2({ family: 'hostedWeb', schema: PluginHostedWebContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'reactNativeBundles', schema: PluginReactNativeBundleContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'uiArtifacts', schema: PluginUiArtifactContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'settings', schema: PluginSettingsContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: 'events', schema: PluginEventContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'executionRunProfiles', schema: PluginExecutionRunProfileContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'notifications', schema: PluginNotificationCategoryContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'notificationChannels', schema: PluginNotificationChannelContributionV2Schema }),
@@ -366,8 +408,11 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'scmBackends', schema: ScmBackendContributionSchema }),
   definePluginContributionFamilyV2({ family: 'connectedAccountDescriptors', schema: PluginConnectedAccountDescriptorContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'installables', schema: PluginInstallableContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: 'systemTools', schema: PluginSystemToolContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'promptAssets', schema: PluginPromptAssetContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'hooks', schema: PluginHookContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'lifecycleHandlers', schema: PluginLifecycleHandlerContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: 'requestInterceptors', schema: PluginRequestInterceptorContributionV1Schema }),
 ] as const;
 
 const PluginContributesV2BaseSchema = buildPluginContributionFamilySchemaV2(
@@ -382,3 +427,46 @@ export const PluginContributesV2Schema = PluginContributesV2BaseSchema.extend({
   }
 }).default({});
 export type PluginContributesV2 = z.infer<typeof PluginContributesV2Schema>;
+
+export {
+  PluginSystemToolContributionV1Schema,
+  PluginSystemToolSourceV1Schema,
+  type PluginSystemToolContributionV1,
+  type PluginSystemToolSourceV1,
+} from './systemTools.js';
+
+export {
+  PluginPromptAssetAdapterKindV1Schema,
+  PluginPromptAssetContributionV1Schema,
+  type PluginPromptAssetAdapterKindV1,
+  type PluginPromptAssetContributionV1,
+} from './promptAssets.js';
+
+export {
+  PluginUiTranslationsContributionV1Schema,
+  type PluginUiTranslationsContributionV1,
+} from './ui/i18n.js';
+export {
+  PluginStructuredMessageDescriptorV1Schema,
+  type PluginStructuredMessageDescriptorV1,
+} from './ui/structuredMessages.js';
+export {
+  PluginSessionSurfaceDescriptorV1Schema,
+  type PluginSessionSurfaceDescriptorV1,
+} from './ui/sessionSurfaces.js';
+export {
+  PluginSessionHeaderActionDescriptorV1Schema,
+  type PluginSessionHeaderActionDescriptorV1,
+} from './ui/sessionHeaderActions.js';
+export {
+  PluginHostedWebContributionV1Schema,
+  type PluginHostedWebContributionV1,
+} from './ui/hostedWeb.js';
+export {
+  PluginReactNativeBundleContributionV1Schema,
+  type PluginReactNativeBundleContributionV1,
+} from './ui/reactNativeBundles.js';
+export {
+  PluginUiArtifactContributionV1Schema,
+  type PluginUiArtifactContributionV1,
+} from './ui/artifacts.js';

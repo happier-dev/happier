@@ -86,6 +86,10 @@
       "types": "./dist/runtime/index.d.ts",
       "default": "./dist/runtime/index.js"
     },
+    "./providers/runtimeDescriptorContributionsV1": {
+      "types": "./dist/providers/runtimeDescriptorContributionsV1.d.ts",
+      "default": "./dist/providers/runtimeDescriptorContributionsV1.js"
+    },
     "./backends": {
       "types": "./dist/backends/index.d.ts",
       "default": "./dist/backends/index.js"
@@ -93,6 +97,10 @@
     "./pets": {
       "types": "./dist/pets/index.d.ts",
       "default": "./dist/pets/index.js"
+    },
+    "./plugins/ui": {
+      "types": "./dist/plugins/ui/index.d.ts",
+      "default": "./dist/plugins/ui/index.js"
     }
   },
   "files": [
@@ -101,7 +109,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "node scripts/generate-embedded-feature-policies.mjs && node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist', { recursive: true, force: true });fs.rmSync('.tsbuildinfo', { force: true });\" && node scripts/generate-embedded-feature-policies.mjs && node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts",
     "pretypecheck": "node scripts/generate-embedded-feature-policies.mjs",
     "postinstall:real": "yarn -s build",

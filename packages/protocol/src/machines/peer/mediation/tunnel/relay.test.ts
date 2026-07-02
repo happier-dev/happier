@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import tweetnacl from 'tweetnacl';
 
-type TunnelRelayModule = typeof import('./relay');
+type TunnelRelayModule = typeof import('./index');
 
 async function loadTunnelRelayModule(): Promise<TunnelRelayModule | null> {
-  const modulePath = './relay.js';
+  const modulePath = './index.js';
   return import(modulePath).catch(() => null) as Promise<TunnelRelayModule | null>;
 }
 
@@ -25,5 +26,169 @@ describe('peer TCP tunnel relay protocol', () => {
 
     expect(parsed?.success).toBe(true);
     expect(mod?.PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT).toBe('peer:tunnel:v1');
+  });
+
+  it('parses same-event binary relay envelopes for negotiated V2 tunnel frames', async () => {
+    const mod = await loadTunnelRelayModule();
+    const binaryFrame = new Uint8Array([0, 0, 0, 2, 123, 125]);
+
+    const parsed = mod?.PeerTcpTunnelRelayBinaryEnvelopeV2Schema.safeParse({
+      v: 2,
+      scopeUserId: 'user_1',
+      sender: { kind: 'user' },
+      recipient: { kind: 'machine', machineId: 'machine_1' },
+      encoding: 'binary_frame_v2',
+      frame: binaryFrame,
+    });
+
+    expect(parsed?.success).toBe(true);
+    expect(mod?.PeerTcpTunnelRelayEnvelopeSchema.safeParse(parsed?.success ? parsed.data : null).success).toBe(true);
+    expect(mod?.PeerTcpTunnelRelayBinaryEnvelopeV2Schema.safeParse({
+      v: 2,
+      scopeUserId: 'user_1',
+      sender: { kind: 'user' },
+      recipient: { kind: 'machine', machineId: 'machine_1' },
+      encoding: 'binary_frame_v2',
+      frame: Buffer.from(binaryFrame),
+    }).success).toBe(true);
+    expect(mod?.PeerTcpTunnelRelayBinaryEnvelopeV2Schema.safeParse({
+      v: 2,
+      scopeUserId: 'user_1',
+      sender: { kind: 'user' },
+      recipient: { kind: 'machine', machineId: 'machine_1' },
+      encoding: 'binary_frame_v2',
+      frame: 'not-binary',
+    }).success).toBe(false);
+  });
+
+  it('requires server relay opens to carry authorization bound to the tunnel and destination', async () => {
+    const mod = await loadTunnelRelayModule();
+    const authorization = {
+      payload: {
+        v: 1,
+        grantId: 'relay_grant_1',
+        accountId: 'user_1',
+        targetMachineId: 'machine_1',
+        flowKind: 'tcp_tunnel',
+        routeKind: 'server_relay',
+        tunnelId: 'tun_1',
+        destination: { host: '127.0.0.1', port: 3000 },
+        capProfileId: 'interactive',
+        maxFrameBytes: 64 * 1024,
+        maxIdleMs: 30_000,
+        maxDurationMs: 300_000,
+        maxTotalBytes: 64 * 1024 * 1024,
+        iat: 1_000,
+        exp: 301_000,
+        aud: 'happier-tcp-tunnel-relay-authorization',
+      },
+      signature: {
+        keyId: 'relay_key_1',
+        alg: 'Ed25519',
+        valueBase64Url: 'AbCdEf012_-',
+      },
+    } as const;
+
+    const openEnvelope = {
+      v: 1,
+      scopeUserId: 'user_1',
+      sender: { kind: 'user' },
+      recipient: { kind: 'machine', machineId: 'machine_1' },
+      frame: {
+        v: 1,
+        kind: 'open',
+        open: {
+          v: 1,
+          kind: 'open',
+          tunnelId: 'tun_1',
+          targetMachineId: 'machine_1',
+          routeKind: 'server_relay',
+          destination: { host: '127.0.0.1', port: 3000 },
+          relayAuthorization: authorization,
+        },
+      },
+    } as const;
+
+    expect(mod?.PeerTcpTunnelRelayEnvelopeV1Schema.safeParse(openEnvelope).success).toBe(true);
+    expect(mod?.PeerTcpTunnelRelayEnvelopeV1Schema.safeParse({
+      ...openEnvelope,
+      frame: {
+        ...openEnvelope.frame,
+        open: {
+          ...openEnvelope.frame.open,
+          relayAuthorization: undefined,
+        },
+      },
+    }).success).toBe(false);
+    expect(mod?.PeerTcpTunnelRelayEnvelopeV1Schema.safeParse({
+      ...openEnvelope,
+      frame: {
+        ...openEnvelope.frame,
+        open: {
+          ...openEnvelope.frame.open,
+          destination: { host: '127.0.0.1', port: 5173 },
+        },
+      },
+    }).success).toBe(false);
+  });
+
+  it('verifies TCP tunnel relay authorization signatures against configured trust roots', async () => {
+    const mod = await loadTunnelRelayModule();
+    expect(mod?.verifyPeerTcpTunnelRelayAuthorizationV1).toBeTypeOf('function');
+    if (!mod?.verifyPeerTcpTunnelRelayAuthorizationV1) return;
+
+    const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
+    const payload = {
+      v: 1,
+      grantId: 'relay_grant_1',
+      accountId: 'user_1',
+      targetMachineId: 'machine_1',
+      flowKind: 'tcp_tunnel',
+      routeKind: 'server_relay',
+      tunnelId: 'tun_1',
+      destination: { host: '127.0.0.1', port: 3000 },
+      capProfileId: 'interactive',
+      maxFrameBytes: 64 * 1024,
+      maxIdleMs: 30_000,
+      maxDurationMs: 300_000,
+      maxTotalBytes: 64 * 1024 * 1024,
+      iat: 1_000,
+      exp: 301_000,
+      aud: 'happier-tcp-tunnel-relay-authorization',
+    } as const;
+    const authorization = {
+      payload,
+      signature: {
+        keyId: 'relay_key_1',
+        alg: 'Ed25519',
+        valueBase64Url: Buffer.from(tweetnacl.sign.detached(
+          new TextEncoder().encode(mod.createPeerTcpTunnelRelayAuthorizationSigningInputV1(payload)),
+          keyPair.secretKey,
+        )).toString('base64url'),
+      },
+    } as const;
+
+    expect(mod.verifyPeerTcpTunnelRelayAuthorizationV1({
+      authorization,
+      nowMs: 2_000,
+      trustRoots: [{
+        keyId: 'relay_key_1',
+        publicKeyBase64Url: Buffer.from(keyPair.publicKey).toString('base64url'),
+      }],
+    })).toEqual({ valid: true, payload });
+    expect(mod.verifyPeerTcpTunnelRelayAuthorizationV1({
+      authorization: {
+        ...authorization,
+        signature: {
+          ...authorization.signature,
+          valueBase64Url: Buffer.from(new Uint8Array(64).fill(1)).toString('base64url'),
+        },
+      },
+      nowMs: 2_000,
+      trustRoots: [{
+        keyId: 'relay_key_1',
+        publicKeyBase64Url: Buffer.from(keyPair.publicKey).toString('base64url'),
+      }],
+    })).toEqual({ valid: false, reasonCode: 'bad_signature' });
   });
 });

@@ -99,8 +99,241 @@ describe('sessionControl contract exports', () => {
       encryption: { type: 'dataKey' },
       latestTurnStatus: 'failed',
       lastRuntimeIssue: runtimeIssue,
+      rollbackEligibleTurnStarts: [1, 3],
     });
     expect(summaryParsed.success).toBe(true);
+
+    const invalidRollbackStarts = (protocol as any).SessionSummarySchema.safeParse({
+      id: 'sess_123',
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      encryption: { type: 'dataKey' },
+      rollbackEligibleTurnStarts: [1, -1],
+    });
+    expect(invalidRollbackStarts.success).toBe(false);
+
+    const invalidLatestTurnId = (protocol as any).SessionSummarySchema.safeParse({
+      id: 'sess_123',
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      encryption: { type: 'dataKey' },
+      latestTurnId: 't'.repeat(192),
+    });
+    expect(invalidLatestTurnId.success).toBe(false);
+  });
+
+  it('does not export dev-only primary turn projection compatibility payloads', () => {
+    expect((protocol as any).LegacyPrimaryTurnProjectionMutationV1Schema).toBeUndefined();
+    expect((protocol as any).PrimaryTurnProjectionMutationV1Schema).toBeUndefined();
+    expect((protocol as any).buildSessionTurnMutationsFromLegacyPrimaryTurnProjectionMutation).toBeUndefined();
+    expect((protocol as any).buildSessionTurnMutationsFromPrimaryTurnProjectionMutation).toBeUndefined();
+    expect((protocol as any).resolveLegacyPrimaryTurnProjectionTurnId).toBeUndefined();
+  });
+
+  it('validates durable session turn mutation payloads', () => {
+    expect(typeof (protocol as any).SessionTurnMutationV1Schema?.safeParse).toBe('function');
+
+    const beginMutation = {
+      v: 1,
+      sessionId: 'sess_123',
+      mutationId: 'mutation_123',
+      action: 'begin',
+      turnId: 'turn_123',
+      provider: 'codex',
+      providerTurnId: 'provider_turn_123',
+      observedAt: 123,
+    };
+
+    expect((protocol as any).SessionTurnMutationV1Schema.safeParse(beginMutation).success).toBe(true);
+    expect((protocol as any).SessionTurnMutationV1Schema.safeParse({
+      ...beginMutation,
+      action: 'complete',
+    }).success).toBe(true);
+    expect((protocol as any).SessionTurnMutationV1Schema.safeParse({
+      ...beginMutation,
+      action: 'fail',
+      issue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'stream_error',
+        source: 'stream_error',
+        occurredAt: 123,
+      },
+    }).success).toBe(true);
+    expect((protocol as any).SessionTurnMutationV1Schema.safeParse({
+      ...beginMutation,
+      providerTurnId: null,
+    }).success).toBe(false);
+    expect((protocol as any).SessionTurnMutationV1Schema.safeParse({
+      ...beginMutation,
+      action: 'append_transcript_anchors',
+      transcriptAnchors: {
+        userMessageSeqs: [1, 2],
+      },
+    }).success).toBe(true);
+    expect((protocol as any).SessionTurnMutationV1Schema.safeParse({
+      ...beginMutation,
+      action: 'end_session',
+      turnId: undefined,
+    }).success).toBe(true);
+  });
+
+  it('validates structured usage-limit issue details', () => {
+    expect(typeof (protocol as any).SessionRuntimeUsageLimitDetailsV1Schema?.safeParse).toBe('function');
+
+    const usageLimit = {
+      v: 1,
+      resetAtMs: 123_000,
+      retryAfterMs: null,
+      quotaScope: 'account',
+      recoverability: 'switch_account',
+      planType: 'team',
+      limitCategory: 'quota',
+      quotaSnapshotRef: {
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'codex-main',
+        fetchedAtMs: 120_000,
+      },
+      effectiveMeterId: 'weekly',
+      effectiveRemainingPct: 8,
+      allWindows: [
+        { meterId: 'daily', scope: 'daily', remainingPct: 30, resetAtMs: 150_000, status: 'ok' },
+        { meterId: 'weekly', scope: 'weekly', remainingPct: 8, resetAtMs: 200_000, status: 'ok' },
+      ],
+      recoveryDecision: 'switching',
+      connectedService: {
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'codex-main',
+        groupExhausted: false,
+      },
+    };
+
+    const parsedDetails = (protocol as any).SessionRuntimeUsageLimitDetailsV1Schema.safeParse(usageLimit);
+    expect(parsedDetails.success).toBe(true);
+    expect(parsedDetails.data.limitCategory).toBe('usage_limit');
+    expect(parsedDetails.data.quotaSnapshotRef).toEqual({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      groupId: 'codex-main',
+      fetchedAtMs: 120_000,
+    });
+    expect((protocol as any).SessionRuntimeUsageLimitDetailsV1Schema.safeParse({
+      ...usageLimit,
+      action: { kind: 'open_url' },
+    }).success).toBe(false);
+    expect((protocol as any).SessionRuntimeUsageLimitDetailsV1Schema.safeParse({
+      ...usageLimit,
+      action: { kind: 'settings', url: 'https://example.com' },
+    }).success).toBe(false);
+    expect((protocol as any).SessionRuntimeUsageLimitDetailsV1Schema.safeParse({
+      ...usageLimit,
+      action: { kind: 'open_url', url: 'https://example.com' },
+    }).success).toBe(true);
+    expect((protocol as any).SessionRuntimeUsageLimitDetailsV1Schema.safeParse({
+      ...usageLimit,
+      limitCategory: 'capacity',
+    }).success).toBe(true);
+    expect((protocol as any).SessionRuntimeUsageLimitDetailsV1Schema.safeParse({
+      ...usageLimit,
+      limitCategory: 'quota',
+      effectiveRemainingPct: 101,
+    }).success).toBe(false);
+
+    const issueParsed = (protocol as any).SessionRuntimeIssueV1Schema.safeParse({
+      v: 1,
+      scope: 'primary_session',
+      status: 'failed',
+      code: 'usage_limit',
+      source: 'usage_limit',
+      occurredAt: 123,
+      usageLimit,
+    });
+    expect(issueParsed.success).toBe(true);
+  });
+
+  it('exports and validates the metadata-backed usage-limit recovery intent schema', () => {
+    expect((protocol as any).SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID).toBe('runtime.usageLimitRecovery');
+    expect((protocol as any).SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY).toBe('sessionUsageLimitRecoveryV1');
+
+    const intent = {
+      v: 1,
+      status: 'waiting',
+      issueFingerprint: 'usage-limit:s1:123',
+      armedAtMs: 100,
+      resetAtMs: 1_000,
+      nextCheckAtMs: 1_050,
+      attemptCount: 1,
+      maxAttempts: 5,
+      lastProbeError: null,
+      selectedAuth: {
+        kind: 'group',
+        serviceId: 'openai-codex',
+        groupId: 'codex-main',
+        profileId: 'work',
+      },
+    };
+
+    const standardParsed = (protocol as any).SessionUsageLimitRecoveryV1Schema.safeParse(intent);
+    expect(standardParsed.success).toBe(true);
+    expect(standardParsed.data.resumePromptMode).toBe('standard');
+    expect((protocol as any).SessionUsageLimitRecoveryV1Schema.safeParse({
+      ...intent,
+      selectedAuth: {
+        kind: 'group',
+        serviceId: 'openai-codex',
+        groupId: 'codex-main',
+        profileId: null,
+      },
+    }).success).toBe(true);
+    const offParsed = (protocol as any).SessionUsageLimitRecoveryV1Schema.safeParse({
+      ...intent,
+      resumePromptMode: 'off',
+    });
+    expect(offParsed.success).toBe(true);
+    expect(offParsed.data.resumePromptMode).toBe('off');
+    expect((protocol as any).SessionMetadataSchema.safeParse({
+      sessionUsageLimitRecoveryV1: offParsed.data,
+    }).success).toBe(true);
+    expect((protocol as any).SessionUsageLimitRecoveryV1Schema.safeParse({
+      ...intent,
+      attemptCount: -1,
+    }).success).toBe(false);
+    expect((protocol as any).SessionUsageLimitRecoveryV1Schema.safeParse({
+      ...intent,
+      resumePromptMode: 'invalid',
+    }).success).toBe(false);
+  });
+
+  it('exports and validates continuation recovery metadata used to gate pending drains', () => {
+    expect((protocol as any).SESSION_CONTINUATION_RECOVERY_METADATA_KEY).toBe('sessionContinuationRecoveryV1');
+    expect(typeof (protocol as any).SessionContinuationRecoveryV1Schema?.safeParse).toBe('function');
+    expect(typeof (protocol as any).isSessionContinuationRecoveryBlockingPendingDrain).toBe('function');
+
+    const metadata = {
+      sessionContinuationRecoveryV1: {
+        v: 1,
+        attemptsById: {
+          'generation-1:restart-1': {
+            v: 1,
+            attemptId: 'generation-1:restart-1',
+            status: 'sending',
+            failureAtMs: 100,
+            updatedAtMs: 110,
+            resumePromptMode: 'standard',
+          },
+        },
+      },
+    };
+
+    expect((protocol as any).SessionMetadataSchema.safeParse(metadata).success).toBe(true);
+    expect((protocol as any).isSessionContinuationRecoveryBlockingPendingDrain(metadata)).toBe(true);
   });
 
   it('validates primary turn status and sanitized runtime issue fields on v2 session records', () => {
@@ -128,10 +361,100 @@ describe('sessionControl contract exports', () => {
       agentStateVersion: 1,
       dataEncryptionKey: null,
       latestTurnStatus: 'failed',
+      latestTurnStatusObservedAt: 456,
       lastRuntimeIssue: runtimeIssue,
+      pendingRequestObservedAt: 789,
+      latestReadyEventSeq: 8,
+      latestReadyEventAt: 654,
+      thinking: true,
+      thinkingAt: 654,
     });
 
     expect(parsed.success).toBe(true);
+
+    const invalidObservedAt = (protocol as any).V2SessionRecordSchema.safeParse({
+      id: 'sess_123',
+      seq: 7,
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      metadata: '{}',
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 1,
+      dataEncryptionKey: null,
+      latestTurnStatus: 'failed',
+      latestTurnStatusObservedAt: -1,
+    });
+    expect(invalidObservedAt.success).toBe(false);
+
+    const invalidAttentionProjection = (protocol as any).V2SessionRecordSchema.safeParse({
+      id: 'sess_123',
+      seq: 7,
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      metadata: '{}',
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 1,
+      dataEncryptionKey: null,
+      thinkingAt: -1,
+    });
+    expect(invalidAttentionProjection.success).toBe(false);
+
+    const invalidLatestTurnId = (protocol as any).V2SessionRecordSchema.safeParse({
+      id: 'sess_123',
+      seq: 7,
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      metadata: '{}',
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 1,
+      dataEncryptionKey: null,
+      latestTurnId: 't'.repeat(192),
+    });
+    expect(invalidLatestTurnId.success).toBe(false);
+  });
+
+  it('validates meaningful activity timestamps on v2 session records', () => {
+    const schema = (protocol as any).V2SessionRecordSchema;
+    const valid = schema.safeParse({
+      id: 'sess_123',
+      seq: 1,
+      createdAt: 1,
+      updatedAt: 4,
+      meaningfulActivityAt: 3,
+      active: false,
+      activeAt: 0,
+      metadata: '{}',
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 1,
+      dataEncryptionKey: null,
+    });
+    expect(valid.success).toBe(true);
+
+    const invalid = schema.safeParse({
+      id: 'sess_123',
+      seq: 1,
+      createdAt: 1,
+      updatedAt: 4,
+      meaningfulActivityAt: -1,
+      active: false,
+      activeAt: 0,
+      metadata: '{}',
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 1,
+      dataEncryptionKey: null,
+    });
+    expect(invalid.success).toBe(false);
   });
 
   it('validates a session_wait envelope shape', () => {
@@ -368,5 +691,16 @@ describe('sessionControl contract exports', () => {
     expect(decode('cursor_v1_sess_123')).toBe('sess_123');
     expect(decode('cursor_v1_')).toBe(null);
     expect(decode('nope')).toBe(null);
+  });
+
+  it('encodes and decodes v2 session list cursors with meaningful activity', () => {
+    const encode = (protocol as any).encodeV2SessionListCursorV2;
+    const decode = (protocol as any).decodeV2SessionListCursorV2;
+
+    const cursor = encode({ sessionId: 'sess_123', meaningfulActivityAt: 1700000000000 });
+    expect(cursor).toMatch(/^cursor_v2_/);
+    expect(decode(cursor)).toEqual({ sessionId: 'sess_123', meaningfulActivityAt: 1700000000000 });
+    expect(decode('cursor_v2_not-json')).toBe(null);
+    expect(decode('cursor_v1_sess_123')).toBe(null);
   });
 });

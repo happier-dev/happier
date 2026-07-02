@@ -13,9 +13,11 @@ export const PluginRuntimeCapabilityFamilyV1Schema = z.enum([
   'executionRunProfiles',
   'mcp',
   'notifications',
+  'sessionHooks',
   'scmHostingProviders',
   'scmBackends',
   'connectedAccountDescriptors',
+  'terminalHost',
   'lifecycle',
   'reload',
 ]);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_BUILT_IN_BACKEND_PROFILES } from './builtInBackendProfiles.js';
 import {
   AIBackendProfileSchema,
   SavedSecretSchema,
@@ -46,6 +47,49 @@ describe('profiles (protocol)', () => {
 
     expect(result.profile.id).toBe('openai');
     expect(result.profile.isBuiltIn).toBe(true);
+  });
+
+  it('preserves Gemini built-in profile model defaults', () => {
+    const geminiProfiles = DEFAULT_BUILT_IN_BACKEND_PROFILES.filter((profile) => (
+      profile.compatibilityByTargetKey['agent:gemini'] === true
+    ));
+
+    expect(geminiProfiles.length).toBeGreaterThan(0);
+    expect(geminiProfiles.find((profile) => profile.id === 'gemini-api-key')?.environmentVariables).toContainEqual({
+      name: 'GEMINI_MODEL',
+      value: 'gemini-2.5-pro',
+    });
+    expect(geminiProfiles.find((profile) => profile.id === 'gemini-vertex')?.environmentVariables).toContainEqual({
+      name: 'GEMINI_MODEL',
+      value: 'gemini-2.5-pro',
+    });
+  });
+
+  it('defaults profiles to enabled unless explicitly disabled', () => {
+    const enabledByDefault = AIBackendProfileSchema.parse({
+      id: 'work',
+      name: 'Work',
+      environmentVariables: [],
+      envVarRequirements: [],
+      isBuiltIn: false,
+      createdAt: 0,
+      updatedAt: 0,
+      version: '1.0.0',
+    });
+    const disabledByDefault = AIBackendProfileSchema.parse({
+      id: 'long-tail',
+      name: 'Long Tail',
+      defaultEnabled: false,
+      environmentVariables: [],
+      envVarRequirements: [],
+      isBuiltIn: true,
+      createdAt: 0,
+      updatedAt: 0,
+      version: '1.0.0',
+    });
+
+    expect(enabledByDefault.defaultEnabled).toBe(true);
+    expect(disabledByDefault.defaultEnabled).toBe(false);
   });
 
   it('resolves custom profiles by id', () => {

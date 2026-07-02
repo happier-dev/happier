@@ -30,6 +30,45 @@ function asRecord(value: unknown): UnknownRecord | null {
   return value as UnknownRecord;
 }
 
+const SHELL_LIKE_TOOL_NAMES = new Set(['bash', 'execute', 'shell']);
+const GENERIC_EXECUTE_TITLES = new Set([
+  'execute',
+  'shell',
+  'bash',
+  'run shell command',
+  'run terminal command',
+  'run command',
+  'execute shell command',
+  'execute terminal command',
+  'execute command',
+  'shell command',
+]);
+
+function normalizeExecuteTitleLabel(value: string): string {
+  return value.trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+}
+
+function normalizeTitleSourcedCommand(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const command = value.trim().replace(/\s+/g, ' ');
+  if (!command) return null;
+  if (GENERIC_EXECUTE_TITLES.has(normalizeExecuteTitleLabel(command))) return null;
+
+  const prefixed = command.match(
+    /^(shell|bash|execute|run shell command|run terminal command|run command|execute shell command|execute terminal command|execute command)\s*:\s*(.+)$/i,
+  );
+  const stripped = prefixed?.[2]?.trim();
+  if (stripped && !GENERIC_EXECUTE_TITLES.has(normalizeExecuteTitleLabel(stripped))) return stripped;
+  return command;
+}
+
+function isShellLikeToolCall(value: UnknownRecord): boolean {
+  const kind = typeof value.kind === 'string' ? value.kind.trim().toLowerCase() : '';
+  if (kind === 'execute') return true;
+  const toolName = typeof value.toolName === 'string' ? value.toolName.trim().toLowerCase() : '';
+  return SHELL_LIKE_TOOL_NAMES.has(toolName);
+}
+
 function extractCommandArrayLike(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   const parts: string[] = [];
@@ -121,9 +160,16 @@ export function extractShellCommand(input: unknown): string | null {
   }
 
   const toolCall = asRecord(obj.toolCall);
-  const rawInput = toolCall ? asRecord(toolCall.rawInput) : null;
-  if (rawInput) {
-    return extractShellCommand(rawInput);
+  if (toolCall) {
+    const rawInput = toolCall ? asRecord(toolCall.rawInput) : null;
+    if (rawInput) {
+      const rawInputCommand = extractShellCommand(rawInput);
+      if (rawInputCommand) return rawInputCommand;
+    }
+
+    if (isShellLikeToolCall(toolCall)) {
+      return normalizeTitleSourcedCommand(toolCall.title);
+    }
   }
 
   return null;

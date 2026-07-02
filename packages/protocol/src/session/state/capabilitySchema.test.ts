@@ -42,15 +42,33 @@ describe('SessionStateCapabilitiesV1Schema', () => {
   it('publishes the closed V1 field id catalog', () => {
     expect(SESSION_STATE_FIELD_IDS).toEqual([
       'identity.runtimeDescriptor',
-      'identity.vendorSessionId',
+      'identity.providerSessionId',
       'intent.model',
       'intent.permissionMode',
       'intent.acpSessionMode',
       'intent.acpConfigOption',
       'display.title',
+      'runtime.workState',
+      'runtime.usageLimitRecovery',
       'view.readState',
       'view.attention',
     ]);
+  });
+
+  it('accepts usage-limit recovery capabilities in the closed schema', () => {
+    const parsed = SessionStateCapabilitiesV1Schema.parse({
+      runtime: {
+        usageLimitRecovery: {
+          supported: true,
+          providerToHappier: { supported: true, source: 'event' },
+        },
+      },
+    });
+
+    expect(parsed.runtime?.usageLimitRecovery?.providerToHappier).toEqual({
+      supported: true,
+      source: 'event',
+    });
   });
 
   it('embeds the schema at capabilities.session.state', () => {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { createCanonicalJsonSigningInput } from '../directRouteGrantV1.js';
+import { MachineLiveStreamControlSidebandV1Schema } from './controlV1.js';
 
 export const MACHINE_LIVE_STREAM_SOCKET_EVENT = 'machines.liveStream.v1' as const;
 export const MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1 = 'happier-live-stream-relay-authorization' as const;
@@ -280,6 +281,7 @@ export const MachineLiveStreamRelayEnvelopeV1Schema = z
       z.object({ kind: z.literal('start_response'), startResponse: MachineLiveStreamStartResponseV1Schema }).passthrough(),
       z.object({ kind: z.literal('frame'), frame: MachineLiveStreamFrameV1Schema }).passthrough(),
       z.object({ kind: z.literal('control'), control: MachineLiveStreamControlV1Schema }).passthrough(),
+      z.object({ kind: z.literal('sideband_control'), control: MachineLiveStreamControlSidebandV1Schema }).strict(),
       z.object({ kind: z.literal('receipt'), receipt: z.unknown() }).passthrough(),
       z.object({ kind: z.literal('metering'), metering: MachineLiveStreamMeteringV1Schema }).passthrough(),
     ]),

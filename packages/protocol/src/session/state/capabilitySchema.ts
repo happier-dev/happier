@@ -47,7 +47,7 @@ export const SessionStateCapabilitiesV1Schema = z
     identity: z
       .object({
         runtimeDescriptor: SessionStateFieldCapabilitySchema.optional(),
-        vendorSessionId: SessionStateFieldCapabilitySchema.optional(),
+        providerSessionId: SessionStateFieldCapabilitySchema.optional(),
       })
       .strict()
       .optional(),
@@ -63,6 +63,13 @@ export const SessionStateCapabilitiesV1Schema = z
     display: z
       .object({
         title: SessionStateFieldCapabilitySchema.optional(),
+      })
+      .strict()
+      .optional(),
+    runtime: z
+      .object({
+        workState: SessionStateFieldCapabilitySchema.optional(),
+        usageLimitRecovery: SessionStateFieldCapabilitySchema.optional(),
       })
       .strict()
       .optional(),

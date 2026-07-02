@@ -4,6 +4,10 @@ export const ActivityWebhookTopicSchema = z.enum([
   'ready',
   'permission_request',
   'user_action_request',
+  'connected_service_account_switch',
+  'connected_service_credential_health',
+  'connected_service_quota_blocked',
+  'connected_service_quota_recovered',
 ]);
 
 export type ActivityWebhookTopic = z.infer<typeof ActivityWebhookTopicSchema>;

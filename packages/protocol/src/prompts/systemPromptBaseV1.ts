@@ -1,10 +1,10 @@
 import { trimIdent } from '../strings/trimIdent.js';
 import {
   isCodingPromptResponseOptionsEnabled,
-  isCodingPromptSessionTitleUpdatesEnabled,
+  resolveCodingPromptSessionTitleUpdatesModeV1,
 } from './codingPromptBehaviorV1.js';
 
-export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_V1 = trimIdent(`
+export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 = trimIdent(`
   # Session title
 
   At the start of the session (before you respond to the first user message), you MUST call the change_title tool once to set a short, descriptive session title based on the user's message.
@@ -12,9 +12,15 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_V1 = trimIdent(`
   This title-change tool call is always allowed and does not require asking the user for permission.
 
   The tool may be exposed under different names depending on the provider. Prefer "mcp__happier__change_title" when available; otherwise use an equivalent alias (for example: change_title).
+`);
+
+export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1 = trimIdent(`
+  ${HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1}
 
   Call the title tool again if the task changes significantly.
 `);
+
+export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_V1 = HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1;
 
 export const HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 = trimIdent(`
   # Options
@@ -59,8 +65,11 @@ export function buildHappierBaseSystemPromptV1(args?: Readonly<{
   settings?: Record<string, unknown> | null | undefined;
 }>): string {
   const blocks: string[] = [];
-  if (isCodingPromptSessionTitleUpdatesEnabled(args?.settings)) {
-    blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_V1);
+  const sessionTitleUpdatesMode = resolveCodingPromptSessionTitleUpdatesModeV1(args?.settings);
+  if (sessionTitleUpdatesMode === 'initial') {
+    blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1);
+  } else if (sessionTitleUpdatesMode === 'ongoing') {
+    blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1);
   }
   if (isCodingPromptResponseOptionsEnabled(args?.settings)) {
     blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1);

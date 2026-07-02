@@ -5,16 +5,40 @@ import type { NotificationsSettingsV1 } from './accountSettings.js';
 
 export const BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID = 'builtin:expo_push';
 
+function normalizeNotificationChannelTopicsV1Input(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  if (
+    !Object.prototype.hasOwnProperty.call(record, 'connectedServiceQuotaRecovered')
+    && record.connectedServiceQuotaBlocked === false
+  ) {
+    return {
+      ...record,
+      connectedServiceQuotaRecovered: false,
+    };
+  }
+  return raw;
+}
+
 export const NotificationChannelTopicsV1Schema = z
-  .object({
-    ready: z.boolean().default(true),
-    permissionRequest: z.boolean().default(true),
-    userActionRequest: z.boolean().default(true),
-  })
+  .preprocess(
+    normalizeNotificationChannelTopicsV1Input,
+    z.object({
+      ready: z.boolean().default(true),
+      permissionRequest: z.boolean().default(true),
+      userActionRequest: z.boolean().default(true),
+      connectedServiceAccountSwitch: z.boolean().default(true),
+      connectedServiceQuotaBlocked: z.boolean().default(true),
+      connectedServiceQuotaRecovered: z.boolean().default(true),
+    }),
+  )
   .catch({
     ready: true,
     permissionRequest: true,
     userActionRequest: true,
+    connectedServiceAccountSwitch: true,
+    connectedServiceQuotaBlocked: true,
+    connectedServiceQuotaRecovered: true,
   });
 
 export type NotificationChannelTopicsV1 = z.infer<typeof NotificationChannelTopicsV1Schema>;
@@ -84,6 +108,9 @@ export function deriveExpoPushNotificationChannelFromLegacySettings(
       ready: settings.ready !== false,
       permissionRequest: settings.permissionRequest !== false,
       userActionRequest: settings.userActionRequest !== false,
+      connectedServiceAccountSwitch: settings.connectedServiceAccountSwitch !== false,
+      connectedServiceQuotaBlocked: settings.connectedServiceQuotaBlocked !== false,
+      connectedServiceQuotaRecovered: settings.connectedServiceQuotaRecovered !== false,
     },
     readyIncludeMessageText: settings.readyIncludeMessageText !== false,
   });

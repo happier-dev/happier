@@ -4,6 +4,7 @@ import { ExecutionRunPublicStateSchema } from './executionRuns.js';
 import { SessionMessageRoleSchema } from './sessionMessages/sessionMessageRole.js';
 import { SessionStoredMessageContentSchema } from './sessionMessages/sessionStoredMessageContent.js';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from './sessions/control/runtimeIssueV1.js';
+import { TurnIdSchema } from './sessions/idsV1.js';
 
 const TimestampMsSchema = z.number().int().min(0);
 const Base64Schema = z.string();
@@ -65,17 +66,26 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     activeAt: TimestampMsSchema,
     createdAt: TimestampMsSchema,
     updatedAt: TimestampMsSchema,
+    meaningfulActivityAt: TimestampMsSchema.optional(),
   }).passthrough(),
   z.object({
     t: z.literal('update-session'),
     id: z.string(),
     metadata: VersionedNullableStringSchema.optional(),
     agentState: VersionedNullableStringSchema.optional(),
+    active: z.boolean().optional(),
+    activeAt: TimestampMsSchema.optional(),
     lastViewedSessionSeq: z.number().int().min(0).optional(),
     pendingPermissionRequestCount: z.number().int().min(0).optional(),
     pendingUserActionRequestCount: z.number().int().min(0).optional(),
+    pendingRequestObservedAt: TimestampMsSchema.nullable().optional(),
+    latestReadyEventSeq: z.number().int().min(0).nullable().optional(),
+    latestReadyEventAt: TimestampMsSchema.nullable().optional(),
+    latestTurnId: TurnIdSchema.nullable().optional(),
     latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
+    latestTurnStatusObservedAt: TimestampMsSchema.nullable().optional(),
     lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
+    meaningfulActivityAt: TimestampMsSchema.optional(),
     archivedAt: TimestampMsSchema.nullable().optional(),
   }).passthrough(),
   z.object({
@@ -85,6 +95,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     pendingVersion: z.number().int().min(0),
     pendingCount: z.number().int().min(0),
     changedByAccountId: z.string().optional(),
+    meaningfulActivityAt: TimestampMsSchema.optional(),
   }).passthrough(),
   z.object({
     t: z.literal('automation-upsert'),
@@ -206,6 +217,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
       avatar: z.unknown().nullable(),
     }).passthrough(),
     accessLevel: z.enum(['view', 'edit', 'admin']),
+    canApprovePermissions: z.boolean().optional(),
     encryptedDataKey: Base64Schema.optional(),
     createdAt: TimestampMsSchema,
   }).passthrough(),
@@ -214,6 +226,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     sessionId: z.string(),
     shareId: z.string(),
     accessLevel: z.enum(['view', 'edit', 'admin']),
+    canApprovePermissions: z.boolean().optional(),
     updatedAt: TimestampMsSchema,
   }).passthrough(),
   z.object({
@@ -365,6 +378,33 @@ export const MessageAckResponseSchema = z.union([
 ]);
 
 export type MessageAckResponse = z.infer<typeof MessageAckResponseSchema>;
+
+export const SessionEndAckResponseSchema = z.union([
+  z.object({
+    ok: z.literal(true),
+    applied: z.boolean(),
+    active: z.literal(false).optional(),
+    activeAt: TimestampMsSchema.optional(),
+    latestTurnId: TurnIdSchema.nullable().optional(),
+    latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
+    latestTurnStatusObservedAt: TimestampMsSchema.nullable().optional(),
+    lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
+    projection: z.object({
+      active: z.literal(false).optional(),
+      activeAt: TimestampMsSchema.optional(),
+      latestTurnId: TurnIdSchema.nullable().optional(),
+      latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
+      latestTurnStatusObservedAt: TimestampMsSchema.nullable().optional(),
+      lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
+    }).passthrough().optional(),
+  }).passthrough(),
+  z.object({
+    ok: z.literal(false),
+    error: z.string(),
+  }).passthrough(),
+]);
+
+export type SessionEndAckResponse = z.infer<typeof SessionEndAckResponseSchema>;
 
 export const UpdateMetadataAckResponseSchema = z.discriminatedUnion('result', [
   z.object({

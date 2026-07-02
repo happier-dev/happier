@@ -39,24 +39,46 @@ export type ExecutionRunClass = z.infer<typeof ExecutionRunClassSchema>;
 export const ExecutionRunIoModeSchema = z.enum(['request_response', 'streaming']);
 export type ExecutionRunIoMode = z.infer<typeof ExecutionRunIoModeSchema>;
 
+const PROVIDER_SESSION_RESUME_HANDLE_KIND = 'provider_session.v1';
+const LEGACY_VENDOR_SESSION_RESUME_HANDLE_KIND = 'vendor_session.v1';
+
 export function normalizeLegacyExecutionRunBackendTargetInput(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return value;
   }
   const record = value as Record<string, unknown>;
+  const providerSessionId = typeof record.providerSessionId === 'string' ? record.providerSessionId.trim() : '';
+  const legacyVendorSessionId = typeof record.vendorSessionId === 'string' ? record.vendorSessionId.trim() : '';
+  const hasProviderSessionResumeHandleKind = record.kind === PROVIDER_SESSION_RESUME_HANDLE_KIND
+    || record.kind === LEGACY_VENDOR_SESSION_RESUME_HANDLE_KIND;
+  const normalizedProviderSessionFields = hasProviderSessionResumeHandleKind
+    ? (() => {
+        const { vendorSessionId: _legacyVendorSessionId, ...rest } = record;
+        const next = record.kind === LEGACY_VENDOR_SESSION_RESUME_HANDLE_KIND
+          ? { ...rest, kind: PROVIDER_SESSION_RESUME_HANDLE_KIND }
+          : rest;
+        if (providerSessionId || !legacyVendorSessionId) {
+          return next;
+        }
+        return {
+          ...next,
+          providerSessionId: legacyVendorSessionId, // legacy vendorSessionId read-compat
+        };
+      })()
+    : record;
   if (record.backendTarget !== undefined) {
-    return value;
+    return normalizedProviderSessionFields === record ? value : normalizedProviderSessionFields;
   }
   const legacyBackendId = typeof record.backendId === 'string' ? record.backendId.trim() : '';
   if (!legacyBackendId) {
-    return value;
+    return normalizedProviderSessionFields === record ? value : normalizedProviderSessionFields;
   }
   const legacyConfiguredBackendId = typeof record.configuredBackendId === 'string'
     ? record.configuredBackendId.trim()
     : '';
   if (record.sourceKind === 'configured' || legacyConfiguredBackendId) {
     return {
-      ...record,
+      ...normalizedProviderSessionFields,
       backendTarget: {
         kind: 'backend',
         backendId: legacyConfiguredBackendId || legacyBackendId,
@@ -66,10 +88,10 @@ export function normalizeLegacyExecutionRunBackendTargetInput(value: unknown): u
     };
   }
   if (isLegacyCustomAcpId(legacyBackendId)) {
-    return value;
+    return normalizedProviderSessionFields === record ? value : normalizedProviderSessionFields;
   }
   return {
-    ...record,
+    ...normalizedProviderSessionFields,
     backendTarget: {
       kind: 'backend',
       backendId: legacyBackendId,
@@ -78,10 +100,10 @@ export function normalizeLegacyExecutionRunBackendTargetInput(value: unknown): u
   };
 }
 
-const ExecutionRunResumeHandleVendorSessionV1SchemaCore = z.object({
-  kind: z.literal('vendor_session.v1'),
+const ExecutionRunResumeHandleProviderSessionV1SchemaCore = z.object({
+  kind: z.literal(PROVIDER_SESSION_RESUME_HANDLE_KIND),
   backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
-  vendorSessionId: z.string().min(1),
+  providerSessionId: z.string().min(1),
 }).passthrough().superRefine((value, ctx) => {
   if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
@@ -91,17 +113,17 @@ const ExecutionRunResumeHandleVendorSessionV1SchemaCore = z.object({
     });
   }
 });
-export const ExecutionRunResumeHandleVendorSessionV1Schema = z.preprocess(
+export const ExecutionRunResumeHandleProviderSessionV1Schema = z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
-  ExecutionRunResumeHandleVendorSessionV1SchemaCore,
+  ExecutionRunResumeHandleProviderSessionV1SchemaCore,
 );
-export type ExecutionRunResumeHandleVendorSessionV1 = z.infer<typeof ExecutionRunResumeHandleVendorSessionV1Schema>;
+export type ExecutionRunResumeHandleProviderSessionV1 = z.infer<typeof ExecutionRunResumeHandleProviderSessionV1Schema>;
 
 const ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore = z.object({
   kind: z.literal('voice_agent_sessions.v1'),
   backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
-  chatVendorSessionId: z.string().min(1),
-  commitVendorSessionId: z.string().min(1),
+  chatProviderSessionId: z.string().min(1),
+  commitProviderSessionId: z.string().min(1),
 }).passthrough().superRefine((value, ctx) => {
   if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
@@ -118,7 +140,7 @@ export const ExecutionRunResumeHandleVoiceAgentSessionsV1Schema = z.preprocess(
 export type ExecutionRunResumeHandleVoiceAgentSessionsV1 = z.infer<typeof ExecutionRunResumeHandleVoiceAgentSessionsV1Schema>;
 
 const ExecutionRunResumeHandleSchemaCore = z.discriminatedUnion('kind', [
-  ExecutionRunResumeHandleVendorSessionV1SchemaCore,
+  ExecutionRunResumeHandleProviderSessionV1SchemaCore,
   ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore,
 ]);
 export const ExecutionRunResumeHandleSchema = z.preprocess(

@@ -1,13 +1,21 @@
 import { z } from 'zod';
 
 import { ActionIdSchema, normalizeLegacyActionId, type ActionId } from './actionIds.js';
-import { ActionSurfaceSchema, type ActionSurfaces } from './actionSpecs.js';
+import {
+  ActionSurfaceSchema,
+  ActionToolExposureModeSchema,
+  type ActionSurfaces,
+  type ActionToolExposureMode,
+  type ActionToolExposureSurface,
+} from './actionSpecs.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 
 const ActionSurfaceKeySchema = ActionSurfaceSchema.keyof();
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
 export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
+const ACTION_TOOL_EXPOSURE_MODE_KEYS = ['session_agent', 'mcp', 'cli'] as const satisfies readonly ActionToolExposureSurface[];
+const ACTION_TOOL_EXPOSURE_MODE_KEY_SET = new Set<string>(ACTION_TOOL_EXPOSURE_MODE_KEYS);
 const BROAD_ACTION_SURFACE_KEYS = new Set<ActionSurfaceKey>(ActionSurfaceKeySchema.options);
 // A.6 tolerant read-on-load shim for pre-broad-surface persisted settings.
 // Keep the legacy spellings constructed below so the final source fence still
@@ -39,6 +47,32 @@ function normalizeActionSurfaceList(raw: unknown): readonly ActionSurfaceKey[] {
   return next;
 }
 
+function normalizeActionToolExposureModes(raw: unknown): Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+
+  const next: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!ACTION_TOOL_EXPOSURE_MODE_KEY_SET.has(key)) continue;
+    const parsed = ActionToolExposureModeSchema.safeParse(value);
+    if (!parsed.success) continue;
+    next[key as ActionToolExposureSurface] = parsed.data;
+  }
+  return next;
+}
+
+const ActionSettingsToolExposureModesSchema = z.preprocess(
+  normalizeActionToolExposureModes,
+  z
+    .object({
+      session_agent: ActionToolExposureModeSchema.optional(),
+      mcp: ActionToolExposureModeSchema.optional(),
+      cli: ActionToolExposureModeSchema.optional(),
+    })
+    .default({}),
+);
+
 function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return raw;
@@ -59,6 +93,7 @@ const ActionSettingsOverrideSchema = z.preprocess(
       disabledSurfaces: z.array(ActionSurfaceKeySchema).default([]),
       disabledPlacements: z.array(ActionUiPlacementSchema).default([]),
       approvalRequiredSurfaces: z.array(ActionSurfaceKeySchema).default([]),
+      toolExposureModes: ActionSettingsToolExposureModesSchema,
     })
     .strict(),
 );

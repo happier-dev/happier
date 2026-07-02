@@ -10,6 +10,14 @@ import {
   CodingPromptBehaviorV1Schema,
   DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
 } from '../../prompts/codingPromptBehaviorV1.js';
+import {
+  ConnectedServicesDefaultAuthByAgentIdV1Schema,
+  ConnectedServicesProviderStateSharingSettingsV1Schema,
+  DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
+  DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
+  type ConnectedServicesDefaultAuthByAgentIdV1,
+  type ConnectedServicesProviderStateSharingSettingsV1,
+} from './connectedServicesSettings.js';
 import { WorkspaceRefV1Schema } from '../../workspaces/workspaceRefV1.js';
 import {
   AttentionDeliveryPolicyV1Schema,
@@ -46,16 +54,37 @@ export const ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION = 2;
 export const ForegroundBehaviorSchema = z.enum(['full', 'silent', 'off']);
 export type ForegroundBehavior = z.infer<typeof ForegroundBehaviorSchema>;
 
+function normalizeNotificationsSettingsV1Input(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  if (
+    !Object.prototype.hasOwnProperty.call(record, 'connectedServiceQuotaRecovered')
+    && record.connectedServiceQuotaBlocked === false
+  ) {
+    return {
+      ...record,
+      connectedServiceQuotaRecovered: false,
+    };
+  }
+  return raw;
+}
+
 export const NotificationsSettingsV1Schema = z
-  .object({
-    v: z.literal(1).default(1),
-    pushEnabled: z.boolean().default(true),
-    ready: z.boolean().default(true),
-    readyIncludeMessageText: z.boolean().default(true),
-    permissionRequest: z.boolean().default(true),
-    userActionRequest: z.boolean().default(true),
-    foregroundBehavior: ForegroundBehaviorSchema.default('full'),
-  })
+  .preprocess(
+    normalizeNotificationsSettingsV1Input,
+    z.object({
+      v: z.literal(1).default(1),
+      pushEnabled: z.boolean().default(true),
+      ready: z.boolean().default(true),
+      readyIncludeMessageText: z.boolean().default(true),
+      permissionRequest: z.boolean().default(true),
+      userActionRequest: z.boolean().default(true),
+      connectedServiceAccountSwitch: z.boolean().default(true),
+      connectedServiceQuotaBlocked: z.boolean().default(true),
+      connectedServiceQuotaRecovered: z.boolean().default(true),
+      foregroundBehavior: ForegroundBehaviorSchema.default('full'),
+    }),
+  )
   .catch({
     v: 1,
     pushEnabled: true,
@@ -63,6 +92,9 @@ export const NotificationsSettingsV1Schema = z
     readyIncludeMessageText: true,
     permissionRequest: true,
     userActionRequest: true,
+    connectedServiceAccountSwitch: true,
+    connectedServiceQuotaBlocked: true,
+    connectedServiceQuotaRecovered: true,
     foregroundBehavior: 'full',
   });
 
@@ -83,6 +115,9 @@ export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1S
     'session.status.get': { disabledSurfaces: ['session_agent'] },
     'session.history.get': { disabledSurfaces: ['session_agent'] },
     'session.wait.idle': { disabledSurfaces: ['session_agent'] },
+    'session.usageLimit.waitResume.enable': { disabledSurfaces: ['session_agent'] },
+    'session.usageLimit.waitResume.cancel': { disabledSurfaces: ['session_agent'] },
+    'session.usageLimit.checkNow': { disabledSurfaces: ['session_agent'] },
     'session.message.send': { disabledSurfaces: ['session_agent'] },
     'session.permission.respond': { disabledSurfaces: ['session_agent'] },
     'session.user_action.answer': { disabledSurfaces: ['session_agent'] },
@@ -92,6 +127,58 @@ export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1S
     'session.messages.recent.get': { disabledSurfaces: ['session_agent'] },
   },
 });
+
+export const UsageLimitRecoverySettingsV1Schema = z
+  .object({
+    v: z.literal(1).default(1),
+    mode: z.enum(['ask', 'auto_wait']).default('ask'),
+    promptMode: z.literal('standard').default('standard'),
+    resumePromptMode: z.enum(['standard', 'off', 'custom']).default('standard'),
+    /**
+     * Account-level custom resume prompt text; only meaningful when
+     * `resumePromptMode === 'custom'`. Empty/missing text fails safe to the
+     * standard prompt (never silently off).
+     */
+    customResumePrompt: z.string().trim().max(2000).optional(),
+  })
+  .strict()
+  .catch({
+    v: 1,
+    mode: 'ask',
+    promptMode: 'standard',
+    resumePromptMode: 'standard',
+  });
+
+export type UsageLimitRecoverySettingsV1 = z.infer<typeof UsageLimitRecoverySettingsV1Schema>;
+
+export const DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1: UsageLimitRecoverySettingsV1 = UsageLimitRecoverySettingsV1Schema.parse({});
+
+export const SessionProviderUsageSettingsV1Schema = z
+  .object({
+    v: z.literal(1).default(1),
+    gaugeMode: z.enum(['auto', 'hidden']).default('auto'),
+    gaugeWindowMode: z
+      .enum(['most_constrained', 'daily', 'weekly', 'primary', 'secondary', 'session'])
+      .default('most_constrained'),
+  })
+  .strict()
+  .catch({
+    v: 1,
+    gaugeMode: 'auto',
+    gaugeWindowMode: 'most_constrained',
+  });
+
+export type SessionProviderUsageSettingsV1 = z.infer<typeof SessionProviderUsageSettingsV1Schema>;
+
+export const DEFAULT_SESSION_PROVIDER_USAGE_SETTINGS_V1: SessionProviderUsageSettingsV1 =
+  SessionProviderUsageSettingsV1Schema.parse({});
+
+export const SESSION_PENDING_QUEUE_DRAIN_MODES = ['one_at_a_time', 'drain_all'] as const;
+export const DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE = 'one_at_a_time' as const;
+export const SessionPendingQueueDrainModeSchema = z
+  .enum(SESSION_PENDING_QUEUE_DRAIN_MODES)
+  .catch(DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE);
+export type SessionPendingQueueDrainMode = z.infer<typeof SessionPendingQueueDrainModeSchema>;
 
 const LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1 = Object.freeze([
   'session.stop',
@@ -234,11 +321,24 @@ export const AccountSettingsSchema = z.preprocess(
       peerMediationPreferencesV1: PeerMediationPreferencesV1Schema
         .catch(DEFAULT_PEER_MEDIATION_PREFERENCES_V1)
         .default(DEFAULT_PEER_MEDIATION_PREFERENCES_V1),
+      usageLimitRecoverySettingsV1: UsageLimitRecoverySettingsV1Schema.default(DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1),
+      sessionProviderUsageSettingsV1: SessionProviderUsageSettingsV1Schema.default(DEFAULT_SESSION_PROVIDER_USAGE_SETTINGS_V1),
+      sessionPendingQueueDrainMode: SessionPendingQueueDrainModeSchema.default(DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE),
+      connectedServicesDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1Schema.default(
+        DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
+      ),
+      connectedServicesProviderStateSharingSettingsV1:
+        ConnectedServicesProviderStateSharingSettingsV1Schema.default(
+          DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
+        ),
       acpCatalogSettingsV1: AcpCatalogSettingsV1Schema.catch({ v: 2, backends: [] }).default({ v: 2, backends: [] }),
       workspaceRefsV1: z.array(WorkspaceRefV1Schema).catch([]).default([]),
     })
     .passthrough(),
 );
+
+export const AccountSettingsPersistedObjectSchema = z.object({}).passthrough();
+export type AccountSettingsPersistedObject = z.infer<typeof AccountSettingsPersistedObjectSchema>;
 
 export type AccountSettings = z.infer<typeof AccountSettingsSchema>;
 
@@ -263,7 +363,12 @@ export function resolveNotificationChannelsV1FromAccountSettings(settingsLike: u
 }
 
 export { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID };
-export type { NotificationChannelV1, NotificationChannelsV1 };
+export type {
+  ConnectedServicesDefaultAuthByAgentIdV1,
+  ConnectedServicesProviderStateSharingSettingsV1,
+  NotificationChannelV1,
+  NotificationChannelsV1,
+};
 export {
   AttentionDeliveryPolicyV1Schema,
   DEFAULT_ATTENTION_DELIVERY_POLICY_V1,

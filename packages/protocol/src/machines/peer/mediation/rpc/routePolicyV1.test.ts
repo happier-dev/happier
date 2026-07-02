@@ -123,7 +123,12 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH)).toMatchObject({
       routeClass: 'server_required',
       rpcClassification: 'action_spec_bound',
-      actionSpecId: 'sessions.external.attach',
+      actionSpecId: 'sessions.external.follow',
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH)).toMatchObject({
+      routeClass: 'server_required',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'sessions.external.unfollow',
     });
   });
 
@@ -142,6 +147,28 @@ describe('MachineRpcRoutePolicyV1', () => {
       rpcClassification: 'action_spec_bound',
       actionSpecId: 'execution.run.stream.read',
     });
+  });
+
+  it('identifies A.12 voice cleanup RPC governance as internal-only without making transport direct', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    const methods = [
+      RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+      RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
+      RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE,
+      RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK,
+      RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT,
+      RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE,
+    ];
+
+    for (const method of methods) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required',
+        rpcClassification: 'internal_only',
+      });
+    }
   });
 
   it('identifies session transcript RPC governance from A.12 transcript ActionSpec bindings', async () => {

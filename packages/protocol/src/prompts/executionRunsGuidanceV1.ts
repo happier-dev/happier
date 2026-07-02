@@ -149,15 +149,15 @@ export function buildExecutionRunsGuidanceBlockV1(params: Readonly<{
     }
   }
 
-  // Best-effort: include explicit delegation mechanics so the agent knows how to act on the rules.
+  // Best-effort: include execution-run mechanics so the agent knows how to act on the rules.
   // Skip if it doesn't fit the character budget.
   const delegationLines = [
     '',
-    '## Delegating via MCP',
-    'When you decide to delegate work to an execution run, use the MCP tools available to you:',
-    '- Start a run with `execution_run_start` (include the task prompt; optionally pass intent/backend/model from the rules above).',
-    '- Poll or fetch results with `execution_run_get` (or list runs with `execution_run_list`).',
-    '- Stop a run with `execution_run_stop` if it is no longer needed.',
+    '## Happier-Managed Execution Runs',
+    'Use Happier execution runs when the user explicitly asks for Happier-managed reviews, plans, delegates, or voice agents, or when a configured rule above requires them.',
+    '- Prefer provider-native subagent/delegation tools for native subagent work when those tools are available and the user did not ask for Happier-managed runs.',
+    '- Backend targets choose agent provider/backend implementations; they are not parallelism slots or capacity controls.',
+    '- Discover Happier run actions with `action_spec_search` or `action_spec_get`, resolve dynamic fields with `action_options_resolve`, then invoke the chosen action with `action_execute`.',
   ];
   {
     const snapshot = { usedChars, linesLen: lines.length };

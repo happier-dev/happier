@@ -12,6 +12,9 @@ export const AttentionDeliveryEventIdSchema = z.enum([
   'task_failed',
   'resource_limit',
   'probe_detected',
+  'connected_service_account_switch',
+  'connected_service_quota_blocked',
+  'connected_service_quota_recovered',
 ]);
 export type AttentionDeliveryEventId = z.infer<typeof AttentionDeliveryEventIdSchema>;
 
@@ -50,6 +53,12 @@ const LEGACY_EVENT_ID_MAP: Record<string, AttentionDeliveryEventId> = {
   permission_request: 'permission_request',
   userActionRequest: 'user_action_request',
   user_action_request: 'user_action_request',
+  connectedServiceAccountSwitch: 'connected_service_account_switch',
+  connected_service_account_switch: 'connected_service_account_switch',
+  connectedServiceQuotaBlocked: 'connected_service_quota_blocked',
+  connected_service_quota_blocked: 'connected_service_quota_blocked',
+  connectedServiceQuotaRecovered: 'connected_service_quota_recovered',
+  connected_service_quota_recovered: 'connected_service_quota_recovered',
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

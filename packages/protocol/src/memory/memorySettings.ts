@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringsV1.js';
-import { CLAUDE_MEMORY_SUMMARIZER_BACKEND_ID } from '../providers/claude/memoryDefaults.js';
+import { GENERATED_MEMORY_SUMMARIZER_BACKEND_ID } from '../providers/generated/memory/defaults.js';
 
 const MemoryDefaultScopeV1Schema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('global') }).passthrough(),
@@ -9,12 +9,56 @@ const MemoryDefaultScopeV1Schema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session') }).passthrough(),
 ]);
 
-export const MemoryHintsSettingsV1Schema = z
+export const MemoryCoveragePolicyV1Schema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('full') }).passthrough(),
+  z.object({
+    type: z.literal('latest_messages'),
+    maxSemanticMessagesPerSession: z.number().int().min(1).max(100_000).default(1_000),
+  }).passthrough(),
+  z.object({
+    type: z.literal('latest_days'),
+    days: z.number().int().min(1).max(3_650).default(30),
+  }).passthrough(),
+  z.object({ type: z.literal('since_enabled') }).passthrough(),
+]);
+export type MemoryCoveragePolicyV1 = z.infer<typeof MemoryCoveragePolicyV1Schema>;
+const DEFAULT_MEMORY_COVERAGE_POLICY: MemoryCoveragePolicyV1 = MemoryCoveragePolicyV1Schema.parse({ type: 'full' });
+
+export const MemoryContentPolicyV1Schema = z
   .object({
-    summarizerBackendId: z.string().trim().min(1).default(CLAUDE_MEMORY_SUMMARIZER_BACKEND_ID),
+    includeUserMessages: z.boolean().default(true),
+    includeAssistantMessages: z.boolean().default(true),
+    includeReasoning: z.boolean().default(false),
+    includeToolSummaries: z.boolean().default(false),
+    includeToolOutputs: z.boolean().default(false),
+  })
+  .passthrough();
+export type MemoryContentPolicyV1 = z.infer<typeof MemoryContentPolicyV1Schema>;
+const DEFAULT_MEMORY_CONTENT_POLICY: MemoryContentPolicyV1 = MemoryContentPolicyV1Schema.parse({});
+
+export const MemoryHintsSettingsV1Schema = z.preprocess((value) => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const candidate = value as Record<string, unknown>;
+    if (
+      !Object.prototype.hasOwnProperty.call(candidate, 'targetShardMessages') &&
+      Object.prototype.hasOwnProperty.call(candidate, 'windowSizeMessages')
+    ) {
+      return {
+        ...candidate,
+        targetShardMessages: candidate.windowSizeMessages,
+      };
+    }
+  }
+  return value;
+}, z
+  .object({
+    summarizerBackendId: z.string().trim().min(1).default(GENERATED_MEMORY_SUMMARIZER_BACKEND_ID),
     summarizerModelId: z.string().trim().min(1).default('default'),
     summarizerPermissionMode: z.enum(['no_tools', 'read_only']).default('no_tools'),
     windowSizeMessages: z.number().int().min(5).max(500).default(40),
+    targetShardMessages: z.number().int().min(1).max(500).default(16),
+    minShardMessages: z.number().int().min(1).max(500).default(1),
+    targetShardChars: z.number().int().min(1_000).max(200_000).default(8_000),
     maxShardChars: z.number().int().min(1_000).max(200_000).default(12_000),
     maxSummaryChars: z.number().int().min(50).max(50_000).default(500),
     paddingMessagesOnVerify: z.number().int().min(0).max(200).default(8),
@@ -28,7 +72,7 @@ export const MemoryHintsSettingsV1Schema = z
     maxEntities: z.number().int().min(0).max(100).default(12),
     maxDecisions: z.number().int().min(0).max(100).default(12),
   })
-  .passthrough();
+  .passthrough());
 
 export type MemoryHintsSettingsV1 = z.infer<typeof MemoryHintsSettingsV1Schema>;
 const DEFAULT_MEMORY_HINTS_SETTINGS: MemoryHintsSettingsV1 = MemoryHintsSettingsV1Schema.parse({});
@@ -36,9 +80,10 @@ const DEFAULT_MEMORY_HINTS_SETTINGS: MemoryHintsSettingsV1 = MemoryHintsSettings
 export const MemoryDeepSettingsV1Schema = z
   .object({
     recentDays: z.number().int().min(1).max(3650).default(30),
-    maxChunkChars: z.number().int().min(500).max(200_000).default(12_000),
-    maxChunkMessages: z.number().int().min(1).max(500).default(50),
-    minChunkMessages: z.number().int().min(1).max(500).default(5),
+    maxChunkChars: z.number().int().min(500).max(200_000).default(8_000),
+    targetChunkMessages: z.number().int().min(1).max(500).default(12),
+    maxChunkMessages: z.number().int().min(1).max(500).default(25),
+    minChunkMessages: z.number().int().min(1).max(500).default(1),
     includeAssistantAcpMessage: z.boolean().default(true),
     includeToolOutput: z.boolean().default(false),
     candidateLimit: z.number().int().min(1).max(10_000).default(200),
@@ -220,6 +265,8 @@ export const MemorySettingsV1Schema = z
     indexMode: z.enum(['hints', 'deep']).default('hints'),
     defaultScope: MemoryDefaultScopeV1Schema.default({ type: 'global' }),
     backfillPolicy: z.enum(['new_only', 'last_30_days', 'all_history']).default('new_only'),
+    coveragePolicy: MemoryCoveragePolicyV1Schema.prefault(DEFAULT_MEMORY_COVERAGE_POLICY),
+    contentPolicy: MemoryContentPolicyV1Schema.prefault(DEFAULT_MEMORY_CONTENT_POLICY),
     deleteOnDisable: z.boolean().default(false),
     hints: MemoryHintsSettingsV1Schema.prefault(DEFAULT_MEMORY_HINTS_SETTINGS),
     deep: MemoryDeepSettingsV1Schema.prefault(DEFAULT_MEMORY_DEEP_SETTINGS),

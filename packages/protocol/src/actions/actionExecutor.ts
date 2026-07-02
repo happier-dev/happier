@@ -21,9 +21,19 @@ import {
   type ApprovalRequestV1,
 } from '../approvals/approvalRequestV1.js';
 import type { PromptRegistryConfiguredSourceV1 } from '../promptLibrary/promptRegistriesV1.js';
-import { BackendTargetKeySchema, buildBackendTargetKey, parseBackendTargetKey } from '../backendTargets/backendTargetRef.js';
+import {
+  BackendTargetKeySchema,
+  buildBackendTargetKey,
+  parseBackendTargetKey,
+  type BackendTargetRefV1,
+} from '../backendTargets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.js';
 import type { SessionRollbackTarget } from '../sessionRollback.js';
+import type { ReviewStartInput } from '../reviews/reviewStart.js';
+import {
+  ReviewCommentActionIdV1Schema,
+  type ReviewCommentActionIdV1,
+} from '../reviews/comments/actions.js';
 import type {
   SubagentRefInputV1,
   SubagentStatusV1,
@@ -45,6 +55,12 @@ import type {
   CheckpointCodeRollbackActionRequest,
   CheckpointCodeRollbackResult,
 } from '../sessions/control/rollback/checkpointCodeRollback.js';
+import type {
+  SessionCheckpointRequestV1,
+  SessionCheckpointResultV1,
+  SessionRestoreRequestV1,
+  SessionRestoreResultV1,
+} from '../sessions/control/checkpoints/v1.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 
 export type ActionExecuteResult =
@@ -131,6 +147,19 @@ export type ActionExecutorDeps = Readonly<{
   executionRunStop: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunAction: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunWait: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
+  reviewStartInline?: (args: Readonly<{
+    sessionId: string;
+    engineId: string;
+    backendTarget: BackendTargetRefV1;
+    instructions: string;
+    input: ReviewStartInput;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  reviewCommentAction?: (args: Readonly<{
+    actionId: ReviewCommentActionIdV1;
+    input: unknown;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
 
   // Session navigation/spawn (client-side)
   sessionOpen: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
@@ -141,6 +170,14 @@ export type ActionExecutorDeps = Readonly<{
     request: CheckpointCodeRollbackRequest;
     serverId?: string | null;
   }>) => Promise<CheckpointCodeRollbackResult | unknown>;
+  sessionCheckpoint?: (args: Readonly<{
+    request: SessionCheckpointRequestV1;
+    serverId?: string | null;
+  }>) => Promise<SessionCheckpointResultV1 | unknown>;
+  sessionRestore?: (args: Readonly<{
+    request: SessionRestoreRequestV1;
+    serverId?: string | null;
+  }>) => Promise<SessionRestoreResultV1 | unknown>;
   sessionHandoffStart?: (args: Readonly<{
     sessionId: string;
     targetMachineId: string;
@@ -233,6 +270,42 @@ export type ActionExecutorDeps = Readonly<{
     serverId?: string | null;
   }>) => Promise<unknown>;
   sessionWaitIdle?: (args: Readonly<{ sessionId: string; timeoutSeconds?: number; serverId?: string | null }>) => Promise<unknown>;
+  sessionWorkStateGet?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionGoalGet?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionGoalSet?: (args: Readonly<{
+    sessionId: string;
+    objective?: string;
+    status?: string;
+    tokenBudget?: number | null;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  sessionGoalClear?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionUsageLimitWaitResumeEnable?: (args: Readonly<{
+    sessionId: string;
+    issueFingerprint?: string;
+    remember?: boolean;
+    resumePromptMode?: 'standard' | 'off' | 'custom';
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  sessionUsageLimitWaitResumeCancel?: (args: Readonly<{
+    sessionId: string;
+    issueFingerprint?: string | null;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  sessionUsageLimitCheckNow?: (args: Readonly<{
+    sessionId: string;
+    provider?: string;
+    resumePromptMode?: 'standard' | 'off' | 'custom';
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  sessionUsageLimitSwitchAccountNow?: (args: Readonly<{
+    sessionId: string;
+    provider?: string;
+    resumePromptMode?: 'standard' | 'off' | 'custom';
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  sessionVendorPluginCatalogList?: (args: Readonly<{ sessionId: string; cwd?: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionSkillCatalogList?: (args: Readonly<{ sessionId: string; cwd?: string; serverId?: string | null }>) => Promise<unknown>;
 
   // Permission response (session RPC, server-scoped)
   sessionPermissionRespond?: (args: Readonly<{
@@ -444,6 +517,36 @@ function resolveApprovalOriginForRequest(
   if (!parsed.success) return null;
   if (sessionId && parsed.data.sessionId !== sessionId) return null;
   return parsed.data;
+}
+
+function resolvePolicyApprovalRequestingSessionId(
+  rawOrigin: unknown,
+  ctx: ActionExecutorContext,
+  targetSessionId: string | null,
+): string | null {
+  const origin = resolveApprovalOriginForRequest(rawOrigin, null);
+  const originSessionId = normalizeId(origin?.sessionId);
+  if (originSessionId) return originSessionId;
+
+  const defaultSessionId = normalizeId(ctx.defaultSessionId);
+  if (defaultSessionId) return defaultSessionId;
+
+  return targetSessionId;
+}
+
+function resolveExplicitApprovalRequestingSessionId(
+  rawOrigin: unknown,
+  ctx: ActionExecutorContext,
+  targetSessionId: string | null,
+): string | null {
+  const defaultSessionId = normalizeId(ctx.defaultSessionId);
+  if (defaultSessionId) return defaultSessionId;
+
+  const origin = resolveApprovalOriginForRequest(rawOrigin, null);
+  const originSessionId = normalizeId(origin?.sessionId);
+  if (originSessionId) return originSessionId;
+
+  return targetSessionId;
 }
 
 function isApprovalActionId(actionId: ActionId): boolean {
@@ -902,12 +1005,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         const now = Date.now();
-        const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+        const targetSessionId = resolveSessionIdFromInput(parsed.data, ctx);
         const requestedSurface = parseActionSurfaceKey(ctx.surface);
-        const approvalOrigin = resolveApprovalOriginForRequest(ctx.approvalOrigin, sessionId);
+        const requestingSessionId = resolvePolicyApprovalRequestingSessionId(ctx.approvalOrigin, ctx, targetSessionId);
+        const approvalOrigin = resolveApprovalOriginForRequest(ctx.approvalOrigin, requestingSessionId);
         const createdBy = {
           surface: mapApprovalCreatedBySurface(ctx.surface ?? null),
-          ...(sessionId ? { sessionId } : {}),
+          ...(requestingSessionId ? { sessionId: requestingSessionId } : {}),
         } as const;
 
         const request: ApprovalRequestV1 = {
@@ -924,7 +1028,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           },
           actionId,
           actionArgs: parsed.data,
-          summary: buildApprovalSummary(spec, sessionId),
+          summary: buildApprovalSummary(spec, targetSessionId),
           preview: { actionId, actionArgs: parsed.data },
           ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
         };
@@ -998,15 +1102,68 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       // Switch by actionId; keep substrate generic.
+      const reviewCommentActionId = ReviewCommentActionIdV1Schema.safeParse(actionId);
+      if (reviewCommentActionId.success) {
+        if (!deps.reviewCommentAction) {
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        const serverId = normalizeId(ctx.serverId) || null;
+        const result = await deps.reviewCommentAction({
+          actionId: reviewCommentActionId.data,
+          input: parsed.data,
+          ...(serverId ? { serverId } : {}),
+        });
+        const failure = readActionFailureEnvelope(result);
+        return failure ?? { ok: true, result };
+      }
+
       if (actionId === 'review.start') {
         const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
         if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
         const serverId = resolveServerIdForSession(deps, ctx, sessionId);
         const opts = serverId ? { serverId } : undefined;
 
-        const engineIds: readonly string[] = Array.isArray((parsed.data as any).engineIds) ? (parsed.data as any).engineIds : [];
-        const instructions = String((parsed.data as any).instructions ?? '').trim();
-        const intentInputBase = { ...(parsed.data as any) };
+        const reviewInput = parsed.data as ReviewStartInput;
+        const engineIds = reviewInput.engineIds;
+        const instructions = reviewInput.instructions.trim();
+        const permissionMode = reviewInput.permissionMode;
+        const intentInputBase = { ...reviewInput };
+        const runLocation = reviewInput.runLocation;
+
+        if (runLocation === 'current_session') {
+          if (engineIds.length !== 1) {
+            return {
+              ok: false,
+              errorCode: 'inline_review_requires_single_engine',
+              error: 'inline_review_requires_single_engine',
+            };
+          }
+          if (!deps.reviewStartInline) {
+            return {
+              ok: false,
+              errorCode: 'inline_review_not_supported',
+              error: 'inline_review_not_supported',
+            };
+          }
+
+          const engineId = engineIds[0]!;
+          const result = await deps.reviewStartInline({
+            sessionId,
+            engineId,
+            backendTarget: parseBackendTargetKey(normalizeExecutionBackendOptionValue(engineId)),
+            instructions,
+            input: intentInputBase,
+            ...(serverId ? { serverId } : {}),
+          });
+          if (result && typeof result === 'object' && (result as Record<string, unknown>).ok === false) {
+            const record = result as Record<string, unknown>;
+            const errorCode = typeof record.errorCode === 'string' ? record.errorCode : 'action_failed';
+            const error = typeof record.error === 'string' ? record.error : errorCode;
+            return { ok: false, errorCode, error };
+          }
+          return { ok: true, result };
+        }
+
         const availableReviewEngineKeys = buildAvailableExecutionBackendOptionKeys(await deps.reviewEnginesList({
           sessionId,
           includeDisabled: false,
@@ -1033,7 +1190,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 intent: 'review',
                 backendTarget: parseBackendTargetKey(normalizedBackendTargetKey),
                 instructions,
-                permissionMode: (parsed.data as any).permissionMode ?? 'read_only',
+                permissionMode,
                 retentionPolicy: 'resumable',
                 runClass: 'bounded',
                 // Reviews should stream sidechain progress (and tool traffic) into the parent session.
@@ -1462,6 +1619,26 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+        if (actionId === 'session.checkpoint') {
+          if (!deps.sessionCheckpoint) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.checkpoint' };
+          }
+          const request = parsed.data as SessionCheckpointRequestV1;
+          const serverId = resolveServerIdForSession(deps, ctx, request.sessionId);
+          const res = await deps.sessionCheckpoint({ request, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.restore') {
+          if (!deps.sessionRestore) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.restore' };
+          }
+          const request = parsed.data as SessionRestoreRequestV1;
+          const serverId = resolveServerIdForSession(deps, ctx, request.sessionId);
+          const res = await deps.sessionRestore({ request, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
         if (actionId === 'session.handoff') {
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
@@ -1726,6 +1903,174 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const live = (parsed.data as any).live === true;
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionStatusGet({ sessionId, live, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.work_state.get') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionWorkStateGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.work_state.get' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionWorkStateGet({ sessionId, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.goal.get') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionGoalGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.goal.get' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionGoalGet({ sessionId, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.goal.set') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionGoalSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.goal.set' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const data = parsed.data as Record<string, unknown>;
+          const tokenBudget = data.tokenBudget;
+          const res = await deps.sessionGoalSet({
+            sessionId,
+            ...(typeof data.objective === 'string' ? { objective: data.objective } : {}),
+            ...(typeof data.status === 'string' ? { status: data.status } : {}),
+            ...(Object.prototype.hasOwnProperty.call(data, 'tokenBudget') && (typeof tokenBudget === 'number' || tokenBudget === null)
+              ? { tokenBudget }
+              : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.goal.clear') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionGoalClear) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.goal.clear' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionGoalClear({ sessionId, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.usageLimit.waitResume.enable') {
+          const data = parsed.data as Record<string, unknown>;
+          const sessionId = normalizeId(data.sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionUsageLimitWaitResumeEnable) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.usageLimit.waitResume.enable' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const issueFingerprint = typeof data.issueFingerprint === 'string'
+            ? data.issueFingerprint
+            : undefined;
+          const remember = data.remember === true
+            || data.rememberPreference === true;
+          const resumePromptMode = data.resumePromptMode === 'off'
+            ? 'off'
+            : data.resumePromptMode === 'standard'
+              ? 'standard'
+              : data.resumePromptMode === 'custom'
+                ? 'custom'
+                : undefined;
+          const res = await deps.sessionUsageLimitWaitResumeEnable({
+            sessionId,
+            ...(issueFingerprint ? { issueFingerprint } : {}),
+            ...(remember ? { remember } : {}),
+            ...(resumePromptMode ? { resumePromptMode } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.usageLimit.waitResume.cancel') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionUsageLimitWaitResumeCancel) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.usageLimit.waitResume.cancel' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const data = parsed.data as Record<string, unknown>;
+          const issueFingerprint = data.issueFingerprint;
+          const res = await deps.sessionUsageLimitWaitResumeCancel({
+            sessionId,
+            ...(Object.prototype.hasOwnProperty.call(data, 'issueFingerprint')
+              && (typeof issueFingerprint === 'string' || issueFingerprint === null)
+              ? { issueFingerprint }
+              : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.usageLimit.checkNow') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const data = parsed.data as Record<string, unknown>;
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const operation = data.operation === 'switch_account_now' ? 'switch_account_now' : 'check_now';
+          const resumePromptMode = data.resumePromptMode === 'standard' || data.resumePromptMode === 'off' || data.resumePromptMode === 'custom'
+            ? data.resumePromptMode
+            : undefined;
+          if (operation === 'switch_account_now') {
+            if (!deps.sessionUsageLimitSwitchAccountNow) {
+              return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.usageLimit.checkNow' };
+            }
+            const res = await deps.sessionUsageLimitSwitchAccountNow({
+              sessionId,
+              ...(typeof data.provider === 'string' && data.provider.trim().length > 0 ? { provider: data.provider.trim() } : {}),
+              ...(resumePromptMode ? { resumePromptMode } : {}),
+              ...(serverId ? { serverId } : {}),
+            });
+            return { ok: true, result: res };
+          }
+
+          if (!deps.sessionUsageLimitCheckNow) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.usageLimit.checkNow' };
+          }
+          const res = await deps.sessionUsageLimitCheckNow({
+            sessionId,
+            ...(typeof data.provider === 'string' && data.provider.trim().length > 0 ? { provider: data.provider.trim() } : {}),
+            ...(resumePromptMode ? { resumePromptMode } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.vendor_plugin_catalog.list') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionVendorPluginCatalogList) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.vendor_plugin_catalog.list' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionVendorPluginCatalogList({
+            sessionId,
+            ...(typeof (parsed.data as any).cwd === 'string' ? { cwd: (parsed.data as any).cwd } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.skill_catalog.list') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionSkillCatalogList) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.skill_catalog.list' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionSkillCatalogList({
+            sessionId,
+            ...(typeof (parsed.data as any).cwd === 'string' ? { cwd: (parsed.data as any).cwd } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
           return { ok: true, result: res };
         }
 
@@ -2189,10 +2534,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const forcedSurface = mapApprovalCreatedBySurface(ctx.surface ?? null);
         const actionArgsSessionId = normalizeId((parsedTargetArgs.data as any)?.sessionId);
         const ctxDefaultSessionId = normalizeId(ctx.defaultSessionId);
-        const requestSessionId = actionArgsSessionId || ctxDefaultSessionId || null;
+        const targetSessionId = actionArgsSessionId || ctxDefaultSessionId || null;
         const rawApprovalOrigin = Object.prototype.hasOwnProperty.call(parsed.data, 'origin')
           ? (parsed.data as any).origin
           : ctx.approvalOrigin;
+        const requestSessionId = resolveExplicitApprovalRequestingSessionId(rawApprovalOrigin, ctx, targetSessionId);
         const approvalOrigin = resolveApprovalOriginForRequest(rawApprovalOrigin, requestSessionId);
         const rawAgentId = rawCreatedBy && typeof rawCreatedBy === 'object' ? normalizeId((rawCreatedBy as any).agentId) : null;
         const requestedSurface = parseActionSurfaceKey(ctx.surface);

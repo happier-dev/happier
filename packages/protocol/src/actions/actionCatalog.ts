@@ -100,6 +100,7 @@ export function serializeActionSpec(spec: ActionSpec): SerializedActionSpec {
     examples: spec.examples ?? null,
     surfaces: spec.surfaces,
     inputHints: spec.inputHints ?? null,
+    ...(spec.toolExposure ? { toolExposure: spec.toolExposure } : {}),
     ...(spec.outputSchema ? { outputSchema: zodSchemaToJsonSchemaObject(spec.outputSchema) } : {}),
     ...(spec.execution ? { execution: spec.execution } : {}),
     ...(spec.sideEffectClass ? { sideEffectClass: spec.sideEffectClass } : {}),

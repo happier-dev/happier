@@ -1,8 +1,63 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { CapabilitiesSchema } from './capabilitiesSchema.js';
 
 describe('CapabilitiesSchema (server capabilities)', () => {
+  it('parses server identity capabilities outside the strict server capability object', () => {
+    const parsed = CapabilitiesSchema.parse({
+      server: {
+        canonicalServerUrl: 'https://stack.example.test',
+      },
+      serverIdentity: {
+        serverIdentityId: 'srv_identity_123',
+      },
+    });
+
+    expect(parsed.server.canonicalServerUrl).toBe('https://stack.example.test');
+    expect(parsed.serverIdentity.serverIdentityId).toBe('srv_identity_123');
+  });
+
+  it('defaults missing server identity capabilities for older servers', () => {
+    const parsed = CapabilitiesSchema.parse({});
+
+    expect(parsed.serverIdentity.serverIdentityId).toBeNull();
+  });
+
+  it('normalizes unsafe server identity capabilities to null', () => {
+    const parsed = CapabilitiesSchema.parse({
+      serverIdentity: {
+        serverIdentityId: 'relay.example.test',
+      },
+    });
+
+    expect(parsed.serverIdentity.serverIdentityId).toBeNull();
+  });
+
+  it('keeps new server identity payloads parseable for old strict server capability shapes', () => {
+    const OldCapabilitiesSchema = z.object({
+      server: z.object({
+        canonicalServerUrl: z.string().trim().min(1).optional(),
+        webappUrl: z.string().trim().min(1).optional(),
+      }).strict().optional().default({}),
+    });
+
+    const parsed = OldCapabilitiesSchema.parse({
+      server: {
+        canonicalServerUrl: 'https://stack.example.test',
+      },
+      serverIdentity: {
+        serverIdentityId: 'srv_identity_123',
+      },
+    });
+
+    expect(parsed).toEqual({
+      server: {
+        canonicalServerUrl: 'https://stack.example.test',
+      },
+    });
+  });
+
   it('parses tunnel limits under machine capabilities without treating them as gates', () => {
     const parsed = CapabilitiesSchema.parse({
       machines: {
@@ -16,6 +71,20 @@ describe('CapabilitiesSchema (server capabilities)', () => {
             maxBytes: 4096,
             maxActiveTunnelsPerSocket: 2,
             maxFrameBytes: 1024,
+            supportedEncodings: ['json_base64_v1', 'binary_frame_v2'],
+            preferredEncoding: 'binary_frame_v2',
+            allowV1Fallback: true,
+            maxBinaryHeaderBytes: 512,
+            maxRawPayloadBytes: 2048,
+            maxFramedMessageBytes: 4096,
+            substreams: {
+              maxConcurrentSubstreams: 8,
+              maxTotalSubstreams: 64,
+              maxBytesPerSubstream: 8192,
+              maxAggregateBytes: 16_384,
+              maxSubstreamIdleMs: 5000,
+              maxSessionIdleMs: 10_000,
+            },
             maxIdleMs: 10_000,
             maxDurationMs: 60_000,
             disabledReason: 'relay_disabled_by_server_policy',
@@ -29,7 +98,21 @@ describe('CapabilitiesSchema (server capabilities)', () => {
       maxBytes: 4096,
       maxActiveTunnelsPerSocket: 2,
       maxFrameBytes: 1024,
+      preferredEncoding: 'binary_frame_v2',
+      maxBinaryHeaderBytes: 512,
+      maxRawPayloadBytes: 2048,
+      maxFramedMessageBytes: 4096,
       disabledReason: 'relay_disabled_by_server_policy',
+    });
+    expect(parsed.machines.tunnel.serverRouted.supportedEncodings).toEqual([
+      'json_base64_v1',
+      'binary_frame_v2',
+    ]);
+    expect(parsed.machines.tunnel.serverRouted.substreams).toMatchObject({
+      maxConcurrentSubstreams: 8,
+      maxTotalSubstreams: 64,
+      maxBytesPerSubstream: 8192,
+      maxAggregateBytes: 16_384,
     });
   });
 

@@ -17,6 +17,14 @@ describe('feature catalog', () => {
     expect(isFeatureId('files.diffSyntaxHighlighting')).toBe(true);
     expect(isFeatureId('files.editor')).toBe(true);
     expect(isFeatureId('files.syntaxHighlighting.advanced')).toBe(true);
+    expect(isFeatureId('files.markdownRichEditor')).toBe(true);
+  });
+
+  it('includes markdown rich editor as a client feature depending on the embedded editor', () => {
+    expect(isFeatureId('files.markdownRichEditor')).toBe(true);
+    expect(FEATURE_CATALOG['files.markdownRichEditor']?.representation).toBe('client');
+    expect(FEATURE_CATALOG['files.markdownRichEditor']?.dependencies).toEqual(['files.editor']);
+    expect(FEATURE_CATALOG['files.markdownRichEditor']?.defaultFailMode).toBe('fail_closed');
   });
 
   it('includes execution runs feature id', () => {
@@ -32,6 +40,19 @@ describe('feature catalog', () => {
 
   it('includes connected services quotas feature id', () => {
     expect(isFeatureId('connectedServices.quotas')).toBe(true);
+  });
+
+  it('includes connected-service account group and usage-limit recovery feature ids', () => {
+    expect(isFeatureId('sessions.usageLimitRecovery')).toBe(true);
+    expect(isFeatureId('connectedServices.accountGroups')).toBe(true);
+    expect(isFeatureId('connectedServices.accountFallback')).toBe(true);
+    expect(FEATURE_CATALOG['sessions.usageLimitRecovery']?.dependencies).toEqual(['sessions']);
+    expect(FEATURE_CATALOG['connectedServices.accountGroups']?.dependencies).toEqual(['connectedServices']);
+    expect(FEATURE_CATALOG['connectedServices.accountFallback']?.dependencies).toEqual([
+      'connectedServices.accountGroups',
+      'sessions.usageLimitRecovery',
+    ]);
+    expect(FEATURE_CATALOG['sessions.usageLimitRecovery']?.representation).toBe('server');
   });
 
   it('includes remote hosts feature ids', () => {
@@ -61,6 +82,30 @@ describe('feature catalog', () => {
     expect(isFeatureId('sessions.direct')).toBe(true);
   });
 
+  it('includes Codex app-server feature ids as client-represented runtime capabilities', () => {
+    expect(isFeatureId('providers.codex.appServer.goals')).toBe(true);
+    expect(isFeatureId('providers.codex.appServer.plugins')).toBe(true);
+    expect(isFeatureId('providers.codex.appServer.structuredInput')).toBe(true);
+    expect(isFeatureId('providers.codex.appServer.permissionProfiles')).toBe(true);
+    expect(FEATURE_CATALOG['providers.codex.appServer.goals']?.representation).toBe('client');
+    expect(FEATURE_CATALOG['providers.codex.appServer.goals']?.dependencies).toEqual([]);
+    expect(FEATURE_CATALOG['providers.codex.appServer.plugins']?.dependencies).toContain('prompts.skills.registries');
+    expect(FEATURE_CATALOG['providers.codex.appServer.structuredInput']?.dependencies).toContain('attachments.uploads');
+  });
+
+  it('includes Claude unified terminal as a client-represented runtime capability', () => {
+    expect(isFeatureId('providers.claude.unifiedTerminal')).toBe(true);
+    expect(FEATURE_CATALOG['providers.claude.unifiedTerminal']?.representation).toBe('client');
+    expect(FEATURE_CATALOG['providers.claude.unifiedTerminal']?.dependencies).toEqual(['sessions.direct']);
+  });
+
+  it('includes the Claude unified terminal TUI runtime-control gate (fail-closed, unified-dependent)', () => {
+    expect(isFeatureId('providers.claude.unifiedTerminal.tuiRuntimeControl')).toBe(true);
+    expect(FEATURE_CATALOG['providers.claude.unifiedTerminal.tuiRuntimeControl']?.representation).toBe('client');
+    expect(FEATURE_CATALOG['providers.claude.unifiedTerminal.tuiRuntimeControl']?.defaultFailMode).toBe('fail_closed');
+    expect(FEATURE_CATALOG['providers.claude.unifiedTerminal.tuiRuntimeControl']?.dependencies).toEqual(['providers.claude.unifiedTerminal']);
+  });
+
   it('includes session handoff feature ids', () => {
     expect(isFeatureId('sessions.handoff')).toBe(true);
     expect(isFeatureId('sessions.handoff.serverRoutedTransfer')).toBe(false);
@@ -83,6 +128,40 @@ describe('feature catalog', () => {
     expect(isFeatureId('machines.rpc.directPeer')).toBe(true);
     const forbiddenServerRoutedRpcFeatureId = ['machines.rpc', 'serverRouted'].join('.');
     expect(isFeatureId(forbiddenServerRoutedRpcFeatureId)).toBe(false);
+  });
+
+  it('includes local service preview and public exposure feature ids', () => {
+    expect(isFeatureId('localServices')).toBe(true);
+    expect(isFeatureId('localServices.inventory')).toBe(true);
+    expect(isFeatureId('localServices.managed')).toBe(true);
+    expect(isFeatureId('localServices.preview')).toBe(true);
+    expect(isFeatureId('localServices.publicPreview')).toBe(true);
+    expect(FEATURE_CATALOG['localServices.inventory']?.dependencies).toEqual(['localServices']);
+    expect(FEATURE_CATALOG['localServices.managed']?.dependencies).toEqual(['localServices.inventory']);
+    expect(FEATURE_CATALOG['localServices.preview']?.dependencies).toEqual(['localServices.inventory']);
+    expect(FEATURE_CATALOG['localServices.publicPreview']?.dependencies).toEqual(['localServices.preview']);
+    expect(FEATURE_CATALOG['localServices.publicPreview']?.representation).toBe('server');
+  });
+
+  it('includes browser target feature ids', () => {
+    expect(isFeatureId('browser')).toBe(true);
+    expect(isFeatureId('browser.viewTargets')).toBe(true);
+    expect(isFeatureId('browser.internal')).toBe(true);
+    expect(isFeatureId('browser.sidecar')).toBe(true);
+    expect(FEATURE_CATALOG['browser.viewTargets']?.dependencies).toEqual(['browser']);
+    expect(FEATURE_CATALOG['browser.internal']?.dependencies).toEqual(['browser.viewTargets']);
+    expect(FEATURE_CATALOG['browser.sidecar']?.dependencies).toEqual(['browser.internal']);
+  });
+
+  it('includes simulator preview feature ids', () => {
+    expect(isFeatureId('devices')).toBe(true);
+    expect(isFeatureId('devices.simulatorPreview')).toBe(true);
+    expect(FEATURE_CATALOG['devices.simulatorPreview']?.representation).toBe('client');
+    expect(FEATURE_CATALOG['devices.simulatorPreview']?.dependencies).toEqual([
+      'devices',
+      'machines.liveStream',
+      'browser.viewTargets',
+    ]);
   });
 
   it('includes sharing feature ids', () => {

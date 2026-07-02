@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ActionDefinitionV1Schema,
+  AttachSurfaceStaticMetadataV1Schema,
   BackendDefinitionV1Schema,
-  BackendRuntimeAdapterOperationCatalogV1,
-  BackendRuntimeAdapterV1Schema,
+  BackendSurfaceDeclarationV1Schema,
+  BackendSurfaceKindV1Schema,
+  BackendSurfaceOperationCatalogV1,
   ExtensionManifestV2Schema,
   ExtensionSourceSpecV1Schema,
   ExtensionTargetsV2Schema,
@@ -18,7 +20,7 @@ import {
   ProviderDefinitionV1Schema,
   RuntimeDescriptorV1Schema,
   SerializedActionDefinitionV1Schema,
-  isSupportedBackendRuntimeAdapterOperationV1,
+  isSupportedBackendSurfaceOperationV1,
   readHookEventEnvelopeV1,
   readHookRegistrationV1,
 } from '../index.js';
@@ -35,9 +37,11 @@ describe('extension and hook contract exports', () => {
     expect(typeof ProviderDefinitionV1Schema.safeParse).toBe('function');
     expect(typeof ProviderCliRuntimeV1Schema.safeParse).toBe('function');
     expect(typeof BackendDefinitionV1Schema.safeParse).toBe('function');
-    expect(typeof BackendRuntimeAdapterV1Schema.safeParse).toBe('function');
-    expect(typeof BackendRuntimeAdapterOperationCatalogV1).toBe('object');
-    expect(typeof isSupportedBackendRuntimeAdapterOperationV1).toBe('function');
+    expect(typeof BackendSurfaceDeclarationV1Schema.safeParse).toBe('function');
+    expect(typeof AttachSurfaceStaticMetadataV1Schema.safeParse).toBe('function');
+    expect(typeof BackendSurfaceKindV1Schema.safeParse).toBe('function');
+    expect(typeof BackendSurfaceOperationCatalogV1).toBe('object');
+    expect(typeof isSupportedBackendSurfaceOperationV1).toBe('function');
     expect(typeof RuntimeDescriptorV1Schema.safeParse).toBe('function');
     expect(typeof HookRegistrationV1Schema.safeParse).toBe('function');
     expect(typeof HookEventEnvelopeV1Schema.safeParse).toBe('function');
@@ -141,9 +145,9 @@ describe('extension and hook contract exports', () => {
         externalSessions: true,
         terminalRuntime: true,
       },
-      runtimeAdapters: [
+      surfaceHandlers: [
         {
-          runtimeAdapterApiVersion: 1,
+          surfaceApiVersion: 1,
           id: 'backend.terminalRuntime.launch',
           kind: 'terminalRuntime',
           operation: 'launch',
@@ -157,13 +161,13 @@ describe('extension and hook contract exports', () => {
 
     const registration = HookRegistrationV1Schema.parse({
       hookApiVersion: 1,
-      id: 'backend.terminalRuntime.bindTranscript',
+      id: 'backend.terminalRuntime.resolveTranscriptBinding',
       category: 'integration',
       scope: 'backend',
       executionKind: 'integrate',
       handler: {
         target: 'plugin',
-        exportName: 'bindTranscript',
+        exportName: 'resolveTranscriptBinding',
       },
     });
 
@@ -212,7 +216,7 @@ describe('extension and hook contract exports', () => {
             },
           },
           capabilities: backendDefinition.capabilities,
-          runtimeAdapters: backendDefinition.runtimeAdapters,
+          surfaceHandlers: backendDefinition.surfaceHandlers,
         },
         {
           kind: 'hook',
@@ -247,8 +251,8 @@ describe('extension and hook contract exports', () => {
     expect(backendDefinition.id).toBe('ohMyPi.acp');
     expect(backendDefinition.providerAgentId).toBe('claude');
     expect(backendDefinition.iconAgentId).toBe('codex');
-    expect(backendDefinition.runtimeAdapters).toHaveLength(1);
-    expect(backendDefinition.runtimeAdapters[0]).toMatchObject({
+    expect(backendDefinition.surfaceHandlers).toHaveLength(1);
+    expect(backendDefinition.surfaceHandlers[0]).toMatchObject({
       id: 'backend.terminalRuntime.launch',
       kind: 'terminalRuntime',
       operation: 'launch',
@@ -267,9 +271,9 @@ describe('extension and hook contract exports', () => {
     });
     expect(manifest.contributions[2]).toMatchObject({
       kind: 'hook',
-      id: 'backend.terminalRuntime.bindTranscript',
+      id: 'backend.terminalRuntime.resolveTranscriptBinding',
     });
-    expect(registration.id).toBe('backend.terminalRuntime.bindTranscript');
+    expect(registration.id).toBe('backend.terminalRuntime.resolveTranscriptBinding');
     expect(manifest.targets.daemon?.entry).toBe('./daemon.js');
     expect(envelope.scope).toBe('session');
     expect(source.kind).toBe('path');
@@ -278,7 +282,7 @@ describe('extension and hook contract exports', () => {
   it('rejects hook registrations when category and execution semantics conflict', () => {
     const parsed = HookRegistrationV1Schema.safeParse({
       hookApiVersion: 1,
-      id: 'backend.terminalRuntime.bindTranscript',
+      id: 'backend.terminalRuntime.resolveTranscriptBinding',
       category: 'integration',
       scope: 'backend',
       executionKind: 'observe',
@@ -293,7 +297,7 @@ describe('extension and hook contract exports', () => {
   it('rejects hook registrations whose handler target is not a plugin export', () => {
     const parsed = HookRegistrationV1Schema.safeParse({
       hookApiVersion: 1,
-      id: 'backend.terminalRuntime.bindTranscript',
+      id: 'backend.terminalRuntime.resolveTranscriptBinding',
       category: 'integration',
       scope: 'backend',
       executionKind: 'integrate',
@@ -310,16 +314,16 @@ describe('extension and hook contract exports', () => {
     expect(HookHandlerTargetV1Schema.safeParse('daemon').success).toBe(false);
   });
 
-  it('rejects invalid backend runtime adapter descriptors', () => {
+  it('rejects invalid backend surface descriptors', () => {
     const parsed = BackendDefinitionV1Schema.safeParse({
       kindVersion: 1,
       id: 'ohMyPi.acp',
       providerId: 'ohMyPi',
       runtimeKind: 'acp',
       capabilities: {},
-      runtimeAdapters: [
+      surfaceHandlers: [
         {
-          runtimeAdapterApiVersion: 1,
+          surfaceApiVersion: 1,
           id: 'backend.terminalRuntime.launch',
           kind: 'terminalRuntime',
           operation: 'launch',
@@ -334,9 +338,9 @@ describe('extension and hook contract exports', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('requires canonical runtime adapter operations instead of deriving them from opaque ids', () => {
-    expect(BackendRuntimeAdapterV1Schema.safeParse({
-      runtimeAdapterApiVersion: 1,
+  it('requires canonical backend surface operations instead of deriving them from opaque ids', () => {
+    expect(BackendSurfaceDeclarationV1Schema.safeParse({
+      surfaceApiVersion: 1,
       id: 'launch-adapter',
       kind: 'terminalRuntime',
       handler: {
@@ -345,8 +349,8 @@ describe('extension and hook contract exports', () => {
       },
     }).success).toBe(false);
 
-    const parsed = BackendRuntimeAdapterV1Schema.parse({
-      runtimeAdapterApiVersion: 1,
+    const parsed = BackendSurfaceDeclarationV1Schema.parse({
+      surfaceApiVersion: 1,
       id: 'launch-adapter',
       kind: 'terminalRuntime',
       operation: 'launch',
@@ -363,9 +367,9 @@ describe('extension and hook contract exports', () => {
     });
   });
 
-  it('treats runtime adapter operation names as host-validated ABI strings rather than schema-level enums', () => {
-    const parsed = BackendRuntimeAdapterV1Schema.parse({
-      runtimeAdapterApiVersion: 1,
+  it('treats backend surface operation names as host-validated ABI strings rather than schema-level enums', () => {
+    const parsed = BackendSurfaceDeclarationV1Schema.parse({
+      surfaceApiVersion: 1,
       id: 'future-adapter',
       kind: 'terminalRuntime',
       operation: 'futureOperation',
@@ -376,14 +380,103 @@ describe('extension and hook contract exports', () => {
     });
 
     expect(parsed.operation).toBe('futureOperation');
-    expect(isSupportedBackendRuntimeAdapterOperationV1({
+    expect(isSupportedBackendSurfaceOperationV1({
       kind: 'terminalRuntime',
       operation: 'launch',
     })).toBe(true);
-    expect(isSupportedBackendRuntimeAdapterOperationV1({
+    expect(isSupportedBackendSurfaceOperationV1({
       kind: 'terminalRuntime',
       operation: 'futureOperation',
     })).toBe(false);
+  });
+
+  it('accepts the final six backend surface kinds and rejects stale surface-kind names', () => {
+    expect(BackendSurfaceKindV1Schema.options).toEqual([
+      'terminalRuntime',
+      'externalSession',
+      'attach',
+      'handoff',
+      'fork',
+      'checkpoint',
+    ]);
+    expect(BackendSurfaceKindV1Schema.safeParse('externalSessions').success).toBe(false);
+    expect(BackendSurfaceKindV1Schema.safeParse('sessionHandoff').success).toBe(false);
+  });
+
+  it('uses final backend surface operation vocabulary', () => {
+    expect(BackendSurfaceOperationCatalogV1.terminalRuntime.resolveTranscriptBinding).toBe('resolveTranscriptBinding');
+    expect(BackendSurfaceOperationCatalogV1.externalSession.resolveSource).toBe('resolveSource');
+    expect(BackendSurfaceOperationCatalogV1.externalSession.resolveTakeoverLaunch).toBe('resolveTakeoverLaunch');
+    expect(BackendSurfaceOperationCatalogV1.attach.evaluateAvailability).toBe('evaluateAvailability');
+    expect(BackendSurfaceOperationCatalogV1.attach.attach).toBe('attach');
+    expect(BackendSurfaceOperationCatalogV1.handoff.exportBundle).toBe('exportBundle');
+    expect(BackendSurfaceOperationCatalogV1.fork.resolveReplayChildLaunch).toBe('resolveReplayChildLaunch');
+    expect(BackendSurfaceOperationCatalogV1.checkpoint.restore).toBe('restore');
+    expect((BackendSurfaceOperationCatalogV1.terminalRuntime as Record<string, unknown>).bindTranscript).toBeUndefined();
+  });
+
+  it('keeps attach backend surface static metadata display-only', () => {
+    expect(BackendSurfaceDeclarationV1Schema.safeParse({
+      surfaceApiVersion: 1,
+      id: 'backend.attach.tmux',
+      kind: 'attach',
+      operation: 'attach',
+      handler: {
+        target: 'daemon',
+        exportName: 'attach',
+      },
+      staticMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'shared',
+        locality: 'same_machine',
+        maxClients: 1,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    }).success).toBe(true);
+    expect(BackendSurfaceDeclarationV1Schema.safeParse({
+      surfaceApiVersion: 1,
+      id: 'backend.attach.provider',
+      kind: 'attach',
+      operation: 'attach',
+      handler: {
+        target: 'daemon',
+        exportName: 'attach',
+      },
+      staticMetadata: {
+        attachStrategy: 'provider_attach',
+        topology: 'shared',
+        remoteWritable: true,
+      },
+    }).success).toBe(false);
+    expect(BackendSurfaceDeclarationV1Schema.safeParse({
+      surfaceApiVersion: 1,
+      id: 'backend.attach.terminal',
+      kind: 'attach',
+      operation: 'attach',
+      handler: {
+        target: 'daemon',
+        exportName: 'attach',
+      },
+      staticMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'shared',
+        injectUserPrompt: true,
+      },
+    }).success).toBe(false);
+  });
+
+  it('rejects stale runtime adapter carriers in final backend definitions', () => {
+    const parsed = BackendDefinitionV1Schema.safeParse({
+      kindVersion: 1,
+      id: 'ohMyPi.acp',
+      providerId: 'ohMyPi',
+      runtimeKind: 'acp',
+      capabilities: {},
+      runtimeAdapters: [],
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   it('rejects unsupported extension target descriptors in the v2 manifest contract', () => {
@@ -410,9 +503,9 @@ describe('extension and hook contract exports', () => {
     ).toBe(false);
   });
 
-  it('rejects plugin-target backend runtime adapter handlers in the v1 contract', () => {
-    const parsed = BackendRuntimeAdapterV1Schema.safeParse({
-      runtimeAdapterApiVersion: 1,
+  it('rejects plugin-target backend surface handlers in the v1 contract', () => {
+    const parsed = BackendSurfaceDeclarationV1Schema.safeParse({
+      surfaceApiVersion: 1,
       id: 'backend.terminalRuntime.launch',
       kind: 'terminalRuntime',
       operation: 'launch',
@@ -425,7 +518,9 @@ describe('extension and hook contract exports', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('does not expose internal runtime adapter operation-id helpers through the public protocol root', () => {
+  it('does not expose stale runtime adapter helpers through the public protocol root', () => {
+    expect((protocol as Record<string, unknown>).BackendRuntimeAdapterOperationCatalogV1).toBeUndefined();
+    expect((protocol as Record<string, unknown>).BackendRuntimeAdapterV1Schema).toBeUndefined();
     expect((protocol as Record<string, unknown>).BackendRuntimeAdapterOperationIdsByKindV1).toBeUndefined();
     expect((protocol as Record<string, unknown>).isSupportedBackendRuntimeAdapterOperationIdV1).toBeUndefined();
   });
@@ -498,6 +593,20 @@ describe('extension and hook contract exports', () => {
 
     expect(normalized).toBeTruthy();
     expect(normalized?.eventId).toBe('session.started');
+
+    const legacyProviderSession = readHookEventEnvelopeV1({
+      hookVersion: 1,
+      eventId: 'session.started',
+      category: 'lifecycle',
+      scope: 'session',
+      timestampMs: 1,
+      vendorSessionId: 'legacy-provider-session',
+      payload: {},
+    }) as { providerSessionId?: string; vendorSessionId?: string } | null;
+
+    expect(legacyProviderSession).toBeTruthy();
+    expect(legacyProviderSession?.providerSessionId).toBe('legacy-provider-session');
+    expect(legacyProviderSession?.vendorSessionId).toBeUndefined();
 
     const invalid = readHookEventEnvelopeV1({
       hookVersion: 1,

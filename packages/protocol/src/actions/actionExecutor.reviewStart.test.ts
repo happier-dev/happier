@@ -3,6 +3,71 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from './actionExecutor';
 
 describe('createActionExecutor (review.start)', () => {
+  it('routes current-session single-engine reviews to the inline review dependency', async () => {
+    const executionRunStart = vi.fn(async () => ({ runId: 'run_1' }));
+    const reviewStartInline = vi.fn(async () => ({ ok: true, reviewTurnId: 'turn-review-native' }));
+
+    const executor = createActionExecutor({
+      executionRunStart,
+      executionRunList: async () => ({}),
+      executionRunGet: async () => ({}),
+      executionRunSend: async () => ({}),
+      executionRunStop: async () => ({}),
+      executionRunAction: async () => ({}),
+      executionRunWait: async () => ({}),
+      sessionOpen: async () => ({}),
+      sessionFork: async () => ({}),
+      sessionRollback: async () => ({}),
+      sessionSpawnNew: async () => ({}),
+      sessionSpawnPicker: async () => ({}),
+      pathsListRecent: async () => ({ items: [] }),
+      machinesList: async () => ({ items: [] }),
+      serversList: async () => ({ items: [] }),
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      reviewStartInline,
+      agentsBackendsList: async () => ({ items: [] }),
+      agentsModelsList: async () => ({ items: [] }),
+      sessionSendMessage: async () => ({}),
+      sessionPermissionRespond: async () => ({}),
+      sessionUserActionAnswer: async () => ({}),
+      sessionModeSet: async () => ({}),
+      sessionModesList: async () => ({ items: [] }),
+      sessionTargetPrimarySet: async () => ({}),
+      sessionTargetTrackedSet: async () => ({}),
+      sessionList: async () => ({}),
+      sessionActivityGet: async () => ({}),
+      sessionRecentMessagesGet: async () => ({}),
+      daemonMemorySearch: async () => ({ v: 1, ok: true as const, hits: [] }),
+      daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
+      daemonMemoryEnsureUpToDate: async () => ({ ok: true }),
+      resetGlobalVoiceAgent: async () => {},
+    });
+
+    await expect(executor.execute(
+      'review.start' as any,
+      {
+        sessionId: 's1',
+        engineIds: ['codex'],
+        instructions: 'Review this.',
+        runLocation: 'current_session',
+        changeType: 'uncommitted',
+        base: { kind: 'none' },
+      },
+      { defaultSessionId: 's1' },
+    )).resolves.toEqual({
+      ok: true,
+      result: { ok: true, reviewTurnId: 'turn-review-native' },
+    });
+
+    expect(reviewStartInline).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      engineId: 'codex',
+      instructions: 'Review this.',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+    }));
+    expect(executionRunStart).not.toHaveBeenCalled();
+  });
+
   it('starts resumable review runs with ioMode=streaming so sidechain progress can stream', async () => {
     const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
 

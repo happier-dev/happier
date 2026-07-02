@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ExternalSessionsSourceSchema } from '../../providers/externalSessionsCatalog.js';
+import { ExternalSessionsSourceSchema } from '../../sessions/external/sourceCatalog.js';
 import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
 import { CODEX_BACKEND_MODES } from '../../providers/codex/backendMode.js';
 

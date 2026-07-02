@@ -3,15 +3,22 @@ import { z } from 'zod';
 export const CodingPromptBehaviorModeV1Schema = z.enum(['agent', 'disabled']);
 export type CodingPromptBehaviorModeV1 = z.infer<typeof CodingPromptBehaviorModeV1Schema>;
 
+export const CodingPromptSessionTitleUpdatesModeV1Schema = z.enum(['disabled', 'initial', 'ongoing']);
+export type CodingPromptSessionTitleUpdatesModeV1 = z.infer<typeof CodingPromptSessionTitleUpdatesModeV1Schema>;
+
+const CodingPromptSessionTitleUpdatesInputV1Schema = z
+  .enum(['agent', 'disabled', 'initial', 'ongoing'])
+  .transform((mode): CodingPromptSessionTitleUpdatesModeV1 => (mode === 'agent' ? 'ongoing' : mode));
+
 export const CodingPromptBehaviorV1Schema = z
   .object({
     v: z.literal(1).default(1),
-    sessionTitleUpdates: CodingPromptBehaviorModeV1Schema.default('agent'),
+    sessionTitleUpdates: CodingPromptSessionTitleUpdatesInputV1Schema.default('ongoing'),
     responseOptions: CodingPromptBehaviorModeV1Schema.default('agent'),
   })
   .catch({
     v: 1,
-    sessionTitleUpdates: 'agent',
+    sessionTitleUpdates: 'ongoing',
     responseOptions: 'agent',
   });
 
@@ -28,8 +35,12 @@ export function resolveCodingPromptBehaviorV1(settingsLike: unknown): CodingProm
   return CodingPromptBehaviorV1Schema.parse(rec?.codingPromptBehaviorV1);
 }
 
+export function resolveCodingPromptSessionTitleUpdatesModeV1(settingsLike: unknown): CodingPromptSessionTitleUpdatesModeV1 {
+  return resolveCodingPromptBehaviorV1(settingsLike).sessionTitleUpdates;
+}
+
 export function isCodingPromptSessionTitleUpdatesEnabled(settingsLike: unknown): boolean {
-  return resolveCodingPromptBehaviorV1(settingsLike).sessionTitleUpdates === 'agent';
+  return resolveCodingPromptSessionTitleUpdatesModeV1(settingsLike) !== 'disabled';
 }
 
 export function isCodingPromptResponseOptionsEnabled(settingsLike: unknown): boolean {

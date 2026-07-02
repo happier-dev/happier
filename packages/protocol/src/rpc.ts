@@ -1,5 +1,7 @@
 export const RPC_METHODS = {
   SPAWN_HAPPY_SESSION: 'spawn-happy-session',
+  DAEMON_SPAWN_SESSION_RESOLVE: 'daemon.spawnSession.resolve',
+  DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE: 'daemon.spawnSession.resolveByNonce',
   STOP_SESSION: 'stop-session',
   STOP_DAEMON: 'stop-daemon',
   DAEMON_EXECUTION_RUNS_LIST: 'daemon.executionRuns.list',
@@ -13,6 +15,7 @@ export const RPC_METHODS = {
   DAEMON_MEMORY_GET_WINDOW: 'daemon.memory.getWindow',
   DAEMON_MEMORY_ENSURE_UP_TO_DATE: 'daemon.memory.ensureUpToDate',
   DAEMON_MEMORY_STATUS: 'daemon.memory.status',
+  DAEMON_SERVER_WORK_STATUS: 'daemon.serverWork.status',
   DAEMON_MEMORY_SETTINGS_GET: 'daemon.memory.settings.get',
   DAEMON_MEMORY_SETTINGS_SET: 'daemon.memory.settings.set',
   DAEMON_VOICE_INFERENCE_STATUS: 'daemon.voiceInference.status',
@@ -96,6 +99,15 @@ export const RPC_METHODS = {
   DAEMON_SESSION_HANDOFF_COMMIT: 'daemon.sessionHandoff.commit',
   DAEMON_SESSION_HANDOFF_ABORT: 'daemon.sessionHandoff.abort',
   DAEMON_SESSION_HANDOFF_STATUS_GET: 'daemon.sessionHandoff.status.get',
+  DAEMON_SESSION_GOAL_GET: 'daemon.sessionGoal.get',
+  DAEMON_SESSION_GOAL_SET: 'daemon.sessionGoal.set',
+  DAEMON_SESSION_GOAL_CLEAR: 'daemon.sessionGoal.clear',
+  DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE: 'daemon.sessionUsageLimit.waitResume.enable',
+  DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL: 'daemon.sessionUsageLimit.waitResume.cancel',
+  DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW: 'daemon.sessionUsageLimit.checkNow',
+  DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH: 'daemon.sessionConnectedServiceAuth.switch',
+  DAEMON_SESSION_VENDOR_PLUGIN_CATALOG_LIST: 'daemon.sessionVendorPluginCatalog.list',
+  DAEMON_SESSION_SKILL_CATALOG_LIST: 'daemon.sessionSkillCatalog.list',
   SESSION_CONTINUE_WITH_REPLAY: 'session.continueWithReplay',
   SESSION_FORK: 'session.fork',
   SESSION_PERMISSION_RESPOND: 'session.permission.respond',
@@ -205,6 +217,17 @@ export const RPC_ERROR_MESSAGES = {
 // Session-scoped RPC method names (used with `${sessionId}:${method}` over socket RPC).
 export const SESSION_RPC_METHODS = {
   SESSION_USER_MESSAGE_SEND: 'session.userMessage.send',
+  SESSION_WORK_STATE_GET: 'session.workState.get',
+  SESSION_GOAL_GET: 'session.goal.get',
+  SESSION_GOAL_SET: 'session.goal.set',
+  SESSION_GOAL_CLEAR: 'session.goal.clear',
+  SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS: 'session.connectedServiceAuth.invalidateTransports',
+  SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE: 'session.usageLimit.waitResume.enable',
+  SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL: 'session.usageLimit.waitResume.cancel',
+  SESSION_USAGE_LIMIT_CHECK_NOW: 'session.usageLimit.checkNow',
+  SESSION_REVIEW_START_INLINE: 'session.review.startInline',
+  SESSION_VENDOR_PLUGIN_CATALOG_LIST: 'session.vendorPluginCatalog.list',
+  SESSION_SKILL_CATALOG_LIST: 'session.skillCatalog.list',
   EXECUTION_RUN_START: 'execution.run.start',
   EXECUTION_RUN_ENSURE: 'execution.run.ensure',
   EXECUTION_RUN_ENSURE_OR_START: 'execution.run.ensureOrStart',
@@ -218,6 +241,8 @@ export const SESSION_RPC_METHODS = {
   EXECUTION_RUN_ACTION: 'execution.run.action',
   SESSION_ROLLBACK: 'session.rollback',
   SESSION_CHECKPOINT_CODE_ROLLBACK: 'session.checkpointCodeRollback',
+  SESSION_CHECKPOINT: 'session.checkpoint',
+  SESSION_RESTORE: 'session.restore',
 } as const;
 
 export function isRpcMethodNotFoundResult(value: unknown): value is { error: string; errorCode?: string } {

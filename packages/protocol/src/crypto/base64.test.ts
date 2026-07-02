@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { decodeBase64, encodeBase64 } from './base64.js';
 
@@ -16,6 +16,21 @@ describe('protocol base64 helpers', () => {
     const encoded = encodeBase64(bytes, 'base64');
     const decoded = decodeBase64(encoded, 'base64');
     expect(Array.from(decoded)).toEqual(Array.from(bytes));
+  });
+
+  it('decodes large canonical padded base64 without a JavaScript character-by-character pre-scan', () => {
+    const bytes = createDeterministicBytes(4096);
+    const encoded = encodeBase64(bytes, 'base64');
+    const charCodeAtSpy = vi.spyOn(String.prototype, 'charCodeAt');
+
+    try {
+      const decoded = decodeBase64(encoded, 'base64');
+
+      expect(Array.from(decoded)).toEqual(Array.from(bytes));
+      expect(charCodeAtSpy.mock.calls.length).toBeLessThan(encoded.length * 1.5);
+    } finally {
+      charCodeAtSpy.mockRestore();
+    }
   });
 
   it('decodes base64 leniently (whitespace, invalid chars, missing padding)', () => {

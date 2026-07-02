@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { BackendDefinitionV1Schema } from '../backendDefinitionV1.js';
+import { BackendDefinitionV1BaseSchema } from '../backendDefinitionV1.js';
 import { ProviderDefinitionV1Schema } from '../providerDefinitionV1.js';
 import { ExtensionActionContributionV2Schema, ExtensionDaemonHandlerRefV1Schema } from '../actions/v2.js';
 import {
@@ -169,7 +169,7 @@ export const ExtensionBackendEngineV2Schema = z.discriminatedUnion('kind', [
 });
 export type ExtensionBackendEngineV2 = z.infer<typeof ExtensionBackendEngineV2Schema>;
 
-export const ExtensionBackendContributionV2Schema = BackendDefinitionV1Schema.omit({
+export const ExtensionBackendContributionV2Schema = BackendDefinitionV1BaseSchema.omit({
   runtimeKind: true,
   acp: true,
 }).extend({

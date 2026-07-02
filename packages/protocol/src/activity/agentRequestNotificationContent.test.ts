@@ -8,13 +8,15 @@ describe('buildAgentRequestNotificationContent', () => {
       buildAgentRequestNotificationContent({
         kind: 'permission',
         sessionId: 'session-1',
+        sessionTitle: 'Fix prod issue',
+        agentDisplayName: 'Claude',
         requestId: 'request-1',
         toolName: 'Bash',
         toolInput: { command: 'git status --short && echo secret-token' },
       }),
     ).toEqual({
-      title: 'Permission Request',
-      body: 'Approval needed for: Bash\nCommand: git',
+      title: 'Fix prod issue',
+      body: 'Claude asks permission to use Bash\nCommand: git',
       data: {
         sessionId: 'session-1',
         requestId: 'request-1',
@@ -31,6 +33,8 @@ describe('buildAgentRequestNotificationContent', () => {
       buildAgentRequestNotificationContent({
         kind: 'user_action',
         sessionId: 'session-1',
+        sessionTitle: '  Research   plan  ',
+        agentDisplayName: 'Codex',
         requestId: 'request-2',
         toolName: 'ask_user_question',
         toolInput: {
@@ -39,9 +43,34 @@ describe('buildAgentRequestNotificationContent', () => {
         toolDetails: 'Custom details',
       }),
     ).toMatchObject({
-      title: 'Action Required',
-      body: 'Input needed for: AskUserQuestion\nCustom details',
+      title: 'Research plan',
+      body: 'Codex needs your input for AskUserQuestion\nCustom details',
       toolDetails: 'Custom details',
+    });
+  });
+
+  it('uses safe fallback display text when session and agent labels are missing', () => {
+    expect(
+      buildAgentRequestNotificationContent({
+        kind: 'permission',
+        sessionId: 'session-permission-with-long-id',
+        sessionTitle: '   ',
+        agentDisplayName: '',
+        requestId: 'request-3',
+        toolName: 'Write',
+        toolDetails: null,
+      }),
+    ).toMatchObject({
+      title: 'Session session-',
+      body: 'Agent asks permission to use Write',
+      data: {
+        sessionId: 'session-permission-with-long-id',
+        requestId: 'request-3',
+        tool: 'Write',
+        type: 'permission_request',
+        kind: 'permission',
+      },
+      toolDetails: null,
     });
   });
 });

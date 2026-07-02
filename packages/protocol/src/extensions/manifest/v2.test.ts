@@ -122,13 +122,13 @@ describe('extension manifest v2 contracts', () => {
         {
           kind: 'hook',
           hookApiVersion: 1,
-          id: 'backend.terminalRuntime.bindTranscript',
+          id: 'backend.terminalRuntime.resolveTranscriptBinding',
           category: 'integration',
           scope: 'backend',
           executionKind: 'integrate',
           handler: {
             target: 'plugin',
-            exportName: 'bindTranscript',
+            exportName: 'resolveTranscriptBinding',
           },
           priority: 10,
         },
@@ -227,7 +227,7 @@ describe('extension manifest v2 contracts', () => {
         futureEngineHint: 'preserved',
       },
       capabilities: {},
-      runtimeAdapters: [],
+      surfaceHandlers: [],
       futureBackendHint: 'preserved',
     });
 
@@ -280,7 +280,7 @@ describe('extension manifest v2 contracts', () => {
         },
       },
       capabilities: {},
-      runtimeAdapters: [],
+      surfaceHandlers: [],
     }).success).toBe(false);
 
     expect(ExtensionContributionV2Schema.safeParse({
@@ -293,7 +293,7 @@ describe('extension manifest v2 contracts', () => {
         command: 'acme-agent',
       },
       capabilities: {},
-      runtimeAdapters: [],
+      surfaceHandlers: [],
     }).success).toBe(false);
   });
 
@@ -314,7 +314,7 @@ describe('extension manifest v2 contracts', () => {
         },
       },
       capabilities: {},
-      runtimeAdapters: [],
+      surfaceHandlers: [],
     }).success).toBe(true);
 
     expect(ExtensionContributionV2Schema.safeParse({
@@ -336,7 +336,7 @@ describe('extension manifest v2 contracts', () => {
         },
       },
       capabilities: {},
-      runtimeAdapters: [],
+      surfaceHandlers: [],
     }).success).toBe(true);
   });
 

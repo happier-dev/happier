@@ -94,6 +94,16 @@ describe('updates transcript vNext payloads', () => {
     expect(parsed.data.archivedAt).toBe(1_700_000_000_000);
   });
 
+  it('rejects update-session payloads with overlong latestTurnId values', () => {
+    const parsed = UpdateBodySchema.safeParse({
+      t: 'update-session',
+      id: 'sess_1',
+      latestTurnId: 't'.repeat(192),
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it('parses execution-run-updated ephemerals', () => {
     const parsed = EphemeralUpdateSchema.safeParse({
       type: 'execution-run-updated',
@@ -230,8 +240,11 @@ describe('updates transcript vNext payloads', () => {
         version: 2,
         anotherFutureField: 'hello',
       },
+      active: false,
+      activeAt: 1_233,
     });
 
     expect(parsed.success).toBe(true);
+    expect(parsed.data).toMatchObject({ active: false, activeAt: 1_233 });
   });
 });

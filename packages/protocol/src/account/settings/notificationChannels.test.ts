@@ -30,6 +30,9 @@ describe('notificationChannelsV1', () => {
           ready: false,
           permissionRequest: true,
           userActionRequest: false,
+          connectedServiceAccountSwitch: true,
+          connectedServiceQuotaBlocked: true,
+          connectedServiceQuotaRecovered: true,
         },
         readyIncludeMessageText: false,
       },
@@ -62,6 +65,9 @@ describe('notificationChannelsV1', () => {
             ready: true,
             permissionRequest: false,
             userActionRequest: true,
+            connectedServiceAccountSwitch: false,
+            connectedServiceQuotaBlocked: false,
+            connectedServiceQuotaRecovered: true,
           },
           readyIncludeMessageText: false,
         },
@@ -79,11 +85,14 @@ describe('notificationChannelsV1', () => {
           _isSecretValue: true,
           value: 'webhook-secret',
         },
-        topics: {
-          ready: true,
-          permissionRequest: false,
-          userActionRequest: true,
-        },
+          topics: {
+            ready: true,
+            permissionRequest: false,
+            userActionRequest: true,
+            connectedServiceAccountSwitch: false,
+            connectedServiceQuotaBlocked: false,
+            connectedServiceQuotaRecovered: true,
+          },
         readyIncludeMessageText: false,
       },
     ]);
@@ -137,6 +146,9 @@ describe('notificationChannelsV1', () => {
           ready: false,
           permissionRequest: true,
           userActionRequest: true,
+          connectedServiceAccountSwitch: true,
+          connectedServiceQuotaBlocked: true,
+          connectedServiceQuotaRecovered: true,
         },
         readyIncludeMessageText: false,
       },
@@ -174,9 +186,41 @@ describe('notificationChannelsV1', () => {
           ready: true,
           permissionRequest: true,
           userActionRequest: true,
+          connectedServiceAccountSwitch: true,
+          connectedServiceQuotaBlocked: true,
+          connectedServiceQuotaRecovered: true,
         },
         readyIncludeMessageText: true,
       },
     ]);
+  });
+
+  it('defaults quota recovered channel topics from quota blocked channel topics', () => {
+    const parsed = accountSettingsParse({
+      notificationChannelsV1: [
+        {
+          v: 1,
+          id: 'webhook-primary',
+          kind: 'webhook',
+          enabled: true,
+          url: 'https://hooks.example.test/happier',
+          topics: {
+            ready: true,
+            permissionRequest: true,
+            userActionRequest: true,
+            connectedServiceQuotaBlocked: false,
+          },
+        },
+      ],
+    });
+
+    expect(resolveNotificationChannelsV1FromAccountSettings(parsed)[0]?.topics).toEqual({
+      ready: true,
+      permissionRequest: true,
+      userActionRequest: true,
+      connectedServiceAccountSwitch: true,
+      connectedServiceQuotaBlocked: false,
+      connectedServiceQuotaRecovered: false,
+    });
   });
 });

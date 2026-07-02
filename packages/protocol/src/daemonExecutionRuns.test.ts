@@ -23,9 +23,9 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       startedAtMs: 0,
       updatedAtMs: 1,
       resumeHandle: {
-        kind: 'vendor_session.v1',
+        kind: 'provider_session.v1',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        // vendorSessionId missing on purpose
+        // providerSessionId missing on purpose
       },
     });
 
@@ -49,9 +49,9 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       startedAtMs: 0,
       updatedAtMs: 1,
       resumeHandle: {
-        kind: 'vendor_session.v1',
+        kind: 'provider_session.v1',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        vendorSessionId: 'vendor-session-123',
+        providerSessionId: 'vendor-session-123',
       },
     });
 
@@ -107,9 +107,9 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       startedAtMs: 0,
       updatedAtMs: 1,
       resumeHandle: {
-        kind: 'vendor_session.v1',
+        kind: 'provider_session.v1',
         backendId: 'codex',
-        vendorSessionId: 'vendor-session-123',
+        providerSessionId: 'vendor-session-123',
       },
     });
 
@@ -119,9 +119,9 @@ describe('DaemonExecutionRunMarkerSchema', () => {
     }
     expect(parsed.data.backendTarget).toEqual({ kind: 'backend', backendId: 'codex', sourceKind: 'built_in' });
     expect(parsed.data.resumeHandle).toMatchObject({
-      kind: 'vendor_session.v1',
+      kind: 'provider_session.v1',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      vendorSessionId: 'vendor-session-123',
+      providerSessionId: 'vendor-session-123',
     });
   });
 
@@ -144,11 +144,11 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       startedAtMs: 0,
       updatedAtMs: 1,
       resumeHandle: {
-        kind: 'vendor_session.v1',
+        kind: 'provider_session.v1',
         backendId: 'review-bot',
         sourceKind: 'configured',
         configuredBackendId: 'review-bot',
-        vendorSessionId: 'vendor-session-123',
+        providerSessionId: 'vendor-session-123',
       },
     });
 
@@ -163,14 +163,14 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       sourceKind: 'configured',
     });
     expect(parsed.data.resumeHandle).toMatchObject({
-      kind: 'vendor_session.v1',
+      kind: 'provider_session.v1',
       backendTarget: {
         kind: 'backend',
         backendId: 'review-bot',
         configuredBackendId: 'review-bot',
         sourceKind: 'configured',
       },
-      vendorSessionId: 'vendor-session-123',
+      providerSessionId: 'vendor-session-123',
     });
   });
 

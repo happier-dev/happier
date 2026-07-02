@@ -11,6 +11,11 @@ describe('PluginBackendCapabilitiesV1Schema session media capabilities', () => {
       emitsSessionMedia: { supported: false },
       nativeImageGeneration: { supported: false },
     });
+    expect(parsed.session.contextCompaction).toEqual({
+      events: { supported: false },
+      manualTrigger: { supported: false },
+      transcriptInference: { supported: false },
+    });
   });
 
   it('distinguishes image input, session media output, and native image generation support', () => {
@@ -64,7 +69,48 @@ describe('PluginBackendCapabilitiesV1Schema session media capabilities', () => {
           emitsSessionMedia: { supported: false },
           nativeImageGeneration: { supported: false },
         },
+        contextCompaction: {
+          events: { supported: false },
+          manualTrigger: { supported: false },
+          transcriptInference: { supported: false },
+        },
       },
+    });
+  });
+
+  it('parses context compaction observability and manual trigger capabilities', () => {
+    const parsed = PluginBackendCapabilitiesV1Schema.parse({
+      session: {
+        contextCompaction: {
+          events: {
+            supported: true,
+            phases: ['started', 'completed', 'failed'],
+            tokenCounts: true,
+            progress: false,
+          },
+          manualTrigger: {
+            supported: true,
+            transport: 'native-runtime-hook',
+            acceptsInstructions: true,
+          },
+          transcriptInference: { supported: true },
+        },
+      },
+    });
+
+    expect(parsed.session.contextCompaction).toEqual({
+      events: {
+        supported: true,
+        phases: ['started', 'completed', 'failed'],
+        tokenCounts: true,
+        progress: false,
+      },
+      manualTrigger: {
+        supported: true,
+        transport: 'native-runtime-hook',
+        acceptsInstructions: true,
+      },
+      transcriptInference: { supported: true },
     });
   });
 });

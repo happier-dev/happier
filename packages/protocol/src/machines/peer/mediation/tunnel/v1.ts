@@ -3,6 +3,11 @@ import { z } from 'zod';
 import { decodeBase64 } from '../../../../crypto/base64.js';
 import { PeerRouteNonceProofV1Schema, type PeerRouteNonceProofV1 } from '../directRouteGrantNonceV1.js';
 import { SignedDirectRouteGrantV1Schema, type SignedDirectRouteGrantV1 } from '../directRouteGrantV1.js';
+import {
+  PeerTcpTunnelRelayAuthorizationV1Schema,
+  type PeerTcpTunnelRelayAuthorizationV1,
+} from './authorization.js';
+import { PeerTcpTunnelEncodingSchema } from './encoding.js';
 
 export const PEER_TCP_TUNNEL_OPEN_PATH = '/peer-mediation/v1/tunnel/open' as const;
 export const PEER_TCP_TUNNEL_STREAM_PATH = '/peer-mediation/v1/tunnel/stream' as const;
@@ -28,23 +33,73 @@ export const PeerTcpTunnelDestinationV1Schema = z.object({
 });
 export type PeerTcpTunnelDestinationV1 = z.infer<typeof PeerTcpTunnelDestinationV1Schema>;
 
-export const PeerTcpTunnelOpenV1Schema = z.object({
-  v: z.literal(1),
-  kind: z.literal('open'),
-  tunnelId: z.string().min(1),
-  targetMachineId: z.string().min(1),
-  routeKind: PeerTcpTunnelRouteKindV1Schema,
-  destination: PeerTcpTunnelDestinationV1Schema,
-  grant: SignedDirectRouteGrantV1Schema.optional(),
-  nonceProof: PeerRouteNonceProofV1Schema.optional(),
-});
+export const PeerTcpTunnelOpenV1Schema = z
+  .object({
+    v: z.literal(1),
+    kind: z.literal('open'),
+    tunnelId: z.string().min(1),
+    targetMachineId: z.string().min(1),
+    routeKind: PeerTcpTunnelRouteKindV1Schema,
+    destination: PeerTcpTunnelDestinationV1Schema,
+    grant: SignedDirectRouteGrantV1Schema.optional(),
+    nonceProof: PeerRouteNonceProofV1Schema.optional(),
+    relayAuthorization: PeerTcpTunnelRelayAuthorizationV1Schema.optional(),
+    supportedEncodings: z.array(PeerTcpTunnelEncodingSchema).min(1).optional(),
+    selectedEncoding: PeerTcpTunnelEncodingSchema.optional(),
+    allowV1Fallback: z.boolean().optional(),
+  })
+  .superRefine((open, ctx) => {
+    if (open.routeKind !== 'server_relay') {
+      if (open.relayAuthorization !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relayAuthorization'],
+          message: 'TCP tunnel relay authorization is only valid for server relay opens',
+        });
+      }
+      return;
+    }
+
+    const authorization = open.relayAuthorization;
+    if (authorization === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relayAuthorization'],
+        message: 'TCP tunnel server relay opens require relay authorization',
+      });
+      return;
+    }
+
+    const payload = authorization.payload;
+    if (payload.targetMachineId !== open.targetMachineId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relayAuthorization', 'payload', 'targetMachineId'],
+        message: 'TCP tunnel relay authorization target machine does not match the open frame',
+      });
+    }
+    if (payload.tunnelId !== open.tunnelId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relayAuthorization', 'payload', 'tunnelId'],
+        message: 'TCP tunnel relay authorization tunnel does not match the open frame',
+      });
+    }
+    if (payload.destination.host !== open.destination.host || payload.destination.port !== open.destination.port) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relayAuthorization', 'payload', 'destination'],
+        message: 'TCP tunnel relay authorization destination does not match the open frame',
+      });
+    }
+  });
 export type PeerTcpTunnelOpenV1 = z.infer<typeof PeerTcpTunnelOpenV1Schema>;
 
 export const PeerTcpTunnelOpenResponseV1Schema = z.object({
   v: z.literal(1),
   tunnelId: z.string().min(1),
   streamPath: z.literal(PEER_TCP_TUNNEL_STREAM_PATH),
-  encoding: z.literal(PEER_TCP_TUNNEL_ENCODING_V1),
+  encoding: PeerTcpTunnelEncodingSchema,
   initialWindowBytes: z.number().int().min(PEER_TCP_TUNNEL_MIN_WINDOW_BYTES).max(PEER_TCP_TUNNEL_MAX_WINDOW_BYTES),
   maxFrameBytes: z.number().int().positive().max(PEER_TCP_TUNNEL_MAX_FRAME_BYTES),
 });
@@ -140,3 +195,4 @@ export function validatePeerTcpTunnelDataFrameCaps(input: Readonly<{
 
 export type PeerTcpTunnelOpenGrantV1 = SignedDirectRouteGrantV1;
 export type PeerTcpTunnelOpenNonceProofV1 = PeerRouteNonceProofV1;
+export type PeerTcpTunnelOpenRelayAuthorizationV1 = PeerTcpTunnelRelayAuthorizationV1;

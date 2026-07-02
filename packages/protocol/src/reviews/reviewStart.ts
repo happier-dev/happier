@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ReviewScmScopeV1Schema } from './scope.js';
+
 /**
  * Canonical, cross-surface input contract for starting reviews.
  *
@@ -27,6 +29,8 @@ export const ReviewEngineInputsSchema = z.record(ReviewEngineIdSchema, ReviewEng
 export type ReviewEngineInputs = z.infer<typeof ReviewEngineInputsSchema>;
 const DEFAULT_REVIEW_ENGINE_INPUTS: ReviewEngineInputs = ReviewEngineInputsSchema.parse({});
 
+export const REVIEW_SCM_SCOPE_INPUT_KEY = 'scmReviewScope';
+
 export const ReviewStartInputSchema = z
   .object({
     sessionId: z.string().min(1).optional(),
@@ -37,6 +41,7 @@ export const ReviewStartInputSchema = z
     changeType: ReviewChangeTypeSchema.default('uncommitted'),
     base: ReviewBaseSchema.default({ kind: 'none' }),
     engines: ReviewEngineInputsSchema.prefault(DEFAULT_REVIEW_ENGINE_INPUTS),
+    scmReviewScope: ReviewScmScopeV1Schema.optional(),
     permissionMode: z.string().min(1).default('read_only'),
   })
   .passthrough()

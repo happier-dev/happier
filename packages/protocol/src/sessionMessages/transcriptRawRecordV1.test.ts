@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { TranscriptRawRecordV1Schema } from './transcriptRawRecordV1.js';
+import {
+  TranscriptRawAgentEventV1Schema,
+  TranscriptRawRecordV1Schema,
+} from './transcriptRawRecordV1.js';
 
 describe('TranscriptRawRecordV1Schema', () => {
   it('parses user text records with extra fields', () => {
@@ -70,6 +73,105 @@ describe('TranscriptRawRecordV1Schema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('parses legacy codex tool-result sidechain records', () => {
+    const parsed = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'codex',
+        data: {
+          type: 'tool-result',
+          callId: 'call_child_1',
+          id: 'tool-result-legacy-1',
+          output: 'ok',
+          sidechainId: 'thread-child',
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('parses canonical context compaction records including cancellation and retry metadata', () => {
+    const acp = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'acp',
+        provider: 'pi',
+        data: {
+          type: 'context-compaction',
+          phase: 'cancelled',
+          lifecycleId: 'pi:context-compaction',
+          provider: 'pi',
+          trigger: 'threshold',
+          source: 'provider-event',
+          tokenCountBefore: 1200,
+          tokenCountAfter: 700,
+          retryAttempt: 1,
+          sanitizedErrorPreview: 'cancelled by provider',
+        },
+      },
+    });
+
+    const sessionEvent = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'event',
+        id: 'event_context_compaction',
+        data: {
+          type: 'context-compaction',
+          phase: 'completed',
+          lifecycleId: 'pi:context-compaction',
+          provider: 'pi',
+          trigger: 'manual',
+          source: 'provider-event',
+        },
+      },
+    });
+
+    expect(acp.success).toBe(true);
+    expect(sessionEvent.success).toBe(true);
+  });
+
+  it('rejects inconsistent context compaction paused metadata', () => {
+    const invalidEvents = [
+      {
+        phase: 'failed',
+        continuation: 'paused',
+        pauseReason: 'provider-idle-after-compaction',
+      },
+      {
+        phase: 'completed',
+        pauseReason: 'provider-idle-after-compaction',
+      },
+    ];
+
+    for (const event of invalidEvents) {
+      const parsed = TranscriptRawRecordV1Schema.safeParse({
+        role: 'agent',
+        content: {
+          type: 'event',
+          id: 'event_context_compaction_invalid_paused',
+          data: {
+            type: 'context-compaction',
+            source: 'provider-event',
+            ...event,
+          },
+        },
+      });
+
+      expect(parsed.success).toBe(false);
+    }
+  });
+
+  it('rejects inconsistent paused metadata in standalone context compaction events', () => {
+    expect(TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'context-compaction',
+      phase: 'failed',
+      continuation: 'paused',
+      pauseReason: 'provider-idle-after-compaction',
+    }).success).toBe(false);
+  });
+
   it.each(['turn_failed', 'turn_cancelled', 'turn_aborted'] as const)(
     'parses codex %s lifecycle records',
     (type) => {
@@ -123,6 +225,431 @@ describe('TranscriptRawRecordV1Schema', () => {
     },
   );
 
+  it('parses structured provider quota and connected-service switch events', () => {
+    const records = [
+      {
+        type: 'connected-service-account-switch',
+        serviceId: 'openai-codex',
+        groupId: 'codex-main',
+        fromProfileId: 'work',
+        toProfileId: 'backup',
+        reason: 'usage_limit',
+        mode: 'restart_resume',
+        effectiveRemainingPct: 12,
+      },
+      {
+        type: 'provider-quota-wait',
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'codex-main',
+        resetAtMs: 1_000,
+        reason: 'usage_limit',
+      },
+      {
+        type: 'provider-quota-recovered',
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'codex-main',
+        reason: 'reset_confirmed',
+      },
+    ];
+
+    for (const data of records) {
+      const parsed = TranscriptRawRecordV1Schema.safeParse({
+        role: 'agent',
+        content: {
+          type: 'event',
+          id: `event_${data.type}`,
+          data,
+        },
+      });
+
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it('parses connected-service account switch events with native endpoints', () => {
+    const parsed = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'event',
+        id: 'event_connected-service-account-switch_native',
+        data: {
+          type: 'connected-service-account-switch',
+          serviceId: 'openai-codex',
+          groupId: 'happier',
+          fromProfileId: null,
+          toProfileId: 'team',
+          reason: 'manual',
+          mode: 'restart_resume',
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('parses connected-service account switch events with event-carried endpoint display labels', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch',
+      serviceId: 'claude-subscription',
+      groupId: 'team-pool',
+      fromProfileId: 'batiplus',
+      toProfileId: 'batiplus',
+      fromProfileLabel: 'leeroy',
+      toProfileLabel: null,
+      reason: 'usage_limit',
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success || parsed.data.type !== 'connected-service-account-switch') {
+      throw new Error('expected a parsed connected-service-account-switch event');
+    }
+    expect(parsed.data.fromProfileLabel).toBe('leeroy');
+    expect(parsed.data.toProfileLabel).toBeNull();
+  });
+
+  it('rejects connected-service account switch endpoint labels that are empty after trimming', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch',
+      serviceId: 'claude-subscription',
+      groupId: null,
+      fromProfileId: 'batiplus',
+      toProfileId: 'other',
+      fromProfileLabel: '   ',
+      reason: 'manual',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('parses connected-service switch attempts with explicit failed hot-apply outcome semantics', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: false,
+      action: 'hot_applied',
+      attemptedContinuityMode: 'hot_apply',
+      outcome: 'failed',
+      outcomeAction: 'none',
+      errorCode: 'post_switch_verification_failed',
+      diagnostic: {
+        code: 'post_switch_verification_failed',
+        failurePhase: 'post_switch_verification',
+        source: 'runtime_auth_recovery',
+        serviceId: 'openai-codex',
+        profileId: 'backup',
+        groupId: 'codex-main',
+        retryable: true,
+        suggestedActions: ['retry', 'open_connected_accounts'],
+      },
+      partialState: 'runtime_auth_partially_applied',
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error('expected parse success');
+    expect(parsed.data.attemptedContinuityMode).toBe('hot_apply');
+    expect(parsed.data.outcome).toBe('failed');
+    expect(parsed.data.outcomeAction).toBe('none');
+  });
+
+  it('parses connected-service switch attempts with explicit successful hot-apply outcome semantics', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'hot_applied',
+      attemptedContinuityMode: 'hot_apply',
+      outcome: 'succeeded',
+      outcomeAction: 'hot_applied',
+      partialState: 'runtime_auth_applied',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('preserves connected-service switch attempt verification details', () => {
+    const parsed = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'event',
+        id: 'event-account-switch-attempt-verification',
+        data: {
+          type: 'connected-service-account-switch-attempt',
+          ok: true,
+          action: 'hot_applied',
+          verificationByServiceId: {
+            'openai-codex': {
+              status: 'weakly_verified',
+              reason: 'provider_account_email_verified_without_account_id',
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error('expected parse success');
+    const content = parsed.data.content;
+    expect(content.type).toBe('event');
+    if (content.type !== 'event') throw new Error('expected event content');
+    expect(content.data.type).toBe('connected-service-account-switch-attempt');
+    if (content.data.type !== 'connected-service-account-switch-attempt') {
+      throw new Error('expected connected-service account switch attempt');
+    }
+    expect(content.data.verificationByServiceId).toEqual({
+      'openai-codex': {
+        status: 'weakly_verified',
+        reason: 'provider_account_email_verified_without_account_id',
+      },
+    });
+  });
+
+  it('keeps legacy connected-service switch attempt rows valid without outcome fields', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: false,
+      action: 'hot_applied',
+      errorCode: 'hot_apply_failed',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects new-shape connected-service switch attempts that omit outcome semantics', () => {
+    const attemptedHotApplyWithoutOutcome = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: false,
+      action: 'hot_applied',
+      attemptedContinuityMode: 'hot_apply',
+      errorCode: 'hot_apply_failed',
+    });
+    const diagnosticWithoutOutcome = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: false,
+      action: 'hot_applied',
+      diagnostic: {
+        code: 'post_switch_verification_failed',
+        failurePhase: 'post_switch_verification',
+        source: 'runtime_auth_recovery',
+        retryable: true,
+        suggestedActions: ['retry'],
+      },
+    });
+    const partialStateWithoutOutcome = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'hot_applied',
+      partialState: 'runtime_auth_applied',
+    });
+
+    expect(attemptedHotApplyWithoutOutcome.success).toBe(false);
+    expect(diagnosticWithoutOutcome.success).toBe(false);
+    expect(partialStateWithoutOutcome.success).toBe(false);
+  });
+
+  it('rejects failed connected-service switch attempt outcomes that still claim a success action', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: false,
+      action: 'hot_applied',
+      attemptedContinuityMode: 'hot_apply',
+      outcome: 'failed',
+      outcomeAction: 'hot_applied',
+      errorCode: 'hot_apply_failed',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('validates group-generation and per-session adoption projection fields on switch attempts', () => {
+    const observed = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'metadata_updated',
+      attemptedContinuityMode: 'metadata_only',
+      outcome: 'observed',
+      outcomeAction: 'metadata_updated',
+      groupGeneration: 12,
+      sessionAdoption: 'observed_only',
+    });
+    const applied = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'metadata_updated',
+      attemptedContinuityMode: 'metadata_only',
+      outcome: 'succeeded',
+      outcomeAction: 'metadata_updated',
+      groupGeneration: 12,
+      sessionAdoption: 'applied',
+      sessionAdoptedGeneration: 12,
+    });
+    const negativeGeneration = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'metadata_updated',
+      outcome: 'observed',
+      groupGeneration: -1,
+      sessionAdoption: 'observed_only',
+    });
+    const unknownAdoption = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'metadata_updated',
+      outcome: 'observed',
+      groupGeneration: 12,
+      sessionAdoption: 'globally_active',
+    });
+    const failedButApplied = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: false,
+      action: 'metadata_updated',
+      outcome: 'failed',
+      outcomeAction: 'none',
+      groupGeneration: 12,
+      sessionAdoption: 'applied',
+      sessionAdoptedGeneration: 12,
+    });
+    const appliedWithoutGeneration = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'metadata_updated',
+      outcome: 'succeeded',
+      outcomeAction: 'metadata_updated',
+      sessionAdoption: 'applied',
+    });
+    const appliedMismatchedGeneration = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'metadata_updated',
+      outcome: 'succeeded',
+      outcomeAction: 'metadata_updated',
+      groupGeneration: 12,
+      sessionAdoption: 'applied',
+      sessionAdoptedGeneration: 11,
+    });
+    const observedOnlyWithAdoptedGeneration = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'metadata_updated',
+      outcome: 'observed',
+      outcomeAction: 'metadata_updated',
+      groupGeneration: 12,
+      sessionAdoption: 'observed_only',
+      sessionAdoptedGeneration: 12,
+    });
+
+    expect(observed.success).toBe(true);
+    expect(applied.success).toBe(true);
+    expect(negativeGeneration.success).toBe(false);
+    expect(unknownAdoption.success).toBe(false);
+    expect(failedButApplied.success).toBe(false);
+    expect(appliedWithoutGeneration.success).toBe(false);
+    expect(appliedMismatchedGeneration.success).toBe(false);
+    expect(observedOnlyWithAdoptedGeneration.success).toBe(false);
+  });
+
+  it('parses typed runtime-auth recovery transcript events with diagnostics', () => {
+    const scheduled = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-runtime-auth-recovery',
+      status: 'retry_scheduled',
+      serviceId: 'openai-codex',
+      profileId: 'backup',
+      groupId: 'codex-main',
+      attempt: 2,
+      nextRetryAtMs: 1_900_000_000_000,
+      diagnostic: {
+        code: 'recovery_retry_scheduled',
+        failurePhase: 'runtime_auth_recovery',
+        source: 'runtime_auth_recovery',
+        serviceId: 'openai-codex',
+        profileId: 'backup',
+        groupId: 'codex-main',
+        retryable: true,
+        suggestedActions: ['retry'],
+      },
+    });
+    const deadLettered = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-runtime-auth-recovery',
+      status: 'dead_lettered',
+      serviceId: 'openai-codex',
+      profileId: 'backup',
+      groupId: 'codex-main',
+      attempt: 5,
+      terminal: true,
+      diagnostic: {
+        code: 'recovery_dead_lettered',
+        failurePhase: 'runtime_auth_recovery',
+        source: 'runtime_auth_recovery',
+        serviceId: 'openai-codex',
+        profileId: 'backup',
+        groupId: 'codex-main',
+        retryable: false,
+        suggestedActions: ['open_connected_accounts'],
+      },
+    });
+
+    expect(scheduled.success).toBe(true);
+    expect(deadLettered.success).toBe(true);
+  });
+
+  it('rejects runtime-auth recovery transcript events with non-runtime diagnostics', () => {
+    const wrongSource = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-runtime-auth-recovery',
+      status: 'retry_scheduled',
+      serviceId: 'openai-codex',
+      diagnostic: {
+        code: 'recovery_retry_scheduled',
+        failurePhase: 'runtime_auth_recovery',
+        source: 'manual_auth_switch',
+        retryable: true,
+        suggestedActions: ['retry'],
+      },
+    });
+    const wrongPhase = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-runtime-auth-recovery',
+      status: 'dead_lettered',
+      serviceId: 'openai-codex',
+      diagnostic: {
+        code: 'recovery_dead_lettered',
+        failurePhase: 'post_switch_verification',
+        source: 'runtime_auth_recovery',
+        retryable: false,
+        suggestedActions: ['open_connected_accounts'],
+      },
+    });
+    const missingScheduledDiagnostic = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-runtime-auth-recovery',
+      status: 'retry_scheduled',
+      serviceId: 'openai-codex',
+    });
+
+    expect(wrongSource.success).toBe(false);
+    expect(wrongPhase.success).toBe(false);
+    expect(missingScheduledDiagnostic.success).toBe(false);
+  });
+
+  it('strips legacy provider state-sharing entry names from parsed events', () => {
+    const parsed = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'event',
+        id: 'event_provider-state-sharing-degraded',
+        data: {
+          type: 'provider-state-sharing-degraded',
+          serviceId: 'pi',
+          requestedStateMode: 'enabled',
+          effectiveStateMode: 'disabled',
+          code: 'state_sharing_unavailable',
+          reason: 'Provider state sharing unavailable',
+          entryName: 'sessions/--Users-alice-work-project--',
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(JSON.stringify(parsed.success ? parsed.data : null)).not.toContain('Users-alice-work-project');
+    expect(JSON.stringify(parsed.success ? parsed.data : null)).not.toContain('entryName');
+  });
+
   it('parses assistant content blocks with unknown types (forward compatibility)', () => {
     const parsed = TranscriptRawRecordV1Schema.safeParse({
       role: 'agent',
@@ -166,5 +693,78 @@ describe('TranscriptRawRecordV1Schema', () => {
 
     expect(parsed.success).toBe(true);
     expect((parsed.success ? (parsed.data as any).content.data.message.usage : null)).toBeUndefined();
+  });
+});
+
+describe('runtime-config-outcome agent event', () => {
+  const baseEvent = {
+    type: 'runtime-config-outcome' as const,
+    runtime: 'unified',
+    status: 'applied' as const,
+    message: 'model switched to claude-opus',
+  };
+
+  it('accepts each of the five public statuses', () => {
+    for (const status of [
+      'applied',
+      'requires_restart',
+      'requires_interactive_control',
+      'unsupported',
+      'failed',
+    ] as const) {
+      const parsed = TranscriptRawAgentEventV1Schema.safeParse({ ...baseEvent, status });
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it('rejects an unknown status enum value', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({ ...baseEvent, status: 'queued' });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('accepts every public timing value and rejects unknown timing values', () => {
+    for (const timing of [
+      'current_window',
+      'queued_until_safe_window',
+      'scheduled_for_next_prompt',
+      'next_idle',
+      'before_next_prompt',
+      'skipped_already_effective',
+      'not_applicable',
+    ] as const) {
+      const parsed = TranscriptRawAgentEventV1Schema.safeParse({ ...baseEvent, timing });
+      expect(parsed.success).toBe(true);
+    }
+
+    const rejected = TranscriptRawAgentEventV1Schema.safeParse({ ...baseEvent, timing: 'whenever' });
+    expect(rejected.success).toBe(false);
+  });
+
+  it('accepts a sessionMode change key alongside the existing change keys', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      ...baseEvent,
+      changes: [
+        { key: 'sessionMode', requested: 'plan', effective: 'default' },
+        { key: 'model', requested: 'claude-opus' },
+        { key: 'reasoningEffort', requested: 'high' },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects an unknown change key (strict change shape)', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      ...baseEvent,
+      changes: [{ key: 'somethingNew', requested: 'x' }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('passes through unknown top-level keys (back-compat property)', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      ...baseEvent,
+      somethingFromANewerClient: { nested: true },
+    });
+    expect(parsed.success).toBe(true);
   });
 });

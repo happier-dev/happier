@@ -65,7 +65,7 @@ function describePredicate(predicate: ActionInputPredicate | undefined): string 
 
 const FIELD_GUIDANCE_BY_OPTIONS_SOURCE_ID: Readonly<Record<string, readonly VoiceGuidanceNote[]>> = Object.freeze({
   'review.engines.available': [{ text: 'Use listReviewEngines to discover review engines by name before choosing engineIds internally', requiresActionIds: ['review.engines.list'] }],
-  'execution.backends.enabled': [{ text: 'Use listAgentBackends to discover backends by name before choosing backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
+  'execution.backends.enabled': [{ text: 'Use listAgentBackends to discover provider/backend targets before choosing backendTargetKeys internally, not as parallelism capacity', requiresActionIds: ['agents.backends.list'] }],
 });
 
 const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<string, readonly VoiceGuidanceNote[]>>>> = Object.freeze({
@@ -173,9 +173,9 @@ const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<strin
 
 const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanceNote[]>> = Object.freeze({
   'review.start': [{ text: 'Use listReviewEngines before guessing engineIds from engine names', requiresActionIds: ['review.engines.list'] }],
-  'subagents.plan.start': [{ text: 'Use listAgentBackends before choosing backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
-  'subagents.delegate.start': [{ text: 'Use listAgentBackends before choosing backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
-  'voice_agent.start': [{ text: 'Use listAgentBackends before choosing backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
+  'subagents.plan.start': [{ text: 'Use listAgentBackends before choosing provider/backend targets in backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
+  'subagents.delegate.start': [{ text: 'Use listAgentBackends before choosing provider/backend targets in backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
+  'voice_agent.start': [{ text: 'Use listAgentBackends before choosing provider/backend targets in backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
   'agents.models.list': [{ text: 'Call listAgentBackends first if you do not already know the backend name', requiresActionIds: ['agents.backends.list'] }],
   'execution.run.get': [{ text: 'Use listExecutionRuns before choosing runId internally', requiresActionIds: ['execution.run.list'] }],
   'execution.run.send': [{ text: 'Use listExecutionRuns before choosing runId internally', requiresActionIds: ['execution.run.list'] }],

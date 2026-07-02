@@ -2,23 +2,36 @@ import { z } from 'zod';
 
 import { ImageRefSchema } from '../common/imageRef.js';
 import {
+  ConnectedServiceAuthGroupIdSchema,
   ConnectedServiceCloudVendorKeySchema,
+  ConnectedServiceCredentialHealthV1Schema,
   ConnectedServiceIdSchema,
+  ConnectedServiceProfileIdSchema,
 } from '../connect/connectedServiceSchemas.js';
 
 const ConnectedServiceV2ProfileSchema = z.object({
   profileId: z.string().min(1),
-  status: z.enum(['connected', 'needs_reauth']),
+  status: z.enum(['connected', 'refreshing', 'needs_reauth', 'refresh_failed_retryable']),
   kind: z.enum(['oauth', 'token']).nullable().optional().default(null),
   providerEmail: z.string().nullable().optional().default(null),
   providerAccountId: z.string().nullable().optional().default(null),
   expiresAt: z.number().int().nonnegative().nullable().optional().default(null),
   lastUsedAt: z.number().int().nonnegative().nullable().optional().default(null),
+  health: ConnectedServiceCredentialHealthV1Schema.nullable().optional().default(null),
+}).strict();
+
+const ConnectedServiceV2GroupSchema = z.object({
+  groupId: ConnectedServiceAuthGroupIdSchema,
+  displayName: z.string().min(1).nullable().optional().default(null),
+  activeProfileId: ConnectedServiceProfileIdSchema.nullable().optional().default(null),
+  generation: z.number().int().nonnegative().optional().default(0),
+  memberProfileIds: z.array(ConnectedServiceProfileIdSchema).default([]),
 }).strict();
 
 const ConnectedServiceV2ServiceSchema = z.object({
   serviceId: ConnectedServiceIdSchema,
   profiles: z.array(ConnectedServiceV2ProfileSchema).default([]),
+  groups: z.array(ConnectedServiceV2GroupSchema).default([]),
 }).strict();
 
 export const LinkedProviderSchema = z.object({

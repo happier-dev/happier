@@ -5,11 +5,13 @@ import {
   ExtensionHookAggregationKindV1Schema,
   ExtensionHookScopeV1Schema,
   getExtensionHookDefinitionV1,
+  PLUGIN_HOOK_IDS_V1,
 } from '../../index.js';
 
 describe('extension hook catalog v1', () => {
-  it('catalogs event ids with category, scope, execution kind, and aggregation semantics', () => {
+  it('aliases extension hook exports to the final plugin hook catalog', () => {
     expect(typeof getExtensionHookDefinitionV1).toBe('function');
+    expect(EXTENSION_HOOK_CATALOG_V1.map((entry) => entry.id)).toEqual([...PLUGIN_HOOK_IDS_V1]);
 
     const spawnEnv = getExtensionHookDefinitionV1('spawn.augmentEnv');
     expect(spawnEnv).toMatchObject({
@@ -21,15 +23,7 @@ describe('extension hook catalog v1', () => {
       failureMode: 'bestEffort',
     });
 
-    const providerDecision = getExtensionHookDefinitionV1('provider.request.before');
-    expect(providerDecision).toMatchObject({
-      id: 'provider.request.before',
-      category: 'decision',
-      scope: 'provider',
-      executionKind: 'decide',
-      aggregation: 'firstDecision',
-      failureMode: 'failClosed',
-    });
+    expect(getExtensionHookDefinitionV1('provider.request.before')).toBe(null);
 
     expect(ExtensionHookAggregationKindV1Schema.parse('orderedList')).toBe('orderedList');
     expect(ExtensionHookScopeV1Schema.parse('agent')).toBe('agent');

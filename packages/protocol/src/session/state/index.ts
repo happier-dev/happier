@@ -7,6 +7,7 @@ export type {
   SessionStateCapabilitiesV1,
   SessionStateFieldCapabilityV1,
   SessionStateFieldClass,
+  SessionStateFieldDeliveryClassV1,
   SessionStateFieldId,
   SessionStateFieldRegistry,
   SessionStateFieldValue,
@@ -22,6 +23,7 @@ export {
 export {
   SessionStateFieldClassSchema,
   SessionStateFieldDescriptorSchema,
+  SessionStateFieldDeliveryClassSchema,
   SessionStateFieldIdSchema,
 } from './fieldRegistrySchema.js';
 export * from './valueSchemas/index.js';

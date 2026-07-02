@@ -3,6 +3,18 @@ import { z } from 'zod';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
+import {
+  REVIEW_COMMENT_ACTION_IDS_V1,
+  ReviewCommentActionInputSchemasV1,
+  ReviewCommentActionOutputSchemasV1,
+  type ReviewCommentActionIdV1,
+} from '../reviews/comments/actions.js';
+import {
+  PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1,
+  PluginPermissionGrantActionInputSchemasV1,
+  PluginPermissionGrantActionOutputSchemasV1,
+  type PluginPermissionGrantActionIdV1,
+} from '../plugins/permissions/actions.js';
 import { ActionInputPredicateSchema, type ActionInputPredicate } from './actionInputPredicates.js';
 import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
 import {
@@ -28,6 +40,12 @@ import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.js';
 import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
 import { ExecutionRunStartRequestSchema } from '../executionRunStartRequest.js';
+import { SessionWorkStateStatusV1Schema } from '../sessionWorkState/sessionWorkStateV1.js';
+import {
+  SessionUsageLimitCheckNowRequestV1Schema,
+  SessionUsageLimitWaitResumeCancelRequestV1Schema,
+  SessionUsageLimitWaitResumeEnableRequestV1Schema,
+} from '../sessionWorkState/sessionWorkStateRpc.js';
 import {
   ExternalSessionAttachRequestSchema,
   ExternalSessionAttachResponseSchema,
@@ -83,6 +101,12 @@ import {
   ScmDiffSummaryGenerateOutputSchema,
 } from '../scmDiffSummary.js';
 import {
+  SkillCatalogItemV1Schema,
+  SkillCatalogV1Schema,
+  VendorPluginCatalogItemV1Schema,
+  VendorPluginCatalogV1Schema,
+} from '../runtime/catalog/index.js';
+import {
   ExternalSessionTakeoverInputV1Schema,
   ExternalSessionTakeoverResultV1Schema,
 } from '../sessions/external/takeoverV1.js';
@@ -98,6 +122,12 @@ import {
   CheckpointCodeRollbackActionRequestSchema,
   CheckpointCodeRollbackResultSchema,
 } from '../sessions/control/rollback/checkpointCodeRollback.js';
+import {
+  SessionCheckpointRequestV1Schema,
+  SessionCheckpointResultV1Schema,
+  SessionRestoreRequestV1Schema,
+  SessionRestoreResultV1Schema,
+} from '../sessions/control/checkpoints/v1.js';
 import {
   SessionHandoffAbortRequestSchema,
   SessionHandoffCommitRequestSchema,
@@ -137,6 +167,21 @@ export const ActionSurfaceSchema = z.object({
   sdk: z.boolean(),
 }).passthrough();
 export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
+
+export const ActionToolExposureModeSchema = z.enum(['direct', 'discoverable_only']);
+export type ActionToolExposureMode = z.infer<typeof ActionToolExposureModeSchema>;
+
+export const ActionToolExposureSurfaceSchema = z.enum(['session_agent', 'mcp', 'cli']);
+export type ActionToolExposureSurface = z.infer<typeof ActionToolExposureSurfaceSchema>;
+
+export const ActionToolExposureSchema = z
+  .object({
+    session_agent: ActionToolExposureModeSchema.optional(),
+    mcp: ActionToolExposureModeSchema.optional(),
+    cli: ActionToolExposureModeSchema.optional(),
+  })
+  .strict();
+export type ActionToolExposure = z.infer<typeof ActionToolExposureSchema>;
 
 export const ActionSafetySchema = z.enum(['safe', 'danger']);
 export type ActionSafety = z.infer<typeof ActionSafetySchema>;
@@ -287,6 +332,7 @@ export const ActionSpecSchema = z.object({
     .passthrough()
     .optional(),
   prompting: ActionPromptingSchema.optional(),
+  toolExposure: ActionToolExposureSchema.optional(),
   surfaces: ActionSurfaceSchema,
   inputSchema: ZodSchemaLike,
   inputHints: ActionInputHintsSchema.optional(),
@@ -352,6 +398,7 @@ type ActionSpecWithoutApproval = Readonly<{
   sideEffectClass?: ParsedActionSpec['sideEffectClass'];
   examples?: ParsedActionSpec['examples'];
   prompting?: ParsedActionSpec['prompting'];
+  toolExposure?: ParsedActionSpec['toolExposure'];
   surfaces: ParsedActionSpec['surfaces'];
   inputSchema: ParsedActionSpec['inputSchema'];
   inputHints?: ParsedActionSpec['inputHints'];
@@ -448,7 +495,7 @@ export const SessionTranscriptGetInputSchema = z.object({
   includeMeta: z.boolean().optional(),
   includeStructuredPayload: z.boolean().optional(),
   includeRaw: z.boolean().optional(),
-  maxCharsPerMessage: z.number().int().min(0).max(4000).nullable().optional(),
+  maxCharsPerMessage: z.number().int().min(0).max(50_000).nullable().optional(),
   maxRawPayloadChars: z.number().int().min(1).max(32768).nullable().optional(),
 }).passthrough();
 export type SessionTranscriptGetInput = z.infer<typeof SessionTranscriptGetInputSchema>;
@@ -543,6 +590,38 @@ export type SessionEventsGetOutput =
 const SessionWaitIdleInputSchema = z.object({
   sessionId: z.string().min(1),
   timeoutSeconds: z.number().int().min(1).max(3600).optional(),
+}).passthrough();
+
+const SessionGoalSetInputSchema = z.object({
+  sessionId: z.string().min(1),
+  objective: z.string().trim().min(1).max(4000).optional(),
+  status: SessionWorkStateStatusV1Schema.optional(),
+  tokenBudget: z.number().finite().positive().nullable().optional(),
+}).passthrough().refine((value) => (
+  typeof value.objective === 'string'
+  || typeof value.status === 'string'
+  || Object.prototype.hasOwnProperty.call(value, 'tokenBudget')
+), { message: 'At least one goal mutation field is required' });
+
+const SessionCatalogListInputSchema = z.object({
+  sessionId: z.string().min(1),
+  cwd: z.string().min(1).optional(),
+}).passthrough();
+
+const SessionVendorPluginCatalogListOutputSchema = z.object({
+  supported: z.boolean().optional(),
+  unsupported: z.literal(true).optional(),
+  vendorPlugins: z.array(VendorPluginCatalogItemV1Schema).readonly(),
+  catalog: VendorPluginCatalogV1Schema.optional(),
+  diagnostic: z.string().min(1).optional(),
+}).passthrough();
+
+const SessionSkillCatalogListOutputSchema = z.object({
+  supported: z.boolean().optional(),
+  unsupported: z.literal(true).optional(),
+  skills: z.array(SkillCatalogItemV1Schema).readonly(),
+  catalog: SkillCatalogV1Schema.optional(),
+  diagnostic: z.string().min(1).optional(),
 }).passthrough();
 
 const IntentStartCommonSchema = z.object({
@@ -1080,7 +1159,13 @@ const ExternalSessionTakeoverActionInputSchema = ExternalSessionTakeoverInputV1S
 
 const APPROVAL_RESULT_REQUIRED: ActionApproval = Object.freeze({ result: 'required' });
 const APPROVAL_RESULT_NONE: ActionApproval = Object.freeze({ result: 'none' });
+const APPROVAL_RESULT_NONE_DEFERRED: ActionApproval = Object.freeze({ result: 'none', flow: 'deferred' });
 const APPROVAL_RESULT_OPTIONAL_DEFERRED: ActionApproval = Object.freeze({ result: 'optional', flow: 'deferred' });
+
+const RESULT_NONE_DEFERRED_APPROVAL_ACTION_IDS = [
+  'session.usageLimit.waitResume.enable',
+  'session.usageLimit.waitResume.cancel',
+] as const satisfies readonly ActionId[];
 
 const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'action.spec.search',
@@ -1102,6 +1187,11 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'agents.backends.list',
   'agents.models.list',
   'session.status.get',
+  'session.work_state.get',
+  'session.goal.get',
+  'session.usageLimit.checkNow',
+  'session.vendor_plugin_catalog.list',
+  'session.skill_catalog.list',
   'session.history.get',
   'session.transcript.get',
   'session.events.get',
@@ -1123,6 +1213,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'bugreport.getLogTail',
   'approval.request.list',
   'approval.request.get',
+  'plugins.permissions.grants.list',
   'session.log.tail',
   'transcript.page',
   'transcript.readAfter',
@@ -1146,6 +1237,8 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
   'session.model.set',
   'session.archive',
   'session.unarchive',
+  'session.goal.set',
+  'session.goal.clear',
   'ui.voice_global.reset',
   'ui.pet.choose',
   'prompt_doc.update',
@@ -1154,6 +1247,11 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
   'prompt_registry.install',
   'approval.request.create',
   'approval.request.decide',
+  'plugins.permissions.grants.request',
+  'plugins.permissions.grants.grant',
+  'plugins.permissions.grants.revoke',
+  'plugins.permissions.grants.dismissRequest',
+  ...REVIEW_COMMENT_ACTION_IDS_V1,
 ] as const satisfies readonly ActionId[];
 
 const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
@@ -1177,6 +1275,8 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'session.continue_with_replay',
   'session.rollback',
   'session.checkpoint_code_rollback',
+  'session.checkpoint',
+  'session.restore',
   'session.handoff',
   'session.handoff.prepare_target',
   'session.handoff.commit',
@@ -1196,8 +1296,8 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'bugreport.uploadArtifact',
   'transcript.import',
   'sessions.external.link.ensure',
-  'sessions.external.attach',
-  'sessions.external.detach',
+  'sessions.external.follow',
+  'sessions.external.unfollow',
   'sessions.external.followPolicy.set',
   'sessions.external.takeover',
   'scm.pullRequest.openOrReuse',
@@ -1212,16 +1312,121 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
 
 const RESULT_REQUIRED_APPROVAL_ACTION_ID_SET = new Set<ActionId>(RESULT_REQUIRED_APPROVAL_ACTION_IDS);
 const RESULT_NONE_APPROVAL_ACTION_ID_SET = new Set<ActionId>(RESULT_NONE_APPROVAL_ACTION_IDS);
+const RESULT_NONE_DEFERRED_APPROVAL_ACTION_ID_SET = new Set<ActionId>(RESULT_NONE_DEFERRED_APPROVAL_ACTION_IDS);
 const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_ID_SET = new Set<ActionId>(RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS);
+
+const CHECKPOINT_SCOPE_INPUT_OPTIONS: ActionInputOption[] = [
+  { value: 'conversation', label: 'Conversation' },
+  { value: 'workspace', label: 'Workspace' },
+];
+
+const CHECKPOINT_SOURCE_INPUT_OPTIONS: ActionInputOption[] = [
+  { value: 'provider', label: 'Provider' },
+  { value: 'happier_scm', label: 'Happier SCM' },
+  { value: 'composed', label: 'Composed' },
+];
+
+const REVIEW_COMMENT_ACTION_TITLES: Readonly<Record<ReviewCommentActionIdV1, string>> = Object.freeze({
+  'reviews.comments.create': 'Create review comment',
+  'reviews.comments.list': 'List review comments',
+  'reviews.comments.get': 'Get review comment',
+  'reviews.comments.transition': 'Transition review comment',
+  'reviews.comments.edit': 'Edit review comment',
+  'reviews.comments.reply': 'Reply to review comment',
+  'reviews.comments.redact': 'Redact review comment',
+  'reviews.comments.setDisposition': 'Set review comment disposition',
+  'reviews.comments.attachEvidence': 'Attach review comment evidence',
+  'reviews.comments.bulkTransition': 'Bulk transition review comments',
+});
+
+const REVIEW_COMMENT_ACTION_SDK_METHODS: Readonly<Record<ReviewCommentActionIdV1, string>> = Object.freeze({
+  'reviews.comments.create': 'reviews.comments.create',
+  'reviews.comments.list': 'reviews.comments.list',
+  'reviews.comments.get': 'reviews.comments.get',
+  'reviews.comments.transition': 'reviews.comments.transition',
+  'reviews.comments.edit': 'reviews.comments.edit',
+  'reviews.comments.reply': 'reviews.comments.reply',
+  'reviews.comments.redact': 'reviews.comments.redact',
+  'reviews.comments.setDisposition': 'reviews.comments.setDisposition',
+  'reviews.comments.attachEvidence': 'reviews.comments.attachEvidence',
+  'reviews.comments.bulkTransition': 'reviews.comments.bulkTransition',
+});
+
+const PLUGIN_PERMISSION_GRANT_ACTION_TITLES: Readonly<Record<PluginPermissionGrantActionIdV1, string>> = Object.freeze({
+  'plugins.permissions.grants.list': 'List plugin permission grants',
+  'plugins.permissions.grants.request': 'Request plugin permission grant',
+  'plugins.permissions.grants.grant': 'Grant plugin permission',
+  'plugins.permissions.grants.revoke': 'Revoke plugin permission',
+  'plugins.permissions.grants.dismissRequest': 'Dismiss plugin permission request',
+});
+
+function createPluginPermissionGrantActionSpec(actionId: PluginPermissionGrantActionIdV1): ActionSpecWithoutApproval {
+  const isRead = actionId === 'plugins.permissions.grants.list';
+  return {
+    id: actionId,
+    title: PLUGIN_PERMISSION_GRANT_ACTION_TITLES[actionId],
+    description: 'Manage durable user-approved optional plugin permission grants.',
+    safety: isRead ? 'safe' : 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: actionId,
+      sdkMethod: actionId,
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: isRead ? 'read' : 'write',
+    outputSchema: PluginPermissionGrantActionOutputSchemasV1[actionId],
+    inputSchema: PluginPermissionGrantActionInputSchemasV1[actionId],
+    inputHints: { fields: [] },
+  };
+}
+
+function createReviewCommentActionSpec(actionId: ReviewCommentActionIdV1): ActionSpecWithoutApproval {
+  const isRead = actionId === 'reviews.comments.list' || actionId === 'reviews.comments.get';
+  return {
+    id: actionId,
+    title: REVIEW_COMMENT_ACTION_TITLES[actionId],
+    description: 'Operate on durable review comments through the shared review-comment substrate.',
+    safety: isRead ? 'safe' : 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: actionId,
+      sdkMethod: REVIEW_COMMENT_ACTION_SDK_METHODS[actionId],
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: isRead ? 'read' : 'write',
+    outputSchema: ReviewCommentActionOutputSchemasV1[actionId],
+    inputSchema: ReviewCommentActionInputSchemasV1[actionId],
+    inputHints: { fields: [] },
+  };
+}
 
 function resolveApprovalMetadataForActionId(actionId: ActionId): ActionApproval {
   if (RESULT_REQUIRED_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_REQUIRED;
+  if (RESULT_NONE_DEFERRED_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_NONE_DEFERRED;
   if (RESULT_NONE_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_NONE;
   if (RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_OPTIONAL_DEFERRED;
   throw new Error(`Missing action approval metadata for ${actionId}`);
 }
 
 const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Object.freeze([
+  ...PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1.map(createPluginPermissionGrantActionSpec),
+  ...REVIEW_COMMENT_ACTION_IDS_V1.map(createReviewCommentActionSpec),
   {
     id: 'action.spec.search',
     title: 'Search action specs',
@@ -1412,12 +1617,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { voiceClientToolName: 'startPlan', mcpToolName: 'subagents_plan_start' },
     inputHints: {
       title: 'Start a planning run',
-      description: 'Start one or more parallel planning runs using selected backends.',
+      description: 'Start one or more Happier-managed planning runs using selected provider/backend targets; targets are provider choices, not parallelism capacity.',
       fields: [
         {
           path: 'backendTargetKeys',
-          title: 'Backends',
-          description: 'Select one or more backends. Each backend runs as its own execution run.',
+          title: 'Provider/backend targets',
+          description: 'Select provider/backend targets for Happier-managed runs; use repeated launches or provider-native subagents for homogeneous parallelism capacity.',
           widget: 'multiselect',
           required: true,
           optionsSourceId: 'execution.backends.enabled',
@@ -1456,12 +1661,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     bindings: { voiceClientToolName: 'startDelegate', mcpToolName: 'subagents_delegate_start' },
     inputHints: {
       title: 'Start a delegation run',
-      description: 'Start one or more parallel delegation runs using selected backends.',
+      description: 'Start one or more Happier-managed delegation runs using selected provider/backend targets; targets are provider choices, not parallelism capacity.',
       fields: [
         {
           path: 'backendTargetKeys',
-          title: 'Backends',
-          description: 'Select one or more backends. Each backend runs as its own execution run.',
+          title: 'Provider/backend targets',
+          description: 'Select provider/backend targets for Happier-managed runs; use repeated launches or provider-native subagents for homogeneous parallelism capacity.',
           widget: 'multiselect',
           required: true,
           optionsSourceId: 'execution.backends.enabled',
@@ -1503,8 +1708,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       fields: [
         {
           path: 'backendTargetKeys',
-          title: 'Backends',
-          description: 'Select one or more backends.',
+          title: 'Provider/backend targets',
+          description: 'Select provider/backend targets for the Happier-managed voice agent run; this is not parallelism capacity.',
           widget: 'multiselect',
           required: true,
           optionsSourceId: 'execution.backends.enabled',
@@ -2218,6 +2423,61 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     inputSchema: CheckpointCodeRollbackActionRequestSchema,
   },
   {
+    id: 'session.checkpoint',
+    title: 'Create checkpoint',
+    description: 'Create a source-qualified checkpoint for the selected session.',
+    safety: 'danger',
+    placements: ['session_action_menu', 'session_info'],
+    bindings: { rpcMethod: SESSION_RPC_METHODS.SESSION_CHECKPOINT },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Create a session checkpoint',
+      description: 'Creates a checkpoint through a selected provider or Happier SCM source.',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'scopes', title: 'Scopes', widget: 'multiselect', options: CHECKPOINT_SCOPE_INPUT_OPTIONS, required: true },
+      ],
+    },
+    outputSchema: SessionCheckpointResultV1Schema,
+    inputSchema: SessionCheckpointRequestV1Schema,
+  },
+  {
+    id: 'session.restore',
+    title: 'Restore checkpoint',
+    description: 'Restore a selected session checkpoint source.',
+    safety: 'danger',
+    placements: ['session_action_menu', 'session_info'],
+    bindings: { rpcMethod: SESSION_RPC_METHODS.SESSION_RESTORE },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Restore a session checkpoint',
+      description: 'Restores from an explicit provider or Happier SCM checkpoint source.',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'scopes', title: 'Scopes', widget: 'multiselect', options: CHECKPOINT_SCOPE_INPUT_OPTIONS, required: true },
+        { path: 'candidate.source', title: 'Source', widget: 'select', options: CHECKPOINT_SOURCE_INPUT_OPTIONS, required: true },
+      ],
+    },
+    outputSchema: SessionRestoreResultV1Schema,
+    inputSchema: SessionRestoreRequestV1Schema,
+  },
+  {
     id: 'session.handoff',
     title: 'Hand off session',
     description: 'Move the current session to another machine while keeping the same session id.',
@@ -2839,6 +3099,295 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     inputSchema: SessionStatusGetInputSchema,
   },
   {
+    id: 'session.work_state.get',
+    title: 'Get session work state',
+    description: 'Get the normalized current goal, task, and todo snapshot for a session.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_work_state_get' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Get session work state',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionIdRequiredInputSchema,
+  },
+  {
+    id: 'session.goal.get',
+    title: 'Get session goal',
+    description: 'Get the editable session goal when the provider supports native goals.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_goal_get' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Get session goal',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionIdRequiredInputSchema,
+  },
+  {
+    id: 'session.goal.set',
+    title: 'Set session goal',
+    description: 'Set or update the native session goal.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_goal_set' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","objective":"Ship goal controls"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Set session goal',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'objective', title: 'Objective', widget: 'textarea' },
+        { path: 'status', title: 'Status', widget: 'text' },
+        { path: 'tokenBudget', title: 'Token budget', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionGoalSetInputSchema,
+  },
+  {
+    id: 'session.goal.clear',
+    title: 'Clear session goal',
+    description: 'Clear the native session goal.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_goal_clear' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Clear session goal',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionIdRequiredInputSchema,
+  },
+  {
+    id: 'session.usageLimit.waitResume.enable',
+    title: 'Enable usage-limit wait resume',
+    description: 'Arm a durable intent to continue a session when a provider usage limit is lifted.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_usage_limit_wait_resume_enable' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","remember":true}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Enable usage-limit wait resume',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'issueFingerprint', title: 'Issue fingerprint', widget: 'text' },
+        { path: 'remember', title: 'Remember', widget: 'toggle' },
+        {
+          path: 'resumePromptMode',
+          title: 'Resume prompt mode',
+          widget: 'select',
+          options: [
+            { value: 'standard', label: 'Standard' },
+            { value: 'off', label: 'Off' },
+            { value: 'custom', label: 'Custom' },
+          ],
+        },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionUsageLimitWaitResumeEnableRequestV1Schema,
+  },
+  {
+    id: 'session.usageLimit.waitResume.cancel',
+    title: 'Cancel usage-limit wait resume',
+    description: 'Cancel the active usage-limit wait/resume intent for a session.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_usage_limit_wait_resume_cancel' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Cancel usage-limit wait resume',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'issueFingerprint', title: 'Issue fingerprint', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionUsageLimitWaitResumeCancelRequestV1Schema,
+  },
+  {
+    id: 'session.usageLimit.checkNow',
+    title: 'Check usage-limit recovery now',
+    description: 'Ask the session runtime to perform a safe provider-owned usage-limit recovery check.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_usage_limit_check_now' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Check usage-limit recovery now',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        {
+          path: 'provider',
+          title: 'Provider',
+          description: 'Optional provider id for provider-scoped recovery controls.',
+          widget: 'text',
+        },
+        {
+          path: 'operation',
+          title: 'Operation',
+          widget: 'select',
+          options: [
+            { value: 'check_now', label: 'Check now' },
+            { value: 'switch_account_now', label: 'Switch account now' },
+          ],
+        },
+        {
+          path: 'resumePromptMode',
+          title: 'Resume prompt mode',
+          widget: 'select',
+          options: [
+            { value: 'standard', label: 'Standard' },
+            { value: 'off', label: 'Off' },
+            { value: 'custom', label: 'Custom' },
+          ],
+        },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionUsageLimitCheckNowRequestV1Schema,
+  },
+  {
+    id: 'session.vendor_plugin_catalog.list',
+    title: 'List session vendor plugins',
+    description: 'List provider-owned vendor plugins available to the session.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_vendor_plugin_catalog_list' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'List vendor plugins',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'cwd', title: 'Working directory', widget: 'text' },
+      ],
+    },
+    outputSchema: SessionVendorPluginCatalogListOutputSchema,
+    inputSchema: SessionCatalogListInputSchema,
+  },
+  {
+    id: 'session.skill_catalog.list',
+    title: 'List session skills',
+    description: 'List provider-visible skills available to the session.',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'session_skill_catalog_list' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'List skills',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'cwd', title: 'Working directory', widget: 'text' },
+      ],
+    },
+    outputSchema: SessionSkillCatalogListOutputSchema,
+    inputSchema: SessionCatalogListInputSchema,
+  },
+  {
     id: 'session.history.get',
     title: 'Get session history',
     description: 'DEPRECATED: use session_events_get. Returns diagnostic session events with cleaner pagination.',
@@ -2886,8 +3435,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     placements: ['voice_panel'],
     bindings: { voiceClientToolName: 'getSessionTranscript', mcpToolName: 'session_transcript_get' },
     examples: {
-      mcp: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"]}' },
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"]}' },
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"],"maxCharsPerMessage":null}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","limit":20,"roles":["user","assistant"],"maxCharsPerMessage":null}' },
     },
     surfaces: {
       ui: true,
@@ -2904,6 +3453,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
         { path: 'limit', title: 'Limit', widget: 'text' },
         { path: 'cursor', title: 'Cursor', widget: 'text' },
+        {
+          path: 'maxCharsPerMessage',
+          title: 'Message truncation chars',
+          description: 'Optional per-message truncation budget. Omit or pass null for full message text.',
+          widget: 'text',
+        },
       ],
     },
     outputSchema: z.unknown(),
@@ -4166,8 +4721,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     },
   },
   {
-    id: 'sessions.external.attach',
-    title: 'Attach external session lease',
+    id: 'sessions.external.follow',
+    title: 'Follow external session lease',
     description: 'Attach an ephemeral follow lease to an external session link.',
     safety: 'danger',
     placements: [],
@@ -4188,7 +4743,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     outputSchema: ExternalSessionAttachResponseSchema,
     inputSchema: ExternalSessionAttachRequestSchema,
     inputHints: {
-      title: 'Attach external session lease',
+      title: 'Follow external session lease',
       fields: [
         { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
@@ -4201,8 +4756,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     },
   },
   {
-    id: 'sessions.external.detach',
-    title: 'Detach external session lease',
+    id: 'sessions.external.unfollow',
+    title: 'Unfollow external session lease',
     description: 'Detach an external-session follow lease.',
     safety: 'danger',
     placements: [],
@@ -4223,7 +4778,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     outputSchema: ExternalSessionDetachResponseSchema,
     inputSchema: ExternalSessionDetachRequestSchema,
     inputHints: {
-      title: 'Detach external session lease',
+      title: 'Unfollow external session lease',
       fields: [
         { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },

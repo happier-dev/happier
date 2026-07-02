@@ -10,7 +10,7 @@ import {
 } from './daemonRpcV1';
 import * as daemonRpcV1 from './daemonRpcV1';
 import { AgentProviderIdV1Schema } from '../../providers/agentProviderIdsV1';
-import { resolveExternalSessionsSourceKey } from '../../providers/externalSessionsCatalog';
+import { resolveExternalSessionsSourceKey } from './sourceCatalog';
 
 describe('ExternalSessionsProviderIdSchema', () => {
   it('stays scoped to direct-session browsing providers even when daemon-facing provider ids grow', () => {
@@ -64,6 +64,22 @@ describe('ExternalSessionsSourceSchema', () => {
     });
   });
 
+  it('accepts exact Codex connected-service group identity', () => {
+    expect(ExternalSessionsSourceSchema.parse({
+      kind: 'codexHome',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceGroupId: 'team',
+      homePath: '/tmp/connected/__groups/team/codex/codex-home',
+    })).toEqual({
+      kind: 'codexHome',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceGroupId: 'team',
+      homePath: '/tmp/connected/__groups/team/codex/codex-home',
+    });
+  });
+
   it('validates runtimeDescriptor as a schema-owned direct-session link field', () => {
     const parsed = ExternalSessionLinkEnsureRequestSchema.parse({
       machineId: 'machine-1',
@@ -78,7 +94,7 @@ describe('ExternalSessionsSourceSchema', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'thread_1',
+          providerSessionId: 'thread_1',
         },
         futureRuntimeDescriptorField: 'keep-me',
       },
@@ -89,7 +105,7 @@ describe('ExternalSessionsSourceSchema', () => {
       providerId: 'codex',
       provider: {
         backendMode: 'appServer',
-        vendorSessionId: 'thread_1',
+        providerSessionId: 'thread_1',
       },
     });
     expect(((parsed as any).runtimeDescriptorV1 as any).futureRuntimeDescriptorField).toBe('keep-me');
@@ -109,7 +125,7 @@ describe('ExternalSessionsSourceSchema', () => {
         providerId: 42,
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'thread_1',
+          providerSessionId: 'thread_1',
         },
       },
     })).toThrow();
@@ -199,6 +215,13 @@ describe('ExternalSessionsSourceSchema', () => {
       home: 'user',
       homePath: '/tmp/codex-home',
     })).toBe('codexHome:user:::/tmp/codex-home');
+    expect(resolveExternalSessionsSourceKey({
+      kind: 'codexHome',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceGroupId: 'team',
+      homePath: '/tmp/connected/__groups/team/codex/codex-home',
+    })).toBe('codexHome:connectedService:openai-codex:group:team:/tmp/connected/__groups/team/codex/codex-home');
     expect(resolveExternalSessionsSourceKey({
       kind: 'ohMyPiAgentDir',
       agentDir: '/tmp/omp-agent',

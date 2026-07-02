@@ -9,7 +9,7 @@ type DescriptorExports = Readonly<{
         connectModes: readonly unknown[];
         credentialKinds?: readonly string[];
         defaultCredentialKind?: string;
-        oauth?: { refresh: { body: string } };
+        oauth?: { refresh: { body: string }; authorization?: { scopes: readonly string[] } };
         tokenSetup?: {
             setupUrl?: string;
             permissions?: Readonly<Record<string, string>>;
@@ -31,7 +31,7 @@ type DescriptorExports = Readonly<{
         connectModes: readonly unknown[];
         credentialKinds?: readonly string[];
         defaultCredentialKind?: string;
-        oauth?: { refresh: { body: string } };
+        oauth?: { refresh: { body: string }; authorization?: { scopes: readonly string[] } };
         tokenSetup?: {
             setupUrl?: string;
             permissions?: Readonly<Record<string, string>>;
@@ -131,6 +131,13 @@ describe('connectedAccountDescriptors', () => {
                 expect.objectContaining({ targetId: 'claude', mode: 'oauth' }),
             ]),
         );
+        expect(descriptorExports.getConnectedAccountDescriptor?.('claude-subscription')?.oauth?.authorization?.scopes).toEqual([
+            'user:inference',
+            'user:profile',
+            'user:sessions:claude_code',
+            'user:mcp_servers',
+            'user:file_upload',
+        ]);
         expect(descriptorExports.getConnectedAccountDescriptor?.('gemini')?.oauth?.refresh.body).toBe('form');
 
         const github = descriptorExports.getConnectedAccountDescriptor?.('github');
@@ -163,6 +170,20 @@ describe('connectedAccountDescriptors', () => {
         });
 
         expect(descriptorExports.getConnectedAccountDescriptor?.('bitbucket')).toBeNull();
+    });
+
+    it('exposes short brand names through the ui projection for compact surfaces', () => {
+        const shortNamesById = Object.fromEntries(
+            (descriptorExports.CONNECTED_ACCOUNT_DESCRIPTORS ?? []).map((descriptor) => [descriptor.id, descriptor.ui.shortName]),
+        );
+        expect(shortNamesById).toEqual({
+            'openai-codex': 'Codex',
+            openai: 'OpenAI',
+            anthropic: 'Anthropic',
+            'claude-subscription': 'Claude',
+            gemini: 'Gemini',
+            github: 'GitHub',
+        });
     });
 
     it('rejects descriptor metadata that stores raw secret-shaped values', () => {

@@ -145,3 +145,79 @@ describe('createActionExecutor (session.checkpoint_code_rollback)', () => {
     });
   });
 });
+
+describe('createActionExecutor (session.checkpoint / session.restore)', () => {
+  it('delegates session.checkpoint with request and resolved server id', async () => {
+    const sessionCheckpoint = vi.fn(async () => ({ ok: true, status: 'succeeded', receipts: [] }));
+    const deps = createDeps({
+      sessionCheckpoint,
+      resolveServerIdForSessionId: vi.fn(() => 'server_a'),
+    } as Partial<ActionExecutorDeps>);
+    const executor = createActionExecutor(deps);
+    const request = {
+      v: 1,
+      sessionId: 'sess_1',
+      scopes: ['workspace'],
+      candidate: {
+        source: 'happier_scm',
+      },
+      timing: 'idle',
+    } as const;
+
+    const result = await executor.execute('session.checkpoint' as any, request, { defaultSessionId: 'ignored' });
+
+    expect(result.ok).toBe(true);
+    expect(sessionCheckpoint).toHaveBeenCalledWith({
+      request,
+      serverId: 'server_a',
+    });
+  });
+
+  it('delegates session.restore with request and resolved server id', async () => {
+    const sessionRestore = vi.fn(async () => ({ ok: true, status: 'succeeded', restoredScopes: ['workspace'], receipts: [] }));
+    const deps = createDeps({
+      sessionRestore,
+      resolveServerIdForSessionId: vi.fn(() => 'server_a'),
+    } as Partial<ActionExecutorDeps>);
+    const executor = createActionExecutor(deps);
+    const request = {
+      v: 1,
+      sessionId: 'sess_1',
+      scopes: ['workspace'],
+      candidate: {
+        source: 'happier_scm',
+        checkpointRef: 'refs/happier/checkpoints/scope/turn-final/turn-1',
+      },
+      confirmation: { sourceChoiceConfirmed: true },
+    } as const;
+
+    const result = await executor.execute('session.restore' as any, request, {});
+
+    expect(result.ok).toBe(true);
+    expect(sessionRestore).toHaveBeenCalledWith({
+      request,
+      serverId: 'server_a',
+    });
+  });
+
+  it('fails closed when session.restore dependency is unavailable', async () => {
+    const executor = createActionExecutor(createDeps());
+
+    const result = await executor.execute('session.restore' as any, {
+      v: 1,
+      sessionId: 'sess_1',
+      scopes: ['workspace'],
+      candidate: {
+        source: 'happier_scm',
+        checkpointRef: 'refs/happier/checkpoints/scope/turn-final/turn-1',
+      },
+      confirmation: { sourceChoiceConfirmed: true },
+    }, {});
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'unsupported_action',
+      error: 'unsupported_action:session.restore',
+    });
+  });
+});

@@ -1,7 +1,15 @@
 import { trimUtf8TextToMaxBytes } from './utf8.js';
 
+const QUOTED_SECRET_FIELD_PATTERN =
+  /(["'])(api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|jwt|session(?:id)?|password|token|secret)\1\s*:\s*(["'])(?:\\.|(?!\3).)*\3/gi;
+
 export function redactBugReportSensitiveText(input: string): string {
   return String(input ?? '')
+    .replace(
+      QUOTED_SECRET_FIELD_PATTERN,
+      (_match, keyQuote: string, key: string, valueQuote: string) =>
+        `${keyQuote}${key}${keyQuote}: ${valueQuote}[REDACTED]${valueQuote}`,
+    )
     .replace(/\bauthorization\s*:\s*bearer\s+[^\r\n]+/gi, 'authorization: bearer [REDACTED]')
     .replace(/\b(cookie|set-cookie)\s*:\s*[^\r\n]+/gi, (_match, key: string) => `${key.toLowerCase()}: [REDACTED]`)
     .replace(/\bx-api-key\s*:\s*[^\r\n]+/gi, 'x-api-key: [REDACTED]')

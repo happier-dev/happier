@@ -31,6 +31,14 @@ import {
   MachineLiveStreamCapabilitiesSchema,
 } from './machineLiveStreamCapabilities.js';
 import {
+  BrowserCapabilitiesSchema,
+  DEFAULT_BROWSER_CAPABILITIES,
+} from './browserCapabilities.js';
+import {
+  DEFAULT_LOCAL_SERVICE_CAPABILITIES,
+  LocalServiceCapabilitiesSchema,
+} from './localServiceCapabilities.js';
+import {
   DEFAULT_PEER_MEDIATION_CAPABILITIES,
   PeerMediationCapabilitiesSchema,
 } from './peerMediationCapabilities.js';
@@ -38,6 +46,10 @@ import {
   DEFAULT_SERVER_CAPABILITIES,
   ServerCapabilitiesSchema,
 } from './serverCapabilities.js';
+import {
+  DEFAULT_SERVER_IDENTITY_CAPABILITIES,
+  ServerIdentityCapabilitiesSchema,
+} from './serverIdentityCapabilities.js';
 import {
   DEFAULT_PETS_CAPABILITIES,
   PetsCapabilitiesSchema,
@@ -57,6 +69,7 @@ export const CapabilitiesSchema = z.object({
   pets: PetsCapabilitiesSchema.optional().default(DEFAULT_PETS_CAPABILITIES),
   encryption: EncryptionCapabilitiesSchema.optional().default(DEFAULT_ENCRYPTION_CAPABILITIES),
   server: ServerCapabilitiesSchema.optional().default(DEFAULT_SERVER_CAPABILITIES),
+  serverIdentity: ServerIdentityCapabilitiesSchema.optional().default(DEFAULT_SERVER_IDENTITY_CAPABILITIES),
   machines: z
     .object({
       transfer: MachineTransferCapabilitiesSchema.optional().default(DEFAULT_MACHINE_TRANSFER_CAPABILITIES),
@@ -71,6 +84,8 @@ export const CapabilitiesSchema = z.object({
       liveStream: DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
       peerMediation: DEFAULT_PEER_MEDIATION_CAPABILITIES,
     }),
+  localServices: LocalServiceCapabilitiesSchema.optional().default(DEFAULT_LOCAL_SERVICE_CAPABILITIES),
+  browser: BrowserCapabilitiesSchema.optional().default(DEFAULT_BROWSER_CAPABILITIES),
   social: z
     .object({
       friends: SocialFriendsCapabilitiesSchema.optional().default(DEFAULT_SOCIAL_FRIENDS_CAPABILITIES),

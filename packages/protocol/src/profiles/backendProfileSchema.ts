@@ -88,6 +88,9 @@ export const AIBackendProfileSchema = z.object({
   // Built-in profile indicator.
   isBuiltIn: z.boolean().default(false),
 
+  // Whether this profile should appear in user-facing pickers by default.
+  defaultEnabled: z.boolean().default(true),
+
   // Metadata.
   createdAt: z.number().default(() => Date.now()),
   updatedAt: z.number().default(() => Date.now()),

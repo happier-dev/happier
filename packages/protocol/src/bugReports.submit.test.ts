@@ -239,6 +239,8 @@ describe('submitBugReportToService', () => {
       'cookie: session=abc123',
       'x-api-key: sk-live-abc123def456ghi789',
       'token=ghp_123456789012345678901234567890123456',
+      '"access_token": "provider-access-token"',
+      '"refresh_token": "provider-refresh-token"',
     ].join('\n');
 
     const output = redactBugReportSensitiveText(input);
@@ -247,6 +249,8 @@ describe('submitBugReportToService', () => {
     expect(output).toContain('x-api-key: [REDACTED]');
     expect(output).not.toContain('ghp_1234567890');
     expect(output).not.toContain('eyJhbGciOiJI');
+    expect(output).not.toContain('provider-access-token');
+    expect(output).not.toContain('provider-refresh-token');
   });
 
   it('fully redacts bearer tokens that include URL-safe and base64 characters', () => {

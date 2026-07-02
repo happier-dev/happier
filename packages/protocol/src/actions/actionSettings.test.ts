@@ -15,6 +15,10 @@ describe('ActionsSettingsV1Schema', () => {
           disabledSurfaces: ['mcp'],
           disabledPlacements: ['command_palette'],
           approvalRequiredSurfaces: ['cli'],
+          toolExposureModes: {
+            session_agent: 'direct',
+            mcp: 'discoverable_only',
+          },
         },
         'subagents.delegate.start': {
           disabledSurfaces: ['session_agent'],
@@ -43,6 +47,11 @@ describe('ActionsSettingsV1Schema', () => {
 
     // Ensure action ids remain the canonical ActionId schema.
     expect(() => ActionIdSchema.parse('review.start')).not.toThrow();
+
+    expect(parsed.actions['subagents.plan.start' as keyof typeof parsed.actions].toolExposureModes).toEqual({
+      session_agent: 'direct',
+      mcp: 'discoverable_only',
+    });
   });
 
   it('normalizes legacy subagent action ids to the new persisted ids', () => {
@@ -63,12 +72,14 @@ describe('ActionsSettingsV1Schema', () => {
       disabledSurfaces: [],
       disabledPlacements: ['command_palette'],
       approvalRequiredSurfaces: [],
+      toolExposureModes: {},
     });
     expect(parsed.actions['subagents.delegate.start' as keyof typeof parsed.actions]).toEqual({
       enabledPlacements: ['agent_input_chips'],
       disabledSurfaces: [],
       disabledPlacements: [],
       approvalRequiredSurfaces: [],
+      toolExposureModes: {},
     });
   });
 
@@ -92,8 +103,35 @@ describe('ActionsSettingsV1Schema', () => {
       disabledSurfaces: ['ui', 'voice', 'mcp'],
       disabledPlacements: [],
       approvalRequiredSurfaces: ['voice', 'cli'],
+      toolExposureModes: {},
     });
     expect(isActionEnabledByActionsSettings('review.start' as any, parsed, { surface: 'ui' } as any)).toBe(false);
     expect(isActionEnabledByActionsSettings('review.start' as any, parsed, { surface: 'voice' } as any)).toBe(false);
+  });
+
+  it('filters tool exposure settings to supported tool surfaces and modes', () => {
+    const parsed = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'subagents.delegate.start': {
+          toolExposureModes: {
+            session_agent: 'direct',
+            mcp: 'discoverable_only',
+            cli: 'direct',
+            ui: 'direct',
+            voice: 'discoverable_only',
+            unknown: 'direct',
+            session_control_cli: 'direct',
+            badMode: 'hidden',
+          },
+        },
+      },
+    });
+
+    expect(parsed.actions['subagents.delegate.start' as keyof typeof parsed.actions].toolExposureModes).toEqual({
+      session_agent: 'direct',
+      mcp: 'discoverable_only',
+      cli: 'direct',
+    });
   });
 });

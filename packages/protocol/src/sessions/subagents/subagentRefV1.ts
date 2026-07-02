@@ -48,7 +48,7 @@ export const SubagentDisplayV1Schema = z.object({
 export type SubagentDisplayV1 = z.infer<typeof SubagentDisplayV1Schema>;
 
 export const VendorSessionRefV1Schema = z.object({
-  vendorSessionId: z.string().trim().min(1),
+  providerSessionId: z.string().trim().min(1),
   vendorSource: z.string().trim().min(1).optional(),
   resumeMetadata: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();

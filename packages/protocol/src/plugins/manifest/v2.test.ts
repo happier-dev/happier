@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { z } from 'zod';
 
 import * as protocol from '../../index.js';
+import type { ParsedPluginManifestV2, PluginManifestV2 } from '../../index.js';
 
 function readSchemaExport(name: string): z.ZodTypeAny | undefined {
   const value = (protocol as Record<string, unknown>)[name];
@@ -127,6 +128,393 @@ describe('plugin manifest v2 contracts', () => {
     expect(manifestSchema!.safeParse(stalePermissionManifest).success).toBe(false);
   });
 
+  it('accepts final hierarchical permission names and optional runtime grants while rejecting stale event names', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const baseManifest = {
+      schemaVersion: 2,
+      id: 'acme.permissions',
+      version: '1.0.0',
+      displayName: 'Acme Permissions',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: ['terminalHost'] },
+      contributes: {},
+    };
+
+    const parsed = manifestSchema!.parse({
+      ...baseManifest,
+      capabilities: {
+        permissions: [
+          { capability: 'events.runtime.subscribe' },
+          { capability: 'events.lifecycle.subscribe' },
+          { capability: 'events.session.subscribe' },
+          { capability: 'events.plugin.subscribe', scope: 'acme.observed' },
+          { capability: 'network' },
+          { capability: 'network.intercept' },
+          { capability: 'reviews.comments.write.direct' },
+          { capability: 'terminal.host.control' },
+        ],
+        optionalPermissions: [
+          { capability: 'secrets.read', reason: 'Read user-selected credentials at runtime' },
+          { capability: 'storage.synced' },
+        ],
+      },
+    });
+
+    expect(parsed.capabilities.permissions.map((permission) => permission.capability)).toEqual([
+      'events.runtime.subscribe',
+      'events.lifecycle.subscribe',
+      'events.session.subscribe',
+      'events.plugin.subscribe',
+      'network',
+      'network.intercept',
+      'reviews.comments.write.direct',
+      'terminal.host.control',
+    ]);
+    expect(parsed.capabilities.optionalPermissions.map((permission) => permission.capability)).toEqual([
+      'secrets.read',
+      'storage.synced',
+    ]);
+
+    for (const staleCapability of [
+      'events.subscribe',
+      'runtimeEvents.subscribe',
+      'runtime.subscribe',
+      'lifecycle.subscribe',
+      'session.subscribe',
+    ]) {
+      expect(manifestSchema!.safeParse({
+        ...baseManifest,
+        capabilities: {
+          permissions: [{ capability: staleCapability }],
+        },
+      }).success, staleCapability).toBe(false);
+    }
+  });
+
+  it('accepts system-tool contributions with schema defaults and rejects unknown tool fields', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const baseManifest = {
+      schemaVersion: 2,
+      id: 'acme.system-tools',
+      version: '1.0.0',
+      displayName: 'Acme System Tools',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: [] },
+      capabilities: { permissions: [] },
+    };
+
+    const parsed = manifestSchema!.parse({
+      ...baseManifest,
+      contributes: {
+        systemTools: [
+          {
+            toolId: 'acme.audit',
+            displayName: 'Acme Audit',
+            lookupNames: ['acme-audit'],
+            source: 'system',
+          },
+        ],
+      },
+    });
+
+    expect(parsed.contributes.systemTools).toEqual([
+      {
+        toolId: 'acme.audit',
+        displayName: 'Acme Audit',
+        lookupNames: ['acme-audit'],
+        defaultArgs: [],
+        source: 'system',
+      },
+    ]);
+    expect(manifestSchema!.safeParse({
+      ...baseManifest,
+      contributes: {
+        systemTools: [
+          {
+            toolId: 'acme.audit',
+            displayName: 'Acme Audit',
+            command: 'acme-audit',
+          },
+        ],
+      },
+    }).success).toBe(false);
+  });
+
+  it('types optional runtime permission grants as authoring-optional and parse-defaulted', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const authoredManifest = {
+      schemaVersion: 2,
+      id: 'acme.optional-permissions',
+      version: '1.0.0',
+      displayName: 'Acme Optional Permissions',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: [] },
+      capabilities: {
+        permissions: [],
+      },
+      contributes: {},
+    } satisfies PluginManifestV2;
+
+    const parsed = manifestSchema!.parse(authoredManifest) as ParsedPluginManifestV2;
+
+    expect(parsed.capabilities.optionalPermissions).toEqual([]);
+    expectTypeOf(parsed.capabilities.optionalPermissions).toEqualTypeOf<ParsedPluginManifestV2['capabilities']['optionalPermissions']>();
+  });
+
+  it('accepts manifest-declared events with local slash ids and rejects stale event ids', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const baseManifest = {
+      schemaVersion: 2,
+      id: 'acme.events',
+      version: '1.0.0',
+      displayName: 'Acme Events',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: [] },
+      capabilities: { permissions: [] },
+    };
+
+    const parsed = manifestSchema!.parse({
+      ...baseManifest,
+      contributes: {
+        events: [
+          {
+            id: 'checkpoint/created',
+            payloadSchema: {
+              type: 'object',
+              properties: {
+                checkpointId: { type: 'string' },
+              },
+              required: ['checkpointId'],
+            },
+            description: 'Emitted when Acme creates a checkpoint',
+          },
+        ],
+      },
+    });
+
+    expect(parsed.contributes.events).toEqual([
+      {
+        id: 'checkpoint/created',
+        payloadSchema: {
+          type: 'object',
+          properties: {
+            checkpointId: { type: 'string' },
+          },
+          required: ['checkpointId'],
+        },
+        description: 'Emitted when Acme creates a checkpoint',
+        deprecated: false,
+      },
+    ]);
+
+    for (const staleEventId of [
+      'checkpoint.created',
+      'acme.events.checkpoint-created',
+      'acme.events/checkpoint-created',
+      '@happier/runtime/reload',
+      '/checkpoint',
+      'checkpoint/',
+      'checkpoint//created',
+      'checkpoint/Created',
+    ]) {
+      expect(manifestSchema!.safeParse({
+        ...baseManifest,
+        contributes: {
+          events: [{ id: staleEventId }],
+        },
+      }).success, staleEventId).toBe(false);
+    }
+  });
+
+  it('accepts only catalog-backed public hook ids in manifest declarations', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const baseManifest = {
+      schemaVersion: 2,
+      id: 'acme.hooks',
+      version: '1.0.0',
+      displayName: 'Acme Hooks',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: ['hooks'] },
+      capabilities: { permissions: [{ capability: 'hooks.register' }] },
+    };
+    const providerResponseHook = {
+      id: 'provider.response.after',
+      category: 'lifecycle',
+      scope: 'provider',
+      executionKind: 'observe',
+      handler: { target: 'plugin', exportName: 'onProviderResponse' },
+    };
+    const parsed = manifestSchema!.parse({
+      ...baseManifest,
+      contributes: {
+        hooks: [
+          providerResponseHook,
+          {
+            id: 'subagent.start',
+            category: 'lifecycle',
+            scope: 'session',
+            executionKind: 'observe',
+            handler: { target: 'plugin', exportName: 'onSubagentStart' },
+          },
+        ],
+      },
+    });
+
+    expect(parsed.contributes.hooks.map((hook) => hook.id)).toEqual([
+      'provider.response.after',
+      'subagent.start',
+    ]);
+
+    for (const id of [
+      'connectedServices.materialization.githubScmHostingToken',
+      'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+      'provider.request.before',
+      'sidechain.start',
+      'acme.hooks.custom',
+    ]) {
+      expect(manifestSchema!.safeParse({
+        ...baseManifest,
+        contributes: {
+          hooks: [{ ...providerResponseHook, id }],
+        },
+      }).success, id).toBe(false);
+    }
+  });
+
+  it('accepts manifest-declared request interceptors with order and plugin-fetch targets only', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const parsed = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.policy',
+      version: '1.0.0',
+      displayName: 'Acme Policy',
+      engines: {
+        happier: '^1.0.0',
+      },
+      runtime: {
+        apiVersion: 1,
+        capabilities: [],
+      },
+      contributes: {
+        requestInterceptors: [
+          {
+            id: 'acme.policy.egress',
+            order: 20,
+            targets: [
+              {
+                scope: 'plugin-fetch',
+                urlOrigins: ['https://api.example.test'],
+              },
+            ],
+          },
+        ],
+      },
+      capabilities: {
+        permissions: [
+          {
+            capability: 'network.intercept',
+            reason: 'Mediate plugin and Happier server requests',
+          },
+        ],
+      },
+    });
+
+    expect(parsed.contributes.requestInterceptors).toEqual([
+      {
+        id: 'acme.policy.egress',
+        order: 20,
+        targets: [
+          {
+            scope: 'plugin-fetch',
+            urlOrigins: ['https://api.example.test'],
+          },
+        ],
+      },
+    ]);
+    expect(parsed.capabilities.permissions.map((entry: { capability: string }) => entry.capability))
+      .toContain('network.intercept');
+  });
+
+  it('rejects stale request interceptor priority and unknown target scopes', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const baseManifest = {
+      schemaVersion: 2,
+      id: 'acme.policy',
+      version: '1.0.0',
+      displayName: 'Acme Policy',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: [] },
+      capabilities: { permissions: [{ capability: 'network.intercept' }] },
+    };
+
+    expect(manifestSchema!.safeParse({
+      ...baseManifest,
+      contributes: {
+        requestInterceptors: [
+          {
+            id: 'acme.policy.priority',
+            priority: 10,
+            targets: [{ scope: 'plugin-fetch' }],
+          },
+        ],
+      },
+    }).success).toBe(false);
+
+    for (const invalidScope of [
+      'marketplace',
+      'provider-auth',
+      'backend-runtime',
+      'happier-server',
+    ]) {
+      expect(manifestSchema!.safeParse({
+        ...baseManifest,
+        contributes: {
+          requestInterceptors: [
+            {
+              id: 'acme.policy.unknown',
+              order: 10,
+              targets: [{ scope: invalidScope }],
+            },
+          ],
+        },
+      }).success, invalidScope).toBe(false);
+    }
+
+    for (const invalidUrlOrigin of [
+      'api.example.test',
+      'https://api.example.test/path',
+      'https://api.example.test?token=value',
+      'ftp://api.example.test',
+    ]) {
+      expect(manifestSchema!.safeParse({
+        ...baseManifest,
+        contributes: {
+          requestInterceptors: [
+            {
+              id: 'acme.policy.invalid-origin',
+              order: 10,
+              targets: [{ scope: 'plugin-fetch', urlOrigins: [invalidUrlOrigin] }],
+            },
+          ],
+        },
+      }).success, invalidUrlOrigin).toBe(false);
+    }
+  });
+
   it('normalizes backend execution-run capability support to the nested contract', () => {
     const manifestSchema = readSchemaExport('PluginManifestV2Schema');
     expect(manifestSchema).toBeDefined();
@@ -166,6 +554,11 @@ describe('plugin manifest v2 contracts', () => {
           acceptsImageInput: { supported: false },
           emitsSessionMedia: { supported: false },
           nativeImageGeneration: { supported: false },
+        },
+        contextCompaction: {
+          events: { supported: false },
+          manualTrigger: { supported: false },
+          transcriptInference: { supported: false },
         },
       },
     });
@@ -208,6 +601,11 @@ describe('plugin manifest v2 contracts', () => {
           acceptsImageInput: { supported: false },
           emitsSessionMedia: { supported: false },
           nativeImageGeneration: { supported: false },
+        },
+        contextCompaction: {
+          events: { supported: false },
+          manualTrigger: { supported: false },
+          transcriptInference: { supported: false },
         },
       },
     });

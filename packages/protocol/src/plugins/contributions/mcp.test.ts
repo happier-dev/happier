@@ -106,6 +106,28 @@ describe('MCP plugin contribution schemas', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects credential-bearing remote MCP descriptor URLs', () => {
+    for (const url of [
+      'https://user:pass@mcp.example.test',
+      'https://mcp.example.test?token=raw-token',
+      'https://mcp.example.test?api_key=raw-key',
+      'https://mcp.example.test#access_token=raw-token',
+    ]) {
+      expect(PluginMcpContributesV1Schema.safeParse({
+        servers: [
+          {
+            id: 'acme.remote',
+            kind: 'mcp.server',
+            version: '1.0.0',
+            name: 'acme-remote',
+            transport: 'http',
+            url,
+          },
+        ],
+      }).success).toBe(false);
+    }
+  });
+
   it('allows MCP token and secret fields when they use value references', () => {
     const result = PluginMcpContributesV1Schema.safeParse({
       servers: [

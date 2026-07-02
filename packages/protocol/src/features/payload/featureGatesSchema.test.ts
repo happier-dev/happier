@@ -69,6 +69,45 @@ describe('FeatureGatesSchema', () => {
     expect((parsed as any).capabilities.futureCapability).toBeUndefined();
   });
 
+  it('preserves connected-service account group and usage-limit recovery gates', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {
+        connectedServices: {
+          enabled: true,
+          accountGroups: { enabled: true },
+          accountFallback: { enabled: true },
+        },
+        sessions: {
+          enabled: true,
+          usageLimitRecovery: { enabled: true },
+        },
+      },
+      capabilities: {},
+    });
+
+    expect(readServerEnabledBit(parsed, 'connectedServices.accountGroups')).toBe(true);
+    expect(readServerEnabledBit(parsed, 'connectedServices.accountFallback')).toBe(true);
+    expect(readServerEnabledBit(parsed, 'sessions.usageLimitRecovery')).toBe(true);
+  });
+
+  it('defaults connected-service account group and usage-limit recovery gates fail-closed', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {
+        connectedServices: {
+          enabled: true,
+        },
+        sessions: {
+          enabled: true,
+        },
+      },
+      capabilities: {},
+    });
+
+    expect(readServerEnabledBit(parsed, 'connectedServices.accountGroups')).toBe(false);
+    expect(readServerEnabledBit(parsed, 'connectedServices.accountFallback')).toBe(false);
+    expect(readServerEnabledBit(parsed, 'sessions.usageLimitRecovery')).toBe(false);
+  });
+
   it('preserves peer mediation gate namespace and keeps rpc server-routed absent', () => {
     const parsed = FeaturesResponseSchema.parse({
       features: {
@@ -100,6 +139,21 @@ describe('FeatureGatesSchema', () => {
     expect(readServerEnabledBit(parsed, 'machines.liveStream.serverRouted' as never)).toBe(false);
     expect(readServerEnabledBit(parsed, 'machines.rpc.directPeer' as never)).toBe(true);
     expect((parsed.features.machines as unknown as { rpc?: { serverRouted?: unknown } }).rpc?.serverRouted).toBeUndefined();
+  });
+
+  it('preserves device and simulator preview gates', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {
+        devices: {
+          enabled: true,
+          simulatorPreview: { enabled: true },
+        },
+      },
+      capabilities: {},
+    });
+
+    expect(readServerEnabledBit(parsed, 'devices' as never)).toBe(true);
+    expect(readServerEnabledBit(parsed, 'devices.simulatorPreview' as never)).toBe(true);
   });
 
   it('preserves setup machine and ssh gate namespaces', () => {

@@ -5,6 +5,7 @@ import {
   PluginOptionalStringSchema,
   PluginStringArraySchema,
 } from './_shared.js';
+import { BackendSurfaceDeclarationV1Schema } from './backendSurfaceDeclarationV1.js';
 
 export const PluginBackendLaunchV1Schema = z.object({
   binaryName: PluginOptionalStringSchema,
@@ -32,6 +33,10 @@ export type PluginBackendProbeV1 = z.infer<typeof PluginBackendProbeV1Schema>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function normalizePluginBackendCapabilitiesInput(value: unknown): unknown {
@@ -91,13 +96,56 @@ export const PluginBackendSessionMediaCapabilitiesV1Schema = z.object({
 });
 export type PluginBackendSessionMediaCapabilitiesV1 = z.infer<typeof PluginBackendSessionMediaCapabilitiesV1Schema>;
 
+const ContextCompactionPhaseV1Schema = z.enum(['started', 'progress', 'completed', 'failed', 'cancelled']);
+
+export const PluginBackendSessionContextCompactionEventsCapabilitiesV1Schema = z.object({
+  supported: z.boolean().default(false),
+  phases: z.array(ContextCompactionPhaseV1Schema).optional(),
+  tokenCounts: z.boolean().optional(),
+  progress: z.boolean().optional(),
+}).passthrough().default({ supported: false });
+export type PluginBackendSessionContextCompactionEventsCapabilitiesV1 =
+  z.infer<typeof PluginBackendSessionContextCompactionEventsCapabilitiesV1Schema>;
+
+export const PluginBackendSessionContextCompactionManualTriggerCapabilitiesV1Schema = z.object({
+  supported: z.boolean().default(false),
+  transport: z.enum(['native-runtime-hook', 'raw-provider-command']).optional(),
+  acceptsInstructions: z.boolean().optional(),
+}).passthrough().default({ supported: false });
+export type PluginBackendSessionContextCompactionManualTriggerCapabilitiesV1 =
+  z.infer<typeof PluginBackendSessionContextCompactionManualTriggerCapabilitiesV1Schema>;
+
+export const PluginBackendSessionContextCompactionTranscriptInferenceCapabilitiesV1Schema = z.object({
+  supported: z.boolean().default(false),
+}).passthrough().default({ supported: false });
+export type PluginBackendSessionContextCompactionTranscriptInferenceCapabilitiesV1 =
+  z.infer<typeof PluginBackendSessionContextCompactionTranscriptInferenceCapabilitiesV1Schema>;
+
+export const PluginBackendSessionContextCompactionCapabilitiesV1Schema = z.object({
+  events: PluginBackendSessionContextCompactionEventsCapabilitiesV1Schema,
+  manualTrigger: PluginBackendSessionContextCompactionManualTriggerCapabilitiesV1Schema,
+  transcriptInference: PluginBackendSessionContextCompactionTranscriptInferenceCapabilitiesV1Schema,
+}).passthrough().default({
+  events: { supported: false },
+  manualTrigger: { supported: false },
+  transcriptInference: { supported: false },
+});
+export type PluginBackendSessionContextCompactionCapabilitiesV1 =
+  z.infer<typeof PluginBackendSessionContextCompactionCapabilitiesV1Schema>;
+
 export const PluginBackendSessionCapabilitiesV1Schema = z.object({
   media: PluginBackendSessionMediaCapabilitiesV1Schema,
+  contextCompaction: PluginBackendSessionContextCompactionCapabilitiesV1Schema,
 }).passthrough().default({
   media: {
     acceptsImageInput: { supported: false },
     emitsSessionMedia: { supported: false },
     nativeImageGeneration: { supported: false },
+  },
+  contextCompaction: {
+    events: { supported: false },
+    manualTrigger: { supported: false },
+    transcriptInference: { supported: false },
   },
 });
 export type PluginBackendSessionCapabilitiesV1 = z.infer<typeof PluginBackendSessionCapabilitiesV1Schema>;
@@ -115,6 +163,11 @@ export const PluginBackendCapabilitiesV1Schema = z.preprocess(
         emitsSessionMedia: { supported: false },
         nativeImageGeneration: { supported: false },
       },
+      contextCompaction: {
+        events: { supported: false },
+        manualTrigger: { supported: false },
+        transcriptInference: { supported: false },
+      },
     },
   }),
 );
@@ -124,7 +177,7 @@ export function normalizePluginBackendCapabilitiesV1(input: unknown): PluginBack
   return PluginBackendCapabilitiesV1Schema.parse(input);
 }
 
-export const PluginBackendDefinitionV1Schema = z.object({
+export const PluginBackendDefinitionV1BaseSchema = z.object({
   kindVersion: z.literal(1).default(1),
   id: z.string().trim().min(1),
   agentId: z.string().trim().min(1),
@@ -133,7 +186,25 @@ export const PluginBackendDefinitionV1Schema = z.object({
   launch: PluginBackendLaunchV1Schema.optional(),
   install: PluginBackendInstallV1Schema.optional(),
   capabilities: PluginBackendCapabilitiesV1Schema,
+  surfaceHandlers: z.array(BackendSurfaceDeclarationV1Schema).default([]),
   runtimeOptionsSchema: PluginLooseJsonObjectSchema.optional(),
   probe: PluginBackendProbeV1Schema.optional(),
 }).passthrough();
+
+export const PluginBackendDefinitionV1Schema = PluginBackendDefinitionV1BaseSchema.superRefine((value, ctx) => {
+  if (hasOwn(value, 'runtimeAdapters')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['runtimeAdapters'],
+      message: 'Backend surface declarations must use surfaceHandlers; runtimeAdapters is not final SDK vocabulary.',
+    });
+  }
+  if (hasOwn(value, 'runtimeCoreHooks')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['runtimeCoreHooks'],
+      message: 'Backend surface declarations must use surfaceHandlers; runtimeCoreHooks is not final SDK vocabulary.',
+    });
+  }
+});
 export type PluginBackendDefinitionV1 = z.infer<typeof PluginBackendDefinitionV1Schema>;

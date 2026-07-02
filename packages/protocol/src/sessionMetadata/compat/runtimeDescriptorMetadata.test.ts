@@ -16,7 +16,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'canonical-thread',
+          providerSessionId: 'canonical-thread',
         },
       },
       agentRuntimeDescriptorV1: {
@@ -24,7 +24,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'acp',
-          vendorSessionId: 'legacy-thread',
+          providerSessionId: 'legacy-thread',
         },
       },
     })).toEqual({
@@ -32,7 +32,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
       providerId: 'codex',
       provider: {
         backendMode: 'appServer',
-        vendorSessionId: 'canonical-thread',
+        providerSessionId: 'canonical-thread',
       },
     });
   });
@@ -112,7 +112,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'server',
-          vendorSessionId: 'legacy-oc',
+          providerSessionId: 'legacy-oc',
         },
       },
     }, {
@@ -120,7 +120,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
       providerId: 'opencode',
       provider: {
         backendMode: 'server',
-        vendorSessionId: 'oc-1',
+        providerSessionId: 'oc-1',
       },
     })).toEqual({
       path: '/tmp/session',
@@ -131,7 +131,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'server',
-          vendorSessionId: 'legacy-oc',
+          providerSessionId: 'legacy-oc',
         },
       },
       runtimeDescriptorV1: {
@@ -139,7 +139,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'server',
-          vendorSessionId: 'oc-1',
+          providerSessionId: 'oc-1',
         },
       },
     });
@@ -154,7 +154,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
       providerId: 'opencode',
       provider: {
         backendMode: 'server',
-        vendorSessionId: 'oc-1',
+        providerSessionId: 'oc-1',
       },
     }, {
       mirrorLegacyAgentRuntimeDescriptorV1: true,
@@ -166,7 +166,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'server',
-          vendorSessionId: 'oc-1',
+          providerSessionId: 'oc-1',
         },
       },
       agentRuntimeDescriptorV1: {
@@ -174,7 +174,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'server',
-          vendorSessionId: 'oc-1',
+          providerSessionId: 'oc-1',
         },
       },
     });
