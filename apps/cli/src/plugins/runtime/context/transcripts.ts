@@ -1,11 +1,19 @@
 import type { TranscriptSourceDefinitionV1, TranscriptsRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 
+import { createPluginTranscriptFileFollowService } from './transcripts/fileFollow';
+import type { TranscriptFileFollowPathGrantRegistry } from './transcripts/fileFollowGrants';
+
 const DEFAULT_MAX_TRANSCRIPT_SOURCES = 32;
 
 export function createPluginTranscriptsService(params: Readonly<{
     append: (turn: unknown) => Promise<void>;
     maxSources?: number;
     addDisposable?: (disposable: Readonly<{ dispose: () => void | Promise<void> }>) => unknown;
+    pluginId?: string;
+    runtimeId?: string;
+    readSessionId?: () => string | null;
+    fileFollowAllowedPathRoots?: readonly string[];
+    fileFollowPathGrants?: TranscriptFileFollowPathGrantRegistry;
 }>): TranscriptsRuntimeServiceV1 {
     const sources = new Map<string, Readonly<{
         definition: TranscriptSourceDefinitionV1<unknown>;
@@ -15,6 +23,14 @@ export function createPluginTranscriptsService(params: Readonly<{
 
     const service: TranscriptsRuntimeServiceV1 = Object.freeze({
         append: params.append,
+        fileFollow: createPluginTranscriptFileFollowService({
+            pluginId: params.pluginId,
+            runtimeId: params.runtimeId,
+            readSessionId: params.readSessionId,
+            allowedPathRoots: params.fileFollowAllowedPathRoots,
+            fileFollowPathGrants: params.fileFollowPathGrants,
+            addDisposable: params.addDisposable,
+        }),
         async defineSource<TItem = unknown>(definition: TranscriptSourceDefinitionV1<TItem>) {
             const id = definition.id.trim();
             if (id.length === 0) {

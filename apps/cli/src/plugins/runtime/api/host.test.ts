@@ -255,25 +255,34 @@ describe('createPluginApiHost', () => {
             pluginId: 'acme.hooks',
             runtimeCapabilities: ['hooks'],
             permissions: ['hooks.register'],
-            declaredHookIds: ['acme.hooks.allowed'],
+            declaredHookIds: ['session.message.send', 'provider.request.before'],
         });
 
         host.api.registerHook({
-            hookId: 'acme.hooks.allowed',
+            hookId: 'session.message.send',
             handler: async () => null,
         });
 
         expect(() => host.api.registerHook({
+            // @ts-expect-error custom hook id intentionally exercises runtime rejection.
             hookId: 'acme.hooks.shadow',
             handler: async () => null,
         })).toThrow(/manifest-declared hook id/);
 
         expect(host.registrations().hooks.map((entry) => entry.hookId)).toEqual([
-            'acme.hooks.allowed',
+            'session.message.send',
         ]);
+        expect(() => host.api.registerHook({
+            // @ts-expect-error stale hook id intentionally exercises runtime rejection.
+            hookId: 'provider.request.before',
+            handler: async () => null,
+        })).toThrow(/unsupported hook id/);
         expect(host.registrations().diagnostics).toEqual([
             expect.objectContaining({
                 code: 'plugin_hook_undeclared_id',
+            }),
+            expect.objectContaining({
+                code: 'plugin_hook_unsupported_id',
             }),
         ]);
     });
@@ -380,10 +389,11 @@ describe('createPluginApiHost', () => {
         expect(registeredCanaries).toEqual([]);
     });
 
-    it('registers request interceptors only when the plugin declares network permission', () => {
+    it('registers request interceptors only when declared in the manifest with network.intercept', () => {
         const denied = createPluginApiHost({
             pluginId: 'acme.fetch',
-            permissions: [],
+            permissions: ['network'],
+            declaredRequestInterceptorIds: ['acme.fetch.audit'],
         });
 
         expect('registerRequestInterceptor' in denied.api).toBe(true);
@@ -393,7 +403,7 @@ describe('createPluginApiHost', () => {
 
         expect(deniedApi.registerRequestInterceptor({
             id: 'acme.fetch.audit',
-            intercept: async () => ({ ok: true }),
+            handle: async () => ({ kind: 'allow' }),
         })).toEqual(expect.any(Function));
         expect(denied.registrations().requestInterceptors).toEqual([]);
         expect(denied.registrations().diagnostics).toEqual([
@@ -404,7 +414,8 @@ describe('createPluginApiHost', () => {
 
         const allowed = createPluginApiHost({
             pluginId: 'acme.fetch',
-            permissions: ['network'],
+            permissions: ['network.intercept'],
+            declaredRequestInterceptorIds: ['acme.fetch.audit'],
         });
         const allowedApi = allowed.api as typeof allowed.api & Readonly<{
             registerRequestInterceptor: (registration: unknown) => () => void;
@@ -412,8 +423,7 @@ describe('createPluginApiHost', () => {
 
         const dispose = allowedApi.registerRequestInterceptor({
             id: 'acme.fetch.audit',
-            priority: 5,
-            intercept: async () => ({ ok: true }),
+            handle: async () => ({ kind: 'allow' }),
         });
 
         expect(allowed.registrations().requestInterceptors).toHaveLength(1);
@@ -421,6 +431,51 @@ describe('createPluginApiHost', () => {
         dispose();
 
         expect(allowed.registrations().requestInterceptors).toEqual([]);
+    });
+
+    it('rejects request interceptor registrations absent from the same plugin manifest', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.fetch',
+            permissions: ['network.intercept'],
+            declaredRequestInterceptorIds: ['acme.fetch.allowed'],
+        });
+
+        expect(() => host.api.registerRequestInterceptor({
+            id: 'acme.fetch.shadow',
+            handle: async () => ({ kind: 'allow' }),
+        })).toThrow(/manifest-declared request interceptor id/);
+
+        expect(host.registrations().requestInterceptors).toEqual([]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_request_interceptor_undeclared_id',
+            }),
+        ]);
+    });
+
+    it('rejects request interceptor runtime registrations that redeclare manifest-owned fields', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.fetch',
+            permissions: ['network.intercept'],
+            declaredRequestInterceptorIds: ['acme.fetch.audit'],
+        });
+        const api = host.api as typeof host.api & Readonly<{
+            registerRequestInterceptor: (registration: unknown) => unknown;
+        }>;
+
+        expect(() => api.registerRequestInterceptor({
+            id: 'acme.fetch.audit',
+            order: 10,
+            targets: [{ scope: 'plugin-fetch' }],
+            handle: async () => ({ kind: 'allow' }),
+        })).toThrow(/manifest-owned request interceptor fields/);
+
+        expect(host.registrations().requestInterceptors).toEqual([]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_request_interceptor_manifest_fields_redeclared',
+            }),
+        ]);
     });
 
     it('validates notification category and channel registrations against manifest declarations', async () => {
@@ -519,28 +574,15 @@ describe('createPluginApiHost', () => {
         ]);
     });
 
-    it('rejects invalid execution-run profile registrations before storing them', () => {
+    it('does not expose descriptor-only static registration methods on the activation API', () => {
         const host = createPluginApiHost({
-            pluginId: 'acme.execution-runs',
-            runtimeCapabilities: ['executionRunProfiles'],
-            declaredExecutionRunProfileIds: ['acme.review.profile'],
+            pluginId: 'acme.descriptors',
         });
-        const api = host.api as typeof host.api & Readonly<{
-            registerExecutionRunProfile: (registration: unknown) => unknown;
-        }>;
+        const api = host.api as typeof host.api & Readonly<Record<string, unknown>>;
 
-        expect(() => api.registerExecutionRunProfile({
-            id: 'acme.review.profile',
-            intent: 'review',
-            displayKey: 'plugins.acme.executionRuns.review.label',
-        })).toThrow(/Invalid execution-run profile/);
-
-        expect(host.registrations().executionRunProfiles).toEqual([]);
-        expect(host.registrations().diagnostics).toEqual([
-            expect.objectContaining({
-                code: 'plugin_manifest_semantic_invalid',
-            }),
-        ]);
+        expect(api.registerResource).toBeUndefined();
+        expect(api.registerUiDescriptor).toBeUndefined();
+        expect(api.registerExecutionRunProfile).toBeUndefined();
     });
 
     it('records MCP server and discovery registrations and removes them through disposable handles', async () => {
@@ -551,7 +593,7 @@ describe('createPluginApiHost', () => {
         const serverDisposable = host.api.registerMcpServer({
             id: 'acme.hosted',
             name: 'acme-hosted',
-            transport: { kind: 'hosted' },
+            transport: { kind: 'hosted' as const },
         });
         const discoveryDisposable = host.api.registerMcpDiscoveryProvider({
             id: 'acme.discovery',
@@ -566,6 +608,45 @@ describe('createPluginApiHost', () => {
 
         expect(host.registrations().mcpServers).toEqual([]);
         expect(host.registrations().mcpDiscoveryProviders).toEqual([]);
+    });
+
+    it('rejects runtime MCP registrations that were not declared by the manifest', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+            declaredMcpServerIds: ['acme.hosted'],
+            declaredMcpDiscoveryProviderIds: ['acme.discovery'],
+        });
+
+        host.api.registerMcpServer({
+            id: 'acme.hosted',
+            name: 'acme-hosted',
+            transport: { kind: 'hosted' as const },
+        });
+        host.api.registerMcpDiscoveryProvider({
+            id: 'acme.discovery',
+            discover: async () => [],
+        });
+
+        expect(() => host.api.registerMcpServer({
+            id: 'acme.undeclared',
+            name: 'acme-undeclared',
+            transport: { kind: 'hosted' },
+        })).toThrow(/not declared by its manifest/);
+        expect(() => host.api.registerMcpDiscoveryProvider({
+            id: 'acme.undeclaredDiscovery',
+            discover: async () => [],
+        })).toThrow(/not declared by its manifest/);
+
+        expect(host.registrations().mcpServers.map((entry) => entry.id)).toEqual(['acme.hosted']);
+        expect(host.registrations().mcpDiscoveryProviders.map((entry) => entry.id)).toEqual(['acme.discovery']);
+        expect(host.registrations().diagnostics).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                code: 'plugin_mcp_server_undeclared_id',
+            }),
+            expect.objectContaining({
+                code: 'plugin_mcp_discovery_provider_undeclared_id',
+            }),
+        ]));
     });
 
     it('does not expose retired MCP backend-client or direct-tool registration methods', () => {
@@ -588,6 +669,126 @@ describe('createPluginApiHost', () => {
             name: 'acme-remote',
             transport: { kind: 'http' as const, url: 'https://mcp.example.test' },
             headers: { Authorization: 'Bearer raw-token' },
+        };
+
+        expect(() => host.api.registerMcpServer(rawSecretServerRegistration)).toThrow(/raw secret material/);
+
+        expect(host.registrations().mcpServers).toEqual([]);
+    });
+
+    it('accepts hosted MCP tool handlers while still rejecting adjacent raw secret fields', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+        });
+        const handler = async () => ({
+            content: [{ type: 'text' as const, text: 'ok' }],
+        });
+
+        host.api.registerMcpServer({
+            id: 'acme.hosted',
+            name: 'acme-hosted',
+            transport: { kind: 'hosted' },
+            hosted: {
+                tools: [
+                    {
+                        name: 'ext.acme.echo',
+                        handler,
+                    },
+                ],
+            },
+        });
+
+        expect(host.registrations().mcpServers).toEqual([
+            expect.objectContaining({
+                id: 'acme.hosted',
+                hosted: {
+                    tools: [
+                        expect.objectContaining({
+                            name: 'ext.acme.echo',
+                            handler,
+                        }),
+                    ],
+                },
+            }),
+        ]);
+
+        const rawSecretHostedRegistration = {
+            id: 'acme.secretHosted',
+            name: 'acme-secret-hosted',
+            transport: { kind: 'hosted' as const },
+            hosted: {
+                tools: [
+                    {
+                        name: 'acme_secret',
+                        handler,
+                        token: 'raw-token',
+                    },
+                ],
+            },
+        };
+
+        expect(() => host.api.registerMcpServer(rawSecretHostedRegistration)).toThrow(/raw secret material/);
+    });
+
+    it('rejects unprefixed hosted MCP tool names before storing them', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+        });
+
+        expect(() => host.api.registerMcpServer({
+            id: 'acme.hosted',
+            name: 'acme-hosted',
+            transport: { kind: 'hosted' },
+            hosted: {
+                tools: [
+                    {
+                        name: 'acme_echo',
+                        handler: async () => ({ content: [{ type: 'text', text: 'unexpected' }] }),
+                    },
+                ],
+            },
+        })).toThrow(/hosted MCP tool name/i);
+
+        expect(host.registrations().mcpServers).toEqual([]);
+    });
+
+    it('rejects hosted MCP tool definitions on non-hosted transports before storing them', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+        });
+
+        expect(() => host.api.registerMcpServer({
+            id: 'acme.remote',
+            name: 'acme-remote',
+            transport: { kind: 'http', url: 'https://mcp.example.test' },
+            hosted: {
+                tools: [
+                    {
+                        name: 'ext.acme.echo',
+                        handler: async () => ({ content: [{ type: 'text', text: 'unexpected' }] }),
+                    },
+                ],
+            },
+        })).toThrow(/hosted MCP handlers require hosted transport/i);
+
+        expect(host.registrations().mcpServers).toEqual([]);
+    });
+
+    it('rejects secret-shaped runtime MCP server stdio argv before storing them', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+        });
+        const rawSecretServerRegistration = {
+            id: 'acme.stdio',
+            name: 'acme-stdio',
+            transport: {
+                kind: 'stdio' as const,
+                launch: {
+                    kind: 'binary' as const,
+                    executablePath: 'acme-mcp',
+                    args: ['--api-key', 'raw-api-key-value'],
+                },
+            },
         };
 
         expect(() => host.api.registerMcpServer(rawSecretServerRegistration)).toThrow(/raw secret material/);

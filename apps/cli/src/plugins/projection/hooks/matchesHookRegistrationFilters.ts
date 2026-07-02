@@ -10,7 +10,7 @@ function normalizeNonEmpty(value: unknown): string | null {
 function readEnvelopeSessionIds(envelope: HookEventEnvelopeV1): readonly string[] {
   return [
     normalizeNonEmpty(envelope.happySessionId),
-    normalizeNonEmpty(envelope.vendorSessionId),
+    normalizeNonEmpty(envelope.providerSessionId),
   ].filter((value): value is string => Boolean(value));
 }
 

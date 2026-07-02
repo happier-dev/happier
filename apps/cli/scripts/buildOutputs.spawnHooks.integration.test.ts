@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
@@ -38,31 +38,165 @@ function matchesDynamicVendorResumeSupportImport(text: string): boolean {
   return patterns.some((p) => p.test(text));
 }
 
+function matchesDynamicConnectedServiceCatalogHookImport(text: string): boolean {
+  // These connected-service catalog hooks are used during daemon auth-switch/restart/recovery.
+  // If they compile to lazy hashed chunks, a local dev rebuild can remove those chunks while
+  // an older daemon is still alive.
+  const patterns: RegExp[] = [
+    /getConnectedServices?Materializer:\s*async\s*\([^)]*\)\s*=>[\s\S]{0,240}(?:import|require)\(\s*['"]\.\/create[A-Z][A-Za-z]+ConnectedServices?Materializer-[^'"]+['"]\s*\)/,
+    /getConnectedServiceRuntimeAuthAdapter:\s*async\s*\([^)]*\)\s*=>[\s\S]{0,240}(?:import|require)\(\s*['"]\.\/create[A-Z][A-Za-z]+ConnectedServiceRuntimeAuthAdapter-[^'"]+['"]\s*\)/,
+    /getConnectedServiceStateSharingDescriptor:\s*async\s*\([^)]*\)\s*=>[\s\S]{0,240}(?:import|require)\(\s*['"]\.\/[A-Za-z]+ConnectedServiceStateSharingDescriptor-[^'"]+['"]\s*\)/,
+    /resolveConnectedServiceSwitchContinuity:\s*async\s*\([^)]*\)\s*=>[\s\S]{0,260}(?:import|require)\(\s*['"]\.\/resolve[A-Z][A-Za-z]+ConnectedServiceSwitchContinuity-[^'"]+['"]\s*\)/,
+  ];
+
+  return patterns.some((p) => p.test(text));
+}
+
+function matchesDynamicCodexAppServerSessionControlAdapterImport(text: string): boolean {
+  // Stopped-session controls such as Check limit now run through the built backend catalog.
+  // Codex app-server control adapters must stay in the catalog bundle rather than lazy chunks,
+  // because old daemons can otherwise resolve runtime-relative chunks that a rebuild removed.
+  const patterns: RegExp[] = [
+    /getSessionGoalControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,260}(?:import|require)\(\s*['"]\.\/(?:appServer\/goalControl\/codexAppServerGoalControlAdapter|codexAppServerGoalControlAdapter-[^'"]+)['"]\s*\)/,
+    /getSessionCatalogControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,260}(?:import|require)\(\s*['"]\.\/(?:appServer\/catalogControl\/codexAppServerCatalogControlAdapter|codexAppServerCatalogControlAdapter-[^'"]+)['"]\s*\)/,
+    /getSessionUsageLimitRecoveryControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,260}(?:import|require)\(\s*['"]\.\/(?:appServer\/usageLimitRecoveryControl\/codexAppServerUsageLimitRecoveryControlAdapter|codexAppServerUsageLimitRecoveryControlAdapter-[^'"]+)['"]\s*\)/,
+  ];
+
+  return patterns.some((p) => p.test(text));
+}
+
+function matchesDynamicUsageLimitRecoveryControlAdapterImport(text: string): boolean {
+  // Stopped-session controls such as "Check limit now" use these catalog hooks from
+  // long-lived daemons. Keep provider usage-limit recovery adapters in the reachable
+  // catalog bundle instead of runtime-resolved chunks or source aliases.
+  const patterns: RegExp[] = [
+    /getSessionUsageLimitRecoveryControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,300}(?:import|require)\(\s*['"](?:\.\/|@\/backends\/)(?:claude|gemini|opencode|openCode)[^'"]*(?:UsageLimitRecoveryControlAdapter|usageLimitRecoveryControlAdapter)[^'"]*['"]\s*\)/,
+    /getSessionUsageLimitRecoveryControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,300}(?:import|require)\(\s*(?:CLAUDE|GEMINI|OPENCODE)_USAGE_LIMIT_RECOVERY_CONTROL_ADAPTER_MODULE\s*\)/,
+  ];
+
+  return patterns.some((p) => p.test(text));
+}
+
+function findDescriptorOnlyPluginApiRegistration(text: string): string[] {
+  const patterns: Readonly<Record<string, RegExp>> = {
+    registerResource: /methodName:\s*["']registerResource["']/,
+    registerUiDescriptor: /\bregisterUiDescriptor\b/,
+    registerExecutionRunProfile: /\bregisterExecutionRunProfile\b/,
+  };
+
+  return Object.entries(patterns)
+    .filter(([, pattern]) => pattern.test(text))
+    .map(([name]) => name);
+}
+
 async function listDistFiles(distDir: string): Promise<string[]> {
-  // Focus the scan on the primary built bundles that contain the AGENT catalog wiring.
-  // This avoids reading hundreds of unrelated dist chunks, keeping the test fast and stable.
-  const isPrimaryBundle = (name: string) => /^(api|index)(?:-[^.]+)?\.(?:mjs|cjs)$/.test(name);
-  const isAnyBundle = (name: string) => /\.(?:mjs|cjs)$/.test(name);
+  const entrypointRelativePaths = await resolveDistEntrypointRelativePaths(projectPath());
 
   // Retry briefly to avoid flaky ENOENT/empty-dir failures when dist is being rebuilt.
   for (let attempt = 0; attempt < 200; attempt++) {
     try {
-      const entries = await fs.readdir(distDir);
-      const primaryFiles = entries.filter(isPrimaryBundle).map((entry) => join(distDir, entry));
-      if (primaryFiles.length > 0) return primaryFiles;
-
-      const fallbackFiles = entries.filter(isAnyBundle).map((entry) => join(distDir, entry));
-      if (fallbackFiles.length > 0) return fallbackFiles;
+      const reachableFiles = await walkReachableDistFiles(distDir, entrypointRelativePaths);
+      if (reachableFiles.length > 0) return reachableFiles;
     } catch (e: any) {
       if (e?.code !== 'ENOENT') throw e;
     }
     await new Promise((r) => setTimeout(r, 50));
   }
 
-  const entries = await fs.readdir(distDir);
-  const primaryFiles = entries.filter(isPrimaryBundle).map((entry) => join(distDir, entry));
-  if (primaryFiles.length > 0) return primaryFiles;
-  return entries.filter(isAnyBundle).map((entry) => join(distDir, entry));
+  return walkReachableDistFiles(distDir, entrypointRelativePaths);
+}
+
+async function resolveDistEntrypointRelativePaths(packageRoot: string): Promise<string[]> {
+  const packageJson = JSON.parse(await fs.readFile(join(packageRoot, 'package.json'), 'utf8')) as {
+    main?: string;
+    module?: string;
+    exports?: unknown;
+  };
+
+  const entrypoints = new Set<string>();
+  const pushIfDistFile = (value: unknown) => {
+    if (typeof value !== 'string') return;
+    if (!value.startsWith('./dist/')) return;
+    if (!/\.(?:mjs|cjs)$/.test(value)) return;
+    entrypoints.add(value.slice('./dist/'.length));
+  };
+
+  const visitExportValue = (value: unknown) => {
+    if (typeof value === 'string') {
+      pushIfDistFile(value);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    for (const nestedValue of Object.values(value as Record<string, unknown>)) {
+      visitExportValue(nestedValue);
+    }
+  };
+
+  pushIfDistFile(packageJson.main);
+  pushIfDistFile(packageJson.module);
+  visitExportValue(packageJson.exports);
+
+  return Array.from(entrypoints);
+}
+
+async function walkReachableDistFiles(distDir: string, entrypointRelativePaths: readonly string[]): Promise<string[]> {
+  const queue = entrypointRelativePaths.map((entrypoint) => resolve(distDir, entrypoint));
+  const seen = new Set<string>();
+  const reachableFiles: string[] = [];
+
+  while (queue.length > 0) {
+    const nextPath = queue.shift();
+    if (!nextPath || seen.has(nextPath)) continue;
+    seen.add(nextPath);
+    if (!isWithinDirectory(nextPath, distDir)) continue;
+    if (!existsSync(nextPath)) continue;
+    if (!/\.(?:mjs|cjs)$/.test(nextPath)) continue;
+
+    reachableFiles.push(nextPath);
+
+    const text = await fs.readFile(nextPath, 'utf8');
+    for (const specifier of collectRelativeImportSpecifiers(text)) {
+      const resolvedImport = resolveRelativeImport(nextPath, specifier);
+      if (resolvedImport) queue.push(resolvedImport);
+    }
+  }
+
+  return reachableFiles;
+}
+
+function isWithinDirectory(candidatePath: string, directoryPath: string): boolean {
+  const relativePath = relative(directoryPath, candidatePath);
+  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
+}
+
+function collectRelativeImportSpecifiers(text: string): string[] {
+  const matches = text.matchAll(
+    /(?:import|export)\s+(?:[^'"`]*?\s+from\s+)?["'](\.{1,2}\/[^"'`]+)["']|import\(\s*["'](\.{1,2}\/[^"'`]+)["']\s*\)|require\(\s*["'](\.{1,2}\/[^"'`]+)["']\s*\)/g,
+  );
+
+  const specifiers = new Set<string>();
+  for (const match of matches) {
+    const specifier = match[1] ?? match[2] ?? match[3];
+    if (specifier) specifiers.add(specifier);
+  }
+  return Array.from(specifiers);
+}
+
+function resolveRelativeImport(fromFilePath: string, specifier: string): string | null {
+  const basePath = resolve(dirname(fromFilePath), specifier);
+  const candidates = [
+    basePath,
+    `${basePath}.mjs`,
+    `${basePath}.cjs`,
+    join(basePath, 'index.mjs'),
+    join(basePath, 'index.cjs'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return null;
 }
 
 function resolveDistBuildLockPath(): string {
@@ -120,6 +254,31 @@ describe('CLI build output', () => {
   const distDir = join(projectPath(), 'dist');
   let distFiles: string[] = [];
 
+  it('walks only the reachable dist entrypoint closure', async () => {
+    const tempRoot = await fs.mkdtemp(join(tmpdir(), 'happier-cli-dist-closure-'));
+    const tempDistDir = join(tempRoot, 'dist');
+    const runtimeDir = join(tempDistDir, 'runtime');
+
+    try {
+      await fs.mkdir(runtimeDir, { recursive: true });
+      await fs.writeFile(join(tempDistDir, 'index.mjs'), 'export * from "./runtime/entry.mjs";\n', 'utf8');
+      await fs.writeFile(join(runtimeDir, 'entry.mjs'), 'export const ready = true;\n', 'utf8');
+      await fs.writeFile(
+        join(tempDistDir, 'catalog-orphan.mjs'),
+        'export const getDaemonSpawnHooks = async () => (await import("./spawnHooks-bad.mjs"));\n',
+        'utf8',
+      );
+
+      const files = (
+        await walkReachableDistFiles(tempDistDir, ['index.mjs'])
+      ).map((file) => file.slice(tempDistDir.length + 1)).sort();
+
+      expect(files).toEqual(['index.mjs', 'runtime/entry.mjs']);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   beforeAll(async () => {
     await ensureCliDistReady(distDir);
     distFiles = await listDistFiles(distDir);
@@ -144,6 +303,75 @@ describe('CLI build output', () => {
     for (const file of distFiles) {
       const text = await fs.readFile(file, 'utf8');
       if (matchesDynamicVendorResumeSupportImport(text)) offenders.push(file);
+    }
+
+    expect(offenders).toEqual([]);
+  }, 60_000);
+
+  it('does not lazy-load connected-service daemon recovery hooks via dynamic import chunks', async () => {
+    expect(distFiles.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const file of distFiles) {
+      const text = await fs.readFile(file, 'utf8');
+      if (matchesDynamicConnectedServiceCatalogHookImport(text)) offenders.push(file);
+    }
+
+    expect(offenders).toEqual([]);
+  }, 60_000);
+
+  it('does not lazy-load Codex app-server session-control adapters via dynamic import chunks', async () => {
+    expect(distFiles.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const file of distFiles) {
+      const text = await fs.readFile(file, 'utf8');
+      if (matchesDynamicCodexAppServerSessionControlAdapterImport(text)) offenders.push(file);
+    }
+
+    expect(offenders).toEqual([]);
+  }, 60_000);
+
+  it('does not lazy-load provider usage-limit recovery control adapters via dynamic import chunks', async () => {
+    expect(distFiles.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const file of distFiles) {
+      const text = await fs.readFile(file, 'utf8');
+      if (matchesDynamicUsageLimitRecoveryControlAdapterImport(text)) offenders.push(file);
+    }
+
+    expect(offenders).toEqual([]);
+  }, 60_000);
+
+  it('includes Claude unified hook assets and bundled plugin package in the CLI release files', async () => {
+    const packageJson = JSON.parse(await fs.readFile(join(projectPath(), 'package.json'), 'utf8')) as {
+      bundledDependencies?: unknown;
+      dependencies?: Record<string, string>;
+      files?: unknown;
+    };
+    const releaseFiles = Array.isArray(packageJson.files) ? packageJson.files.map((entry) => String(entry)) : [];
+    const bundledDependencies = Array.isArray(packageJson.bundledDependencies)
+      ? packageJson.bundledDependencies.map((entry) => String(entry))
+      : [];
+
+    expect(releaseFiles).toContain('scripts/**/*.cjs');
+    expect(existsSync(join(projectPath(), 'scripts', 'session_hook_forwarder.cjs'))).toBe(true);
+    expect(existsSync(join(projectPath(), 'scripts', 'permission_hook_forwarder.cjs'))).toBe(true);
+    expect(bundledDependencies).toContain('@happier-dev/plugins-claude');
+    expect(packageJson.dependencies?.['@happier-dev/plugins-claude']).toBe('0.0.0');
+  });
+
+  it('does not expose descriptor-only plugin API registration methods in packaged dist', async () => {
+    expect(distFiles.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const file of distFiles) {
+      const text = await fs.readFile(file, 'utf8');
+      const retiredNames = findDescriptorOnlyPluginApiRegistration(text);
+      if (retiredNames.length > 0) {
+        offenders.push(`${relative(distDir, file)}:${retiredNames.join(',')}`);
+      }
     }
 
     expect(offenders).toEqual([]);

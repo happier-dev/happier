@@ -82,7 +82,7 @@ function createContributes(): ResolvedContributionRegistry {
         resourcesById: new Map(),
         uiDescriptorsById: new Map(),
         lifecycleHandlersById: new Map(),
-        runtimeCoreHooksByBackendId: new Map(),
+        surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: {},
         providerDefinitionsById: new Map(),
         backendDefinitionsById: new Map(),

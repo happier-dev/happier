@@ -1,15 +1,26 @@
 import type {
+    PluginRequestInterceptorContributionV1,
+    PluginRequestInterceptorScopeV1,
+    PluginRequestInterceptorTargetV1,
+    RequestInterceptorRequestPatchV1,
+    RequestPolicyResultV1,
+} from '@happier-dev/protocol';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
+import type {
     FetchRuntimeRequestV1,
     FetchRuntimeResponseV1,
     FetchRuntimeServiceV1,
     PluginApiRequestInterceptorRegistrationV1,
-    PluginFetchNextV1,
+    RequestPolicyCallerV1,
 } from '@happier-dev/plugin-sdk';
 
 export type PluginFetchErrorCode =
     | 'PLUGIN_FETCH_PERMISSION_DENIED'
     | 'PLUGIN_FETCH_ADAPTER_UNAVAILABLE'
-    | 'PLUGIN_FETCH_URL_SCOPE_DENIED';
+    | 'PLUGIN_FETCH_URL_SCOPE_DENIED'
+    | 'PLUGIN_FETCH_INTERCEPTOR_DENIED'
+    | 'PLUGIN_FETCH_INTERCEPTOR_FAILED';
 
 export class PluginFetchError extends Error {
     readonly code: PluginFetchErrorCode;
@@ -24,7 +35,12 @@ export class PluginFetchError extends Error {
 export type CreatePluginFetchServiceParams = Readonly<{
     networkAllowed: boolean;
     adapter?: FetchRuntimeServiceV1 | null;
-    interceptors?: readonly PluginApiRequestInterceptorRegistrationV1[];
+    interceptors?: readonly PluginRequestInterceptorBindingV1[];
+    interception?: Readonly<{
+        scope?: PluginRequestInterceptorScopeV1;
+        caller?: RequestPolicyCallerV1;
+        operationId?: string;
+    }>;
     pluginId?: string | null;
     allowedUrlOrigins?: readonly string[];
     retry?: Readonly<{
@@ -32,6 +48,37 @@ export type CreatePluginFetchServiceParams = Readonly<{
         baseDelayMs?: number;
     }>;
 }>;
+
+export type PluginRequestInterceptorBindingV1 = Readonly<{
+    pluginId: string;
+    contribution: PluginRequestInterceptorContributionV1;
+    registration: PluginApiRequestInterceptorRegistrationV1;
+}>;
+
+const REDACTED_VALUE = '[redacted]';
+const SECRET_KEY_PATTERN = /api_?key|secret|token|password|credential/i;
+const TIER_ONE_HEADER_NAMES = new Set([
+    'authorization',
+    'cookie',
+    'set-cookie',
+    'proxy-authorization',
+    'x-api-key',
+    'api-key',
+    'x-auth-token',
+]);
+const TIER_TWO_HEADER_NAMES = new Set([
+    'forwarded',
+    'x-client-ip',
+    'x-forwarded-user',
+    'x-forwarded-for',
+    'x-forwarded-email',
+    'x-real-ip',
+    'x-user-id',
+    'x-user-email',
+    'x-user-name',
+    'x-signature',
+    'x-hub-signature-256',
+]);
 
 function createAbortError(): Error {
     const error = new Error('Plugin fetch request was aborted');
@@ -121,6 +168,222 @@ function assertUrlAllowed(params: Readonly<{
     }
 }
 
+function readOrigin(url: string): string | null {
+    try {
+        return new URL(url).origin;
+    } catch {
+        return null;
+    }
+}
+
+function targetAllowsUrl(target: PluginRequestInterceptorTargetV1, url: string): boolean {
+    const allowedUrlOrigins = target.urlOrigins;
+    if (!allowedUrlOrigins || allowedUrlOrigins.length === 0 || allowedUrlOrigins.includes('*')) {
+        return true;
+    }
+    const origin = readOrigin(url);
+    return origin !== null && allowedUrlOrigins.includes(origin);
+}
+
+function selectTarget(
+    contribution: PluginRequestInterceptorContributionV1,
+    scope: PluginRequestInterceptorScopeV1,
+    request: FetchRuntimeRequestV1,
+): PluginRequestInterceptorTargetV1 | null {
+    return contribution.targets.find((target) => (
+        target.scope === scope && targetAllowsUrl(target, request.url)
+    )) ?? null;
+}
+
+function normalizeHeaderName(name: string): string {
+    return name.trim().toLowerCase();
+}
+
+function isTierOneHeader(name: string): boolean {
+    const normalized = normalizeHeaderName(name);
+    return TIER_ONE_HEADER_NAMES.has(normalized)
+        || SECRET_KEY_PATTERN.test(normalized)
+        || normalized.endsWith('api-key')
+        || normalized.endsWith('auth-token')
+        || normalized.endsWith('session-secret')
+        || normalized.endsWith('account-token')
+        || normalized.endsWith('provider-credential');
+}
+
+function isTierTwoHeader(name: string): boolean {
+    const normalized = normalizeHeaderName(name);
+    return TIER_TWO_HEADER_NAMES.has(normalized)
+        || normalized.startsWith('x-forwarded-')
+        || normalized.startsWith('x-user-')
+        || normalized.includes('signature');
+}
+
+function redactUrl(url: string): string {
+    try {
+        const parsed = new URL(url);
+        for (const key of [...parsed.searchParams.keys()]) {
+            if (SECRET_KEY_PATTERN.test(key)) {
+                parsed.searchParams.set(key, REDACTED_VALUE);
+            }
+        }
+        return parsed.toString();
+    } catch {
+        return url;
+    }
+}
+
+function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+}
+
+function redactBody(value: unknown, redactPrimitive: boolean = true): unknown {
+    if (value === undefined || value === null) {
+        return value;
+    }
+    if (Array.isArray(value)) {
+        return value.map((entry) => redactBody(entry, false));
+    }
+    if (!isPlainRecord(value)) {
+        return typeof value === 'object' || redactPrimitive ? REDACTED_VALUE : value;
+    }
+    const output: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+        output[key] = SECRET_KEY_PATTERN.test(key) ? REDACTED_VALUE : redactBody(child, false);
+    }
+    return Object.freeze(output);
+}
+
+function redactHeaders(headers: FetchRuntimeRequestV1['headers']): FetchRuntimeRequestV1['headers'] {
+    if (!headers) {
+        return headers;
+    }
+    return Object.freeze(Object.fromEntries(Object.entries(headers).map(([key, value]) => [
+        key,
+        isTierOneHeader(key) || isTierTwoHeader(key) ? REDACTED_VALUE : value,
+    ])));
+}
+
+function redactRequestForInterceptor(request: FetchRuntimeRequestV1): FetchRuntimeRequestV1 {
+    return Object.freeze({
+        ...request,
+        url: redactUrl(request.url),
+        headers: redactHeaders(request.headers),
+        body: redactBody(request.body),
+    });
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isStringRecord(value: unknown): value is Readonly<Record<string, string>> {
+    return isPlainRecord(value) && Object.values(value).every((entry) => typeof entry === 'string');
+}
+
+function isHeaderPatch(value: unknown): boolean {
+    if (!isPlainRecord(value)) {
+        return false;
+    }
+    return (value.remove === undefined || isStringArray(value.remove))
+        && (value.set === undefined || isStringRecord(value.set));
+}
+
+function isRequestPatch(value: unknown): value is RequestInterceptorRequestPatchV1 {
+    if (!isPlainRecord(value)) {
+        return false;
+    }
+    const allowedKeys = new Set(['url', 'method', 'headers', 'metadata']);
+    if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+        return false;
+    }
+    return (value.url === undefined || typeof value.url === 'string')
+        && (value.method === undefined || typeof value.method === 'string')
+        && (value.headers === undefined || isHeaderPatch(value.headers))
+        && (value.metadata === undefined || isPlainRecord(value.metadata));
+}
+
+function isDiagnosticMetadata(value: unknown): value is Readonly<Record<string, unknown>> {
+    return isPlainRecord(value);
+}
+
+function hasOnlyKeys(
+    value: Readonly<Record<string, unknown>>,
+    allowedKeys: ReadonlySet<string>,
+): boolean {
+    return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+const ALLOW_RESULT_KEYS = new Set(['kind', 'request', 'auditMetadata']);
+const DENY_RESULT_KEYS = new Set(['kind', 'code', 'reason', 'auditMetadata']);
+const ERROR_RESULT_KEYS = new Set(['kind', 'code', 'reason', 'retryable', 'auditMetadata']);
+
+function isRequestPolicyResult(value: unknown): value is RequestPolicyResultV1 {
+    if (!isPlainRecord(value) || typeof value.kind !== 'string') {
+        return false;
+    }
+    if (value.auditMetadata !== undefined && !isDiagnosticMetadata(value.auditMetadata)) {
+        return false;
+    }
+    if (value.kind === 'allow') {
+        return hasOnlyKeys(value, ALLOW_RESULT_KEYS)
+            && (value.request === undefined || isRequestPatch(value.request));
+    }
+    if (value.kind === 'deny') {
+        return hasOnlyKeys(value, DENY_RESULT_KEYS)
+            && typeof value.code === 'string'
+            && value.code.trim().length > 0
+            && (value.reason === undefined || typeof value.reason === 'string');
+    }
+    if (value.kind === 'error') {
+        return hasOnlyKeys(value, ERROR_RESULT_KEYS)
+            && typeof value.code === 'string'
+            && value.code.trim().length > 0
+            && (value.reason === undefined || typeof value.reason === 'string')
+            && (value.retryable === undefined || typeof value.retryable === 'boolean');
+    }
+    return false;
+}
+
+function removeHeader(headers: Record<string, string>, name: string): void {
+    const normalized = normalizeHeaderName(name);
+    for (const key of Object.keys(headers)) {
+        if (normalizeHeaderName(key) === normalized) {
+            delete headers[key];
+        }
+    }
+}
+
+function applyRequestPatch(
+    request: FetchRuntimeRequestV1,
+    patch: RequestInterceptorRequestPatchV1 | undefined,
+): FetchRuntimeRequestV1 {
+    if (!patch) {
+        return request;
+    }
+    const headers = { ...(request.headers ?? {}) };
+    for (const name of patch.headers?.remove ?? []) {
+        removeHeader(headers, name);
+    }
+    for (const [name, value] of Object.entries(patch.headers?.set ?? {})) {
+        removeHeader(headers, name);
+        headers[name] = value;
+    }
+    const metadata = patch.metadata
+        ? Object.freeze({ ...(request.metadata ?? {}), ...patch.metadata })
+        : request.metadata;
+    return Object.freeze({
+        ...request,
+        ...(patch.url !== undefined ? { url: patch.url } : {}),
+        ...(patch.method !== undefined ? { method: patch.method } : {}),
+        ...(Object.keys(headers).length > 0 ? { headers: Object.freeze(headers) } : { headers: undefined }),
+        ...(metadata !== undefined ? { metadata } : {}),
+    });
+}
+
 function isTransientFetchError(error: unknown): boolean {
     if (!(error instanceof Error)) {
         return false;
@@ -171,12 +434,27 @@ async function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal | und
 }
 
 function sortInterceptors(
-    interceptors: readonly PluginApiRequestInterceptorRegistrationV1[],
-): readonly PluginApiRequestInterceptorRegistrationV1[] {
+    interceptors: readonly PluginRequestInterceptorBindingV1[],
+): readonly PluginRequestInterceptorBindingV1[] {
     return Object.freeze([...interceptors].sort((left, right) => (
-        (right.priority ?? 0) - (left.priority ?? 0)
-        || left.id.localeCompare(right.id)
+        (left.contribution.order ?? 0) - (right.contribution.order ?? 0)
+        || left.pluginId.localeCompare(right.pluginId)
+        || left.contribution.id.localeCompare(right.contribution.id)
     )));
+}
+
+function createDefaultOperationId(
+    scope: PluginRequestInterceptorScopeV1,
+    request: FetchRuntimeRequestV1,
+): string {
+    const method = (request.method ?? 'GET').trim().toUpperCase() || 'GET';
+    const digest = createHash('sha256')
+        .update(method)
+        .update('\0')
+        .update(redactUrl(request.url))
+        .digest('hex')
+        .slice(0, 16);
+    return `${scope}:${method}:${digest}`;
 }
 
 function createTerminalFetchAdapter(params: CreatePluginFetchServiceParams): FetchRuntimeServiceV1 {
@@ -197,24 +475,95 @@ function createTerminalFetchAdapter(params: CreatePluginFetchServiceParams): Fet
     };
 }
 
-function applyInterceptors(
-    terminal: PluginFetchNextV1,
-    interceptors: readonly PluginApiRequestInterceptorRegistrationV1[],
-): PluginFetchNextV1 {
-    return interceptors.reduceRight<PluginFetchNextV1>(
-        (next, registration) => async (request) => {
-            assertNotAborted(request.signal);
-            return await registration.intercept(request, next);
-        },
-        terminal,
-    );
-}
-
 export function createPluginFetchService(params: CreatePluginFetchServiceParams): FetchRuntimeServiceV1 {
     const interceptors = sortInterceptors(params.interceptors ?? []);
-    const fetchThroughHost = applyInterceptors(createTerminalFetchAdapter(params), interceptors);
+    const terminal = createTerminalFetchAdapter(params);
+    const activeInterceptorKeysByOperation = new AsyncLocalStorage<Set<string>>();
+    const scope = params.interception?.scope ?? 'plugin-fetch';
+    const caller = params.interception?.caller ?? Object.freeze({
+        scope: 'plugin-fetch' as const,
+        ...(params.pluginId ? { pluginId: params.pluginId } : {}),
+    });
 
-    return async (request: FetchRuntimeRequestV1): Promise<FetchRuntimeResponseV1> => {
+    async function fetchThroughPolicies(request: FetchRuntimeRequestV1): Promise<FetchRuntimeResponseV1> {
+        const activeInterceptorKeys = activeInterceptorKeysByOperation.getStore();
+        if (!activeInterceptorKeys) {
+            throw new PluginFetchError(
+                'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+                'Request interceptor recursion state is unavailable for this operation',
+            );
+        }
+        let effectiveRequest = request;
+        for (const binding of interceptors) {
+            assertNotAborted(effectiveRequest.signal);
+            const activeKey = `${binding.pluginId}:${binding.contribution.id}`;
+            if (activeInterceptorKeys.has(activeKey)) {
+                continue;
+            }
+            const target = selectTarget(binding.contribution, scope, effectiveRequest);
+            if (!target) {
+                continue;
+            }
+            activeInterceptorKeys.add(activeKey);
+            let result: RequestPolicyResultV1;
+            try {
+                result = await binding.registration.handle({
+                    interceptorId: binding.contribution.id,
+                    pluginId: binding.pluginId,
+                    target,
+                    originalRequest: redactRequestForInterceptor(request),
+                    effectiveRequest: redactRequestForInterceptor(effectiveRequest),
+                    caller,
+                    operation: {
+                        id: params.interception?.operationId ?? createDefaultOperationId(scope, request),
+                        attempt: Number(request.metadata?.attempt ?? 1),
+                    },
+                });
+            } catch (error) {
+                throw new PluginFetchError(
+                    'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+                    error instanceof Error ? error.message : `Request interceptor '${binding.contribution.id}' failed`,
+                );
+            } finally {
+                activeInterceptorKeys.delete(activeKey);
+            }
+            if (!isRequestPolicyResult(result)) {
+                throw new PluginFetchError(
+                    'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+                    `Request interceptor '${binding.contribution.id}' returned an invalid policy result`,
+                );
+            }
+            if (result.kind === 'deny') {
+                throw new PluginFetchError(
+                    'PLUGIN_FETCH_INTERCEPTOR_DENIED',
+                    result.reason ?? `Request interceptor '${binding.contribution.id}' denied the request with code '${result.code}'`,
+                );
+            }
+            if (result.kind === 'error') {
+                throw new PluginFetchError(
+                    'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+                    result.reason ?? `Request interceptor '${binding.contribution.id}' failed with code '${result.code}'`,
+                );
+            }
+            if (result.kind !== 'allow') {
+                throw new PluginFetchError(
+                    'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+                    `Request interceptor '${binding.contribution.id}' returned an invalid policy result`,
+                );
+            }
+            const nextRequest = applyRequestPatch(effectiveRequest, result.request);
+            if (!targetAllowsUrl(target, nextRequest.url)) {
+                throw new PluginFetchError(
+                    'PLUGIN_FETCH_URL_SCOPE_DENIED',
+                    `Request interceptor '${binding.contribution.id}' rewrote the request outside its declared target URL origins`,
+                );
+            }
+            effectiveRequest = nextRequest;
+        }
+        return await terminal(effectiveRequest);
+    }
+
+    async function executeFetch(request: FetchRuntimeRequestV1): Promise<FetchRuntimeResponseV1> {
         assertNotAborted(request.signal);
         if (!params.networkAllowed) {
             throw new PluginFetchError(
@@ -233,7 +582,7 @@ export function createPluginFetchService(params: CreatePluginFetchServiceParams)
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
                 assertNotAborted(timeout.request.signal);
                 try {
-                    return await raceWithAbort(fetchThroughHost({
+                    return await raceWithAbort(fetchThroughPolicies({
                         ...timeout.request,
                         metadata: Object.freeze({
                             ...(timeout.request.metadata ?? {}),
@@ -254,5 +603,15 @@ export function createPluginFetchService(params: CreatePluginFetchServiceParams)
             'PLUGIN_FETCH_ADAPTER_UNAVAILABLE',
             'ctx.fetch retry exhausted without a terminal result',
         );
+    }
+
+    return async (request: FetchRuntimeRequestV1): Promise<FetchRuntimeResponseV1> => {
+        const existingOperationState = activeInterceptorKeysByOperation.getStore();
+        if (existingOperationState) {
+            return await executeFetch(request);
+        }
+        return await activeInterceptorKeysByOperation.run(new Set<string>(), async () => (
+            await executeFetch(request)
+        ));
     };
 }

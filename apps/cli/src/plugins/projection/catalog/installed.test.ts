@@ -39,7 +39,7 @@ describe('pluginCatalog', () => {
       expect(installResult.entry.contributionIds).toEqual({
         providers: ['acme.sample.provider'],
         backends: ['acme.sample.backend'],
-        hooks: ['backend.terminalRuntime.bindTranscript'],
+        hooks: ['backend.resolveRuntimePrerequisites'],
       });
 
       const entries = await readInstalledPluginCatalog({ happyHomeDir: home });

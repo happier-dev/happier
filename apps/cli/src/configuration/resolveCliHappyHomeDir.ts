@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
 
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { expandHomeDirPath } from '../utils/path/expandHomeDirPath';
 
 function isWindowsShapedAbsolutePath(pathLike: string): boolean {
   const value = String(pathLike ?? '').trim();

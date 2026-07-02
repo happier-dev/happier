@@ -1,6 +1,7 @@
 import {
   getPluginHookDefinitionV1,
   readHookEventEnvelopeV1,
+  validatePluginHookPayloadV1,
   type PluginHookAggregationKindV1,
   type PluginHookFailureModeV1,
   type HookEventEnvelopeV1,
@@ -22,6 +23,7 @@ export type DispatchPluginHookEventResultV1 = Readonly<{
   eventId: string | null;
   matchedHandlerCount: number;
   outcomes: readonly DispatchedPluginHookOutcomeV1[];
+  validationError?: string;
   aggregate?: Readonly<{
     executionKind: string;
     result: unknown;
@@ -118,6 +120,7 @@ export async function dispatchPluginHookEvent(params: Readonly<{
     'hookHandlersByHookId' | 'readHookEventEnvelopeV1'
   >;
   event: HookEventEnvelopeV1 | unknown;
+  context?: unknown;
 }>): Promise<DispatchPluginHookEventResultV1> {
   const envelope = params.runtimeRegistry.readHookEventEnvelopeV1
     ? params.runtimeRegistry.readHookEventEnvelopeV1(params.event)
@@ -132,6 +135,18 @@ export async function dispatchPluginHookEvent(params: Readonly<{
 
   const handlers = params.runtimeRegistry.hookHandlersByHookId.get(envelope.eventId) ?? [];
   const hookDefinition = getPluginHookDefinitionV1(envelope.eventId);
+  const payloadValidation = validatePluginHookPayloadV1({
+    hookId: envelope.eventId,
+    payload: envelope.payload,
+  });
+  if (!payloadValidation.success) {
+    return {
+      eventId: envelope.eventId,
+      matchedHandlerCount: 0,
+      outcomes: Object.freeze([]),
+      validationError: payloadValidation.message,
+    };
+  }
   const outcomes: DispatchedPluginHookOutcomeV1[] = [];
   let matchedExecutionKind: string | null = null;
   const aggregation = hookDefinition?.aggregation ?? null;
@@ -145,7 +160,7 @@ export async function dispatchPluginHookEvent(params: Readonly<{
     matchedExecutionKind ??= handler.registration.definition.executionKind;
 
     try {
-      const result = await handler.handler(envelope);
+      const result = await handler.handler(envelope, params.context);
       const outcome: DispatchedPluginHookOutcomeV1 = {
         pluginId: handler.pluginId,
         hookId: handler.hookId,

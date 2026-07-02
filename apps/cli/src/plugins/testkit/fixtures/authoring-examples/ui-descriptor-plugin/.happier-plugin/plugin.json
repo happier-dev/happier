@@ -3,16 +3,13 @@
   "id": "examples.ui-descriptor-plugin",
   "version": "0.1.0",
   "displayName": "UI Descriptor Example",
-  "description": "Activation-time resource and host-rendered descriptor example.",
+  "description": "Manifest-owned resource and host-rendered descriptor example.",
   "engines": {
     "happier": "^0.2.0"
   },
   "runtime": {
     "apiVersion": 1,
-    "capabilities": [
-      "resources",
-      "uiDescriptors"
-    ]
+    "capabilities": []
   },
   "targets": {
     "daemon": {
@@ -20,16 +17,47 @@
     }
   },
   "capabilities": {
-    "permissions": [
+    "permissions": [],
+    "optionalPermissions": []
+  },
+  "contributes": {
+    "resources": [
       {
-        "capability": "resources.register",
-        "reason": "Register the example prompt resource during plugin activation."
-      },
+        "id": "examples.ui.prompt",
+        "resourceKind": "prompt",
+        "path": "resources/review-prompt.md",
+        "contentType": "text/markdown"
+      }
+    ],
+    "uiDescriptors": [
       {
-        "capability": "ui.descriptors",
-        "reason": "Register the example settings descriptor during plugin activation."
+        "id": "examples.ui.settings",
+        "surface": "settings",
+        "title": "Example Plugin Settings",
+        "description": "Host-rendered descriptor declared in the manifest.",
+        "fields": [
+          {
+            "id": "enabled",
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          {
+            "id": "profile",
+            "type": "select",
+            "title": "Profile",
+            "options": [
+              {
+                "value": "fast",
+                "label": "Fast"
+              },
+              {
+                "value": "safe",
+                "label": "Safe"
+              }
+            ]
+          }
+        ]
       }
     ]
-  },
-  "contributes": {}
+  }
 }

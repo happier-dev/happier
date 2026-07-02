@@ -50,7 +50,7 @@
           "id": "examples.bundled-first-party"
         },
         "agentId": "examples.bundled.provider",
-        "runtimeCoreHooks": [
+        "surfaceHandlers": [
           {
             "id": "backend.terminalRuntime.launch",
             "kind": "terminalRuntime",
@@ -58,8 +58,7 @@
             "handler": {
               "target": "daemon",
               "exportName": "launch"
-            },
-            "runtimeCoreHookApiVersion": 1
+            }
           },
           {
             "id": "backend.terminalRuntime.discoverIdentity",
@@ -68,8 +67,7 @@
             "handler": {
               "target": "daemon",
               "exportName": "discoverIdentity"
-            },
-            "runtimeCoreHookApiVersion": 1
+            }
           }
         ],
         "engine": {

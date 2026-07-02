@@ -37,14 +37,14 @@
         "default": "./dist/lib.mjs"
       }
     },
-    "./backends/codex/mcp/happierStdioBridge": {
+    "./mcp/bridges/happierMcpStdioBridge": {
       "require": {
-        "types": "./dist/backends/codex/mcp/happierStdioBridge.d.cts",
-        "default": "./dist/backends/codex/mcp/happierStdioBridge.cjs"
+        "types": "./dist/mcp/bridges/happierMcpStdioBridge.d.cts",
+        "default": "./dist/mcp/bridges/happierMcpStdioBridge.cjs"
       },
       "import": {
-        "types": "./dist/backends/codex/mcp/happierStdioBridge.d.mts",
-        "default": "./dist/backends/codex/mcp/happierStdioBridge.mjs"
+        "types": "./dist/mcp/bridges/happierMcpStdioBridge.d.mts",
+        "default": "./dist/mcp/bridges/happierMcpStdioBridge.mjs"
       }
     },
     "./mcp/bridges/remoteMcpStdioBridge": {
@@ -90,16 +90,27 @@
     "@happier-dev/protocol",
     "@happier-dev/transfers",
     "@happier-dev/release-runtime",
-    "tweetnacl",
+    "@happier-dev/plugins-auggie",
     "@happier-dev/plugins-claude",
     "@happier-dev/plugins-codex",
+    "@happier-dev/plugins-copilot",
+    "@happier-dev/plugins-cursor",
+    "@happier-dev/plugins-gemini",
+    "@happier-dev/plugins-kimi",
+    "@happier-dev/plugins-kilo",
+    "@happier-dev/plugins-ohmypi",
     "@happier-dev/plugins-opencode",
+    "@happier-dev/plugins-pi",
+    "@happier-dev/plugins-qwen",
+    "@happier-dev/plugins-review-coderabbit",
+    "@happier-dev/plugins-review-deepsec",
     "@happier-dev/plugins-scm-azure-devops",
     "@happier-dev/plugins-scm-bitbucket",
     "@happier-dev/plugins-scm-git",
     "@happier-dev/plugins-scm-github",
     "@happier-dev/plugins-scm-gitlab",
-    "@happier-dev/plugins-scm-sapling"
+    "@happier-dev/plugins-scm-sapling",
+    "tweetnacl"
   ],
   "scripts": {
     "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit",
@@ -154,9 +165,16 @@
     "@happier-dev/connection-supervisor": "0.0.0",
     "@happier-dev/peer-mediation": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugins-auggie": "0.0.0",
     "@happier-dev/plugins-claude": "0.0.0",
     "@happier-dev/plugins-codex": "0.0.0",
+    "@happier-dev/plugins-cursor": "0.0.0",
+    "@happier-dev/plugins-gemini": "0.0.0",
+    "@happier-dev/plugins-kimi": "0.0.0",
+    "@happier-dev/plugins-ohmypi": "0.0.0",
     "@happier-dev/plugins-opencode": "0.0.0",
+    "@happier-dev/plugins-pi": "0.0.0",
+    "@happier-dev/plugins-qwen": "0.0.0",
     "@happier-dev/plugins-scm-azure-devops": "0.0.0",
     "@happier-dev/plugins-scm-bitbucket": "0.0.0",
     "@happier-dev/plugins-scm-git": "0.0.0",
@@ -177,6 +195,7 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.7",
     "@types/tmp": "^0.2.6",
+    "ajv": "^8.17.1",
     "ai": "^5.0.107",
     "archiver": "^7.0.1",
     "axios": "^1.13.2",
@@ -203,7 +222,11 @@
     "tar": "^7.5.2",
     "tmp": "^0.2.5",
     "tweetnacl": "^1.0.3",
-    "zod": "4.3.6"
+    "zod": "4.3.6",
+    "@happier-dev/plugins-review-coderabbit": "0.0.0",
+    "@happier-dev/plugins-review-deepsec": "0.0.0",
+    "@happier-dev/plugins-copilot": "0.0.0",
+    "@happier-dev/plugins-kilo": "0.0.0"
   },
   "devDependencies": {
     "@eslint/compat": "^1",

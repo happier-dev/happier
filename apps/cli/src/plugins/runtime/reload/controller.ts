@@ -1,5 +1,4 @@
-import { configuration } from '@/configuration';
-import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 import {
     writePluginReloadStateSnapshot,
 } from './state';
@@ -208,6 +207,9 @@ export function createPluginReloadController(params?: Readonly<{
         eventId: 'plugin.reload.before' | 'plugin.reload.after';
         payload: Record<string, unknown>;
     }>) => Promise<unknown>;
+    publishInstalledManifestProjections?: (params: Readonly<{
+        pluginIds: readonly string[];
+    }>) => Promise<unknown>;
 }>): PluginReloadController {
     let generation = 0;
     let activeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
@@ -218,8 +220,12 @@ export function createPluginReloadController(params?: Readonly<{
     const outstandingLeaseCounts = new Map<ResolvedExecutablePluginRuntimeRegistry, number>();
     const pendingDisposal = new Set<ResolvedExecutablePluginRuntimeRegistry>();
 
-    function resolveHappyHomeDir(): string {
-        return params?.happyHomeDir ?? configuration.happyHomeDir;
+    async function resolveHappyHomeDir(): Promise<string> {
+        if (params?.happyHomeDir) {
+            return params.happyHomeDir;
+        }
+        const { configuration } = await import('../../../configuration');
+        return configuration.happyHomeDir;
     }
 
     function shouldPersistReloadState(): boolean {
@@ -255,9 +261,9 @@ export function createPluginReloadController(params?: Readonly<{
         if (params?.resolveRuntimeRegistry) {
             return await params.resolveRuntimeRegistry();
         }
-        const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
+        const { resolveExecutablePluginRuntimeRegistry } = await import('../resolveExecutablePluginRuntimeRegistry');
         return await resolveExecutablePluginRuntimeRegistry({
-            happyHomeDir: resolveHappyHomeDir(),
+            happyHomeDir: await resolveHappyHomeDir(),
         });
     }
 
@@ -277,6 +283,17 @@ export function createPluginReloadController(params?: Readonly<{
             });
         } catch {
             // Reload lifecycle hooks remain best-effort even if the dispatcher fails.
+        }
+    }
+
+    async function publishInstalledManifestProjections(pluginIds: readonly string[]): Promise<void> {
+        if (!params?.publishInstalledManifestProjections) {
+            return;
+        }
+        try {
+            await params.publishInstalledManifestProjections({ pluginIds });
+        } catch {
+            // Installed-manifest projection sync is best-effort; reload success remains authoritative locally.
         }
     }
 
@@ -371,7 +388,7 @@ export function createPluginReloadController(params?: Readonly<{
                 registry,
             };
             if (shouldPersistReloadState()) {
-                await writePluginReloadStateSnapshot(resolveHappyHomeDir(), {
+                await writePluginReloadStateSnapshot(await resolveHappyHomeDir(), {
                     t: 'happier_plugin_reload_state_v1',
                     schemaVersion: 1,
                     generation,
@@ -380,6 +397,7 @@ export function createPluginReloadController(params?: Readonly<{
                     updatedAt: Date.now(),
                 });
             }
+            await publishInstalledManifestProjections(affectedPluginIds);
             await emitReloadHook({
                 runtimeRegistry: lastResult.registry,
                 eventId: 'plugin.reload.after',

@@ -26,6 +26,7 @@ import { installablesProjectionFamily } from '../installables';
 import { mcpProjectionFamily } from '../mcp';
 import { scmBackendProjectionFamily } from '../scmBackends';
 import { scmHostingProviderProjectionFamily } from '../scmHostingProviders';
+import { pluginUiProjectionFamily } from '../ui/projection';
 
 function readOptionalString(value: unknown): string | undefined {
     const normalized = typeof value === 'string' ? value.trim() : '';
@@ -639,6 +640,7 @@ export function buildPluginProjectionV2(params: Readonly<{
         scmBackendProjectionFamily,
         installablesProjectionFamily,
         mcpProjectionFamily,
+        pluginUiProjectionFamily,
         ...(params.familyDescriptors ?? []),
     ];
 

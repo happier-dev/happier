@@ -43,6 +43,9 @@ export type PluginSessionLaunchParams = Readonly<{
         id: string;
         providerId: string;
     }>;
+    sessionId: string;
+    directory: string;
+    metadata: Readonly<Record<string, unknown>>;
 }> & PluginSessionBindingInput;
 
 export type PluginSessionLaunchHandler = (
@@ -133,12 +136,20 @@ export function buildPluginSessionLaunchParams(params: Readonly<{
     backend: ResolvedBackendContribution;
     provider: ResolvedProviderContribution;
     input: PluginSessionBindingInput;
+    runtime: Readonly<{
+        sessionId: string;
+        directory: string;
+        metadata: Readonly<Record<string, unknown>>;
+    }>;
 }>): PluginSessionLaunchParams {
     return Object.freeze({
         backend: Object.freeze({
             id: params.backend.id,
             providerId: params.provider.id,
         }),
+        sessionId: params.runtime.sessionId,
+        directory: params.runtime.directory,
+        metadata: params.runtime.metadata,
         ...params.input,
     });
 }

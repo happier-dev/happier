@@ -2,17 +2,21 @@ import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { readPluginReloadStateSnapshot } from '@/plugins/runtime/reload/state';
-import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '@/plugins/projection/registry/sources/generatedBundledPlugins';
-import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { readPluginReloadStateSnapshot } from './reload/state';
+import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '../projection/registry/sources/generatedBundledPlugins';
+import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/types';
+import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
+import { resolveMergedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry } from '../projection/registry/types';
 import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import { activatePluginRuntimeRegistry } from './lifecycle/manager';
+import {
+    resolveTrustedOptionalPermissionGrantsFromServer,
+    type ResolveTrustedOptionalPluginPermissionGrants,
+} from './permissions/grants';
 import { resolvePluginHookHandlerRegistry } from './resolvePluginHookHandlerRegistry';
-import { createPluginScmBackendRegistryFromRuntimeRegistry } from '@/scm/scmBackendCatalog';
+import { createPluginScmBackendRegistryFromRuntimeRegistry } from '../../scm/scmBackendCatalog';
 import type {
     PluginActionHandler,
     PluginHookHandler,
@@ -41,9 +45,19 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     networkAllowedPluginIds?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['networkAllowedPluginIds'];
     networkAllowedUrlOriginsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['networkAllowedUrlOriginsByPluginId'];
     processSpawnAllowedPathsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['processSpawnAllowedPathsByPluginId'];
+    systemToolDefinitionsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['systemToolDefinitionsByPluginId'];
     envAllowedNamesByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['envAllowedNamesByPluginId'];
     filesystemReadAllowedPathsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['filesystemReadAllowedPathsByPluginId'];
     filesystemWriteAllowedPathsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['filesystemWriteAllowedPathsByPluginId'];
+    permissionsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['permissionsByPluginId'];
+    permissionDeclarationsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['permissionDeclarationsByPluginId'];
+    requiredPermissionsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['requiredPermissionsByPluginId'];
+    requiredPermissionDeclarationsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['requiredPermissionDeclarationsByPluginId'];
+    optionalPermissionDeclarationsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['optionalPermissionDeclarationsByPluginId'];
+    trustedOptionalPermissionsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['trustedOptionalPermissionsByPluginId'];
+    trustedOptionalPermissionDeclarationsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['trustedOptionalPermissionDeclarationsByPluginId'];
+    runtimeCapabilitiesByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['runtimeCapabilitiesByPluginId'];
+    eventDeclarationsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['eventDeclarationsByPluginId'];
     eventSubscriptionPermissionsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['eventSubscriptionPermissionsByPluginId'];
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
     addRuntimeDisposable?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['addRuntimeDisposable'];
@@ -92,9 +106,6 @@ function mergeActivatedContributes(
         activatedActions.length === 0
         && activated.tools.length === 0
         && activated.commands.length === 0
-        && activated.resources.length === 0
-        && activated.uiDescriptors.length === 0
-        && activated.executionRunProfiles.length === 0
         && activatedLifecycleHandlers.length === 0
     ) {
         return base;
@@ -115,18 +126,9 @@ function mergeActivatedContributes(
             ...(base.commands ?? []),
             ...activated.commands,
         ]),
-        resources: Object.freeze([
-            ...base.resources,
-            ...activated.resources,
-        ]),
-        uiDescriptors: Object.freeze([
-            ...base.uiDescriptors,
-            ...activated.uiDescriptors,
-        ]),
-        executionRunProfiles: Object.freeze([
-            ...(base.executionRunProfiles ?? []),
-            ...activated.executionRunProfiles,
-        ]),
+        resources: base.resources,
+        uiDescriptors: base.uiDescriptors,
+        executionRunProfiles: base.executionRunProfiles,
         installables: base.installables,
         settings: base.settings,
         scmHostingProviders: base.scmHostingProviders,
@@ -141,8 +143,6 @@ function mergeActivatedContributes(
         pluginDiagnosticsByPluginId: base.pluginDiagnosticsByPluginId,
     });
 }
-
-const bundledFirstPartyPackageNames = new Set(BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES);
 
 function parseFirstPartyPluginIdFromPackageName(packageName: string): string | null {
     const prefix = '@happier-dev/plugins-';
@@ -177,7 +177,7 @@ async function loadBundledFirstPartyPluginDaemonModule(packageName: string): Pro
 }
 
 function resolveBundledActivationSource(target: Readonly<{ pluginId: string; daemonEntryPath: string }>) {
-    if (bundledFirstPartyPackageNames.has(target.daemonEntryPath)) {
+    if (BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES.includes(target.daemonEntryPath)) {
         return {
             kind: 'bundled' as const,
             moduleId: target.daemonEntryPath,
@@ -192,6 +192,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         happyHomeDir?: string;
         contributes?: ResolvedContributionRegistry;
         generation?: number;
+        pluginIds?: readonly string[];
+        resolveTrustedOptionalPermissionGrants?: ResolveTrustedOptionalPluginPermissionGrants;
     }>,
 ): Promise<ResolvedExecutablePluginRuntimeRegistry> {
     const generation = params?.generation ?? await resolveRuntimeGeneration(params?.happyHomeDir);
@@ -206,7 +208,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const activatedRegistry = await activatePluginRuntimeRegistry({
         contributes,
         generation,
+        pluginIds: params?.pluginIds,
         resolveActivationSource: resolveBundledActivationSource,
+        resolveTrustedOptionalPermissionGrants: params?.resolveTrustedOptionalPermissionGrants
+            ?? resolveTrustedOptionalPermissionGrantsFromServer,
     });
     const authoritativeContributes = mergeActivatedContributes(contributes, activatedRegistry);
     const scmBackendRegistry = createPluginScmBackendRegistryFromRuntimeRegistry({
@@ -225,6 +230,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             Object.freeze([...existing, ...handlers].sort((left, right) => (
                 right.priority - left.priority
                 || left.pluginId.localeCompare(right.pluginId)
+                || left.registrationIndex - right.registrationIndex
                 || left.manifestPath.localeCompare(right.manifestPath)
                 || left.exportName.localeCompare(right.exportName)
                 || left.daemonEntryPath.localeCompare(right.daemonEntryPath)
@@ -249,9 +255,19 @@ export async function resolveExecutablePluginRuntimeRegistry(
         networkAllowedPluginIds: activatedRegistry.networkAllowedPluginIds,
         networkAllowedUrlOriginsByPluginId: activatedRegistry.networkAllowedUrlOriginsByPluginId,
         processSpawnAllowedPathsByPluginId: activatedRegistry.processSpawnAllowedPathsByPluginId,
+        systemToolDefinitionsByPluginId: activatedRegistry.systemToolDefinitionsByPluginId,
         envAllowedNamesByPluginId: activatedRegistry.envAllowedNamesByPluginId,
         filesystemReadAllowedPathsByPluginId: activatedRegistry.filesystemReadAllowedPathsByPluginId,
         filesystemWriteAllowedPathsByPluginId: activatedRegistry.filesystemWriteAllowedPathsByPluginId,
+        permissionsByPluginId: activatedRegistry.permissionsByPluginId,
+        permissionDeclarationsByPluginId: activatedRegistry.permissionDeclarationsByPluginId,
+        requiredPermissionsByPluginId: activatedRegistry.requiredPermissionsByPluginId,
+        requiredPermissionDeclarationsByPluginId: activatedRegistry.requiredPermissionDeclarationsByPluginId,
+        optionalPermissionDeclarationsByPluginId: activatedRegistry.optionalPermissionDeclarationsByPluginId,
+        trustedOptionalPermissionsByPluginId: activatedRegistry.trustedOptionalPermissionsByPluginId,
+        trustedOptionalPermissionDeclarationsByPluginId: activatedRegistry.trustedOptionalPermissionDeclarationsByPluginId,
+        runtimeCapabilitiesByPluginId: activatedRegistry.runtimeCapabilitiesByPluginId,
+        eventDeclarationsByPluginId: activatedRegistry.eventDeclarationsByPluginId,
         eventSubscriptionPermissionsByPluginId: activatedRegistry.eventSubscriptionPermissionsByPluginId,
         pluginDiagnosticsByPluginId: mergePluginDiagnostics(
             mergePluginDiagnostics(

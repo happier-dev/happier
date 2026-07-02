@@ -73,4 +73,86 @@ describe('validatePluginManifest', () => {
       ]);
     }
   });
+
+  it('rejects conditional backend surface operations without an availability evaluator for the same surface', () => {
+    const manifest = createManifest('acme.conditional-surface');
+    manifest.targets = { daemon: { entry: './daemon.mjs' } };
+    manifest.contributes = {
+      backends: [
+        {
+          kindVersion: 1,
+          id: 'acme.conditional-surface.backend',
+          agentId: 'acme.conditional-surface',
+          engine: { kind: 'custom' },
+          capabilities: { executionRun: { supported: false } },
+          surfaceHandlers: [
+            {
+              surfaceApiVersion: 1,
+              id: 'checkpoint-restore',
+              kind: 'checkpoint',
+              operation: 'restore',
+              support: 'conditional',
+              handler: {
+                target: 'daemon',
+                exportName: 'restore',
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = validatePluginManifest(manifest);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.diagnostics).toEqual([
+        expect.objectContaining({
+          code: 'plugin_manifest_semantic_invalid',
+          message: expect.stringMatching(/conditional.*evaluateAvailability/i),
+        }),
+      ]);
+    }
+  });
+
+  it('accepts conditional backend surface operations with a matching availability evaluator', () => {
+    const manifest = createManifest('acme.conditional-surface-ready');
+    manifest.targets = { daemon: { entry: './daemon.mjs' } };
+    manifest.contributes = {
+      backends: [
+        {
+          kindVersion: 1,
+          id: 'acme.conditional-surface-ready.backend',
+          agentId: 'acme.conditional-surface-ready',
+          engine: { kind: 'custom' },
+          capabilities: { executionRun: { supported: false } },
+          surfaceHandlers: [
+            {
+              surfaceApiVersion: 1,
+              id: 'checkpoint-availability',
+              kind: 'checkpoint',
+              operation: 'evaluateAvailability',
+              handler: {
+                target: 'daemon',
+                exportName: 'evaluateCheckpointAvailability',
+              },
+            },
+            {
+              surfaceApiVersion: 1,
+              id: 'checkpoint-restore',
+              kind: 'checkpoint',
+              operation: 'restore',
+              support: 'conditional',
+              handler: {
+                target: 'daemon',
+                exportName: 'restore',
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(validatePluginManifest(manifest)).toEqual(expect.objectContaining({ ok: true }));
+  });
 });

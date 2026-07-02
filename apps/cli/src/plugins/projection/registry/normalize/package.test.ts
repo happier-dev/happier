@@ -38,6 +38,7 @@ describe('buildPluginContributionRegistry', () => {
               },
             },
             permissions: [],
+            optionalPermissions: [],
             contributes: {
               providers: [
                 {
@@ -56,7 +57,7 @@ describe('buildPluginContributionRegistry', () => {
                   id: 'ohMyPi.acp',
                   providerId: 'ohMyPi',
                   runtimeKind: 'acp',
-                  runtimeCoreHooks: [],
+                  surfaceHandlers: [],
                   capabilities: normalizePluginBackendCapabilitiesV1({ executionRun: { supported: true } }),
                 },
               ],
@@ -113,6 +114,18 @@ describe('buildPluginContributionRegistry', () => {
                   defaultChannelIds: [],
                 },
               ],
+              events: [
+                {
+                  id: 'review/ready',
+                  payloadSchema: {
+                    type: 'object',
+                    properties: {
+                      reviewId: { type: 'string' },
+                    },
+                  },
+                  description: 'Review ready event',
+                },
+              ],
               notificationChannels: [
                 {
                   id: 'acme.ohmypi.webhook',
@@ -134,6 +147,18 @@ describe('buildPluginContributionRegistry', () => {
                   redaction: 'none',
                   hidden: false,
                   actionIds: [],
+                },
+              ],
+              requestInterceptors: [
+                {
+                  id: 'acme.ohmypi.egress',
+                  order: 20,
+                  targets: [
+                    {
+                      scope: 'plugin-fetch',
+                      urlOrigins: ['https://api.example.test'],
+                    },
+                  ],
                 },
               ],
               mcp: {
@@ -167,13 +192,13 @@ describe('buildPluginContributionRegistry', () => {
               hooks: [
                 {
                   hookApiVersion: 1,
-                  id: 'backend.terminalRuntime.bindTranscript',
-                  category: 'integration',
+                  id: 'backend.resolveRuntimePrerequisites',
+                  category: 'decision',
                   scope: 'backend',
-                  executionKind: 'integrate',
+                  executionKind: 'decide',
                   handler: {
                     target: 'plugin',
-                    exportName: 'bindTranscript',
+                    exportName: 'resolveTranscriptBinding',
                   },
                 },
               ],
@@ -191,7 +216,9 @@ describe('buildPluginContributionRegistry', () => {
     expect(registry.uiDescriptors).toHaveLength(1);
     expect(registry.notifications).toHaveLength(1);
     expect(registry.notificationChannels).toHaveLength(1);
+    expect(registry.events).toHaveLength(1);
     expect(registry.executionRunProfiles).toHaveLength(1);
+    expect(registry.requestInterceptors).toHaveLength(1);
     expect(registry.mcpServers).toHaveLength(1);
     expect(registry.mcpDiscoveryProviders).toHaveLength(1);
     expect(registry.providers[0]).toMatchObject({
@@ -246,12 +273,33 @@ describe('buildPluginContributionRegistry', () => {
         title: 'Oh My Pi webhook',
       },
     });
+    expect(registry.events[0]).toMatchObject({
+      pluginId: 'acme.ohmypi',
+      definition: {
+        id: 'acme.ohmypi/review/ready',
+        localId: 'review/ready',
+        description: 'Review ready event',
+      },
+    });
     expect(registry.executionRunProfiles[0]).toMatchObject({
       pluginId: 'acme.ohmypi',
       definition: {
         id: 'acme.ohmypi.review',
         kind: 'executionRun.profile',
         intent: 'review',
+      },
+    });
+    expect(registry.requestInterceptors[0]).toMatchObject({
+      pluginId: 'acme.ohmypi',
+      definition: {
+        id: 'acme.ohmypi.egress',
+        order: 20,
+        targets: [
+          {
+            scope: 'plugin-fetch',
+            urlOrigins: ['https://api.example.test'],
+          },
+        ],
       },
     });
     expect(registry.mcpServers[0]).toMatchObject({
@@ -297,6 +345,7 @@ describe('buildPluginContributionRegistry', () => {
               },
             },
             permissions: [],
+            optionalPermissions: [],
             contributes: {
               providers: [],
               backends: [],

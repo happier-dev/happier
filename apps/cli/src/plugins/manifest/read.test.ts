@@ -109,9 +109,9 @@ describe('readPluginManifest', () => {
               },
             },
             capabilities: {},
-            runtimeCoreHooks: [
+            surfaceHandlers: [
               {
-                runtimeCoreHookApiVersion: 1,
+                surfaceApiVersion: 1,
                 id: 'backend.terminalRuntime.launch',
                 kind: 'terminalRuntime',
                 operation: 'launch',
@@ -186,13 +186,13 @@ describe('readPluginManifest', () => {
           {
             kind: 'hook',
             hookApiVersion: 1,
-            id: 'backend.terminalRuntime.bindTranscript',
-            category: 'integration',
+            id: 'backend.resolveRuntimePrerequisites',
+            category: 'decision',
             scope: 'backend',
-            executionKind: 'integrate',
+            executionKind: 'decide',
             handler: {
               target: 'plugin',
-              exportName: 'bindTranscript',
+              exportName: 'resolveTranscriptBinding',
             },
           },
         ],
@@ -223,7 +223,7 @@ describe('readPluginManifest', () => {
         expect(result.manifest.contributes.resources.map((definition) => definition.id)).toEqual(['acme.prompt']);
         expect(result.manifest.contributes.uiDescriptors.map((definition) => definition.id)).toEqual(['acme.status']);
         expect(result.manifest.contributes.hooks.map((definition) => definition.id)).toEqual([
-            'backend.terminalRuntime.bindTranscript',
+            'backend.resolveRuntimePrerequisites',
         ]);
     });
 
@@ -327,7 +327,7 @@ describe('readPluginManifest', () => {
     expect(result.manifest.contributes.backends[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
   });
 
-  it('returns a semantic diagnostic when default execution-run backend support lacks runtimeCore launch proof', async () => {
+  it('accepts custom runtimeCore-backed execution-run support without requiring terminal surface handlers', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
@@ -367,17 +367,12 @@ describe('readPluginManifest', () => {
 
     const result = await readPluginManifest({ manifestPath });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/execution-run.*runtimeCore/i),
-      }),
-    ]));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
   });
 
-  it('returns a semantic diagnostic when execution-run runtimeCore launch proof is malformed', async () => {
+  it('does not treat terminal surface handlers as execution-run runtimeCore proof', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
@@ -415,70 +410,15 @@ describe('readPluginManifest', () => {
                 supported: true,
               },
             },
-            runtimeCoreHooks: [
+            surfaceHandlers: [
               {
+                surfaceApiVersion: 1,
+                id: 'backend.terminalRuntime.discoverIdentity',
                 kind: 'terminalRuntime',
-                operation: 'launch',
-              },
-            ],
-          },
-        ],
-      })),
-    );
-
-    const result = await readPluginManifest({ manifestPath });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/execution-run.*runtimeCore/i),
-      }),
-    ]));
-  });
-
-  it('returns a semantic diagnostic when execution-run runtimeCore launch proof lacks a daemon export', async () => {
-    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
-    const manifestPath = await writeManifestFile(
-      pluginRoot,
-      JSON.stringify(createBaseManifestV2({
-        id: 'acme.malformed-execution-run-runtime-core-handler',
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['backends'],
-        },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        contributes: [
-          {
-            kind: 'provider',
-            kindVersion: 1,
-            id: 'acme.provider',
-            display: {
-              name: 'Acme Provider',
-            },
-            ownedBackendIds: ['acme.backend'],
-          },
-          {
-            kind: 'backend',
-            kindVersion: 1,
-            id: 'acme.backend',
-            providerId: 'acme.provider',
-            engine: {
-              kind: 'custom',
-            },
-            runtimeCoreHooks: [
-              {
-                runtimeAdapterApiVersion: 1,
-                id: 'backend.terminalRuntime.launch',
-                kind: 'terminalRuntime',
-                operation: 'launch',
+                operation: 'discoverIdentity',
                 handler: {
                   target: 'daemon',
+                  exportName: 'discoverIdentity',
                 },
               },
             ],
@@ -489,14 +429,14 @@ describe('readPluginManifest', () => {
 
     const result = await readPluginManifest({ manifestPath });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.diagnostics).toEqual(expect.arrayContaining([
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifest.contributes.backends[0]?.surfaceHandlers).toEqual([
       expect.objectContaining({
-        code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/execution-run.*runtimeCore/i),
+        kind: 'terminalRuntime',
+        operation: 'discoverIdentity',
       }),
-    ]));
+    ]);
   });
 
   it('reads notification contributes into the canonical grouped CLI manifest shape', async () => {
@@ -622,14 +562,14 @@ describe('readPluginManifest', () => {
           contributes: [
             {
               kind: 'hook',
-              id: 'backend.terminalRuntime.bindTranscript',
-              category: 'integration',
+              id: 'backend.resolveRuntimePrerequisites',
+              category: 'decision',
               scope: 'backend',
               // Intentionally omit executionKind; the compat reader should infer
               // it from the category before schema validation.
               handler: {
                 target: 'plugin',
-                exportName: 'bindTranscript',
+                exportName: 'resolveTranscriptBinding',
               },
             },
           ],
@@ -644,9 +584,9 @@ describe('readPluginManifest', () => {
     expect(result.manifest.contributes.hooks).toHaveLength(1);
     expect(result.manifest.contributes.hooks[0]).toEqual(
       expect.objectContaining({
-        id: 'backend.terminalRuntime.bindTranscript',
-        category: 'integration',
-        executionKind: 'integrate',
+        id: 'backend.resolveRuntimePrerequisites',
+        category: 'decision',
+        executionKind: 'decide',
       }),
     );
   });
@@ -686,11 +626,11 @@ describe('readPluginManifest', () => {
                 kind: 'custom',
               },
               capabilities: {},
-              runtimeCoreHooks: [
+              surfaceHandlers: [
                 {
-                  runtimeCoreHookApiVersion: 1,
-                  id: 'backend.externalSessions.listCandidates',
-                  kind: 'externalSessions',
+                  surfaceApiVersion: 1,
+                  id: 'backend.externalSession.listCandidates',
+                  kind: 'externalSession',
                   operation: 'listCandidates',
                   handler: {
                     target: 'daemon',
@@ -841,7 +781,7 @@ describe('readPluginManifest', () => {
     );
   });
 
-  it('returns a semantic diagnostic when a backend runtime adapter targets the plugin runtime', async () => {
+  it('returns a semantic diagnostic when a backend surface handler targets the plugin runtime', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
@@ -849,7 +789,7 @@ describe('readPluginManifest', () => {
         ...createBaseManifestV2({
           id: 'acme.plugin-runtime-target',
           displayName: 'Plugin Runtime Target',
-          description: 'Uses an unsupported runtime adapter handler target',
+          description: 'Uses an unsupported backend surface handler handler target',
           targets: {
             daemon: {
               entry: './daemon.js',
@@ -865,9 +805,9 @@ describe('readPluginManifest', () => {
                 kind: 'custom',
               },
               capabilities: {},
-              runtimeCoreHooks: [
+              surfaceHandlers: [
                 {
-                  runtimeCoreHookApiVersion: 1,
+                  surfaceApiVersion: 1,
                   id: 'backend.terminalRuntime.launch',
                   kind: 'terminalRuntime',
                   operation: 'launch',
@@ -895,15 +835,15 @@ describe('readPluginManifest', () => {
     ]);
   });
 
-  it('returns a semantic diagnostic when backend runtime adapter ids are duplicated', async () => {
+  it('returns a semantic diagnostic when backend surface handler ids are duplicated', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
       JSON.stringify({
         ...createBaseManifestV2({
-          id: 'acme.duplicate-runtime-adapter',
-          displayName: 'Duplicate Runtime Adapter',
-          description: 'Declares duplicate runtime adapter ids',
+          id: 'acme.duplicate-backend-surface-handler',
+          displayName: 'Duplicate Backend Surface Handler',
+          description: 'Declares duplicate backend surface handler ids',
           targets: {
             daemon: {
               entry: './daemon.js',
@@ -913,15 +853,15 @@ describe('readPluginManifest', () => {
             {
               kind: 'backend',
               kindVersion: 1,
-              id: 'acme.duplicate-runtime-adapter.backend',
-              providerId: 'acme.duplicate-runtime-adapter',
+              id: 'acme.duplicate-backend-surface-handler.backend',
+              providerId: 'acme.duplicate-backend-surface-handler',
               engine: {
                 kind: 'custom',
               },
               capabilities: {},
-              runtimeCoreHooks: [
+              surfaceHandlers: [
                 {
-                  runtimeCoreHookApiVersion: 1,
+                  surfaceApiVersion: 1,
                   id: 'backend.terminalRuntime.launch',
                   kind: 'terminalRuntime',
                   operation: 'launch',
@@ -931,7 +871,7 @@ describe('readPluginManifest', () => {
                   },
                 },
                 {
-                  runtimeCoreHookApiVersion: 1,
+                  surfaceApiVersion: 1,
                   id: 'backend.terminalRuntime.launch',
                   kind: 'terminalRuntime',
                   operation: 'launch',
@@ -954,24 +894,24 @@ describe('readPluginManifest', () => {
     expect(result.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/Duplicate runtime adapter id/i),
+        message: expect.stringMatching(/Duplicate backend surface handler id/i),
       }),
       expect.objectContaining({
         code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/Duplicate runtime adapter operation/i),
+        message: expect.stringMatching(/Duplicate backend surface handler operation/i),
       }),
     ]));
   });
 
-  it('accepts canonical runtime adapter operations even when adapter ids are opaque host-local identifiers', async () => {
+  it('accepts canonical backend surface handler operations even when adapter ids are opaque host-local identifiers', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
       JSON.stringify({
         ...createBaseManifestV2({
-          id: 'acme.runtime-adapter-operations',
-          displayName: 'Runtime Adapter Operations',
-          description: 'Uses canonical runtime adapter operations with opaque ids',
+          id: 'acme.backend-surface-handler-operations',
+          displayName: 'Backend Surface Handler Operations',
+          description: 'Uses canonical backend surface handler operations with opaque ids',
           targets: {
             daemon: {
               entry: './daemon.js',
@@ -981,24 +921,24 @@ describe('readPluginManifest', () => {
             {
               kind: 'provider',
               kindVersion: 1,
-              id: 'acme.runtime-adapter-operations',
+              id: 'acme.backend-surface-handler-operations',
               display: {
-                name: 'Runtime Adapter Operations',
+                name: 'Backend Surface Handler Operations',
               },
-              ownedBackendIds: ['acme.runtime-adapter-operations.backend'],
+              ownedBackendIds: ['acme.backend-surface-handler-operations.backend'],
             },
             {
               kind: 'backend',
               kindVersion: 1,
-              id: 'acme.runtime-adapter-operations.backend',
-              providerId: 'acme.runtime-adapter-operations',
+              id: 'acme.backend-surface-handler-operations.backend',
+              providerId: 'acme.backend-surface-handler-operations',
               engine: {
                 kind: 'custom',
               },
               capabilities: {},
-              runtimeCoreHooks: [
+              surfaceHandlers: [
                 {
-                  runtimeCoreHookApiVersion: 1,
+                  surfaceApiVersion: 1,
                   id: 'launch-adapter',
                   kind: 'terminalRuntime',
                   operation: 'launch',
@@ -1021,15 +961,15 @@ describe('readPluginManifest', () => {
     }));
   });
 
-  it('returns a semantic diagnostic when a runtime adapter operation id is unsupported by the current runtime', async () => {
+  it('returns a semantic diagnostic when a backend surface handler operation id is unsupported by the current runtime', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
       JSON.stringify({
         ...createBaseManifestV2({
-          id: 'acme.unsupported-runtime-adapter-op',
-          displayName: 'Unsupported Runtime Adapter Operation',
-          description: 'Declares a runtime adapter operation id that the host does not support',
+          id: 'acme.unsupported-backend-surface-handler-op',
+          displayName: 'Unsupported Backend Surface Handler Operation',
+          description: 'Declares a backend surface handler operation id that the host does not support',
           targets: {
             daemon: {
               entry: './daemon.js',
@@ -1039,15 +979,15 @@ describe('readPluginManifest', () => {
             {
               kind: 'backend',
               kindVersion: 1,
-              id: 'acme.unsupported-runtime-adapter-op.backend',
-              providerId: 'acme.unsupported-runtime-adapter-op',
+              id: 'acme.unsupported-backend-surface-handler-op.backend',
+              providerId: 'acme.unsupported-backend-surface-handler-op',
               engine: {
                 kind: 'custom',
               },
               capabilities: {},
-              runtimeCoreHooks: [
+              surfaceHandlers: [
                 {
-                  runtimeCoreHookApiVersion: 1,
+                  surfaceApiVersion: 1,
                   id: 'backend.terminalRuntime.futureOperation',
                   kind: 'terminalRuntime',
                   operation: 'futureOperation',
@@ -1070,20 +1010,20 @@ describe('readPluginManifest', () => {
     expect(result.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/unsupported runtime adapter operation/i),
+        message: expect.stringMatching(/unsupported backend surface operation/i),
       }),
     ]));
   });
 
-  it('returns a semantic diagnostic when runtime adapter kind and operation id do not align', async () => {
+  it('returns a semantic diagnostic when backend surface handler kind and operation id do not align', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
       JSON.stringify({
         ...createBaseManifestV2({
-          id: 'acme.mismatched-runtime-adapter-op',
-          displayName: 'Mismatched Runtime Adapter Operation',
-          description: 'Declares a runtime adapter operation id under the wrong runtime adapter kind',
+          id: 'acme.mismatched-backend-surface-handler-op',
+          displayName: 'Mismatched Backend Surface Handler Operation',
+          description: 'Declares a backend surface handler operation id under the wrong backend surface handler kind',
           targets: {
             daemon: {
               entry: './daemon.js',
@@ -1093,21 +1033,21 @@ describe('readPluginManifest', () => {
             {
               kind: 'backend',
               kindVersion: 1,
-              id: 'acme.mismatched-runtime-adapter-op.backend',
-              providerId: 'acme.mismatched-runtime-adapter-op',
+              id: 'acme.mismatched-backend-surface-handler-op.backend',
+              providerId: 'acme.mismatched-backend-surface-handler-op',
               engine: {
                 kind: 'custom',
               },
               capabilities: {},
-              runtimeCoreHooks: [
+              surfaceHandlers: [
                 {
-                  runtimeCoreHookApiVersion: 1,
+                  surfaceApiVersion: 1,
                   id: 'backend.attach.run',
-                  kind: 'externalSessions',
+                  kind: 'externalSession',
                   operation: 'run',
                   handler: {
                     target: 'daemon',
-                    exportName: 'runAttach',
+                    exportName: 'attach',
                   },
                 },
               ],
@@ -1124,7 +1064,7 @@ describe('readPluginManifest', () => {
     expect(result.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/unsupported runtime adapter operation/i),
+        message: expect.stringMatching(/unsupported backend surface operation/i),
       }),
     ]));
   });
@@ -1177,13 +1117,13 @@ describe('readPluginManifest', () => {
             {
               kind: 'hook',
               hookApiVersion: 1,
-              id: 'backend.terminalRuntime.bindTranscript',
-              category: 'integration',
+              id: 'backend.resolveRuntimePrerequisites',
+              category: 'decision',
               scope: 'backend',
-              executionKind: 'integrate',
+              executionKind: 'decide',
               handler: {
                 target: 'daemon',
-                exportName: 'bindTranscript',
+                exportName: 'resolveTranscriptBinding',
               },
             },
           ],
@@ -1221,13 +1161,13 @@ describe('readPluginManifest', () => {
             {
               kind: 'hook',
               hookApiVersion: 2,
-              id: 'backend.terminalRuntime.bindTranscript',
-              category: 'integration',
+              id: 'backend.resolveRuntimePrerequisites',
+              category: 'decision',
               scope: 'backend',
-              executionKind: 'integrate',
+              executionKind: 'decide',
               handler: {
                 target: 'plugin',
-                exportName: 'bindTranscript',
+                exportName: 'resolveTranscriptBinding',
               },
             },
           ],

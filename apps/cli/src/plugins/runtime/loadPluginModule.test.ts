@@ -18,7 +18,7 @@ describe('loadPluginModule', () => {
     it('loads a trusted file-backed daemon entry and caches repeated loads by entry path + fingerprint', async () => {
         const entryPath = await writeDaemonModule({
             extension: 'mjs',
-            contents: 'export async function bindTranscript() { return "loaded"; }\n',
+            contents: 'export async function resolveTranscriptBinding() { return "loaded"; }\n',
         });
 
         const first = await loadPluginModule({
@@ -28,7 +28,7 @@ describe('loadPluginModule', () => {
             source: { kind: 'file_backed', entryPath, trustPolicy: 'local_trusted' },
         });
 
-        expect(typeof (first as PluginModuleNamespace).bindTranscript).toBe('function');
+        expect(typeof (first as PluginModuleNamespace).resolveTranscriptBinding).toBe('function');
         expect(second).toBe(first);
     });
 
@@ -44,7 +44,7 @@ describe('loadPluginModule', () => {
     it('rejects unsupported file-backed daemon entry extensions', async () => {
         const entryPath = await writeDaemonModule({
             extension: 'ts',
-            contents: 'export function bindTranscript() { return "nope"; }\n',
+            contents: 'export function resolveTranscriptBinding() { return "nope"; }\n',
         });
 
         await expect(loadPluginModule({

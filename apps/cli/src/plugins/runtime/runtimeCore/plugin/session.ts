@@ -68,11 +68,6 @@ export async function createPluginSessionRuntimePlan(params: Readonly<{
         backend: params.backend,
         provider: params.provider,
     });
-    const sessionLaunchParams = buildPluginSessionLaunchParams({
-        backend: params.backend,
-        provider: params.provider,
-        input: params.sessionInput,
-    });
     const TerminalDisplay = createProviderTerminalDisplay({
         title: displayName,
         footerName: displayName,
@@ -90,7 +85,17 @@ export async function createPluginSessionRuntimePlan(params: Readonly<{
                 policyAgentId,
                 terminalDisplay: TerminalDisplay,
                 formatPromptErrorMessage: (error) => `Error: ${error instanceof Error ? error.message : String(error)}`,
-                createNativeRuntime: async () => {
+                createNativeRuntime: async (runtimeParams) => {
+                    const sessionLaunchParams = buildPluginSessionLaunchParams({
+                        backend: params.backend,
+                        provider: params.provider,
+                        input: params.sessionInput,
+                        runtime: {
+                            sessionId: runtimeParams.session.sessionId,
+                            directory: runtimeParams.directory,
+                            metadata: runtimeParams.metadata,
+                        },
+                    });
                     const launchResult = await params.launch(sessionLaunchParams);
                     const normalized = normalizePluginSessionLaunchResult({
                         result: launchResult,

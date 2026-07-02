@@ -2,21 +2,21 @@ import type {
     ActionDefinitionV1,
     BackendDefinitionV1,
     PluginBackendCapabilitiesV1,
-    BackendRuntimeAdapterV1,
+    BackendSurfaceDeclarationV1,
     ProviderDefinitionV1,
 } from '@happier-dev/protocol';
-import { BackendRuntimeAdapterOperationCatalogV1 } from '@happier-dev/protocol';
+import { BackendSurfaceOperationCatalogV1 } from '@happier-dev/protocol';
 import type {
     BackendDefinitionContractV1,
     ProviderDefinitionContractV1,
 } from '@happier-dev/agents';
 import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
 
-import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import type { CanonicalPluginBackendDefinition } from '@/plugins/manifest/types';
-import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { loadInstalledPlugins } from '../../discovery/load/installed';
+import type { CanonicalPluginBackendDefinition } from '../../manifest/types';
+import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import { buildPluginContributionRegistry } from './normalize/package';
-import { createPluginRuntimeCoreFactory } from '@/plugins/runtime/runtimeCore/plugin';
+import { createPluginRuntimeCoreFactory } from '../../runtime/runtimeCore/plugin';
 import {
     normalizeBuiltInAgentId,
     resolveContributionProviderAgentId,
@@ -30,6 +30,8 @@ import type {
     ResolvedConnectedAccountDescriptorContribution,
     ResolvedContributionInputs,
     ResolvedExecutionRunProfileContribution,
+    ResolvedEventContribution,
+    ResolvedHostedWebContribution,
     ResolvedHookRegistration,
     ResolvedInstallableContribution,
     ResolvedLifecycleHandlerContribution,
@@ -37,13 +39,20 @@ import type {
     ResolvedMcpServerContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
+    ResolvedReactNativeBundleContribution,
+    ResolvedRequestInterceptorContribution,
     ResolvedScmBackendContribution,
     ResolvedSettingsContribution,
     ResolvedScmHostingProviderContribution,
     ResolvedProviderContribution,
     ResolvedResourceContribution,
+    ResolvedSessionHeaderActionContribution,
+    ResolvedSessionSurfaceContribution,
+    ResolvedStructuredMessageContribution,
     ResolvedToolContribution,
+    ResolvedUiArtifactContribution,
     ResolvedUiDescriptorContribution,
+    ResolvedUiTranslationsContribution,
     ResolvedActivationTarget,
 } from './types';
 
@@ -67,7 +76,7 @@ type PluginResolvedBackendContribution = ResolvedBackendContribution & Readonly<
     manifestPath: string;
     manifestDigest: string;
     daemonEntryPath: string | null;
-    runtimeCoreHooks: readonly BackendRuntimeAdapterV1[];
+    surfaceHandlers: readonly BackendSurfaceDeclarationV1[];
 }>;
 
 type PluginResolvedActionContribution = ResolvedActionContribution & Readonly<{
@@ -110,6 +119,62 @@ type PluginResolvedUiDescriptorContribution = ResolvedUiDescriptorContribution &
     daemonEntryPath: string | null;
 }>;
 
+type PluginResolvedUiTranslationsContribution = ResolvedUiTranslationsContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedStructuredMessageContribution = ResolvedStructuredMessageContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedSessionSurfaceContribution = ResolvedSessionSurfaceContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedSessionHeaderActionContribution = ResolvedSessionHeaderActionContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedHostedWebContribution = ResolvedHostedWebContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedReactNativeBundleContribution = ResolvedReactNativeBundleContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedUiArtifactContribution = ResolvedUiArtifactContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
 type PluginResolvedNotificationCategoryContribution = ResolvedNotificationCategoryContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
@@ -119,6 +184,14 @@ type PluginResolvedNotificationCategoryContribution = ResolvedNotificationCatego
 }>;
 
 type PluginResolvedNotificationChannelContribution = ResolvedNotificationChannelContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedEventContribution = ResolvedEventContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
     manifestPath: string;
@@ -159,6 +232,14 @@ type PluginResolvedMcpDiscoveryProviderContribution = ResolvedMcpDiscoveryProvid
 }>;
 
 type PluginResolvedInstallableContribution = ResolvedInstallableContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedRequestInterceptorContribution = ResolvedRequestInterceptorContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
     manifestPath: string;
@@ -214,6 +295,84 @@ function appendDiagnostic(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isProviderCliInstallCommand(value: unknown): boolean {
+    if (!isRecord(value)) {
+        return false;
+    }
+    return typeof value.cmd === 'string'
+        && isStringArray(value.args)
+        && (value.requiresAdmin === undefined || typeof value.requiresAdmin === 'boolean')
+        && (value.note === undefined || value.note === null || typeof value.note === 'string');
+}
+
+function isProviderCliManagedInstallSpec(
+    value: unknown,
+): value is NonNullable<ProviderCliRuntimeDescriptor['managedInstall']> {
+    if (!isRecord(value)) {
+        return false;
+    }
+    if (value.kind === 'github_release_binary') {
+        return typeof value.githubRepo === 'string'
+            && typeof value.binaryName === 'string';
+    }
+    if (value.kind === 'managed_package') {
+        return typeof value.packageName === 'string'
+            && typeof value.binaryName === 'string';
+    }
+    return false;
+}
+
+function isProviderCliManualInstallRecipes(
+    value: unknown,
+): value is ProviderCliRuntimeDescriptor['manualInstallRecipes'] {
+    if (value === null) {
+        return true;
+    }
+    if (!isRecord(value)) {
+        return false;
+    }
+    return ['darwin', 'linux', 'win32'].every((platform) => {
+        const commands = value[platform];
+        return commands === undefined
+            || (Array.isArray(commands) && commands.every(isProviderCliInstallCommand));
+    });
+}
+
+function isProviderCliRuntimeDescriptor(value: unknown): value is ProviderCliRuntimeDescriptor {
+    if (!isRecord(value)) {
+        return false;
+    }
+    return typeof value.id === 'string'
+        && typeof value.title === 'string'
+        && typeof value.binaryName === 'string'
+        && (value.alternativeBinaryNames === undefined || isStringArray(value.alternativeBinaryNames))
+        && (
+            value.alternativeBinaryFallbackEnabledEnvVar === undefined
+            || value.alternativeBinaryFallbackEnabledEnvVar === null
+            || typeof value.alternativeBinaryFallbackEnabledEnvVar === 'string'
+        )
+        && (
+            value.knownUserBinDirSuffixes === undefined
+            || value.knownUserBinDirSuffixes === null
+            || isStringArray(value.knownUserBinDirSuffixes)
+        )
+        && (value.sourcePreferenceDefault === 'system-first' || value.sourcePreferenceDefault === 'managed-first')
+        && (value.managedInstall === null || isProviderCliManagedInstallSpec(value.managedInstall))
+        && (
+            value.manualInstallKind === 'command'
+            || value.manualInstallKind === 'vendor_recipe'
+            || value.manualInstallKind === 'none'
+        )
+        && isProviderCliManualInstallRecipes(value.manualInstallRecipes)
+        && typeof value.acceptsJavaScriptFileOverride === 'boolean'
+        && (value.installGuideUrl === undefined || value.installGuideUrl === null || typeof value.installGuideUrl === 'string')
+        && (value.docsUrl === undefined || value.docsUrl === null || typeof value.docsUrl === 'string');
 }
 
 function readPluginCatalogEntry(params: Readonly<{
@@ -275,14 +434,21 @@ function readPluginProviderCliRuntime(
     definition: ProviderDefinitionV1,
     diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>,
 ): ProviderCliRuntimeDescriptor | null {
-    const runtime = definition.providerCliRuntime;
+    const runtime = readExternalPluginAgentCliRuntimeWithLegacyProviderFallback(definition);
     if (!runtime) {
+        return null;
+    }
+    if (!isProviderCliRuntimeDescriptor(runtime)) {
+        appendDiagnostic(diagnosticsByPluginId, pluginId, {
+            code: 'plugin_manifest_semantic_invalid',
+            message: `Plugin provider '${providerId}' runtime descriptor must match the provider CLI runtime contract`,
+        });
         return null;
     }
     if (runtime.id !== providerId) {
         appendDiagnostic(diagnosticsByPluginId, pluginId, {
             code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${providerId}' providerCliRuntime id must match the provider id`,
+            message: `Plugin provider '${providerId}' runtime descriptor id must match the provider id`,
         });
         return null;
     }
@@ -292,6 +458,18 @@ function readPluginProviderCliRuntime(
     };
 }
 
+function readExternalPluginAgentCliRuntimeWithLegacyProviderFallback(
+    definition: ProviderDefinitionV1,
+): unknown {
+    if (definition.agentCliRuntime !== undefined) {
+        return definition.agentCliRuntime;
+    }
+
+    // External plugin manifests may still arrive with the legacy provider-era key.
+    // First-party bundled definitions are generated from plugin-owned source and must use agentCliRuntime.
+    return definition.providerCliRuntime;
+}
+
 function clonePluginProviderDefinition(definition: ProviderDefinitionV1): ProviderDefinitionV1 {
     return {
         ...definition,
@@ -299,15 +477,17 @@ function clonePluginProviderDefinition(definition: ProviderDefinitionV1): Provid
     };
 }
 
-const LEGACY_BACKEND_RUNTIME_HOOKS_FIELD = 'runtime' + 'Adapters';
-
-function clonePluginBackendDefinition(definition: CanonicalPluginBackendDefinition): BackendDefinitionV1 {
+function clonePluginBackendDefinition(
+    definition: CanonicalPluginBackendDefinition,
+): Omit<BackendDefinitionV1, 'capabilities' | 'surfaceHandlers'> & Readonly<{
+    capabilities: PluginBackendCapabilitiesV1;
+    surfaceHandlers: readonly BackendSurfaceDeclarationV1[];
+}> {
     return {
         ...definition,
         capabilities: clonePluginBackendCapabilities(definition.capabilities),
-        [LEGACY_BACKEND_RUNTIME_HOOKS_FIELD]: [],
-        runtimeCoreHooks: [...readRuntimeCoreHooks(definition)],
-    } as unknown as BackendDefinitionV1;
+        surfaceHandlers: [...readSurfaceHandlers(definition)],
+    };
 }
 
 function clonePluginBackendCapabilities(capabilities: PluginBackendCapabilitiesV1): PluginBackendCapabilitiesV1 {
@@ -319,9 +499,9 @@ function clonePluginBackendCapabilities(capabilities: PluginBackendCapabilitiesV
     });
 }
 
-function readRuntimeCoreHooks(definition: Readonly<Record<string, unknown>>): readonly BackendRuntimeAdapterV1[] {
-    return Array.isArray(definition.runtimeCoreHooks)
-        ? definition.runtimeCoreHooks as readonly BackendRuntimeAdapterV1[]
+function readSurfaceHandlers(definition: Readonly<Record<string, unknown>>): readonly BackendSurfaceDeclarationV1[] {
+    return Array.isArray(definition.surfaceHandlers)
+        ? definition.surfaceHandlers as readonly BackendSurfaceDeclarationV1[]
         : [];
 }
 
@@ -471,11 +651,28 @@ function withProviderSettingsBackendId(
     };
 }
 
-function hasTerminalRuntimeLaunchAdapter(runtimeCoreHooks: readonly BackendRuntimeAdapterV1[]): boolean {
-    return runtimeCoreHooks.some((runtimeCoreHook) => (
-        runtimeCoreHook.kind === 'terminalRuntime'
-        && runtimeCoreHook.operation === BackendRuntimeAdapterOperationCatalogV1.terminalRuntime.launch
+function hasTerminalRuntimeLaunchSurface(surfaceHandlers: readonly BackendSurfaceDeclarationV1[]): boolean {
+    return surfaceHandlers.some((surfaceHandler) => (
+        surfaceHandler.kind === 'terminalRuntime'
+        && surfaceHandler.operation === BackendSurfaceOperationCatalogV1.terminalRuntime.launch
     ));
+}
+
+function isProviderlessReviewExecutionRunBackend(definition: Readonly<{
+    capabilities?: PluginBackendCapabilitiesV1;
+    surfaceHandlers?: readonly BackendSurfaceDeclarationV1[];
+}>): boolean {
+    if (!definition.capabilities) {
+        return false;
+    }
+    const session = definition.capabilities.session;
+    const executionRun = definition.capabilities.executionRun;
+    return isRecord(session)
+        && session.supported === false
+        && isRecord(executionRun)
+        && executionRun.supported !== false
+        && isRecord(executionRun.review)
+        && !hasTerminalRuntimeLaunchSurface(definition.surfaceHandlers ?? []);
 }
 
 export async function resolvePluginContributes(
@@ -494,9 +691,17 @@ export async function resolvePluginContributes(
     const commandCandidates: PluginResolvedCommandContribution[] = [];
     const resourceCandidates: PluginResolvedResourceContribution[] = [];
     const uiDescriptorCandidates: PluginResolvedUiDescriptorContribution[] = [];
+    const uiTranslationCandidates: PluginResolvedUiTranslationsContribution[] = [];
+    const structuredMessageCandidates: PluginResolvedStructuredMessageContribution[] = [];
+    const sessionSurfaceCandidates: PluginResolvedSessionSurfaceContribution[] = [];
+    const sessionHeaderActionCandidates: PluginResolvedSessionHeaderActionContribution[] = [];
+    const hostedWebCandidates: PluginResolvedHostedWebContribution[] = [];
+    const reactNativeBundleCandidates: PluginResolvedReactNativeBundleContribution[] = [];
+    const uiArtifactCandidates: PluginResolvedUiArtifactContribution[] = [];
     const settingsCandidates: PluginResolvedSettingsContribution[] = [];
     const notificationCandidates: PluginResolvedNotificationCategoryContribution[] = [];
     const notificationChannelCandidates: PluginResolvedNotificationChannelContribution[] = [];
+    const eventCandidates: PluginResolvedEventContribution[] = [];
     const executionRunProfileCandidates: PluginResolvedExecutionRunProfileContribution[] = [];
     const mcpServerCandidates: PluginResolvedMcpServerContribution[] = [];
     const mcpDiscoveryProviderCandidates: PluginResolvedMcpDiscoveryProviderContribution[] = [];
@@ -504,6 +709,7 @@ export async function resolvePluginContributes(
     const scmBackendCandidates: PluginResolvedScmBackendContribution[] = [];
     const connectedAccountDescriptorCandidates: PluginResolvedConnectedAccountDescriptorContribution[] = [];
     const installableCandidates: PluginResolvedInstallableContribution[] = [];
+    const requestInterceptorCandidates: PluginResolvedRequestInterceptorContribution[] = [];
     const lifecycleHandlerCandidates: PluginResolvedLifecycleHandlerContribution[] = [];
     const activationTargets: ResolvedActivationTarget[] = [];
     const hookRegistrations: ResolvedHookRegistration[] = [];
@@ -592,7 +798,12 @@ export async function resolvePluginContributes(
         }
 
         const providerOwnerPluginId = pluginProviderOwnerById.get(providerId);
-        if (providerOwnerPluginId !== contribution.pluginId) {
+        const surfaceHandlers = readSurfaceHandlers(contribution.definition);
+        const providerlessReviewBackend = isProviderlessReviewExecutionRunBackend({
+            capabilities: contribution.definition.capabilities,
+            surfaceHandlers,
+        });
+        if (!providerlessReviewBackend && providerOwnerPluginId !== contribution.pluginId) {
             appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
                 code: 'plugin_manifest_semantic_invalid',
                 message: `Plugin backend '${backendId}' references provider '${providerId}' not owned by the same plugin`,
@@ -600,7 +811,7 @@ export async function resolvePluginContributes(
             continue;
         }
 
-        if (!knownProviderIds.has(providerId)) {
+        if (!providerlessReviewBackend && !knownProviderIds.has(providerId)) {
             appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
                 code: 'plugin_manifest_semantic_invalid',
                 message: `Plugin backend '${backendId}' references missing provider '${providerId}'`,
@@ -631,7 +842,7 @@ export async function resolvePluginContributes(
             },
             runtimeKind: readOptionalString(contribution.definition.runtimeKind),
             capabilities: clonePluginBackendCapabilities(contribution.definition.capabilities),
-            runtimeCoreHooks: Object.freeze([...readRuntimeCoreHooks(contribution.definition)]),
+            surfaceHandlers: Object.freeze([...surfaceHandlers]),
             sourceSpec: contribution.sourceSpec,
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -725,6 +936,97 @@ export async function resolvePluginContributes(
         });
     }
 
+    for (const contribution of pluginRegistry.uiTranslations) {
+        uiTranslationCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.structuredMessages) {
+        structuredMessageCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.sessionSurfaces) {
+        sessionSurfaceCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.sessionHeaderActions) {
+        sessionHeaderActionCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.hostedWeb) {
+        hostedWebCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.reactNativeBundles) {
+        reactNativeBundleCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.uiArtifacts) {
+        uiArtifactCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
     for (const contribution of pluginRegistry.settings) {
         settingsCandidates.push({
             provenance: 'external',
@@ -753,6 +1055,19 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.notificationChannels) {
         notificationChannelCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.events) {
+        eventCandidates.push({
             provenance: 'external',
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
@@ -858,6 +1173,19 @@ export async function resolvePluginContributes(
         });
     }
 
+    for (const contribution of pluginRegistry.requestInterceptors) {
+        requestInterceptorCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
     for (const contribution of pluginRegistry.lifecycleHandlers) {
         lifecycleHandlerCandidates.push({
             provenance: 'external',
@@ -932,6 +1260,10 @@ export async function resolvePluginContributes(
     const providers = normalizedProviderCandidates.filter((provider) => !invalidProviderIds.has(provider.id));
     const providerById = new Map(providers.map((provider) => [provider.id, provider] as const));
     const backends = backendCandidates.flatMap((backend) => {
+        if (isProviderlessReviewExecutionRunBackend(backend)) {
+            return [backend];
+        }
+
         if (!invalidProviderIds.has(backend.providerId)) {
             const provider = providerById.get(backend.providerId);
             if (!provider) {
@@ -942,7 +1274,7 @@ export async function resolvePluginContributes(
                 return [];
             }
 
-            const runtimeBindingRequiresCompatibilityCarrier = hasTerminalRuntimeLaunchAdapter(backend.runtimeCoreHooks);
+            const runtimeBindingRequiresCompatibilityCarrier = hasTerminalRuntimeLaunchSurface(backend.surfaceHandlers);
             const compatibilityCarrier = resolveContributionProviderAgentId({
                 backend,
                 provider,
@@ -1000,9 +1332,17 @@ export async function resolvePluginContributes(
         commands: Object.freeze(commandCandidates),
         resources: Object.freeze(resourceCandidates),
         uiDescriptors: Object.freeze(uiDescriptorCandidates),
+        uiTranslations: Object.freeze(uiTranslationCandidates),
+        structuredMessages: Object.freeze(structuredMessageCandidates),
+        sessionSurfaces: Object.freeze(sessionSurfaceCandidates),
+        sessionHeaderActions: Object.freeze(sessionHeaderActionCandidates),
+        hostedWeb: Object.freeze(hostedWebCandidates),
+        reactNativeBundles: Object.freeze(reactNativeBundleCandidates),
+        uiArtifacts: Object.freeze(uiArtifactCandidates),
         settings: Object.freeze(settingsCandidates),
         notifications: Object.freeze(notificationCandidates),
         notificationChannels: Object.freeze(notificationChannelCandidates),
+        events: Object.freeze(eventCandidates),
         executionRunProfiles: Object.freeze(executionRunProfileCandidates),
         mcpServers: Object.freeze(mcpServerCandidates),
         mcpDiscoveryProviders: Object.freeze(mcpDiscoveryProviderCandidates),
@@ -1010,6 +1350,7 @@ export async function resolvePluginContributes(
         scmBackends: Object.freeze(scmBackendCandidates),
         connectedAccountDescriptors: Object.freeze(connectedAccountDescriptorCandidates),
         installables: Object.freeze(installableCandidates),
+        requestInterceptors: Object.freeze(requestInterceptorCandidates),
         activationTargets: Object.freeze(activationTargets),
         hookRegistrations: Object.freeze(hookRegistrations),
         lifecycleHandlers: Object.freeze(lifecycleHandlerCandidates),

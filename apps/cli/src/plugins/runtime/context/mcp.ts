@@ -1,6 +1,7 @@
 import type {
     ErrorRuntimeServiceV1,
     ExecRuntimeServiceV1,
+    JsonRpcClientV1,
     McpClientHandleV1,
     McpClientSpecV1,
     McpResolveForSessionInputV1,
@@ -10,6 +11,7 @@ import type {
     ManagedServerRuntimeServiceV1,
     ResolvedMcpServerSpecV1,
 } from '@happier-dev/plugin-sdk';
+import { assertMcpRuntimeServerRegistrationSafe } from '@/mcp/hosted/safety';
 
 type PluginMcpDisposable = Readonly<{
     dispose: () => void | Promise<void>;
@@ -91,10 +93,8 @@ function assertMcpClientMethods(
     client: McpClientHandleV1['client'],
     pluginId: string,
     clientId: string,
-): asserts client is NonNullable<McpClientHandleV1['client']> & Required<
-    Pick<NonNullable<McpClientHandleV1['client']>, 'request' | 'notify'>
-> {
-    if (typeof client?.request !== 'function' || typeof client.notify !== 'function') {
+): asserts client is NonNullable<McpClientHandleV1['client']> & Readonly<{ client: JsonRpcClientV1 }> {
+    if (typeof client?.client?.request !== 'function' || typeof client.client.notify !== 'function') {
         throw new Error(`Plugin '${pluginId}' MCP client '${clientId}' does not expose MCP request/notify methods`);
     }
 }
@@ -119,6 +119,7 @@ export function createPluginMcpService(params: CreatePluginMcpServiceParams): Mc
             assertNotAborted(params.signal);
             const transport = spec.transport;
             if (transport.kind === 'hosted') {
+                assertMcpRuntimeServerRegistrationSafe(spec, { pluginId: params.pluginId });
                 if (!params.startHostedServer) {
                     throw createUnsupportedMcpTransportError(transport.kind, 'server');
                 }
@@ -135,6 +136,7 @@ export function createPluginMcpService(params: CreatePluginMcpServiceParams): Mc
                 const handle: McpServerHandleV1 = Object.freeze({
                     id: hostedHandle.id,
                     spec: hostedHandle.spec ?? spec,
+                    endpoint: hostedHandle.endpoint,
                     dispose,
                 });
                 return addDisposable(handle);
@@ -160,7 +162,15 @@ export function createPluginMcpService(params: CreatePluginMcpServiceParams): Mc
             const signal = readSignal(params, transport.kind === 'managed' ? transport.server.signal : undefined);
             assertNotAborted(signal);
             if (transport.kind === 'stdio') {
-                const client = await runWithClassification(() => params.exec.spawnClient(transport.launch, { signal }));
+                const client = await runWithClassification(() => params.exec.spawnClient({
+                    launch: transport.launch,
+                    transport: {
+                        kind: 'stdio',
+                        framing: { kind: 'strict-lf-json' },
+                        encoding: 'utf8',
+                    },
+                    protocol: { kind: 'json-rpc-2.0' },
+                }, { signal }));
                 const dispose = createAbortBoundDispose(
                     () => disposeOnce(() => client.dispose()),
                     [signal],
@@ -175,8 +185,24 @@ export function createPluginMcpService(params: CreatePluginMcpServiceParams): Mc
                     id: spec.id,
                     spec,
                     client,
-                    request: client.request,
-                    notify: client.notify,
+                    request: (message) => {
+                        if (typeof (message as { method?: unknown })?.method !== 'string') {
+                            throw new Error(`Plugin '${params.pluginId}' MCP client '${spec.id}' request requires a string method`);
+                        }
+                        return client.client.request(
+                            (message as { method: string }).method,
+                            (message as { params?: unknown }).params,
+                        );
+                    },
+                    notify: (message) => {
+                        if (typeof (message as { method?: unknown })?.method !== 'string') {
+                            throw new Error(`Plugin '${params.pluginId}' MCP client '${spec.id}' notification requires a string method`);
+                        }
+                        return client.client.notify(
+                            (message as { method: string }).method,
+                            (message as { params?: unknown }).params,
+                        );
+                    },
                     dispose,
                 });
                 return addDisposable(handle);

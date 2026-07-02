@@ -4,14 +4,15 @@ import {
     resolveInstallablesRegistry,
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
+    getPluginHookDefinitionV1,
+    qualifyPluginEventIdV1,
     type InstallableRegistryContribution,
 } from '@happier-dev/protocol';
 
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
-import { resolvePluginContributes } from './resolvePluginContributions';
 import type {
     ResolvedBackendContribution,
-    ResolvedBackendRuntimeAdapterContribution,
+    ResolvedBackendSurfaceContribution,
     ResolvedActionContribution,
     ResolvedCommandContribution,
     ResolvedConnectedAccountDescriptorContribution,
@@ -19,19 +20,28 @@ import type {
     ResolvedContributionRegistry,
     ResolvedCatalogEntry,
     ResolvedExecutionRunProfileContribution,
+    ResolvedEventContribution,
     ResolvedInstallableContribution,
     ResolvedLifecycleHandlerContribution,
     ResolvedMcpDiscoveryProviderContribution,
     ResolvedMcpServerContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
+    ResolvedHostedWebContribution,
+    ResolvedReactNativeBundleContribution,
+    ResolvedRequestInterceptorContribution,
     ResolvedSettingsContribution,
     ResolvedScmBackendContribution,
     ResolvedScmHostingProviderContribution,
     ResolvedProviderContribution,
     ResolvedResourceContribution,
+    ResolvedSessionHeaderActionContribution,
+    ResolvedSessionSurfaceContribution,
+    ResolvedStructuredMessageContribution,
     ResolvedToolContribution,
+    ResolvedUiArtifactContribution,
     ResolvedUiDescriptorContribution,
+    ResolvedUiTranslationsContribution,
     ResolvedActivationTarget,
 } from './types';
 
@@ -44,9 +54,17 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const commands = Object.freeze([...(inputs.commands ?? [])].sort(compareCommandContributes));
     const resources = Object.freeze([...(inputs.resources ?? [])].sort(compareResourceContributes));
     const uiDescriptors = Object.freeze([...(inputs.uiDescriptors ?? [])].sort(compareUiDescriptorContributes));
+    const uiTranslations = Object.freeze([...(inputs.uiTranslations ?? [])].sort(compareUiTranslationsContributes));
+    const structuredMessages = Object.freeze([...(inputs.structuredMessages ?? [])].sort(compareStructuredMessageContributes));
+    const sessionSurfaces = Object.freeze([...(inputs.sessionSurfaces ?? [])].sort(compareSessionSurfaceContributes));
+    const sessionHeaderActions = Object.freeze([...(inputs.sessionHeaderActions ?? [])].sort(compareSessionHeaderActionContributes));
+    const hostedWeb = Object.freeze([...(inputs.hostedWeb ?? [])].sort(compareHostedWebContributes));
+    const reactNativeBundles = Object.freeze([...(inputs.reactNativeBundles ?? [])].sort(compareReactNativeBundleContributes));
+    const uiArtifacts = Object.freeze([...(inputs.uiArtifacts ?? [])].sort(compareUiArtifactContributes));
     const settings = Object.freeze([...(inputs.settings ?? [])].sort(compareSettingsContributes));
     const notifications = Object.freeze([...(inputs.notifications ?? [])].sort(compareNotificationCategoryContributes));
     const notificationChannels = Object.freeze([...(inputs.notificationChannels ?? [])].sort(compareNotificationChannelContributes));
+    const events = Object.freeze([...(inputs.events ?? [])].sort(compareEventContributes));
     const executionRunProfiles = Object.freeze([...(inputs.executionRunProfiles ?? [])].sort(compareExecutionRunProfileContributes));
     const mcpServers = Object.freeze([...(inputs.mcpServers ?? [])].sort(compareMcpServerContributes));
     const mcpDiscoveryProviders = Object.freeze([...(inputs.mcpDiscoveryProviders ?? [])].sort(compareMcpDiscoveryProviderContributes));
@@ -66,23 +84,36 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     );
     const scmBackends = scmBackendsResult.backends;
     const connectedAccountDescriptors = Object.freeze([...(inputs.connectedAccountDescriptors ?? [])].sort(compareConnectedAccountDescriptorContributes));
+    const requestInterceptors = Object.freeze([...(inputs.requestInterceptors ?? [])].sort(compareRequestInterceptorContributes));
     const activationTargets = Object.freeze([...(inputs.activationTargets ?? [])].sort(compareActivationTargets));
     const lifecycleHandlers = Object.freeze([...(inputs.lifecycleHandlers ?? [])].sort(compareLifecycleHandlerContributes));
+    const hookRegistrationsResult = resolveHookRegistrations(
+        inputs.hookRegistrations ?? [],
+        scmBackendsResult.pluginDiagnosticsByPluginId,
+    );
+    const hookRegistrations = hookRegistrationsResult.hookRegistrations;
     const actionsById = new Map<string, ResolvedActionContribution>();
     const toolsById = new Map<string, ResolvedToolContribution>();
     const commandsById = new Map<string, ResolvedCommandContribution>();
     const resourcesById = new Map<string, ResolvedResourceContribution>();
     const uiDescriptorsById = new Map<string, ResolvedUiDescriptorContribution>();
+    const structuredMessagesById = new Map<string, ResolvedStructuredMessageContribution>();
+    const sessionSurfacesById = new Map<string, ResolvedSessionSurfaceContribution>();
+    const sessionHeaderActionsById = new Map<string, ResolvedSessionHeaderActionContribution>();
+    const hostedWebById = new Map<string, ResolvedHostedWebContribution>();
+    const reactNativeBundlesById = new Map<string, ResolvedReactNativeBundleContribution>();
+    const uiArtifactsById = new Map<string, ResolvedUiArtifactContribution>();
     const settingsById = new Map<string, ResolvedSettingsContribution>();
     const notificationsById = new Map<string, ResolvedNotificationCategoryContribution>();
     const notificationChannelsById = new Map<string, ResolvedNotificationChannelContribution>();
+    const eventsById = new Map<string, ResolvedEventContribution>();
     const executionRunProfilesById = new Map<string, ResolvedExecutionRunProfileContribution>();
     const installablesByKey = new Map<string, ResolvedInstallableContribution>();
     const connectedAccountDescriptorsById = new Map<string, ResolvedConnectedAccountDescriptorContribution>();
     const lifecycleHandlersById = new Map<string, ResolvedLifecycleHandlerContribution>();
-    // Host dispatch map keyed by backend id. Runtime-adapter operation names are
+    // Host dispatch map keyed by backend id. Backend-surface operation names are
     // stable plugin ABI values; the dispatch map itself remains host-local.
-    const runtimeCoreHooksByBackendId = new Map<string, readonly ResolvedBackendRuntimeAdapterContribution[]>();
+    const surfaceHandlersByBackendId = new Map<string, readonly ResolvedBackendSurfaceContribution[]>();
     // Internal merged projection used by CLI host surfaces; not a public plugin ABI.
     const catalogEntriesById: Record<string, ResolvedCatalogEntry> = {};
 
@@ -115,17 +146,17 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         if (backendDefinitionsById.has(backend.id)) {
             throw new Error(`Duplicate backend contribution '${backend.id}'`);
         }
-        if (!providerDefinitionsById.has(backend.providerId)) {
+        if (!providerDefinitionsById.has(backend.providerId) && !isProviderlessReviewExecutionRunBackend(backend)) {
             throw new Error(`Missing provider contribution '${backend.providerId}' for backend '${backend.id}'`);
         }
 
         backendDefinitionsById.set(backend.id, backend);
 
-        const runtimeCoreHooks = backend.runtimeCoreHooks ?? [];
-        if (runtimeCoreHooks.length > 0) {
-            runtimeCoreHooksByBackendId.set(
+        const surfaceHandlers = backend.surfaceHandlers ?? [];
+        if (surfaceHandlers.length > 0) {
+            surfaceHandlersByBackendId.set(
                 backend.id,
-                Object.freeze(runtimeCoreHooks.map((definition) => ({
+                Object.freeze(surfaceHandlers.map((definition) => ({
                     backendId: backend.id,
                     provenance: backend.provenance,
                     source: backend.source,
@@ -174,6 +205,54 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         uiDescriptorsById.set(uiDescriptor.definition.id, uiDescriptor);
     }
 
+    for (const message of structuredMessages) {
+        const id = resolvePluginUiContributionRegistryId(message);
+        if (structuredMessagesById.has(id)) {
+            throw new Error(`Duplicate structured message contribution '${id}'`);
+        }
+        structuredMessagesById.set(id, message);
+    }
+
+    for (const surface of sessionSurfaces) {
+        const id = resolvePluginUiContributionRegistryId(surface);
+        if (sessionSurfacesById.has(id)) {
+            throw new Error(`Duplicate session surface contribution '${id}'`);
+        }
+        sessionSurfacesById.set(id, surface);
+    }
+
+    for (const action of sessionHeaderActions) {
+        const id = resolvePluginUiContributionRegistryId(action);
+        if (sessionHeaderActionsById.has(id)) {
+            throw new Error(`Duplicate session header action contribution '${id}'`);
+        }
+        sessionHeaderActionsById.set(id, action);
+    }
+
+    for (const contribution of hostedWeb) {
+        const id = resolvePluginUiContributionRegistryId(contribution);
+        if (hostedWebById.has(id)) {
+            throw new Error(`Duplicate hosted web contribution '${id}'`);
+        }
+        hostedWebById.set(id, contribution);
+    }
+
+    for (const contribution of reactNativeBundles) {
+        const id = resolvePluginUiContributionRegistryId(contribution);
+        if (reactNativeBundlesById.has(id)) {
+            throw new Error(`Duplicate React Native bundle contribution '${id}'`);
+        }
+        reactNativeBundlesById.set(id, contribution);
+    }
+
+    for (const artifact of uiArtifacts) {
+        const id = resolvePluginUiContributionRegistryId(artifact);
+        if (uiArtifactsById.has(id)) {
+            throw new Error(`Duplicate UI artifact contribution '${id}'`);
+        }
+        uiArtifactsById.set(id, artifact);
+    }
+
     for (const setting of settings) {
         if (settingsById.has(setting.definition.id)) {
             throw new Error(`Duplicate settings contribution '${setting.definition.id}'`);
@@ -193,6 +272,14 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             throw new Error(`Duplicate notification channel contribution '${channel.definition.id}'`);
         }
         notificationChannelsById.set(channel.definition.id, channel);
+    }
+
+    for (const event of events) {
+        const eventRegistryId = readEventRegistryId(event);
+        if (eventsById.has(eventRegistryId)) {
+            throw new Error(`Duplicate event contribution '${eventRegistryId}' from plugin '${event.pluginId ?? '<unknown>'}'`);
+        }
+        eventsById.set(eventRegistryId, event);
     }
 
     for (const profile of executionRunProfiles) {
@@ -229,9 +316,17 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             commands,
             resources,
             uiDescriptors,
+            uiTranslations,
+            structuredMessages,
+            sessionSurfaces,
+            sessionHeaderActions,
+            hostedWeb,
+            reactNativeBundles,
+            uiArtifacts,
             settings,
             notifications,
             notificationChannels,
+            events,
             executionRunProfiles,
             mcpServers,
             mcpDiscoveryProviders,
@@ -239,8 +334,9 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             scmHostingProviders,
             scmBackends,
             connectedAccountDescriptors,
+            requestInterceptors,
             activationTargets,
-            hookRegistrations: inputs.hookRegistrations ?? [],
+            hookRegistrations,
             lifecycleHandlers,
         }),
         providers: inputs.providers,
@@ -250,9 +346,17 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         commands,
         resources,
         uiDescriptors,
+        uiTranslations,
+        structuredMessages,
+        sessionSurfaces,
+        sessionHeaderActions,
+        hostedWeb,
+        reactNativeBundles,
+        uiArtifacts,
         settings,
         notifications,
         notificationChannels,
+        events,
         executionRunProfiles,
         mcpServers,
         mcpDiscoveryProviders,
@@ -260,29 +364,46 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         scmHostingProviders,
         scmBackends,
         connectedAccountDescriptors,
+        requestInterceptors,
         activationTargets,
-        hookRegistrations: Object.freeze([...(inputs.hookRegistrations ?? [])]),
+        hookRegistrations,
         lifecycleHandlers,
         actionsById: Object.freeze(actionsById),
         toolsById: Object.freeze(toolsById),
         commandsById: Object.freeze(commandsById),
         resourcesById: Object.freeze(resourcesById),
         uiDescriptorsById: Object.freeze(uiDescriptorsById),
+        structuredMessagesById: Object.freeze(structuredMessagesById),
+        sessionSurfacesById: Object.freeze(sessionSurfacesById),
+        sessionHeaderActionsById: Object.freeze(sessionHeaderActionsById),
+        hostedWebById: Object.freeze(hostedWebById),
+        reactNativeBundlesById: Object.freeze(reactNativeBundlesById),
+        uiArtifactsById: Object.freeze(uiArtifactsById),
         settingsById: Object.freeze(settingsById),
         notificationsById: Object.freeze(notificationsById),
         notificationChannelsById: Object.freeze(notificationChannelsById),
+        eventsById: Object.freeze(eventsById),
         executionRunProfilesById: Object.freeze(executionRunProfilesById),
         installablesByKey: Object.freeze(installablesByKey),
         scmHostingProvidersById: scmHostingProvidersResult.providersById,
         scmBackendsById: scmBackendsResult.backendsById,
         connectedAccountDescriptorsById: Object.freeze(connectedAccountDescriptorsById),
         lifecycleHandlersById: Object.freeze(lifecycleHandlersById),
-        runtimeCoreHooksByBackendId: Object.freeze(runtimeCoreHooksByBackendId),
+        surfaceHandlersByBackendId: Object.freeze(surfaceHandlersByBackendId),
         catalogEntriesById: Object.freeze(catalogEntriesById),
         providerDefinitionsById,
         backendDefinitionsById,
-        pluginDiagnosticsByPluginId: scmBackendsResult.pluginDiagnosticsByPluginId,
+        pluginDiagnosticsByPluginId: hookRegistrationsResult.pluginDiagnosticsByPluginId,
     });
+}
+
+function readEventRegistryId(event: ResolvedEventContribution): string {
+    const pluginId = event.pluginId?.trim();
+    const localId = event.definition.localId?.trim();
+    if (pluginId && localId) {
+        return qualifyPluginEventIdV1(pluginId, localId);
+    }
+    return event.definition.id;
 }
 
 function clonePluginDiagnostics(
@@ -297,6 +418,14 @@ function clonePluginDiagnostics(
 }
 
 function appendScmHostingProviderDiagnostic(
+    diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>,
+    pluginId: string | undefined,
+    diagnostic: PluginCompatibilityDiagnostic,
+): void {
+    appendPluginDiagnostic(diagnosticsByPluginId, pluginId, diagnostic);
+}
+
+function appendPluginDiagnostic(
     diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>,
     pluginId: string | undefined,
     diagnostic: PluginCompatibilityDiagnostic,
@@ -340,6 +469,33 @@ function toInstallableRegistryContribution(
             ...(candidate.manifestDigest ? { manifestDigest: candidate.manifestDigest } : {}),
         },
         descriptor: candidate.definition,
+    };
+}
+
+function resolveHookRegistrations(
+    candidates: readonly NonNullable<ResolvedContributionInputs['hookRegistrations']>[number][],
+    pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>,
+): Readonly<{
+    hookRegistrations: readonly NonNullable<ResolvedContributionInputs['hookRegistrations']>[number][];
+    pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+}> {
+    const diagnosticsByPluginId = clonePluginDiagnostics(pluginDiagnosticsByPluginId);
+    const hookRegistrations: NonNullable<ResolvedContributionInputs['hookRegistrations']>[number][] = [];
+
+    for (const candidate of candidates) {
+        if (!getPluginHookDefinitionV1(candidate.definition.id)) {
+            appendPluginDiagnostic(diagnosticsByPluginId, candidate.pluginId, {
+                code: 'plugin_manifest_semantic_invalid',
+                message: `Plugin hook '${candidate.definition.id}' is not in the final public hook catalog`,
+            });
+            continue;
+        }
+        hookRegistrations.push(candidate);
+    }
+
+    return {
+        hookRegistrations: Object.freeze(hookRegistrations),
+        pluginDiagnosticsByPluginId: freezePluginDiagnostics(diagnosticsByPluginId),
     };
 }
 
@@ -559,6 +715,7 @@ export async function resolveMergedContributionRegistry(
     params?: Readonly<{ happyHomeDir?: string }>,
 ): Promise<ResolvedContributionRegistry> {
     const builtIn = resolveBuiltInContributions();
+    const { resolvePluginContributes } = await import('./resolvePluginContributions');
     const plugin = await resolvePluginContributes({
         happyHomeDir: params?.happyHomeDir,
         existingProviderIds: new Set(builtIn.providers.map((provider) => provider.id)),
@@ -574,10 +731,19 @@ export async function resolveMergedContributionRegistry(
         commands: Object.freeze([...(builtIn.commands ?? []), ...(plugin.commands ?? [])]),
         resources: Object.freeze([...(builtIn.resources ?? []), ...(plugin.resources ?? [])]),
         uiDescriptors: Object.freeze([...(builtIn.uiDescriptors ?? []), ...(plugin.uiDescriptors ?? [])]),
+        uiTranslations: Object.freeze([...(builtIn.uiTranslations ?? []), ...(plugin.uiTranslations ?? [])]),
+        structuredMessages: Object.freeze([...(builtIn.structuredMessages ?? []), ...(plugin.structuredMessages ?? [])]),
+        sessionSurfaces: Object.freeze([...(builtIn.sessionSurfaces ?? []), ...(plugin.sessionSurfaces ?? [])]),
+        sessionHeaderActions: Object.freeze([...(builtIn.sessionHeaderActions ?? []), ...(plugin.sessionHeaderActions ?? [])]),
+        hostedWeb: Object.freeze([...(builtIn.hostedWeb ?? []), ...(plugin.hostedWeb ?? [])]),
+        reactNativeBundles: Object.freeze([...(builtIn.reactNativeBundles ?? []), ...(plugin.reactNativeBundles ?? [])]),
+        uiArtifacts: Object.freeze([...(builtIn.uiArtifacts ?? []), ...(plugin.uiArtifacts ?? [])]),
         notifications: Object.freeze([...(builtIn.notifications ?? []), ...(plugin.notifications ?? [])]),
         notificationChannels: Object.freeze([...(builtIn.notificationChannels ?? []), ...(plugin.notificationChannels ?? [])]),
+        events: Object.freeze([...(builtIn.events ?? []), ...(plugin.events ?? [])]),
         executionRunProfiles: Object.freeze([...(builtIn.executionRunProfiles ?? []), ...(plugin.executionRunProfiles ?? [])]),
         installables: Object.freeze([...(builtIn.installables ?? []), ...(plugin.installables ?? [])]),
+        requestInterceptors: Object.freeze([...(builtIn.requestInterceptors ?? []), ...(plugin.requestInterceptors ?? [])]),
         scmHostingProviders: Object.freeze([...(builtIn.scmHostingProviders ?? []), ...(plugin.scmHostingProviders ?? [])]),
         scmBackends: Object.freeze([...(builtIn.scmBackends ?? []), ...(plugin.scmBackends ?? [])]),
         connectedAccountDescriptors: Object.freeze([...(builtIn.connectedAccountDescriptors ?? []), ...(plugin.connectedAccountDescriptors ?? [])]),
@@ -630,6 +796,22 @@ function assertBackendContributionAligned(backend: ResolvedBackendContribution):
     if (backend.definition.providerId !== backend.providerId) {
         throw new Error(`Backend provider id mismatch for contribution '${backend.id}'`);
     }
+}
+
+function isProviderlessReviewExecutionRunBackend(backend: ResolvedBackendContribution): boolean {
+    const session = backend.capabilities?.session;
+    const executionRun = backend.capabilities?.executionRun;
+    return Boolean(session)
+        && typeof session === 'object'
+        && !Array.isArray(session)
+        && session.supported === false
+        && Boolean(executionRun)
+        && typeof executionRun === 'object'
+        && !Array.isArray(executionRun)
+        && executionRun.supported !== false
+        && Boolean(executionRun.review)
+        && typeof executionRun.review === 'object'
+        && !Array.isArray(executionRun.review);
 }
 
 function compareActionContributes(left: ResolvedActionContribution, right: ResolvedActionContribution): number {
@@ -692,6 +874,84 @@ function compareUiDescriptorContributes(left: ResolvedUiDescriptorContribution, 
     return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
 }
 
+function resolvePluginUiContributionRegistryId(
+    contribution: Readonly<{
+        pluginId?: string;
+        definition: Readonly<{ id: string }>;
+    }>,
+): string {
+    return `${contribution.pluginId ?? 'unknown'}:${contribution.definition.id}`;
+}
+
+function comparePluginUiContributionById(
+    left: Readonly<{ pluginId?: string; manifestPath?: string; definition: Readonly<{ id: string }> }>,
+    right: Readonly<{ pluginId?: string; manifestPath?: string; definition: Readonly<{ id: string }> }>,
+): number {
+    if (left.definition.id !== right.definition.id) {
+        return left.definition.id.localeCompare(right.definition.id);
+    }
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function compareUiTranslationsContributes(
+    left: ResolvedUiTranslationsContribution,
+    right: ResolvedUiTranslationsContribution,
+): number {
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function compareStructuredMessageContributes(
+    left: ResolvedStructuredMessageContribution,
+    right: ResolvedStructuredMessageContribution,
+): number {
+    return comparePluginUiContributionById(left, right);
+}
+
+function compareSessionSurfaceContributes(
+    left: ResolvedSessionSurfaceContribution,
+    right: ResolvedSessionSurfaceContribution,
+): number {
+    return comparePluginUiContributionById(left, right);
+}
+
+function compareSessionHeaderActionContributes(
+    left: ResolvedSessionHeaderActionContribution,
+    right: ResolvedSessionHeaderActionContribution,
+): number {
+    return comparePluginUiContributionById(left, right);
+}
+
+function compareHostedWebContributes(
+    left: ResolvedHostedWebContribution,
+    right: ResolvedHostedWebContribution,
+): number {
+    return comparePluginUiContributionById(left, right);
+}
+
+function compareReactNativeBundleContributes(
+    left: ResolvedReactNativeBundleContribution,
+    right: ResolvedReactNativeBundleContribution,
+): number {
+    return comparePluginUiContributionById(left, right);
+}
+
+function compareUiArtifactContributes(
+    left: ResolvedUiArtifactContribution,
+    right: ResolvedUiArtifactContribution,
+): number {
+    return comparePluginUiContributionById(left, right);
+}
+
 function compareSettingsContributes(left: ResolvedSettingsContribution, right: ResolvedSettingsContribution): number {
     if (left.definition.id !== right.definition.id) {
         return left.definition.id.localeCompare(right.definition.id);
@@ -724,6 +984,37 @@ function compareNotificationChannelContributes(left: ResolvedNotificationChannel
     const rightPluginId = right.pluginId ?? '';
     if (leftPluginId !== rightPluginId) {
         return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function compareEventContributes(left: ResolvedEventContribution, right: ResolvedEventContribution): number {
+    if (left.definition.id !== right.definition.id) {
+        return left.definition.id.localeCompare(right.definition.id);
+    }
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+}
+
+function compareRequestInterceptorContributes(
+    left: ResolvedRequestInterceptorContribution,
+    right: ResolvedRequestInterceptorContribution,
+): number {
+    const orderDelta = (left.definition.order ?? 0) - (right.definition.order ?? 0);
+    if (orderDelta !== 0) {
+        return orderDelta;
+    }
+    const leftPluginId = left.pluginId ?? '';
+    const rightPluginId = right.pluginId ?? '';
+    if (leftPluginId !== rightPluginId) {
+        return leftPluginId.localeCompare(rightPluginId);
+    }
+    if (left.definition.id !== right.definition.id) {
+        return left.definition.id.localeCompare(right.definition.id);
     }
     return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
 }
@@ -763,13 +1054,22 @@ function buildRegistryGenerationId(params: Readonly<{
     commands: readonly ResolvedCommandContribution[];
     resources: readonly ResolvedResourceContribution[];
     uiDescriptors: readonly ResolvedUiDescriptorContribution[];
+    uiTranslations: readonly ResolvedUiTranslationsContribution[];
+    structuredMessages: readonly ResolvedStructuredMessageContribution[];
+    sessionSurfaces: readonly ResolvedSessionSurfaceContribution[];
+    sessionHeaderActions: readonly ResolvedSessionHeaderActionContribution[];
+    hostedWeb: readonly ResolvedHostedWebContribution[];
+    reactNativeBundles: readonly ResolvedReactNativeBundleContribution[];
+    uiArtifacts: readonly ResolvedUiArtifactContribution[];
     settings: readonly ResolvedSettingsContribution[];
     notifications: readonly ResolvedNotificationCategoryContribution[];
     notificationChannels: readonly ResolvedNotificationChannelContribution[];
+    events: readonly ResolvedEventContribution[];
     executionRunProfiles: readonly ResolvedExecutionRunProfileContribution[];
     mcpServers: readonly ResolvedMcpServerContribution[];
     mcpDiscoveryProviders: readonly ResolvedMcpDiscoveryProviderContribution[];
     installables: readonly ResolvedInstallableContribution[];
+    requestInterceptors: readonly ResolvedRequestInterceptorContribution[];
     scmHostingProviders: readonly ResolvedScmHostingProviderContribution[];
     scmBackends: readonly ResolvedScmBackendContribution[];
     connectedAccountDescriptors: readonly ResolvedConnectedAccountDescriptorContribution[];
@@ -786,13 +1086,22 @@ function buildRegistryGenerationId(params: Readonly<{
         ...params.commands.map((command) => `command:${command.provenance}:${command.source.kind}:${command.definition.id}:${command.definition.command}:${command.manifestDigest ?? ''}`),
         ...params.resources.map((resource) => `resource:${resource.provenance}:${resource.source.kind}:${resource.definition.id}:${resource.manifestDigest ?? ''}`),
         ...params.uiDescriptors.map((uiDescriptor) => `ui:${uiDescriptor.provenance}:${uiDescriptor.source.kind}:${uiDescriptor.definition.id}:${uiDescriptor.manifestDigest ?? ''}`),
+        ...params.uiTranslations.map((bundle) => `uiTranslations:${bundle.provenance}:${bundle.source.kind}:${bundle.pluginId ?? ''}:${bundle.manifestDigest ?? ''}`),
+        ...params.structuredMessages.map((message) => `structuredMessage:${message.provenance}:${message.source.kind}:${message.pluginId ?? ''}:${message.definition.id}:${message.definition.kind}:${message.manifestDigest ?? ''}`),
+        ...params.sessionSurfaces.map((surface) => `sessionSurface:${surface.provenance}:${surface.source.kind}:${surface.pluginId ?? ''}:${surface.definition.id}:${surface.definition.surfaceKind}:${surface.manifestDigest ?? ''}`),
+        ...params.sessionHeaderActions.map((action) => `sessionHeaderAction:${action.provenance}:${action.source.kind}:${action.pluginId ?? ''}:${action.definition.id}:${action.manifestDigest ?? ''}`),
+        ...params.hostedWeb.map((web) => `hostedWeb:${web.provenance}:${web.source.kind}:${web.pluginId ?? ''}:${web.definition.id}:${web.manifestDigest ?? ''}`),
+        ...params.reactNativeBundles.map((bundle) => `reactNativeBundle:${bundle.provenance}:${bundle.source.kind}:${bundle.pluginId ?? ''}:${bundle.definition.id}:${bundle.definition.bundle.integrity.digest}:${bundle.manifestDigest ?? ''}`),
+        ...params.uiArtifacts.map((artifact) => `uiArtifact:${artifact.provenance}:${artifact.source.kind}:${artifact.pluginId ?? ''}:${artifact.definition.id}:${artifact.definition.integrity.digest}:${artifact.manifestDigest ?? ''}`),
         ...params.settings.map((setting) => `settings:${setting.provenance}:${setting.source.kind}:${setting.definition.id}:${setting.manifestDigest ?? ''}`),
         ...params.notifications.map((notification) => `notification:${notification.provenance}:${notification.source.kind}:${notification.definition.id}:${notification.manifestDigest ?? ''}`),
         ...params.notificationChannels.map((channel) => `notificationChannel:${channel.provenance}:${channel.source.kind}:${channel.definition.id}:${channel.manifestDigest ?? ''}`),
+        ...params.events.map((event) => `event:${event.provenance}:${event.source.kind}:${event.definition.id}:${event.manifestDigest ?? ''}`),
         ...params.executionRunProfiles.map((profile) => `executionRunProfile:${profile.provenance}:${profile.source.kind}:${profile.definition.id}:${profile.manifestDigest ?? ''}`),
         ...params.mcpServers.map((server) => `mcpServer:${server.provenance}:${server.source.kind}:${server.definition.id}:${server.definition.name}:${server.manifestDigest ?? ''}`),
         ...params.mcpDiscoveryProviders.map((provider) => `mcpDiscoveryProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
         ...params.installables.map((installable) => `installable:${installable.provenance}:${installable.source.kind}:${installable.definition.key}:${installable.definition.capabilityId}:${installable.manifestDigest ?? ''}`),
+        ...params.requestInterceptors.map((interceptor) => `requestInterceptor:${interceptor.provenance}:${interceptor.source.kind}:${interceptor.definition.id}:${interceptor.definition.order ?? 0}:${interceptor.manifestDigest ?? ''}`),
         ...params.scmHostingProviders.map((provider) => `scmHostingProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
         ...params.scmBackends.map((backend) => `scmBackend:${backend.provenance}:${backend.source.kind}:${backend.definition.id}:${backend.manifestDigest ?? ''}`),
         ...params.connectedAccountDescriptors.map((descriptor) => `connectedAccount:${descriptor.provenance}:${descriptor.source.kind}:${descriptor.definition.id}:${descriptor.manifestDigest ?? ''}`),

@@ -1,10 +1,11 @@
 import type {
   BackendDefinitionV1,
-  BackendRuntimeAdapterV1,
+  BackendSurfaceDeclarationV1,
   PluginBackendCapabilitiesV1,
   PluginActionContributionV2,
   PluginCommandContributionV2,
   PluginExecutionRunProfileContributionV2,
+  PluginEventContributionV1,
   PluginHookContributionV2,
   PluginLifecycleHandlerContributionV2,
   PluginManifestMarketplaceMetadataV1,
@@ -12,10 +13,12 @@ import type {
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
   PluginPermissionDeclarationV1,
+  PluginRequestInterceptorContributionV1,
   PluginRuntimeApiV1,
   InstallableDependencyDescriptor,
   ScmBackendContribution,
   ScmHostingProviderContribution,
+  PluginSystemToolContributionV1,
   PluginSourceSpecV1,
   PluginToolContributionV2,
   PluginUiDescriptorContributionV2,
@@ -23,11 +26,9 @@ import type {
   ProviderDefinitionV1,
 } from '@happier-dev/protocol';
 
-type LegacyRuntimeHookFieldName = `${'runtime'}Adapters`;
-
-export type CanonicalPluginBackendDefinition = Omit<BackendDefinitionV1, LegacyRuntimeHookFieldName | 'capabilities'> & Readonly<{
+export type CanonicalPluginBackendDefinition = Omit<BackendDefinitionV1, 'capabilities'> & Readonly<{
   capabilities: PluginBackendCapabilitiesV1;
-  runtimeCoreHooks: readonly BackendRuntimeAdapterV1[];
+  surfaceHandlers: readonly BackendSurfaceDeclarationV1[];
 }>;
 
 export type CanonicalPluginManifestContributes = Readonly<{
@@ -40,6 +41,7 @@ export type CanonicalPluginManifestContributes = Readonly<{
   uiDescriptors: readonly PluginUiDescriptorContributionV2[];
   notifications?: readonly PluginNotificationCategoryContributionV2[];
   notificationChannels?: readonly PluginNotificationChannelContributionV2[];
+  events?: readonly PluginEventContributionV1[];
   executionRunProfiles?: readonly PluginExecutionRunProfileContributionV2[];
   mcp?: Readonly<{
     servers: ReadonlyArray<PluginMcpContributesV1['servers'][number]>;
@@ -48,6 +50,8 @@ export type CanonicalPluginManifestContributes = Readonly<{
   scmHostingProviders?: readonly ScmHostingProviderContribution[];
   scmBackends?: readonly ScmBackendContribution[];
   installables?: readonly InstallableDependencyDescriptor[];
+  systemTools?: readonly PluginSystemToolContributionV1[];
+  requestInterceptors?: readonly PluginRequestInterceptorContributionV1[];
   hooks: readonly PluginHookContributionV2[];
   lifecycleHandlers: readonly PluginLifecycleHandlerContributionV2[];
 }>;
@@ -71,6 +75,7 @@ export type CanonicalPluginManifest = Readonly<{
     }>;
   }>;
   permissions: readonly PluginPermissionDeclarationV1[];
+  optionalPermissions?: readonly PluginPermissionDeclarationV1[];
   source?: PluginSourceSpecV1;
   marketplace?: PluginManifestMarketplaceMetadataV1;
   contributes: CanonicalPluginManifestContributes;

@@ -1,4 +1,4 @@
-import { createTerminalRuntimeExecutionRunBackend } from '@/agent/executionRuns/runtime/backends/terminalRuntime';
+import { createTerminalRuntimeExecutionRunBackend } from '@/agent/runtime/bridges/executionRun/runtime/terminal';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { AnyTerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
 import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';

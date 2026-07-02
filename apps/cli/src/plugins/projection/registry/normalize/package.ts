@@ -3,25 +3,34 @@ import type {
   PluginActionContributionV2,
   PluginCommandContributionV2,
   PluginExecutionRunProfileContributionV2,
+  PluginEventContributionV1,
   PluginHookContributionV2,
+  PluginHostedWebContributionV1,
   PluginLifecycleHandlerContributionV2,
   PluginMcpDiscoveryProviderContributionV1,
   PluginMcpServerContributionV1,
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
+  PluginReactNativeBundleContributionV1,
+  PluginRequestInterceptorContributionV1,
   PluginResourceContributionV2,
+  PluginSessionHeaderActionDescriptorV1,
+  PluginSessionSurfaceDescriptorV1,
   PluginSettingsContributionV2,
+  PluginStructuredMessageDescriptorV1,
+  PluginUiArtifactContributionV1,
   ScmHostingProviderContribution,
   PluginConnectedAccountDescriptorContributionV2,
   PluginSourceSpecV1,
   PluginToolContributionV2,
   PluginUiDescriptorContributionV2,
+  PluginUiTranslationsContributionV1,
   HookRegistrationV1,
   InstallableDependencyDescriptor,
   ScmBackendContribution,
   ProviderDefinitionV1,
 } from '@happier-dev/protocol';
-import { createPluginContributionIdentity } from '@happier-dev/protocol';
+import { createPluginContributionIdentity, qualifyPluginEventIdV1 } from '@happier-dev/protocol';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
@@ -29,6 +38,7 @@ import type { CanonicalPluginBackendDefinition } from '@/plugins/manifest/types'
 import { resolvePluginResourcePath } from '@/plugins/projection/resources/package/resolve';
 import type {
   ResolvedCommandDefinition,
+  ResolvedEventDefinition,
   ResolvedLifecycleHandlerDefinition,
   ResolvedResourceDefinition,
   ResolvedToolDefinition,
@@ -55,9 +65,17 @@ export type PluginContributionRegistry = Readonly<{
   hooks: readonly PluginOwnedContribution<HookRegistrationV1>[];
   resources: readonly PluginOwnedContribution<ResolvedResourceDefinition>[];
   uiDescriptors: readonly PluginOwnedContribution<ResolvedUiDescriptorDefinition>[];
+  uiTranslations: readonly PluginOwnedContribution<PluginUiTranslationsContributionV1>[];
+  structuredMessages: readonly PluginOwnedContribution<PluginStructuredMessageDescriptorV1>[];
+  sessionSurfaces: readonly PluginOwnedContribution<PluginSessionSurfaceDescriptorV1>[];
+  sessionHeaderActions: readonly PluginOwnedContribution<PluginSessionHeaderActionDescriptorV1>[];
+  hostedWeb: readonly PluginOwnedContribution<PluginHostedWebContributionV1>[];
+  reactNativeBundles: readonly PluginOwnedContribution<PluginReactNativeBundleContributionV1>[];
+  uiArtifacts: readonly PluginOwnedContribution<PluginUiArtifactContributionV1>[];
   settings: readonly PluginOwnedContribution<PluginSettingsContributionV2>[];
   notifications: readonly PluginOwnedContribution<PluginNotificationCategoryContributionV2>[];
   notificationChannels: readonly PluginOwnedContribution<PluginNotificationChannelContributionV2>[];
+  events: readonly PluginOwnedContribution<ResolvedEventDefinition>[];
   executionRunProfiles: readonly PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[];
   mcpServers: readonly PluginOwnedContribution<PluginMcpServerContributionV1>[];
   mcpDiscoveryProviders: readonly PluginOwnedContribution<PluginMcpDiscoveryProviderContributionV1>[];
@@ -65,6 +83,7 @@ export type PluginContributionRegistry = Readonly<{
   scmBackends: readonly PluginOwnedContribution<ScmBackendContribution>[];
   connectedAccountDescriptors: readonly PluginOwnedContribution<PluginConnectedAccountDescriptorContributionV2>[];
   installables: readonly PluginOwnedContribution<InstallableDependencyDescriptor>[];
+  requestInterceptors: readonly PluginOwnedContribution<PluginRequestInterceptorContributionV1>[];
   lifecycleHandlers: readonly PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[];
 }>;
 
@@ -221,6 +240,15 @@ function toLifecycleHandlerDefinition(
   });
 }
 
+function toEventDefinition(pluginId: string, definition: PluginEventContributionV1): ResolvedEventDefinition {
+  return Object.freeze({
+    ...definition,
+    id: qualifyPluginEventIdV1(pluginId, definition.id),
+    localId: definition.id,
+    deprecated: definition.deprecated ?? false,
+  });
+}
+
 export function buildPluginContributionRegistry(params: Readonly<{
   loadedPlugins: readonly LoadedPlugin[];
 }>): PluginContributionRegistry {
@@ -232,9 +260,17 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const hooks: PluginOwnedContribution<HookRegistrationV1>[] = [];
   const resources: PluginOwnedContribution<ResolvedResourceDefinition>[] = [];
   const uiDescriptors: PluginOwnedContribution<ResolvedUiDescriptorDefinition>[] = [];
+  const uiTranslations: PluginOwnedContribution<PluginUiTranslationsContributionV1>[] = [];
+  const structuredMessages: PluginOwnedContribution<PluginStructuredMessageDescriptorV1>[] = [];
+  const sessionSurfaces: PluginOwnedContribution<PluginSessionSurfaceDescriptorV1>[] = [];
+  const sessionHeaderActions: PluginOwnedContribution<PluginSessionHeaderActionDescriptorV1>[] = [];
+  const hostedWeb: PluginOwnedContribution<PluginHostedWebContributionV1>[] = [];
+  const reactNativeBundles: PluginOwnedContribution<PluginReactNativeBundleContributionV1>[] = [];
+  const uiArtifacts: PluginOwnedContribution<PluginUiArtifactContributionV1>[] = [];
   const settings: PluginOwnedContribution<PluginSettingsContributionV2>[] = [];
   const notifications: PluginOwnedContribution<PluginNotificationCategoryContributionV2>[] = [];
   const notificationChannels: PluginOwnedContribution<PluginNotificationChannelContributionV2>[] = [];
+  const events: PluginOwnedContribution<ResolvedEventDefinition>[] = [];
   const executionRunProfiles: PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[] = [];
   const mcpServers: PluginOwnedContribution<PluginMcpServerContributionV1>[] = [];
   const mcpDiscoveryProviders: PluginOwnedContribution<PluginMcpDiscoveryProviderContributionV1>[] = [];
@@ -242,6 +278,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const scmBackends: PluginOwnedContribution<ScmBackendContribution>[] = [];
   const connectedAccountDescriptors: PluginOwnedContribution<PluginConnectedAccountDescriptorContributionV2>[] = [];
   const installables: PluginOwnedContribution<InstallableDependencyDescriptor>[] = [];
+  const requestInterceptors: PluginOwnedContribution<PluginRequestInterceptorContributionV1>[] = [];
   const lifecycleHandlers: PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[] = [];
 
   for (const plugin of params.loadedPlugins) {
@@ -366,6 +403,90 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
+    for (const definition of readContributionArray<PluginUiTranslationsContributionV1>(plugin.manifest.contributes, 'uiTranslations')) {
+      uiTranslations.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginStructuredMessageDescriptorV1>(plugin.manifest.contributes, 'structuredMessages')) {
+      structuredMessages.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginSessionSurfaceDescriptorV1>(plugin.manifest.contributes, 'sessionSurfaces')) {
+      sessionSurfaces.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginSessionHeaderActionDescriptorV1>(plugin.manifest.contributes, 'sessionHeaderActions')) {
+      sessionHeaderActions.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginHostedWebContributionV1>(plugin.manifest.contributes, 'hostedWeb')) {
+      hostedWeb.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginReactNativeBundleContributionV1>(plugin.manifest.contributes, 'reactNativeBundles')) {
+      reactNativeBundles.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginUiArtifactContributionV1>(plugin.manifest.contributes, 'uiArtifacts')) {
+      uiArtifacts.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
     for (const definition of readContributionArray<PluginSettingsContributionV2>(plugin.manifest.contributes, 'settings')) {
       settings.push({
         pluginId: plugin.pluginId,
@@ -399,6 +520,18 @@ export function buildPluginContributionRegistry(params: Readonly<{
         daemonEntryPath: plugin.daemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginEventContributionV1>(plugin.manifest.contributes, 'events')) {
+      events.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition: toEventDefinition(plugin.pluginId, definition),
       });
     }
 
@@ -499,6 +632,18 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
+    for (const definition of readContributionArray<PluginRequestInterceptorContributionV1>(plugin.manifest.contributes, 'requestInterceptors')) {
+      requestInterceptors.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
     for (const [index, definition] of readContributionArray<PluginLifecycleHandlerContributionV2>(
       plugin.manifest.contributes,
       'lifecycleHandlers',
@@ -524,9 +669,17 @@ export function buildPluginContributionRegistry(params: Readonly<{
     hooks: Object.freeze(hooks),
     resources: Object.freeze(resources),
     uiDescriptors: Object.freeze(uiDescriptors),
+    uiTranslations: Object.freeze(uiTranslations),
+    structuredMessages: Object.freeze(structuredMessages),
+    sessionSurfaces: Object.freeze(sessionSurfaces),
+    sessionHeaderActions: Object.freeze(sessionHeaderActions),
+    hostedWeb: Object.freeze(hostedWeb),
+    reactNativeBundles: Object.freeze(reactNativeBundles),
+    uiArtifacts: Object.freeze(uiArtifacts),
     settings: Object.freeze(settings),
     notifications: Object.freeze(notifications),
     notificationChannels: Object.freeze(notificationChannels),
+    events: Object.freeze(events),
     executionRunProfiles: Object.freeze(executionRunProfiles),
     mcpServers: Object.freeze(mcpServers),
     mcpDiscoveryProviders: Object.freeze(mcpDiscoveryProviders),
@@ -534,6 +687,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
     scmBackends: Object.freeze(scmBackends),
     connectedAccountDescriptors: Object.freeze(connectedAccountDescriptors),
     installables: Object.freeze(installables),
+    requestInterceptors: Object.freeze(requestInterceptors),
     lifecycleHandlers: Object.freeze(lifecycleHandlers),
   });
 }

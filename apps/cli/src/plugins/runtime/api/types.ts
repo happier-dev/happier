@@ -4,7 +4,6 @@ import type {
     PluginApiActionRegistrationV1,
     PluginApiBackendEngineRegistrationV1,
     PluginApiCommandRegistrationV1,
-    PluginApiExecutionRunProfileRegistrationV1,
     PluginApiHookRegistrationV1,
     PluginApiLifecycleHandlerRegistrationV1,
     PluginApiMcpDiscoveryProviderRegistrationV1,
@@ -13,11 +12,9 @@ import type {
     PluginApiNotificationChannelRegistrationV1,
     PluginApiRequestInterceptorRegistrationV1,
     PluginApiRegisterMethodV1,
-    PluginApiResourceRegistrationV1,
     ScmBackendRuntimeRegistration,
     ScmHostingProviderRuntimeRegistration,
     PluginApiToolRegistrationV1,
-    PluginApiUiDescriptorRegistrationV1,
 } from '@happier-dev/plugin-sdk';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
@@ -58,9 +55,11 @@ export type PluginApiHostPolicy = Readonly<{
     declaredLifecycleHandlers?: readonly PluginApiHostLifecycleHandlerDeclaration[];
     declaredNotificationCategoryIds?: readonly string[];
     declaredNotificationChannelIds?: readonly string[];
-    declaredExecutionRunProfileIds?: readonly string[];
     declaredScmHostingProviderIds?: readonly string[];
     declaredScmBackendIds?: readonly string[];
+    declaredRequestInterceptorIds?: readonly string[];
+    declaredMcpServerIds?: readonly string[];
+    declaredMcpDiscoveryProviderIds?: readonly string[];
     registerMethods?: Readonly<Record<string, PluginApiHostRegisterMethod>>;
 }>;
 
@@ -72,13 +71,10 @@ export type PluginApiBackendEngineRegistration = PluginApiBackendEngineRegistrat
 export type PluginApiActionRegistration = PluginApiActionRegistrationV1;
 export type PluginApiToolRegistration = PluginApiToolRegistrationV1;
 export type PluginApiCommandRegistration = PluginApiCommandRegistrationV1;
-export type PluginApiResourceRegistration = PluginApiResourceRegistrationV1;
-export type PluginApiUiDescriptorRegistration = PluginApiUiDescriptorRegistrationV1;
 export type PluginApiHookRegistration = PluginApiHookRegistrationV1;
 export type PluginApiLifecycleHandlerRegistration = PluginApiLifecycleHandlerRegistrationV1;
 export type PluginApiNotificationCategoryRegistration = PluginApiNotificationCategoryRegistrationV1;
 export type PluginApiNotificationChannelRegistration = PluginApiNotificationChannelRegistrationV1;
-export type PluginApiExecutionRunProfileRegistration = PluginApiExecutionRunProfileRegistrationV1;
 export type PluginApiRequestInterceptorRegistration = PluginApiRequestInterceptorRegistrationV1;
 export type PluginApiScmHostingProviderRegistration = ScmHostingProviderRuntimeRegistration;
 export type PluginApiScmBackendRegistration = ScmBackendRuntimeRegistration;
@@ -90,11 +86,8 @@ export type PluginApiRegistrations = Readonly<{
     actions: readonly PluginApiActionRegistration[];
     tools: readonly PluginApiToolRegistration[];
     commands: readonly PluginApiCommandRegistration[];
-    resources: readonly PluginApiResourceRegistration[];
-    uiDescriptors: readonly PluginApiUiDescriptorRegistration[];
     notificationCategories: readonly PluginApiNotificationCategoryRegistration[];
     notificationChannels: readonly PluginApiNotificationChannelRegistration[];
-    executionRunProfiles: readonly PluginApiExecutionRunProfileRegistration[];
     scmHostingProviders: readonly PluginApiScmHostingProviderRegistration[];
     scmBackends: readonly PluginApiScmBackendRegistration[];
     mcpServers: readonly PluginApiMcpServerRegistration[];

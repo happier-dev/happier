@@ -31,6 +31,14 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
         packageName: '@happier-dev/transfers',
         packageSourceRoot: resolve('../../packages/transfers/src'),
     },
+    {
+        packageName: '@happier-dev/plugins-claude',
+        packageSourceRoot: resolve('../../packages/plugins/claude/src'),
+    },
+    {
+        packageName: '@happier-dev/plugins-codex',
+        packageSourceRoot: resolve('../../packages/plugins/codex/src'),
+    },
 ] as const;
 
 function resolveWorkspacePackageSource(

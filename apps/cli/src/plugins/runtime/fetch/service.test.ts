@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { FetchRuntimeResponseV1 } from '@happier-dev/plugin-sdk';
+import type { FetchRuntimeRequestV1, FetchRuntimeResponseV1 } from '@happier-dev/plugin-sdk';
 import { createPluginFetchService } from './service';
 
 function createResponse(body: unknown): FetchRuntimeResponseV1 {
@@ -30,7 +30,7 @@ describe('createPluginFetchService', () => {
         expect(adapter).not.toHaveBeenCalled();
     });
 
-    it('applies request interceptors in deterministic order and forwards abort signals to the host adapter', async () => {
+    it('applies request-policy interceptors in deterministic lower-order order and composes patches', async () => {
         const order: string[] = [];
         const controller = new AbortController();
         const adapter = vi.fn(async (request) => {
@@ -49,42 +49,57 @@ describe('createPluginFetchService', () => {
             allowedUrlOrigins: ['https://example.test'],
             interceptors: [
                 {
-                    id: 'z-last',
-                    priority: 0,
-                    intercept: async (request, next) => {
-                        order.push('z-before');
-                        const response = await next({
-                            ...request,
-                            headers: { ...request.headers, 'x-z': '1' },
-                        });
-                        order.push('z-after');
-                        return response;
+                    pluginId: 'z.plugin',
+                    contribution: {
+                        id: 'z-last',
+                        order: 20,
+                        targets: [{ scope: 'plugin-fetch' }],
+                    },
+                    registration: {
+                        id: 'z-last',
+                        handle: async () => {
+                            order.push('z');
+                            return {
+                                kind: 'allow',
+                                request: { headers: { set: { 'x-z': '1' } } },
+                            };
+                        },
                     },
                 },
                 {
-                    id: 'b-first',
-                    priority: 10,
-                    intercept: async (request, next) => {
-                        order.push('b-before');
-                        const response = await next({
-                            ...request,
-                            headers: { ...request.headers, 'x-b': '1' },
-                        });
-                        order.push('b-after');
-                        return response;
+                    pluginId: 'b.plugin',
+                    contribution: {
+                        id: 'b-first',
+                        order: 10,
+                        targets: [{ scope: 'plugin-fetch' }],
+                    },
+                    registration: {
+                        id: 'b-first',
+                        handle: async () => {
+                            order.push('b');
+                            return {
+                                kind: 'allow',
+                                request: { headers: { set: { 'x-b': '1' } } },
+                            };
+                        },
                     },
                 },
                 {
-                    id: 'a-first',
-                    priority: 10,
-                    intercept: async (request, next) => {
-                        order.push('a-before');
-                        const response = await next({
-                            ...request,
-                            headers: { ...request.headers, 'x-a': '1' },
-                        });
-                        order.push('a-after');
-                        return response;
+                    pluginId: 'a.plugin',
+                    contribution: {
+                        id: 'a-first',
+                        order: 10,
+                        targets: [{ scope: 'plugin-fetch' }],
+                    },
+                    registration: {
+                        id: 'a-first',
+                        handle: async () => {
+                            order.push('a');
+                            return {
+                                kind: 'allow',
+                                request: { headers: { set: { 'x-a': '1' } } },
+                            };
+                        },
                     },
                 },
             ],
@@ -96,13 +111,10 @@ describe('createPluginFetchService', () => {
         })).resolves.toMatchObject({ ok: true, status: 200 });
 
         expect(order).toEqual([
-            'a-before',
-            'b-before',
-            'z-before',
+            'a',
+            'b',
+            'z',
             'adapter',
-            'z-after',
-            'b-after',
-            'a-after',
         ]);
     });
 
@@ -110,14 +122,15 @@ describe('createPluginFetchService', () => {
         const controller = new AbortController();
         controller.abort();
         const adapter = vi.fn(async () => createResponse('unused'));
-        const interceptor = vi.fn(async (_request, next) => next(_request));
+        const interceptor = vi.fn(async () => ({ kind: 'allow' as const }));
         const service = createPluginFetchService({
             networkAllowed: true,
             adapter,
             allowedUrlOrigins: ['https://example.test'],
             interceptors: [{
-                id: 'never',
-                intercept: interceptor,
+                pluginId: 'acme.policy',
+                contribution: { id: 'never', targets: [{ scope: 'plugin-fetch' }] },
+                registration: { id: 'never', handle: interceptor },
             }],
         });
 
@@ -166,11 +179,15 @@ describe('createPluginFetchService', () => {
             adapter,
             allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
-                id: 'rewrite',
-                intercept: async (request, next) => await next({
-                    ...request,
-                    url: 'https://blocked.example.test/status',
-                }),
+                pluginId: 'acme.policy',
+                contribution: { id: 'rewrite', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'rewrite',
+                    handle: async () => ({
+                        kind: 'allow',
+                        request: { url: 'https://blocked.example.test/status' },
+                    }),
+                },
             }],
         });
 
@@ -250,4 +267,400 @@ describe('createPluginFetchService', () => {
         });
         expect(adapter).toHaveBeenCalledTimes(2);
     });
+
+    it('redacts protected credentials from interceptor input while allowing replacement patches', async () => {
+        const seen: FetchRuntimeRequestV1[] = [];
+        const adapter = vi.fn(async (request) => createResponse({
+            authorization: request.headers?.authorization,
+            user: request.headers?.['x-user-id'],
+            safe: request.headers?.accept,
+            url: request.url,
+            body: request.body,
+        }));
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'credential-policy', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'credential-policy',
+                    handle: async ({ originalRequest, effectiveRequest }) => {
+                        seen.push(originalRequest, effectiveRequest);
+                        return {
+                            kind: 'allow',
+                            request: {
+                                headers: {
+                                    set: { authorization: 'Bearer replacement' },
+                                },
+                            },
+                        };
+                    },
+                },
+            }],
+        });
+
+        await expect(service({
+            url: 'https://api.example.test/status?token=secret&visible=yes',
+            headers: {
+                authorization: 'Bearer original',
+                'x-user-id': 'user-1',
+                'x-forwarded-for': '203.0.113.10',
+                'x-forwarded-email': 'user@example.test',
+                'x-real-ip': '203.0.113.11',
+                accept: 'application/json',
+            },
+            body: {
+                apiKey: 'secret',
+                visible: true,
+            },
+        })).resolves.toMatchObject({
+            body: {
+                authorization: 'Bearer replacement',
+                user: 'user-1',
+                safe: 'application/json',
+                url: 'https://api.example.test/status?token=secret&visible=yes',
+                body: {
+                    apiKey: 'secret',
+                    visible: true,
+                },
+            },
+        });
+
+        expect(seen).toEqual([
+            expect.objectContaining({
+                url: 'https://api.example.test/status?token=%5Bredacted%5D&visible=yes',
+                headers: expect.objectContaining({
+                    authorization: '[redacted]',
+                    'x-user-id': '[redacted]',
+                    'x-forwarded-for': '[redacted]',
+                    'x-forwarded-email': '[redacted]',
+                    'x-real-ip': '[redacted]',
+                    accept: 'application/json',
+                }),
+                body: {
+                    apiKey: '[redacted]',
+                    visible: true,
+                },
+            }),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    authorization: '[redacted]',
+                    'x-user-id': '[redacted]',
+                    'x-forwarded-for': '[redacted]',
+                    'x-forwarded-email': '[redacted]',
+                    'x-real-ip': '[redacted]',
+                    accept: 'application/json',
+                }),
+            }),
+        ]);
+    });
+
+    it('redacts opaque string bodies before request-policy handlers observe them', async () => {
+        const seenBodies: unknown[] = [];
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter: async (request) => createResponse(request.body),
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'body-policy', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'body-policy',
+                    handle: async ({ originalRequest, effectiveRequest }) => {
+                        seenBodies.push(originalRequest.body, effectiveRequest.body);
+                        return { kind: 'allow' };
+                    },
+                },
+            }],
+        });
+
+        await expect(service({
+            url: 'https://api.example.test/token',
+            headers: { 'content-type': 'application/json' },
+            body: '{"access_token":"secret","visible":true}',
+        })).resolves.toMatchObject({
+            body: '{"access_token":"secret","visible":true}',
+        });
+
+        await expect(service({
+            url: 'https://api.example.test/token',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: 'client_secret=secret&visible=yes',
+        })).resolves.toMatchObject({
+            body: 'client_secret=secret&visible=yes',
+        });
+
+        expect(seenBodies).toEqual([
+            '[redacted]',
+            '[redacted]',
+            '[redacted]',
+            '[redacted]',
+        ]);
+    });
+
+    it('maps deny and thrown request-policy handlers to distinct host failures', async () => {
+        const denied = createPluginFetchService({
+            networkAllowed: true,
+            adapter: async () => createResponse('unused'),
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'deny', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'deny',
+                    handle: async () => ({ kind: 'deny', code: 'policy_blocked' }),
+                },
+            }],
+        });
+
+        await expect(denied({ url: 'https://api.example.test/status' })).rejects.toMatchObject({
+            code: 'PLUGIN_FETCH_INTERCEPTOR_DENIED',
+        });
+
+        const failed = createPluginFetchService({
+            networkAllowed: true,
+            adapter: async () => createResponse('unused'),
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'throw', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'throw',
+                    handle: async () => {
+                        throw new Error('handler exploded');
+                    },
+                },
+            }],
+        });
+
+        await expect(failed({ url: 'https://api.example.test/status' })).rejects.toMatchObject({
+            code: 'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+        });
+    });
+
+    it('classifies malformed request-policy results as interceptor failures', async () => {
+        const malformed = createPluginFetchService({
+            networkAllowed: true,
+            adapter: async () => createResponse('unused'),
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'malformed', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'malformed',
+                    handle: async () => ({ kind: 'deny' }) as unknown as never,
+                },
+            }],
+        });
+
+        await expect(malformed({ url: 'https://api.example.test/status' })).rejects.toMatchObject({
+            code: 'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+        });
+    });
+
+    it('classifies invalid allow request patches as interceptor failures', async () => {
+        const invalidPatch = createPluginFetchService({
+            networkAllowed: true,
+            adapter: async () => createResponse('unused'),
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'invalid-patch', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'invalid-patch',
+                    handle: async () => ({
+                        kind: 'allow',
+                        request: {
+                            headers: {
+                                set: { authorization: 42 },
+                            },
+                        },
+                    }) as unknown as never,
+                },
+            }],
+        });
+
+        await expect(invalidPatch({ url: 'https://api.example.test/status' })).rejects.toMatchObject({
+            code: 'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+        });
+    });
+
+    it('classifies request body patches as invalid V1 policy results', async () => {
+        const adapter = vi.fn(async () => createResponse('unused'));
+        const bodyPatch = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'body-patch', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'body-patch',
+                    handle: async () => ({
+                        kind: 'allow',
+                        request: {
+                            body: 'mutated-body',
+                        },
+                    }) as unknown as never,
+                },
+            }],
+        });
+
+        await expect(bodyPatch({
+            url: 'https://api.example.test/status',
+            body: 'original-body',
+        })).rejects.toMatchObject({
+            code: 'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+        });
+        expect(adapter).not.toHaveBeenCalled();
+    });
+
+    it('classifies response patches as invalid V1 policy results', async () => {
+        const adapter = vi.fn(async () => createResponse('unused'));
+        const responsePatch = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'response-patch', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'response-patch',
+                    handle: async () => ({
+                        kind: 'allow',
+                        response: {
+                            headers: {
+                                set: { 'x-plugin': 'mutated' },
+                            },
+                        },
+                    }) as unknown as never,
+                },
+            }],
+        });
+
+        await expect(responsePatch({
+            url: 'https://api.example.test/status',
+        })).rejects.toMatchObject({
+            code: 'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+        });
+        expect(adapter).not.toHaveBeenCalled();
+    });
+
+    it('does not derive operation ids from raw request URLs or query strings', async () => {
+        const operationIds: string[] = [];
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter: async () => createResponse('ok'),
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'operation-policy', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'operation-policy',
+                    handle: async ({ operation }) => {
+                        operationIds.push(operation.id);
+                        return { kind: 'allow' };
+                    },
+                },
+            }],
+        });
+
+        await service({ url: 'https://api.example.test/status?token=secret&visible=yes' });
+
+        expect(operationIds).toHaveLength(1);
+        expect(operationIds[0]).not.toContain('token=secret');
+        expect(operationIds[0]).not.toContain('?');
+        expect(operationIds[0]).toMatch(/^plugin-fetch:/);
+    });
+
+    it('skips the active interceptor during nested ctx.fetch recursion', async () => {
+        const calls: string[] = [];
+        let service: ReturnType<typeof createPluginFetchService>;
+        const adapter = vi.fn(async (request) => {
+            calls.push(`adapter:${request.url}`);
+            return createResponse(request.url);
+        });
+        service = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'self', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'self',
+                    handle: async ({ effectiveRequest }) => {
+                        calls.push(`interceptor:${effectiveRequest.url}`);
+                        if (effectiveRequest.url.endsWith('/outer')) {
+                            await service({ url: 'https://api.example.test/nested' });
+                        }
+                        return { kind: 'allow' };
+                    },
+                },
+            }],
+        });
+
+        await expect(service({ url: 'https://api.example.test/outer' })).resolves.toMatchObject({
+            ok: true,
+            status: 200,
+        });
+
+        expect(calls).toEqual([
+            'interceptor:https://api.example.test/outer',
+            'adapter:https://api.example.test/nested',
+            'adapter:https://api.example.test/outer',
+        ]);
+    });
+
+    it('keeps recursion protection scoped to the current logical request', async () => {
+        const seen: string[] = [];
+        let releaseFirst: () => void = () => undefined;
+        let resolveFirstStarted: (() => void) | null = null;
+        const firstStarted = new Promise<void>((resolve) => {
+            resolveFirstStarted = resolve;
+        });
+
+        const adapter = vi.fn(async (request) => createResponse(request.url));
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                pluginId: 'acme.policy',
+                contribution: { id: 'self', targets: [{ scope: 'plugin-fetch' }] },
+                registration: {
+                    id: 'self',
+                    handle: async ({ effectiveRequest }) => {
+                        seen.push(effectiveRequest.url);
+                        if (effectiveRequest.url.endsWith('/one')) {
+                            resolveFirstStarted?.();
+                            await new Promise<void>((resolveRelease) => {
+                                releaseFirst = resolveRelease;
+                            });
+                        }
+                        return { kind: 'allow' };
+                    },
+                },
+            }],
+        });
+
+        const first = service({ url: 'https://api.example.test/one' });
+        await firstStarted;
+
+        try {
+            await expect(service({ url: 'https://api.example.test/two' }))
+                .resolves
+                .toMatchObject({ body: 'https://api.example.test/two' });
+            expect(seen).toEqual([
+                'https://api.example.test/one',
+                'https://api.example.test/two',
+            ]);
+        } finally {
+            releaseFirst();
+        }
+        await expect(first).resolves.toMatchObject({ body: 'https://api.example.test/one' });
+    });
+
 });

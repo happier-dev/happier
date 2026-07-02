@@ -1,14 +1,10 @@
-import {
-    PluginExecutionRunProfileContributionV2Schema,
-    type PluginPermissionCapabilityV1,
-} from '@happier-dev/protocol';
+import { getPluginHookDefinitionV1, type PluginPermissionCapabilityV1 } from '@happier-dev/protocol';
 import type {
     PluginApiBackendEngineRegistration,
     PluginDisposable,
     PluginApi,
     PluginApiActionRegistration,
     PluginApiCommandRegistration,
-    PluginApiExecutionRunProfileRegistration,
     PluginApiHostPolicy,
     PluginApiHookRegistration,
     PluginApiLifecycleHandlerRegistration,
@@ -17,15 +13,17 @@ import type {
     PluginApiNotificationCategoryRegistration,
     PluginApiNotificationChannelRegistration,
     PluginApiRequestInterceptorRegistration,
-    PluginApiResourceRegistration,
     PluginApiRegistrations,
     PluginApiScmBackendRegistration,
     PluginApiScmHostingProviderRegistration,
     PluginApiToolRegistration,
-    PluginApiUiDescriptorRegistration,
 } from './types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { createPluginDisposableRegistry } from '../lifecycle/disposables';
+import {
+    assertMcpRuntimeRegistrationSecretFree,
+    assertMcpRuntimeServerRegistrationSafe,
+} from './mcpSafety';
 import { isPluginApiScmBackendRegistration } from './scmBackends';
 import { isPluginApiScmHostingProviderRegistration } from './scmHostingProviders';
 
@@ -35,54 +33,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-const MCP_SENSITIVE_REGISTRATION_KEYS = new Set([
-    'authorization',
-    'proxyauthorization',
-    'apikey',
-    'token',
-    'accesstoken',
-    'refreshtoken',
-    'githubtoken',
-    'clientsecret',
-    'pat',
-    'password',
-    'secret',
+const REQUEST_INTERCEPTOR_MANIFEST_OWNED_REGISTRATION_KEYS = new Set([
+    'consent',
+    'enabledByDefault',
+    'failOpen',
+    'order',
+    'priority',
+    'proxy',
+    'proxyOrigin',
+    'scope',
+    'scopes',
+    'target',
+    'targets',
+    'urlOrigins',
 ]);
-
-function normalizeMcpRegistrationKey(key: string): string {
-    return key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-}
-
-function isSensitiveMcpRegistrationKey(key: string): boolean {
-    const normalized = normalizeMcpRegistrationKey(key);
-    return MCP_SENSITIVE_REGISTRATION_KEYS.has(normalized)
-        || normalized.endsWith('token')
-        || normalized.endsWith('apikey')
-        || normalized.endsWith('secret');
-}
-
-function assertMcpRuntimeRegistrationSecretFree(value: unknown, path: readonly string[] = []): void {
-    if (Array.isArray(value)) {
-        value.forEach((entry, index) => assertMcpRuntimeRegistrationSecretFree(entry, [...path, String(index)]));
-        return;
-    }
-    if (!isRecord(value)) {
-        if (typeof value === 'string' && /\bbearer\s+\S+/i.test(value)) {
-            throw new Error(`MCP runtime registration contains raw secret material at '${path.join('.') || '<root>'}'`);
-        }
-        return;
-    }
-    for (const [key, child] of Object.entries(value)) {
-        if (typeof child === 'function') {
-            continue;
-        }
-        const childPath = [...path, key];
-        if (isSensitiveMcpRegistrationKey(key)) {
-            throw new Error(`MCP runtime registration contains raw secret material at '${childPath.join('.')}'`);
-        }
-        assertMcpRuntimeRegistrationSecretFree(child, childPath);
-    }
-}
 
 function formatPluginLabel(pluginId: string | undefined): string {
     return pluginId?.trim().length ? `Plugin '${pluginId}'` : 'Plugin activation';
@@ -97,8 +61,11 @@ function isRequestInterceptorRegistration(value: unknown): value is PluginApiReq
     return isRecord(value)
         && typeof value.id === 'string'
         && value.id.trim().length > 0
-        && (value.priority === undefined || typeof value.priority === 'number')
-        && typeof value.intercept === 'function';
+        && typeof value.handle === 'function';
+}
+
+function getRequestInterceptorManifestOwnedRegistrationKeys(value: PluginApiRequestInterceptorRegistration): readonly string[] {
+    return Object.keys(value).filter((key) => REQUEST_INTERCEPTOR_MANIFEST_OWNED_REGISTRATION_KEYS.has(key));
 }
 
 export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
@@ -111,11 +78,8 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
     const actions: PluginApiActionRegistration[] = [];
     const tools: PluginApiToolRegistration[] = [];
     const commands: PluginApiCommandRegistration[] = [];
-    const resources: PluginApiResourceRegistration[] = [];
-    const uiDescriptors: PluginApiUiDescriptorRegistration[] = [];
     const notificationCategories: PluginApiNotificationCategoryRegistration[] = [];
     const notificationChannels: PluginApiNotificationChannelRegistration[] = [];
-    const executionRunProfiles: PluginApiExecutionRunProfileRegistration[] = [];
     const scmHostingProviders: PluginApiScmHostingProviderRegistration[] = [];
     const scmBackends: PluginApiScmBackendRegistration[] = [];
     const mcpServers: PluginApiMcpServerRegistration[] = [];
@@ -158,14 +122,20 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
     const declaredNotificationChannelIds = policy?.declaredNotificationChannelIds
         ? new Set(policy.declaredNotificationChannelIds)
         : null;
-    const declaredExecutionRunProfileIds = policy?.declaredExecutionRunProfileIds
-        ? new Set(policy.declaredExecutionRunProfileIds)
-        : null;
     const declaredScmHostingProviderIds = policy?.declaredScmHostingProviderIds
         ? new Set(policy.declaredScmHostingProviderIds)
         : null;
     const declaredScmBackendIds = policy?.declaredScmBackendIds
         ? new Set(policy.declaredScmBackendIds)
+        : null;
+    const declaredRequestInterceptorIds = policy?.declaredRequestInterceptorIds
+        ? new Set(policy.declaredRequestInterceptorIds)
+        : null;
+    const declaredMcpServerIds = policy?.declaredMcpServerIds
+        ? new Set(policy.declaredMcpServerIds)
+        : null;
+    const declaredMcpDiscoveryProviderIds = policy?.declaredMcpDiscoveryProviderIds
+        ? new Set(policy.declaredMcpDiscoveryProviderIds)
         : null;
 
     function addDisposable(disposable: PluginDisposable): PluginDisposable {
@@ -316,40 +286,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 }
             });
         },
-        registerResource(registration) {
-            const blocked = isRegistrationAllowed({
-                family: 'resources',
-                methodName: 'registerResource',
-                requiredPermission: 'resources.register',
-            });
-            if (blocked) {
-                return blocked;
-            }
-            resources.push(registration);
-            return addDisposable(() => {
-                const index = resources.indexOf(registration);
-                if (index >= 0) {
-                    resources.splice(index, 1);
-                }
-            });
-        },
-        registerUiDescriptor(registration) {
-            const blocked = isRegistrationAllowed({
-                family: 'uiDescriptors',
-                methodName: 'registerUiDescriptor',
-                requiredPermission: 'ui.descriptors',
-            });
-            if (blocked) {
-                return blocked;
-            }
-            uiDescriptors.push(registration);
-            return addDisposable(() => {
-                const index = uiDescriptors.indexOf(registration);
-                if (index >= 0) {
-                    uiDescriptors.splice(index, 1);
-                }
-            });
-        },
         registerNotificationCategory(registration) {
             const blocked = isRegistrationAllowed({
                 family: 'notifications',
@@ -409,45 +345,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 const index = notificationChannels.indexOf(registration);
                 if (index >= 0) {
                     notificationChannels.splice(index, 1);
-                }
-            });
-        },
-        registerExecutionRunProfile(registration) {
-            const blocked = isRegistrationAllowed({
-                family: 'executionRunProfiles',
-                methodName: 'registerExecutionRunProfile',
-            });
-            if (blocked) {
-                return blocked;
-            }
-            const parsed = PluginExecutionRunProfileContributionV2Schema.safeParse(registration);
-            if (!parsed.success) {
-                appendDiagnostic({
-                    code: 'plugin_manifest_semantic_invalid',
-                    message: `${formatPluginLabel(policy?.pluginId)} registered an invalid execution-run profile descriptor`,
-                });
-                throw new Error('Invalid execution-run profile descriptor');
-            }
-            const descriptor = parsed.data;
-            if (declaredExecutionRunProfileIds && !declaredExecutionRunProfileIds.has(descriptor.id)) {
-                appendDiagnostic({
-                    code: 'plugin_execution_run_profile_undeclared_id',
-                    message: `${formatPluginLabel(policy?.pluginId)} cannot register execution-run profile '${descriptor.id}' because it is not a manifest-declared execution-run profile id`,
-                });
-                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register execution-run profile '${descriptor.id}' because it is not a manifest-declared execution-run profile id`);
-            }
-            if (executionRunProfiles.some((entry) => entry.id === descriptor.id)) {
-                appendDiagnostic({
-                    code: 'plugin_execution_run_profile_duplicate_id',
-                    message: `${formatPluginLabel(policy?.pluginId)} registered duplicate execution-run profile '${descriptor.id}'`,
-                });
-                throw new Error(`Duplicate execution-run profile '${descriptor.id}'`);
-            }
-            executionRunProfiles.push(descriptor);
-            return addDisposable(() => {
-                const index = executionRunProfiles.indexOf(descriptor);
-                if (index >= 0) {
-                    executionRunProfiles.splice(index, 1);
                 }
             });
         },
@@ -533,7 +430,14 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             if (blocked) {
                 return blocked;
             }
-            assertMcpRuntimeRegistrationSecretFree(registration);
+            assertMcpRuntimeServerRegistrationSafe(registration);
+            if (declaredMcpServerIds && !declaredMcpServerIds.has(registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_mcp_server_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register MCP server '${registration.id}' because it is not declared by its manifest`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register MCP server '${registration.id}' because it is not declared by its manifest`);
+            }
             if (mcpServers.some((entry) => entry.id === registration.id || entry.name === registration.name)) {
                 appendDiagnostic({
                     code: 'plugin_manifest_semantic_invalid',
@@ -558,6 +462,13 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 return blocked;
             }
             assertMcpRuntimeRegistrationSecretFree(registration);
+            if (declaredMcpDiscoveryProviderIds && !declaredMcpDiscoveryProviderIds.has(registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_mcp_discovery_provider_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register MCP discovery provider '${registration.id}' because it is not declared by its manifest`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register MCP discovery provider '${registration.id}' because it is not declared by its manifest`);
+            }
             if (mcpDiscoveryProviders.some((entry) => entry.id === registration.id)) {
                 appendDiagnostic({
                     code: 'plugin_manifest_semantic_invalid',
@@ -576,7 +487,7 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
         registerRequestInterceptor(registration) {
             const blocked = isRegistrationAllowed({
                 methodName: 'registerRequestInterceptor',
-                requiredPermission: 'network',
+                requiredPermission: 'network.intercept',
             });
             if (blocked) {
                 return blocked;
@@ -587,6 +498,21 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                     message: `${formatPluginLabel(policy?.pluginId)} provided an invalid request interceptor registration`,
                 });
                 throw new Error(`${formatPluginLabel(policy?.pluginId)} provided an invalid request interceptor registration`);
+            }
+            const manifestOwnedKeys = getRequestInterceptorManifestOwnedRegistrationKeys(registration);
+            if (manifestOwnedKeys.length > 0) {
+                appendDiagnostic({
+                    code: 'plugin_request_interceptor_manifest_fields_redeclared',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot redeclare manifest-owned request interceptor fields at runtime: ${manifestOwnedKeys.join(', ')}`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot redeclare manifest-owned request interceptor fields at runtime`);
+            }
+            if (declaredRequestInterceptorIds && !declaredRequestInterceptorIds.has(registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_request_interceptor_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register request interceptor '${registration.id}' because it is not a manifest-declared request interceptor id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register request interceptor '${registration.id}' because it is not a manifest-declared request interceptor id`);
             }
             if (requestInterceptors.some((entry) => entry.id === registration.id)) {
                 appendDiagnostic({
@@ -618,6 +544,13 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                     message: `${formatPluginLabel(policy?.pluginId)} cannot register hook '${registration.hookId}' because it is not a manifest-declared hook id`,
                 });
                 throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register hook '${registration.hookId}' because it is not a manifest-declared hook id`);
+            }
+            if (!getPluginHookDefinitionV1(registration.hookId)) {
+                appendDiagnostic({
+                    code: 'plugin_hook_unsupported_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register unsupported hook id '${registration.hookId}'`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register unsupported hook id '${registration.hookId}'`);
             }
             hooks.push(registration);
             return addDisposable(() => {
@@ -691,11 +624,8 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             actions: Object.freeze([...actions]),
             tools: Object.freeze([...tools]),
             commands: Object.freeze([...commands]),
-            resources: Object.freeze([...resources]),
-            uiDescriptors: Object.freeze([...uiDescriptors]),
             notificationCategories: Object.freeze([...notificationCategories]),
             notificationChannels: Object.freeze([...notificationChannels]),
-            executionRunProfiles: Object.freeze([...executionRunProfiles]),
             scmHostingProviders: Object.freeze([...scmHostingProviders]),
             scmBackends: Object.freeze([...scmBackends]),
             mcpServers: Object.freeze([...mcpServers]),

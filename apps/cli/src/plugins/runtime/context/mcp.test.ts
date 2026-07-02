@@ -2,17 +2,32 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
     ExecClientHandleV1,
+    ExecClientSpecV1,
     ExecLaunchInputV1,
     ExecRuntimeServiceV1,
+    JsonRpcClientV1,
     ManagedServerHandleV1,
     ManagedServerRuntimeServiceV1,
 } from '@happier-dev/plugin-sdk';
 
 import { createPluginMcpService } from './mcp';
 
+function createJsonRpcClientFixture(result: unknown = undefined): JsonRpcClientV1 {
+    return {
+        async request<TParams = unknown, TResult = unknown>(): Promise<TResult> {
+            return result as TResult;
+        },
+        async notify(): Promise<void> {
+            return undefined;
+        },
+        registerRequestHandler: () => () => undefined,
+        registerNotificationHandler: () => () => undefined,
+    };
+}
+
 describe('createPluginMcpService', () => {
     const launch: ExecLaunchInputV1 = {
-        kind: 'resolvedExecutable',
+        kind: 'binary',
         executablePath: '/bin/echo',
         args: ['mcp'],
     };
@@ -22,6 +37,12 @@ describe('createPluginMcpService', () => {
         const request = vi.fn(async () => ({ ok: true }));
         const notify = vi.fn(async () => undefined);
         const clientHandle: ExecClientHandleV1 = {
+            client: {
+                request: request as JsonRpcClientV1['request'],
+                notify: notify as JsonRpcClientV1['notify'],
+                registerRequestHandler: () => () => undefined,
+                registerNotificationHandler: () => () => undefined,
+            },
             process: {
                 pid: 123,
                 exit: Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
@@ -29,14 +50,19 @@ describe('createPluginMcpService', () => {
                 kill: () => undefined,
                 dispose: async () => undefined,
             },
-            request,
-            notify,
+            status: 'running',
+            onExit: () => () => undefined,
             dispose: clientDispose,
         };
         const exec: ExecRuntimeServiceV1 = {
+            systemTools: {
+                resolve: async () => {
+                    throw new Error('systemTools.resolve is not used by MCP tests');
+                },
+            },
             run: async () => ({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
             spawn: async () => clientHandle.process,
-            spawnClient: vi.fn(async () => clientHandle),
+            spawnClient: vi.fn(async (_spec: ExecClientSpecV1) => clientHandle) as unknown as ExecRuntimeServiceV1['spawnClient'],
         };
         const service = createPluginMcpService({
             pluginId: 'acme',
@@ -52,14 +78,21 @@ describe('createPluginMcpService', () => {
             },
         });
 
-        expect(exec.spawnClient).toHaveBeenCalledWith(launch, expect.objectContaining({
+        expect(exec.spawnClient).toHaveBeenCalledWith(expect.objectContaining({
+            launch,
+            transport: expect.objectContaining({
+                kind: 'stdio',
+                framing: { kind: 'strict-lf-json' },
+            }),
+            protocol: { kind: 'json-rpc-2.0' },
+        }), expect.objectContaining({
             signal: undefined,
         }));
 
         await expect(handle.request?.({ method: 'ping' })).resolves.toEqual({ ok: true });
         await expect(handle.notify?.({ method: 'initialized' })).resolves.toBeUndefined();
-        expect(request).toHaveBeenCalledWith({ method: 'ping' });
-        expect(notify).toHaveBeenCalledWith({ method: 'initialized' });
+        expect(request).toHaveBeenCalledWith('ping', undefined);
+        expect(notify).toHaveBeenCalledWith('initialized', undefined);
 
         await handle.dispose();
         await handle.dispose();
@@ -70,6 +103,7 @@ describe('createPluginMcpService', () => {
     it('rejects stdio clients that do not expose MCP request and notify methods', async () => {
         const clientDispose = vi.fn(async () => undefined);
         const clientHandle: ExecClientHandleV1 = {
+            client: {} as JsonRpcClientV1,
             process: {
                 pid: 123,
                 exit: Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
@@ -77,12 +111,19 @@ describe('createPluginMcpService', () => {
                 kill: () => undefined,
                 dispose: async () => undefined,
             },
+            status: 'running',
+            onExit: () => () => undefined,
             dispose: clientDispose,
         };
         const exec: ExecRuntimeServiceV1 = {
+            systemTools: {
+                resolve: async () => {
+                    throw new Error('systemTools.resolve is not used by MCP tests');
+                },
+            },
             run: async () => ({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
             spawn: async () => clientHandle.process,
-            spawnClient: vi.fn(async () => clientHandle),
+            spawnClient: vi.fn(async (_spec: ExecClientSpecV1) => clientHandle) as unknown as ExecRuntimeServiceV1['spawnClient'],
         };
         const service = createPluginMcpService({
             pluginId: 'acme',
@@ -131,6 +172,7 @@ describe('createPluginMcpService', () => {
         const abortController = new AbortController();
         const clientDispose = vi.fn(async () => undefined);
         const clientHandle: ExecClientHandleV1 = {
+            client: createJsonRpcClientFixture({ ok: true }),
             process: {
                 pid: 123,
                 exit: Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
@@ -138,14 +180,19 @@ describe('createPluginMcpService', () => {
                 kill: () => undefined,
                 dispose: async () => undefined,
             },
-            request: async () => ({ ok: true }),
-            notify: async () => undefined,
+            status: 'running',
+            onExit: () => () => undefined,
             dispose: clientDispose,
         };
         const exec: ExecRuntimeServiceV1 = {
+            systemTools: {
+                resolve: async () => {
+                    throw new Error('systemTools.resolve is not used by MCP tests');
+                },
+            },
             run: async () => ({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
             spawn: async () => clientHandle.process,
-            spawnClient: vi.fn(async () => clientHandle),
+            spawnClient: vi.fn(async (_spec: ExecClientSpecV1) => clientHandle) as unknown as ExecRuntimeServiceV1['spawnClient'],
         };
         const service = createPluginMcpService({
             pluginId: 'acme',
@@ -226,12 +273,23 @@ describe('createPluginMcpService', () => {
 
     it('starts hosted MCP servers through the host substrate adapter and disposes them idempotently', async () => {
         const hostedDispose = vi.fn(async () => undefined);
+        const hostedToolHandler = vi.fn(async () => ({
+            content: [{ type: 'text' as const, text: 'ok' }],
+        }));
         const startHostedServer = vi.fn(async () => ({
             id: 'acme.hosted',
             spec: {
                 id: 'acme.hosted',
                 name: 'acme-hosted',
                 transport: { kind: 'hosted' as const },
+                hosted: {
+                    tools: [
+                        {
+                            name: 'ext.acme.echo',
+                            handler: hostedToolHandler,
+                        },
+                    ],
+                },
             },
             dispose: hostedDispose,
         }));
@@ -246,15 +304,113 @@ describe('createPluginMcpService', () => {
             id: 'acme.hosted',
             name: 'acme-hosted',
             transport: { kind: 'hosted' },
+            hosted: {
+                tools: [
+                    {
+                        name: 'ext.acme.echo',
+                        handler: hostedToolHandler,
+                    },
+                ],
+            },
         });
 
         expect(startHostedServer).toHaveBeenCalledWith({
             id: 'acme.hosted',
             name: 'acme-hosted',
             transport: { kind: 'hosted' },
+            hosted: {
+                tools: [
+                    {
+                        name: 'ext.acme.echo',
+                        handler: hostedToolHandler,
+                    },
+                ],
+            },
         });
 
         await handle.dispose();
+        await handle.dispose();
+
+        expect(hostedDispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects secret-bearing hosted server specs before invoking the host substrate adapter', async () => {
+        const startHostedServer = vi.fn(async () => ({
+            id: 'acme.hosted',
+            dispose: async () => undefined,
+        }));
+        const service = createPluginMcpService({
+            pluginId: 'acme',
+            exec: {} as ExecRuntimeServiceV1,
+            managedServer: {} as ManagedServerRuntimeServiceV1,
+            startHostedServer,
+        });
+
+        await expect(service.startServer({
+            id: 'acme.hosted',
+            name: 'acme-hosted',
+            transport: { kind: 'hosted' },
+            hosted: {
+                apiToken: 'raw-secret',
+                tools: [
+                    {
+                        name: 'ext.acme.echo',
+                        handler: async () => ({ content: [{ type: 'text', text: 'unexpected' }] }),
+                    },
+                ],
+            } as unknown as never,
+        })).rejects.toThrow(/raw secret material/i);
+
+        expect(startHostedServer).not.toHaveBeenCalled();
+    });
+
+    it('preserves sanitized hosted runtime endpoint metadata returned by the host adapter', async () => {
+        const hostedDispose = vi.fn(async () => undefined);
+        const endpoint = Object.freeze({
+            kind: 'loopbackHttp' as const,
+            url: 'http://127.0.0.1:49152',
+            host: '127.0.0.1' as const,
+            port: 49152,
+        });
+        const startHostedServer = vi.fn(async () => ({
+            id: 'acme.hosted',
+            spec: {
+                id: 'acme.hosted',
+                name: 'acme-hosted',
+                transport: {
+                    kind: 'hosted' as const,
+                    exposure: { kind: 'loopbackHttp' as const, requested: true as const },
+                },
+            },
+            endpoint,
+            dispose: hostedDispose,
+        }));
+        const service = createPluginMcpService({
+            pluginId: 'acme',
+            exec: {} as ExecRuntimeServiceV1,
+            managedServer: {} as ManagedServerRuntimeServiceV1,
+            startHostedServer,
+        });
+
+        const handle = await service.startServer({
+            id: 'acme.hosted',
+            name: 'acme-hosted',
+            transport: {
+                kind: 'hosted',
+                exposure: { kind: 'loopbackHttp', requested: true },
+            },
+        });
+
+        expect(startHostedServer).toHaveBeenCalledWith({
+            id: 'acme.hosted',
+            name: 'acme-hosted',
+            transport: {
+                kind: 'hosted',
+                exposure: { kind: 'loopbackHttp', requested: true },
+            },
+        });
+        expect('endpoint' in handle ? handle.endpoint : null).toEqual(endpoint);
+
         await handle.dispose();
 
         expect(hostedDispose).toHaveBeenCalledTimes(1);

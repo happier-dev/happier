@@ -16,7 +16,7 @@ function createRuntimeRegistry(label: string): ResolvedExecutablePluginRuntimeRe
             uiDescriptors: Object.freeze([]),
             activationTargets: Object.freeze([]),
             hookRegistrations: Object.freeze([]),
-            runtimeCoreHooksByBackendId: new Map(),
+            surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: Object.freeze({}),
             providerDefinitionsById: new Map(),
             backendDefinitionsById: new Map(),

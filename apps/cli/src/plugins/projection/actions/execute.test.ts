@@ -43,7 +43,7 @@ function createRegistry(action: ResolvedActionContribution): ResolvedContributio
     activationTargets: [],
     hookRegistrations: [],
     actionsById: new Map([[action.definition.id, action]]),
-    runtimeCoreHooksByBackendId: new Map(),
+    surfaceHandlersByBackendId: new Map(),
     catalogEntriesById: {},
     providerDefinitionsById: new Map(),
     backendDefinitionsById: new Map(),

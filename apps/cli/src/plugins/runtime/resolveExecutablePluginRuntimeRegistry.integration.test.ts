@@ -68,7 +68,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             runtimeKind: 'custom',
             capabilities: {},
         });
-        expect(runtimeRegistry.contributes.runtimeCoreHooksByBackendId.get(SAMPLE_PLUGIN_BACKEND_ID)).toEqual(
+        expect(runtimeRegistry.contributes.surfaceHandlersByBackendId.get(SAMPLE_PLUGIN_BACKEND_ID)).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
                     backendId: SAMPLE_PLUGIN_BACKEND_ID,
@@ -80,7 +80,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 expect.objectContaining({
                     backendId: SAMPLE_PLUGIN_BACKEND_ID,
                     definition: expect.objectContaining({
-                        id: 'backend.terminalRuntime.bindTranscript',
+                        id: 'backend.resolveRuntimePrerequisites',
                         kind: 'terminalRuntime',
                     }),
                 }),
@@ -91,22 +91,22 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         expect(typeof runtimeRegistry.readHookEventEnvelopeV1).toBe('function');
         expect(runtimeRegistry.readHookEventEnvelopeV1({
             hookVersion: 1,
-            hookEventId: 'session.started',
+            hookEventId: 'session.message.send',
             category: 'lifecycle',
             scope: 'session',
             timestampMs: 1,
             payload: {},
-        })?.eventId).toBe('session.started');
+        })?.eventId).toBe('session.message.send');
         expect(runtimeRegistry.readHookEventEnvelopeV1({
             hookVersion: 2,
-            eventId: 'session.started',
+            eventId: 'session.message.send',
             category: 'lifecycle',
             scope: 'session',
             timestampMs: 1,
             payload: {},
         })).toBe(null);
 
-        const handlers = runtimeRegistry.hookHandlersByHookId.get('backend.terminalRuntime.bindTranscript');
+        const handlers = runtimeRegistry.hookHandlersByHookId.get('backend.resolveRuntimePrerequisites');
         expect(handlers).toHaveLength(1);
         await expect(handlers?.[0]?.handler()).resolves.toBe('integration-bound');
         expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.sample']).toEqual([]);
@@ -150,7 +150,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
 
         const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
 
-        expect(runtimeRegistry.hookHandlersByHookId.get('backend.terminalRuntime.bindTranscript')).toBeUndefined();
+        expect(runtimeRegistry.hookHandlersByHookId.get('backend.resolveRuntimePrerequisites')).toBeUndefined();
         expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.sample']).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({

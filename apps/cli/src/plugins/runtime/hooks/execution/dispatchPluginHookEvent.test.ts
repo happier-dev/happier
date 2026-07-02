@@ -16,6 +16,7 @@ describe('dispatchPluginHookEvent', () => {
                 pluginId: 'alpha.plugin',
                 hookId: 'spawn.augmentEnv',
                 priority: 10,
+                registrationIndex: 0,
                 manifestPath: '/plugins/alpha/plugin.json',
                 manifestDigest: 'sha256:alpha',
                 daemonEntryPath: '/plugins/alpha/daemon.mjs',
@@ -51,6 +52,7 @@ describe('dispatchPluginHookEvent', () => {
                 pluginId: 'beta.plugin',
                 hookId: 'spawn.augmentEnv',
                 priority: 0,
+                registrationIndex: 1,
                 manifestPath: '/plugins/beta/plugin.json',
                 manifestDigest: 'sha256:beta',
                 daemonEntryPath: '/plugins/beta/daemon.mjs',
@@ -93,7 +95,11 @@ describe('dispatchPluginHookEvent', () => {
         scope: 'backend',
         backendId: 'codex',
         timestampMs: 1,
-        payload: {},
+        payload: {
+          backendId: 'codex',
+          agentId: 'codex',
+          timestampMs: 1,
+        },
       },
     });
 
@@ -110,6 +116,82 @@ describe('dispatchPluginHookEvent', () => {
     });
   });
 
+  it('passes caller-provided dispatch context to matched hook handlers', async () => {
+    const handler = vi.fn(async () => ({ allowed: true }));
+    const context = Object.freeze({
+      tools: Object.freeze({
+        resolveManagedInstallable: vi.fn(),
+      }),
+    });
+
+    await dispatchPluginHookEvent({
+      runtimeRegistry: {
+        readHookEventEnvelopeV1,
+        hookHandlersByHookId: new Map([
+          [
+            'backend.resolveRuntimePrerequisites',
+            [
+              {
+                pluginId: 'acme.plugin',
+                hookId: 'backend.resolveRuntimePrerequisites',
+                priority: 0,
+                registrationIndex: 0,
+                manifestPath: '/plugins/acme/plugin.json',
+                manifestDigest: 'sha256:acme',
+                daemonEntryPath: '/plugins/acme/daemon.mjs',
+                exportName: 'validateSpawn',
+                registration: {
+                  provenance: 'external',
+                  source: { kind: 'path' },
+                  pluginId: 'acme.plugin',
+                  manifestPath: '/plugins/acme/plugin.json',
+                  manifestDigest: 'sha256:acme',
+                  daemonEntryPath: '/plugins/acme/daemon.mjs',
+                  sourceSpec: {
+                    kind: 'path',
+                    locator: '/plugins/acme',
+                    trustPolicy: 'local_trusted',
+                    installPolicy: 'link',
+                  },
+                  definition: {
+                    hookApiVersion: 1,
+                    id: 'backend.resolveRuntimePrerequisites',
+                    category: 'decision',
+                    scope: 'backend',
+                    executionKind: 'decide',
+                    handler: {
+                      target: 'plugin',
+                      exportName: 'validateSpawn',
+                    },
+                  },
+                },
+                handler,
+              },
+            ],
+          ],
+        ]),
+      },
+      event: {
+        hookVersion: 1,
+        eventId: 'backend.resolveRuntimePrerequisites',
+        category: 'decision',
+        scope: 'backend',
+        backendId: 'codex',
+        timestampMs: 1,
+        payload: {
+          backendId: 'codex',
+          targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+          timestampMs: 1,
+        },
+      },
+      context,
+    });
+
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'backend.resolveRuntimePrerequisites',
+    }), context);
+  });
+
   it('fails closed for decide hooks when a matched handler rejects', async () => {
     const result = await dispatchPluginHookEvent({
       runtimeRegistry: {
@@ -122,6 +204,7 @@ describe('dispatchPluginHookEvent', () => {
                 pluginId: 'acme.plugin',
                 hookId: 'backend.resolveRuntimePrerequisites',
                 priority: 0,
+                registrationIndex: 0,
                 manifestPath: '/plugins/acme/plugin.json',
                 manifestDigest: 'sha256:acme',
                 daemonEntryPath: '/plugins/acme/daemon.mjs',
@@ -166,7 +249,11 @@ describe('dispatchPluginHookEvent', () => {
         scope: 'backend',
         backendId: 'codex',
         timestampMs: 1,
-        payload: {},
+        payload: {
+          backendId: 'codex',
+          targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+          timestampMs: 1,
+        },
       },
     });
 
@@ -202,6 +289,7 @@ describe('dispatchPluginHookEvent', () => {
                 pluginId: 'alpha.plugin',
                 hookId: 'backend.resolveRuntimePrerequisites',
                 priority: 10,
+                registrationIndex: 0,
                 manifestPath: '/plugins/alpha/plugin.json',
                 manifestDigest: 'sha256:alpha',
                 daemonEntryPath: '/plugins/alpha/daemon.mjs',
@@ -237,6 +325,7 @@ describe('dispatchPluginHookEvent', () => {
                 pluginId: 'beta.plugin',
                 hookId: 'backend.resolveRuntimePrerequisites',
                 priority: 0,
+                registrationIndex: 1,
                 manifestPath: '/plugins/beta/plugin.json',
                 manifestDigest: 'sha256:beta',
                 daemonEntryPath: '/plugins/beta/daemon.mjs',
@@ -279,7 +368,11 @@ describe('dispatchPluginHookEvent', () => {
         scope: 'backend',
         backendId: 'codex',
         timestampMs: 1,
-        payload: {},
+        payload: {
+          backendId: 'codex',
+          targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+          timestampMs: 1,
+        },
       },
     });
 
@@ -294,5 +387,73 @@ describe('dispatchPluginHookEvent', () => {
       },
     });
     expect(secondHandler).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid typed hook payloads before invoking handlers', async () => {
+    const handler = vi.fn(async () => ({ observed: true }));
+
+    const result = await dispatchPluginHookEvent({
+      runtimeRegistry: {
+        readHookEventEnvelopeV1,
+        hookHandlersByHookId: new Map([
+          [
+            'subagent.start',
+            [
+              {
+                pluginId: 'acme.plugin',
+                hookId: 'subagent.start',
+                priority: 0,
+                registrationIndex: 0,
+                manifestPath: '/plugins/acme/plugin.json',
+                manifestDigest: 'sha256:acme',
+                daemonEntryPath: '/plugins/acme/daemon.mjs',
+                exportName: 'onSubagentStart',
+                registration: {
+                  provenance: 'external',
+                  source: { kind: 'path' },
+                  pluginId: 'acme.plugin',
+                  manifestPath: '/plugins/acme/plugin.json',
+                  manifestDigest: 'sha256:acme',
+                  daemonEntryPath: '/plugins/acme/daemon.mjs',
+                  sourceSpec: {
+                    kind: 'path',
+                    locator: '/plugins/acme',
+                    trustPolicy: 'local_trusted',
+                    installPolicy: 'link',
+                  },
+                  definition: {
+                    hookApiVersion: 1,
+                    id: 'subagent.start',
+                    category: 'lifecycle',
+                    scope: 'session',
+                    executionKind: 'observe',
+                    handler: {
+                      target: 'plugin',
+                      exportName: 'onSubagentStart',
+                    },
+                  },
+                },
+                handler,
+              },
+            ],
+          ],
+        ]),
+      },
+      event: {
+        hookVersion: 1,
+        eventId: 'subagent.start',
+        category: 'lifecycle',
+        scope: 'session',
+        timestampMs: 1,
+        payload: {},
+      },
+    });
+
+    expect(result).toMatchObject({
+      eventId: 'subagent.start',
+      matchedHandlerCount: 0,
+      validationError: expect.stringContaining('subagent.start'),
+    });
+    expect(handler).not.toHaveBeenCalled();
   });
 });

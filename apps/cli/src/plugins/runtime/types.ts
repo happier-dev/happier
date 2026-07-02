@@ -45,6 +45,7 @@ export type ResolvedPluginHookHandler = Readonly<{
     pluginId: string;
     hookId: string;
     priority: number;
+    registrationIndex: number;
     manifestPath: string;
     manifestDigest: string;
     daemonEntryPath: string;

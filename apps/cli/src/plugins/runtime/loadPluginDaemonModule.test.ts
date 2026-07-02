@@ -17,13 +17,13 @@ describe('loadPluginDaemonModule', () => {
     it('loads a supported daemon entry path and caches repeated loads by absolute path', async () => {
         const daemonEntryPath = await writeDaemonModule({
             extension: 'mjs',
-            contents: 'export async function bindTranscript() { return "loaded"; }\n',
+            contents: 'export async function resolveTranscriptBinding() { return "loaded"; }\n',
         });
 
         const first = await loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' });
         const second = await loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' });
 
-        expect(typeof first.bindTranscript).toBe('function');
+        expect(typeof first.resolveTranscriptBinding).toBe('function');
         expect(second).toBe(first);
     });
 
@@ -39,7 +39,7 @@ describe('loadPluginDaemonModule', () => {
     it('rejects unsupported daemon entry plugins instead of assuming a TypeScript runtime', async () => {
         const daemonEntryPath = await writeDaemonModule({
             extension: 'ts',
-            contents: 'export function bindTranscript() { return "nope"; }\n',
+            contents: 'export function resolveTranscriptBinding() { return "nope"; }\n',
         });
 
         await expect(loadPluginDaemonModule({ daemonEntryPath, trustPolicy: 'local_trusted' })).rejects.toThrow(

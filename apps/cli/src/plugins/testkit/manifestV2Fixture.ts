@@ -57,22 +57,15 @@ function normalizeLegacyContribution(entry: LegacyContribution): LegacyContribut
             output.engine = { kind: output.runtimeKind === 'acp' ? 'acp' : 'custom' };
         }
         delete output.runtimeKind;
-        const legacyRuntimeHooksField = `${'runtime'}Adapters`;
-        const runtimeCoreHooks = output[legacyRuntimeHooksField];
-        if (Array.isArray(runtimeCoreHooks)) {
-            output.runtimeCoreHooks = runtimeCoreHooks.map((hook) => {
+        const surfaceHandlers = output.surfaceHandlers;
+        if (Array.isArray(surfaceHandlers)) {
+            output.surfaceHandlers = surfaceHandlers.map((hook) => {
                 if (typeof hook !== 'object' || hook === null) {
                     return hook;
                 }
                 const normalizedHook = { ...hook } as Record<string, unknown>;
-                const legacyApiVersionField = `${'runtime'}AdapterApiVersion`;
-                if (normalizedHook[legacyApiVersionField]) {
-                    normalizedHook.runtimeCoreHookApiVersion = normalizedHook[legacyApiVersionField];
-                    delete normalizedHook[legacyApiVersionField];
-                }
                 return normalizedHook;
             });
-            delete output[legacyRuntimeHooksField];
         }
     }
     if (entry.kind === 'hook' && output.scope === 'provider') {

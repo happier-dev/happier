@@ -20,6 +20,7 @@ describe('dispatchPluginReloadHookEvent', () => {
                                 pluginId: 'acme.reload',
                                 hookId: 'plugin.reload.before',
                                 priority: 0,
+                                registrationIndex: 0,
                                 manifestPath: '/tmp/plugin.json',
                                 manifestDigest: 'sha256:reload',
                                 daemonEntryPath: '/tmp/daemon.mjs',

@@ -32,15 +32,16 @@ async function writeActivationModule(): Promise<Readonly<{
     const manifestPath = await writeManifest(root, {
         id: 'acme.activated',
         runtimeCapabilities: ['actions', 'tools', 'commands', 'hooks', 'backends', 'lifecycle', 'notifications'],
-        permissions: ['actions.register', 'tools.register', 'commands.register', 'hooks.register', 'notifications.register', 'network'],
+        permissions: ['actions.register', 'tools.register', 'commands.register', 'hooks.register', 'notifications.register', 'network', 'network.intercept'],
         backendIds: ['acme.activated.backend'],
         actionIds: ['acme.activated.action'],
         toolIds: ['acme.activated.tool'],
         commandIds: ['acme.activated.command'],
-        hookIds: ['session.started'],
+        hookIds: ['session.message.send'],
         lifecycleHandlerIds: ['acme.activated.lifecycleActivated', 'acme.activated.lifecycleDeactivating'],
         notificationCategoryIds: ['acme.activated.notification'],
         notificationChannelIds: ['acme.activated.notification.memory'],
+        requestInterceptorIds: ['acme.activated.fetch.audit'],
     });
     const daemonEntryPath = join(root, 'daemon.mjs');
     const disposeMarkerPath = join(root, 'dispose.log');
@@ -73,7 +74,7 @@ async function writeActivationModule(): Promise<Readonly<{
             '    handler: async (request) => ({ argv: request.input?.argv ?? [] }),',
             '  });',
             '  api.registerHook({',
-            '    hookId: "session.started",',
+            '    hookId: "session.message.send",',
             '    priority: 25,',
             '    handler: async () => "activated-hook",',
             '  });',
@@ -117,8 +118,7 @@ async function writeActivationModule(): Promise<Readonly<{
             '  });',
             '  api.registerRequestInterceptor({',
             '    id: "acme.activated.fetch.audit",',
-            '    priority: 10,',
-            '    intercept: async (request, next) => next(request),',
+            '    handle: async () => ({ kind: "allow" }),',
             '  });',
             '  return {',
             '    dispose: async () => {',
@@ -223,6 +223,16 @@ async function writeManifest(
         }>[];
         notificationCategoryIds?: readonly string[];
         notificationChannelIds?: readonly string[];
+        requestInterceptorIds?: readonly string[];
+        mcpServerIds?: readonly string[];
+        mcpDiscoveryProviderIds?: readonly string[];
+        systemTools?: readonly Readonly<{
+            toolId: string;
+            displayName: string;
+            lookupNames?: readonly string[];
+            executablePath?: string | null;
+            source?: 'system' | 'user_config' | 'managed';
+        }>[];
     }>,
 ): Promise<string> {
     const manifestPath = join(root, '.happier-plugin', 'plugin.json');
@@ -313,6 +323,36 @@ async function writeManifest(
                     kind: 'plugin',
                     title: `${channelId} test channel`,
                 })),
+                requestInterceptors: (params.requestInterceptorIds ?? []).map((interceptorId) => ({
+                    id: interceptorId,
+                    order: 10,
+                    targets: [{ scope: 'plugin-fetch' }],
+                })),
+                mcp: {
+                    servers: (params.mcpServerIds ?? []).map((serverId) => ({
+                        id: serverId,
+                        kind: 'mcp.server',
+                        version: '1.0.0',
+                        capabilityGates: [],
+                        permissionGates: [],
+                        redaction: 'none',
+                        hidden: false,
+                        name: serverId.replaceAll('.', '_'),
+                        transport: 'hosted',
+                        providerId: params.id,
+                    })),
+                    discoveryProviders: (params.mcpDiscoveryProviderIds ?? []).map((providerId) => ({
+                        id: providerId,
+                        kind: 'mcp.discoveryProvider',
+                        version: '1.0.0',
+                        capabilityGates: [],
+                        permissionGates: [],
+                        redaction: 'none',
+                        hidden: false,
+                        providerId: params.id,
+                    })),
+                },
+                systemTools: params.systemTools ?? [],
             },
         })),
         'utf8',
@@ -376,7 +416,7 @@ function createContributes(params: Readonly<{
         uiDescriptors: [],
         activationTargets: [],
         hookRegistrations: [],
-        runtimeCoreHooksByBackendId: new Map(),
+        surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: Object.freeze({}),
         providerDefinitionsById: new Map([[provider.id, provider]]),
         backendDefinitionsById: new Map([[backend.id, backend]]),
@@ -393,7 +433,7 @@ function mergeContributes(...registries: readonly ResolvedContributionRegistry[]
         uiDescriptors: registries.flatMap((registry) => registry.uiDescriptors),
         activationTargets: registries.flatMap((registry) => registry.activationTargets),
         hookRegistrations: registries.flatMap((registry) => registry.hookRegistrations),
-        runtimeCoreHooksByBackendId: new Map(),
+        surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: Object.freeze({}),
         providerDefinitionsById: new Map(registries.flatMap((registry) => [...registry.providerDefinitionsById.entries()])),
         backendDefinitionsById: new Map(registries.flatMap((registry) => [...registry.backendDefinitionsById.entries()])),
@@ -450,7 +490,7 @@ describe('activatePluginRuntimeRegistry', () => {
                 }),
             }),
         ]);
-        const hookHandlers = activated.hookHandlersByHookId.get('session.started');
+        const hookHandlers = activated.hookHandlersByHookId.get('session.message.send');
         expect(hookHandlers).toHaveLength(1);
         await expect(hookHandlers?.[0]?.handler({})).resolves.toBe('activated-hook');
         await expect(readFile(lifecycleMarkerPath, 'utf8')).resolves.toBe('activated\n');
@@ -482,8 +522,12 @@ describe('activatePluginRuntimeRegistry', () => {
                 pluginId: 'acme.activated',
                 registration: expect.objectContaining({
                     id: 'acme.activated.fetch.audit',
-                    priority: 10,
-                    intercept: expect.any(Function),
+                    handle: expect.any(Function),
+                }),
+                contribution: expect.objectContaining({
+                    id: 'acme.activated.fetch.audit',
+                    order: 10,
+                    targets: [{ scope: 'plugin-fetch' }],
                 }),
             }),
         ]);
@@ -579,6 +623,52 @@ describe('activatePluginRuntimeRegistry', () => {
         );
     });
 
+    it('projects manifest-declared system tools into plugin runtime policy', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-system-tools-'));
+        const manifestPath = await writeManifest(root, {
+            id: 'acme.system-tools',
+            runtimeCapabilities: [],
+            permissions: [],
+            systemTools: [
+                {
+                    toolId: 'acme.audit',
+                    displayName: 'Acme Audit',
+                    lookupNames: ['acme-audit'],
+                    source: 'system',
+                },
+            ],
+        });
+        const daemonEntryPath = join(root, 'daemon.mjs');
+        await writeFile(
+            daemonEntryPath,
+            [
+                'export async function activate() {',
+                '}',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const activated = await activatePluginRuntimeRegistry({
+            contributes: createContributes({
+                pluginId: 'acme.system-tools',
+                manifestPath,
+                daemonEntryPath,
+            }),
+            generation: 13,
+        });
+
+        expect(activated.systemToolDefinitionsByPluginId.get('acme.system-tools')).toEqual([
+            {
+                toolId: 'acme.audit',
+                displayName: 'Acme Audit',
+                lookupNames: ['acme-audit'],
+                defaultArgs: [],
+                source: 'system',
+            },
+        ]);
+    });
+
     it('records trust diagnostics instead of collapsing prompt-trust activation failures into generic load errors', async () => {
         const { manifestPath, daemonEntryPath } = await writeActivationModule();
 
@@ -600,12 +690,12 @@ describe('activatePluginRuntimeRegistry', () => {
         expect(activated.actions).toEqual([]);
     });
 
-    it('fails closed when activation-time registrations exceed declared runtime capabilities or permissions', async () => {
+    it('fails closed when activation-time executable registrations exceed declared runtime capabilities or permissions', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-plugin-activation-policy-'));
         const manifestPath = await writeManifest(root, {
             id: 'acme.policy',
-            runtimeCapabilities: ['resources', 'tools', 'uiDescriptors'],
-            permissions: ['resources.register'],
+            runtimeCapabilities: ['tools'],
+            permissions: [],
         });
         const daemonEntryPath = join(root, 'daemon.mjs');
 
@@ -613,24 +703,14 @@ describe('activatePluginRuntimeRegistry', () => {
             daemonEntryPath,
             [
                 'export async function activate(api) {',
-                '  api.registerResource({',
-                '    kindVersion: 1,',
-                '    id: "acme.policy.prompt",',
-                '    type: "prompt",',
-                '    path: "resources/prompt.md",',
-                '  });',
+                '  for (const key of ["registerResource", "registerUiDescriptor", "registerExecutionRunProfile"]) {',
+                '    if (key in api) throw new Error(`${key} must be manifest-owned`);',
+                '  }',
                 '  api.registerTool({',
                 '    id: "acme.policy.tool",',
                 '    name: "acme_policy_tool",',
                 '    title: "Policy Tool",',
                 '    handler: async () => "tool",',
-                '  });',
-                '  api.registerUiDescriptor({',
-                '    kindVersion: 1,',
-                '    id: "acme.policy.settings",',
-                '    surface: "settings",',
-                '    title: "Policy Settings",',
-                '    fields: [],',
                 '  });',
                 '}',
                 '',
@@ -648,38 +728,25 @@ describe('activatePluginRuntimeRegistry', () => {
         });
         const activatedWithFamilies = activated as typeof activated & Readonly<Record<string, unknown>>;
 
-        expect(activated.resources).toEqual([
-            expect.objectContaining({
-                pluginId: 'acme.policy',
-                definition: expect.objectContaining({
-                    id: 'acme.policy.prompt',
-                }),
-            }),
-        ]);
         expect(activated.actions).toEqual([]);
         expect(activatedWithFamilies.tools).toEqual([]);
-        expect(activated.uiDescriptors).toEqual([]);
         expect(activated.pluginDiagnosticsByPluginId['acme.policy']).toEqual([
             expect.objectContaining({
                 code: 'plugin_permission_missing',
                 message: expect.stringContaining('tools.register'),
             }),
-            expect.objectContaining({
-                code: 'plugin_permission_missing',
-                message: expect.stringContaining('ui.descriptors'),
-            }),
         ]);
     });
 
-    it('rejects activation-time executable registrations absent from the same manifest', async () => {
+    it('rejects activation-time executable and MCP registrations absent from the same manifest', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-plugin-activation-declared-ids-'));
         const manifestPath = await writeManifest(root, {
             id: 'acme.declared',
-            runtimeCapabilities: ['tools', 'commands', 'hooks', 'lifecycle'],
+            runtimeCapabilities: ['tools', 'commands', 'hooks', 'lifecycle', 'mcp'],
             permissions: ['tools.register', 'commands.register', 'hooks.register'],
             toolIds: ['acme.declared.tool'],
             commandIds: ['acme.declared.command'],
-            hookIds: ['acme.declared.hook'],
+            hookIds: ['tool.call.before'],
             lifecycleHandlerIds: ['acme.declared.lifecycle'],
         });
         const daemonEntryPath = join(root, 'daemon.mjs');
@@ -703,13 +770,22 @@ describe('activatePluginRuntimeRegistry', () => {
                 '    }),',
                 '    () => api.registerHook({',
                 '      id: "acme.declared.shadowHook",',
-                '      hookId: "session.started",',
+                '      hookId: "session.message.send",',
                 '      handler: async () => "shadow-hook",',
                 '    }),',
                 '    () => api.registerLifecycleHandler({',
                 '      id: "acme.declared.shadowLifecycle",',
                 '      event: "activated",',
                 '      handler: async () => undefined,',
+                '    }),',
+                '    () => api.registerMcpServer({',
+                '      id: "acme.declared.shadowMcp",',
+                '      name: "shadow-mcp",',
+                '      transport: { kind: "hosted" },',
+                '    }),',
+                '    () => api.registerMcpDiscoveryProvider({',
+                '      id: "acme.declared.shadowMcpDiscovery",',
+                '      discover: async () => [],',
                 '    }),',
                 '  ]) {',
                 '    try { bind(); } catch {}',
@@ -733,11 +809,15 @@ describe('activatePluginRuntimeRegistry', () => {
         expect(activated.commands).toEqual([]);
         expect(activated.hookHandlersByHookId.size).toBe(0);
         expect(activated.lifecycleHandlers).toEqual([]);
+        expect(activated.mcpServers).toEqual([]);
+        expect(activated.mcpDiscoveryProviders).toEqual([]);
         expect(activated.pluginDiagnosticsByPluginId['acme.declared']).toEqual([
             expect.objectContaining({ code: 'plugin_tool_undeclared_id' }),
             expect.objectContaining({ code: 'plugin_command_undeclared_id' }),
             expect.objectContaining({ code: 'plugin_hook_undeclared_id' }),
             expect.objectContaining({ code: 'plugin_lifecycle_handler_undeclared_id' }),
+            expect.objectContaining({ code: 'plugin_mcp_server_undeclared_id' }),
+            expect.objectContaining({ code: 'plugin_mcp_discovery_provider_undeclared_id' }),
         ]);
     });
 
@@ -1004,7 +1084,7 @@ describe('activatePluginRuntimeRegistry', () => {
                                 ],
                                 hooks: [
                                     {
-                                        id: 'session.started',
+                                        id: 'session.message.send',
                                         category: 'lifecycle',
                                         scope: 'session',
                                         executionKind: 'observe',
@@ -1040,7 +1120,7 @@ describe('activatePluginRuntimeRegistry', () => {
                                 handler: async () => 'activated-command-result',
                             });
                             api.registerHook({
-                                hookId: 'session.started',
+                                hookId: 'session.message.send',
                                 handler: async () => 'activated-hook',
                             });
                             api.registerLifecycleHandler({
@@ -1083,7 +1163,7 @@ describe('activatePluginRuntimeRegistry', () => {
                 pluginId,
             }),
         ]);
-        expect(activated.hookHandlersByHookId.get('session.started')).toEqual([
+        expect(activated.hookHandlersByHookId.get('session.message.send')).toEqual([
             expect.objectContaining({
                 registration: expect.objectContaining({
                     provenance: 'first_party',

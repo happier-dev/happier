@@ -145,6 +145,18 @@ export function resolveServerSelection(params: Readonly<{
             return Boolean(targetComparableKey && localComparableKey && targetComparableKey === localComparableKey);
           };
 
+          const explicitActiveServerId = sanitizeServerIdForFilesystem(params.envActiveServerId ?? '', '');
+          const explicitActive = explicitActiveServerId ? params.persisted.servers[explicitActiveServerId] ?? null : null;
+          if (
+            explicitActive
+            && (
+              matchesUrl(explicitActive, envCanonicalServerUrl)
+              || (!!envApiServerUrl && matchesUrl(explicitActive, envApiServerUrl))
+            )
+          ) {
+            return explicitActive;
+          }
+
           const persistedActive = params.persisted.servers[params.persisted.activeServerId] ?? null;
           const findMatch = (url: string): Readonly<{
             id: string;

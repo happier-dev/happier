@@ -7,7 +7,7 @@ export async function launch() {
             async sendTurnPrompt() {},
             async steerInFlightTurn() {},
             async waitForTurnCompletion() {},
-            subscribeRuntimeMessages() {
+            subscribeRuntimeEvents() {
                 return () => {};
             },
             async respondToPermission() {},

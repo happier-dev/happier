@@ -1,4 +1,3 @@
-import type { AgentMessage } from '@/agent/core/AgentBackend';
 import {
     isRuntimeTurnOperations,
     type RuntimeTurnCompletionOptions,
@@ -7,6 +6,7 @@ import {
     type RuntimeTurnOperations,
     type RuntimeTurnSessionIdentity,
     type RuntimeTurnStartOrLoadOptions,
+    type RuntimePublicationEvent,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { normalizePublishedRuntimeFacetsV1 } from '@/agent/runtime/facets/runtimeFacetsPublication';
 import type {
@@ -62,13 +62,13 @@ function buildGenericPluginRuntimeDescriptor(backend: ResolvedBackendContributio
     };
 }
 
-function emitRuntimeMetadataEvent(handler: RuntimeTurnMessageHandler, name: string, payload: unknown): void {
+function emitRuntimeMetadataEvent(handler: RuntimeTurnMessageHandler, name: RuntimePublicationEvent['name'], payload: unknown): void {
     if (payload === null || payload === undefined) return;
     handler({
         type: 'event',
         name,
         payload,
-    } as AgentMessage);
+    });
 }
 
 export function normalizePluginSessionLaunchResult(params: Readonly<{
@@ -119,11 +119,11 @@ export function decorateRuntimeTurnOperationsWithMetadata(params: Readonly<{
         async waitForTurnCompletion(opts?: RuntimeTurnCompletionOptions) {
             await params.runtime.waitForTurnCompletion(opts);
         },
-        subscribeRuntimeMessages(handler: RuntimeTurnMessageHandler) {
+        subscribeRuntimeEvents(handler: RuntimeTurnMessageHandler) {
             emitRuntimeMetadataEvent(handler, 'runtime.descriptor', params.runtimeDescriptor);
             emitRuntimeMetadataEvent(handler, 'runtime.capabilities', params.runtimeCapabilities);
             emitRuntimeMetadataEvent(handler, 'runtime.facets', params.runtimeFacets);
-            return params.runtime.subscribeRuntimeMessages(handler);
+            return params.runtime.subscribeRuntimeEvents(handler);
         },
         async respondToPermission(requestId: string, approved: boolean) {
             await params.runtime.respondToPermission(requestId, approved);

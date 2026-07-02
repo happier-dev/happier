@@ -51,6 +51,7 @@ function createSyntheticHookRegistration(params: Readonly<{
             id: params.registration.hookId,
             category: params.registration.category ?? 'lifecycle',
             scope: params.registration.scope ?? 'session',
+            ...(params.registration.filters ? { filters: params.registration.filters } : {}),
             executionKind: params.registration.executionKind ?? 'observe',
             priority: params.registration.priority,
             handler: {
@@ -78,6 +79,7 @@ export function createActivatedHandlerRegistry(params: Readonly<{
     const actionHandlersByActionId = new Map<string, PluginActionHandler>();
     const hookHandlersMutable = new Map<string, ResolvedPluginHookHandler[]>();
     const lifecycleHandlersMutable = new Map<string, ResolvedPluginLifecycleHandler[]>();
+    let hookRegistrationIndex = 0;
 
     for (const entry of params.entries) {
         for (const registration of entry.actions) {
@@ -91,10 +93,12 @@ export function createActivatedHandlerRegistry(params: Readonly<{
         }
 
         for (const registration of entry.hooks) {
+            const registrationIndex = hookRegistrationIndex++;
             const resolved: ResolvedPluginHookHandler = {
                 pluginId: entry.pluginId,
                 hookId: registration.hookId,
                 priority: registration.priority ?? 0,
+                registrationIndex,
                 manifestPath: entry.manifestPath,
                 manifestDigest: entry.manifestDigest,
                 daemonEntryPath: entry.daemonEntryPath,
@@ -147,7 +151,11 @@ export function createActivatedHandlerRegistry(params: Readonly<{
     for (const [hookId, handlers] of hookHandlersMutable.entries()) {
         hookHandlersByHookId.set(
             hookId,
-            Object.freeze([...handlers].sort((left, right) => right.priority - left.priority || left.pluginId.localeCompare(right.pluginId))),
+            Object.freeze([...handlers].sort((left, right) => (
+                right.priority - left.priority
+                || left.pluginId.localeCompare(right.pluginId)
+                || left.registrationIndex - right.registrationIndex
+            ))),
         );
     }
 

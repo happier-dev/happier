@@ -6,8 +6,9 @@ import type {
     ManagedServerSnapshotV1,
     ManagedServerSpecV1,
 } from '@happier-dev/plugin-sdk';
+import { LocalServiceLoopbackHostV1Schema } from '@happier-dev/protocol';
 
-import { createPluginExecService } from './exec';
+import { createPluginExecService } from '../exec';
 
 type PluginManagedServerDisposable = Readonly<{
     dispose: () => void | Promise<void>;
@@ -53,20 +54,53 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
 function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
     assertNotAborted(signal);
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, Math.max(0, ms));
-        signal?.addEventListener('abort', () => {
+        let settled = false;
+        const cleanup = () => {
+            if (signal) {
+                signal.removeEventListener('abort', onAbort);
+            }
+        };
+        const finish = (handler: () => void) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            handler();
+        };
+        const timer = setTimeout(() => finish(resolve), Math.max(0, ms));
+        const onAbort = () => {
             clearTimeout(timer);
-            reject(createAbortError());
-        }, { once: true });
+            finish(() => reject(createAbortError()));
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
     });
 }
 
-function composeAbortSignals(signals: readonly (AbortSignal | undefined)[]): AbortSignal {
+type ComposedAbortSignal = Readonly<{
+    signal: AbortSignal;
+    dispose: () => void;
+}>;
+
+function composeAbortSignals(signals: readonly (AbortSignal | undefined)[]): ComposedAbortSignal {
     const controller = new AbortController();
+    const listeners: Array<Readonly<{ signal: AbortSignal; listener: () => void }>> = [];
+    let disposed = false;
+    const dispose = () => {
+        if (disposed) {
+            return;
+        }
+        disposed = true;
+        for (const entry of listeners) {
+            entry.signal.removeEventListener('abort', entry.listener);
+        }
+        listeners.length = 0;
+    };
     const abort = (signal: AbortSignal) => {
         if (!controller.signal.aborted) {
             controller.abort(signal.reason ?? createAbortError());
         }
+        dispose();
     };
     for (const signal of signals) {
         if (!signal) {
@@ -76,9 +110,14 @@ function composeAbortSignals(signals: readonly (AbortSignal | undefined)[]): Abo
             abort(signal);
             break;
         }
-        signal.addEventListener('abort', () => abort(signal), { once: true });
+        const listener = () => abort(signal);
+        signal.addEventListener('abort', listener, { once: true });
+        listeners.push({ signal, listener });
     }
-    return controller.signal;
+    return Object.freeze({
+        signal: controller.signal,
+        dispose,
+    });
 }
 
 function isSuccessfulCommandHealth(result: ExecRunResultV1): boolean {
@@ -86,12 +125,7 @@ function isSuccessfulCommandHealth(result: ExecRunResultV1): boolean {
 }
 
 function isLoopbackHostname(hostname: string): boolean {
-    const normalized = hostname.toLowerCase();
-    return normalized === 'localhost'
-        || normalized === '::1'
-        || normalized === '[::1]'
-        || normalized === '127.0.0.1'
-        || normalized.startsWith('127.');
+    return LocalServiceLoopbackHostV1Schema.safeParse(hostname).success;
 }
 
 function assertLoopbackHttpHealthCheck(url: string): void {
@@ -123,20 +157,21 @@ async function runHealthCheck(params: Readonly<{
     assertLoopbackHttpHealthCheck(healthCheck.url);
     const timeoutController = new AbortController();
     const timer = setTimeout(() => timeoutController.abort(createAbortError()), Math.max(0, healthCheck.timeoutMs ?? 1_000));
-    const signal = composeAbortSignals([params.signal, timeoutController.signal]);
+    const composed = composeAbortSignals([params.signal, timeoutController.signal]);
     try {
         const response = await fetch(healthCheck.url, {
             method: 'GET',
-            signal,
+            signal: composed.signal,
         });
         return response.ok;
     } catch (error) {
-        if (signal.aborted && params.signal?.aborted === true) {
+        if (composed.signal.aborted && params.signal?.aborted === true) {
             throw createAbortError();
         }
         return false;
     } finally {
         clearTimeout(timer);
+        composed.dispose();
     }
 }
 
@@ -146,7 +181,8 @@ export function createPluginManagedServerService(
     const exec = params.exec ?? createPluginExecService();
     const service: ManagedServerRuntimeServiceV1 = Object.freeze({
         async supervise(spec: ManagedServerSpecV1): Promise<ManagedServerHandleV1> {
-            if (spec.restart === 'on_failure') {
+            const restart = (spec as unknown as Readonly<{ restart?: unknown }>).restart;
+            if (restart !== undefined && restart !== 'never') {
                 throw new PluginManagedServerError(
                     'PLUGIN_MANAGED_SERVER_RESTART_UNSUPPORTED',
                     `Managed server '${spec.id}' restart policy is not supported by this host binding yet`,

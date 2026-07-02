@@ -19,6 +19,7 @@ type DispatchDaemonSpawnHookEventDeps = Readonly<{
   dispatchEvent?: (params: Readonly<{
     runtimeRegistry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'hookHandlersByHookId' | 'readHookEventEnvelopeV1'>;
     event: HookEventEnvelopeV1;
+    context?: unknown;
   }>) => Promise<DispatchPluginHookEventResultV1>;
   nowMs?: () => number;
 }>;
@@ -32,6 +33,7 @@ export type DaemonSpawnHookDispatchEvent = Readonly<{
   cwd?: string;
   timestampMs?: number;
   payload: Record<string, unknown>;
+  context?: unknown;
 }>;
 
 function resolveDaemonSpawnHookCategory(eventId: DaemonSpawnHookEventIdV1): HookEventEnvelopeV1['category'] {
@@ -93,6 +95,7 @@ export async function dispatchDaemonSpawnHookEvent(
     return await dispatchEvent({
       runtimeRegistry: lease.registry,
       event,
+      ...(params.event.context === undefined ? {} : { context: params.event.context }),
     });
   } finally {
     await lease.release();

@@ -12,7 +12,7 @@ const hasNoDeprecation = process.execArgv.includes('--no-deprecation');
 
 if (!hasNoWarnings || !hasNoDeprecation) {
   const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  const entrypoint = await prepareRuntimeEntrypoint(projectRoot, join('backends', 'codex', 'mcp', 'happierStdioBridge.mjs'));
+  const entrypoint = await prepareRuntimeEntrypoint(projectRoot, join('mcp', 'bridges', 'happierMcpStdioBridge.mjs'));
 
   try {
     execFileSync(process.execPath, [
@@ -30,5 +30,5 @@ if (!hasNoWarnings || !hasNoDeprecation) {
 } else {
   // Already have desired flags; import module directly
   const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  import(await prepareRuntimeEntrypoint(projectRoot, join('backends', 'codex', 'mcp', 'happierStdioBridge.mjs')));
+  import(await prepareRuntimeEntrypoint(projectRoot, join('mcp', 'bridges', 'happierMcpStdioBridge.mjs')));
 }

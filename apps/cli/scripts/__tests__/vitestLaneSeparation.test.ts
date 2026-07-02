@@ -86,6 +86,14 @@ describe('Vitest lane separation', () => {
                     find: '@happier-dev/release-runtime',
                     replacement: expect.stringContaining('/packages/release-runtime/src'),
                 }),
+                expect.objectContaining({
+                    find: '@happier-dev/plugins-claude',
+                    replacement: expect.stringContaining('/packages/plugins/claude/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/plugins-codex',
+                    replacement: expect.stringContaining('/packages/plugins/codex/src'),
+                }),
             ]),
         );
     });
@@ -103,6 +111,14 @@ describe('Vitest lane separation', () => {
                 expect.objectContaining({
                     find: '@happier-dev/release-runtime',
                     replacement: expect.stringContaining('/packages/release-runtime/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/plugins-claude',
+                    replacement: expect.stringContaining('/packages/plugins/claude/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/plugins-codex',
+                    replacement: expect.stringContaining('/packages/plugins/codex/src'),
                 }),
             ]),
         );

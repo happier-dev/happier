@@ -1,11 +1,16 @@
-import { invalidateDaemonContributionRegistryProjectionCache } from '@/rpc/handlers/daemonContributionRegistryProjection';
-import { dispatchPluginReloadHookEvent } from '@/plugins/runtime/hooks/execution/dispatchPluginReloadHookEvent';
-
 import { createPluginReloadController } from './controller';
 
 export const pluginReloadController = createPluginReloadController({
-    invalidateCaches: () => {
+    invalidateCaches: async () => {
+        const { invalidateDaemonContributionRegistryProjectionCache } = await import('../../../rpc/handlers/daemonContributionRegistryProjection');
         invalidateDaemonContributionRegistryProjectionCache();
     },
-    dispatchReloadHookEvent: dispatchPluginReloadHookEvent,
+    dispatchReloadHookEvent: async (event) => {
+        const { dispatchPluginReloadHookEvent } = await import('../hooks/execution/dispatchPluginReloadHookEvent');
+        await dispatchPluginReloadHookEvent(event);
+    },
+    publishInstalledManifestProjections: async (params) => {
+        const { publishInstalledPluginManifestProjectionsToServer } = await import('../../projection/server/installedManifests');
+        await publishInstalledPluginManifestProjectionsToServer(params);
+    },
 });

@@ -2,19 +2,22 @@ import {
   PluginManifestV2Schema,
   readHookRegistrationV1,
   type AgentDefinitionV1,
-  type BackendRuntimeAdapterV1,
+  type BackendSurfaceDeclarationV1,
   type InstallableDependencyDescriptor,
   type PluginActionContributionV2,
   type PluginBackendContributionV2,
   type PluginCommandContributionV2,
   type PluginExecutionRunProfileContributionV2,
+  type PluginEventContributionV1,
   type PluginHookContributionV2,
   type PluginLifecycleHandlerContributionV2,
-  type PluginManifestV2,
+  type ParsedPluginManifestV2,
   type PluginMcpContributesV1,
   type PluginNotificationCategoryContributionV2,
   type PluginNotificationChannelContributionV2,
+  type PluginRequestInterceptorContributionV1,
   type PluginResourceContributionV2,
+  type PluginSystemToolContributionV1,
   type PluginToolContributionV2,
   type PluginUiDescriptorContributionV2,
   type ScmBackendContribution,
@@ -54,15 +57,15 @@ function toCanonicalBackendContribution(
     catalogAgentId,
     ...backend
   } = contribution;
-  const runtimeCoreHooks = (contribution as Readonly<{ runtimeCoreHooks?: unknown }>).runtimeCoreHooks;
+  const surfaceHandlers = (contribution as Readonly<{ surfaceHandlers?: unknown }>).surfaceHandlers;
 
   return Object.freeze({
     ...backend,
     providerId: agentId,
     providerAgentId: catalogAgentId,
     runtimeKind: engine.kind,
-    runtimeCoreHooks: Object.freeze(Array.isArray(runtimeCoreHooks)
-      ? [...runtimeCoreHooks] as readonly BackendRuntimeAdapterV1[]
+    surfaceHandlers: Object.freeze(Array.isArray(surfaceHandlers)
+      ? [...surfaceHandlers] as readonly BackendSurfaceDeclarationV1[]
       : []),
     engine,
   }) as unknown as CanonicalPluginBackendDefinition;
@@ -78,7 +81,7 @@ function toCanonicalProviderContribution(agent: AgentDefinitionV1): ProviderDefi
   return Object.freeze({
     ...provider,
     providerAgentId: catalogAgentId,
-    providerCliRuntime: agentCliRuntime,
+    ...(agentCliRuntime ? { agentCliRuntime } : {}),
   }) as ProviderDefinitionV1;
 }
 
@@ -100,8 +103,8 @@ export function normalizeManifestHookRegistrations(input: unknown): unknown {
   return input;
 }
 
-function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalPluginManifest {
-  const source = (manifest as PluginManifestV2 & { source?: CanonicalPluginManifest['source'] }).source;
+function toCanonicalPluginManifestFromV2(manifest: ParsedPluginManifestV2): CanonicalPluginManifest {
+  const source = (manifest as ParsedPluginManifestV2 & { source?: CanonicalPluginManifest['source'] }).source;
   const contributes = manifest.contributes as Readonly<{
     agents?: readonly AgentDefinitionV1[];
     backends?: readonly PluginBackendContributionV2[];
@@ -112,11 +115,14 @@ function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalP
     uiDescriptors?: readonly PluginUiDescriptorContributionV2[];
     notifications?: readonly PluginNotificationCategoryContributionV2[];
     notificationChannels?: readonly PluginNotificationChannelContributionV2[];
+    events?: readonly PluginEventContributionV1[];
     executionRunProfiles?: readonly PluginExecutionRunProfileContributionV2[];
     mcp?: PluginMcpContributesV1;
     scmHostingProviders?: readonly ScmHostingProviderContribution[];
     scmBackends?: readonly ScmBackendContribution[];
     installables?: readonly InstallableDependencyDescriptor[];
+    systemTools?: readonly PluginSystemToolContributionV1[];
+    requestInterceptors?: readonly PluginRequestInterceptorContributionV1[];
     hooks?: readonly PluginHookContributionV2[];
     lifecycleHandlers?: readonly PluginLifecycleHandlerContributionV2[];
   }>;
@@ -142,6 +148,7 @@ function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalP
       } : {}),
     }),
     permissions: Object.freeze([...manifest.capabilities.permissions]),
+    optionalPermissions: Object.freeze([...manifest.capabilities.optionalPermissions]),
     ...(source ? { source } : {}),
     ...(manifest.marketplace ? { marketplace: manifest.marketplace } : {}),
     contributes: Object.freeze({
@@ -154,6 +161,7 @@ function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalP
       uiDescriptors: Object.freeze([...(contributes.uiDescriptors ?? [])]),
       notifications: Object.freeze([...(contributes.notifications ?? [])]),
       notificationChannels: Object.freeze([...(contributes.notificationChannels ?? [])]),
+      events: Object.freeze([...(contributes.events ?? [])]),
       executionRunProfiles: Object.freeze([...(contributes.executionRunProfiles ?? [])]),
       mcp: Object.freeze({
         servers: Object.freeze([...(contributes.mcp?.servers ?? [])]),
@@ -162,6 +170,8 @@ function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalP
       scmHostingProviders: Object.freeze([...(contributes.scmHostingProviders ?? [])]),
       scmBackends: Object.freeze([...(contributes.scmBackends ?? [])]),
       installables: Object.freeze([...(contributes.installables ?? [])]),
+      systemTools: Object.freeze([...(contributes.systemTools ?? [])]),
+      requestInterceptors: Object.freeze([...(contributes.requestInterceptors ?? [])]),
       hooks: Object.freeze([...(contributes.hooks ?? [])]),
       lifecycleHandlers: Object.freeze([...(contributes.lifecycleHandlers ?? [])]),
     }),

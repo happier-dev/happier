@@ -1,4 +1,4 @@
-import { isHookHandlerTargetV1 } from '@happier-dev/protocol';
+import { getPluginHookDefinitionV1, isHookHandlerTargetV1 } from '@happier-dev/protocol';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { ResolvedContributionRegistry, ResolvedHookRegistration } from '@/plugins/projection/registry/types';
 
@@ -86,9 +86,19 @@ export async function resolvePluginHookHandlerRegistry(params: Readonly<{
     const handlersByHookIdMutable = new Map<string, ResolvedPluginHookHandler[]>();
     const diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]> = {};
     const hookRegistrations = params.registry?.hookRegistrations ?? params.hookRegistrations ?? [];
+    let registrationIndex = 0;
 
     for (const registration of hookRegistrations) {
+        const currentRegistrationIndex = registrationIndex++;
         ensureDiagnosticBucket(diagnosticsByPluginId, registration.pluginId);
+
+        if (!getPluginHookDefinitionV1(registration.definition.id)) {
+            appendDiagnostic(diagnosticsByPluginId, registration.pluginId, {
+                code: 'plugin_manifest_semantic_invalid',
+                message: `Plugin hook '${registration.definition.id}' is not in the final public hook catalog`,
+            });
+            continue;
+        }
 
         if (!isHookHandlerTargetV1(registration.definition.handler.target)) {
             const handlerTarget = typeof registration.definition.handler.target === 'string'
@@ -163,6 +173,7 @@ export async function resolvePluginHookHandlerRegistry(params: Readonly<{
             pluginId: registration.pluginId,
             hookId: registration.definition.id,
             priority: registration.definition.priority ?? 0,
+            registrationIndex: currentRegistrationIndex,
             manifestPath: registration.manifestPath,
             manifestDigest: registration.manifestDigest,
             daemonEntryPath: registration.daemonEntryPath,
@@ -185,6 +196,9 @@ export async function resolvePluginHookHandlerRegistry(params: Readonly<{
             }
             if (left.pluginId !== right.pluginId) {
                 return left.pluginId.localeCompare(right.pluginId);
+            }
+            if (left.registrationIndex !== right.registrationIndex) {
+                return left.registrationIndex - right.registrationIndex;
             }
             if (left.manifestPath !== right.manifestPath) {
                 return left.manifestPath.localeCompare(right.manifestPath);

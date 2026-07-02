@@ -32,6 +32,7 @@ function createTestAcpBackendEngine(): Record<string, unknown> {
 async function writePluginManifest(rootDir: string, manifestOverrides?: Record<string, unknown>): Promise<void> {
     const manifestDir = join(rootDir, '.happier-plugin');
     await mkdir(manifestDir, { recursive: true });
+    await writeFile(join(rootDir, 'daemon.js'), 'export async function launch() { return null; }\n', 'utf8');
     await writeFile(
         join(manifestDir, 'plugin.json'),
         JSON.stringify(
@@ -73,9 +74,9 @@ async function writePluginManifest(rootDir: string, manifestOverrides?: Record<s
                         providerId: 'acme.ohmypi',
                         engine: createTestAcpBackendEngine(),
                         capabilities: {},
-                        runtimeCoreHooks: [
+                        surfaceHandlers: [
                             {
-                                runtimeCoreHookApiVersion: 1,
+                                surfaceApiVersion: 1,
                                 id: 'backend.terminalRuntime.launch',
                                 kind: 'terminalRuntime',
                                 operation: 'launch',
@@ -103,13 +104,13 @@ async function writePluginManifest(rootDir: string, manifestOverrides?: Record<s
                     {
                         kind: 'hook',
                         hookApiVersion: 1,
-                        id: 'backend.terminalRuntime.bindTranscript',
-                        category: 'integration',
+                        id: 'backend.resolveRuntimePrerequisites',
+                        category: 'decision',
                         scope: 'backend',
-                        executionKind: 'integrate',
+                        executionKind: 'decide',
                         handler: {
                             target: 'plugin',
-                            exportName: 'bindTranscript',
+                            exportName: 'resolveTranscriptBinding',
                         },
                     },
                 ],
@@ -124,7 +125,7 @@ async function writePluginManifest(rootDir: string, manifestOverrides?: Record<s
         join(rootDir, 'daemon.js'),
         [
             'export async function launch() { return null; }',
-            'export async function bindTranscript() { return null; }',
+            'export async function resolveTranscriptBinding() { return null; }',
             'export default async function defaultHookHandler() { return null; }',
         ].join('\n'),
         'utf8',
@@ -191,7 +192,7 @@ describe('resolveMergedContributionRegistry', () => {
                 id: 'acme.ohmypi.acp',
                 providerId: 'acme.ohmypi',
             },
-            runtimeCoreHooks: [
+            surfaceHandlers: [
                 expect.objectContaining({
                     id: 'backend.terminalRuntime.launch',
                     kind: 'terminalRuntime',
@@ -199,7 +200,7 @@ describe('resolveMergedContributionRegistry', () => {
             ],
         });
         expect(registry.backendDefinitionsById.get('acme.ohmypi.acp')?.getRuntimeCore).toEqual(expect.any(Function));
-        expect(registry.runtimeCoreHooksByBackendId.get('acme.ohmypi.acp')).toEqual([
+        expect(registry.surfaceHandlersByBackendId.get('acme.ohmypi.acp')).toEqual([
             expect.objectContaining({
                 backendId: 'acme.ohmypi.acp',
                 definition: expect.objectContaining({
@@ -219,7 +220,7 @@ describe('resolveMergedContributionRegistry', () => {
             expect.objectContaining({
                 pluginId: 'acme.ohmypi',
                 definition: expect.objectContaining({
-                    id: 'backend.terminalRuntime.bindTranscript',
+                    id: 'backend.resolveRuntimePrerequisites',
                 }),
             }),
         ]);
@@ -272,9 +273,9 @@ describe('resolveMergedContributionRegistry', () => {
                             strategy: 'best_effort',
                         },
                     },
-                    runtimeCoreHooks: [
+                    surfaceHandlers: [
                         {
-                            runtimeCoreHookApiVersion: 1,
+                            surfaceApiVersion: 1,
                             id: 'backend.terminalRuntime.launch',
                             kind: 'terminalRuntime',
                             operation: 'launch',
@@ -321,22 +322,39 @@ describe('resolveMergedContributionRegistry', () => {
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
         expect(registry.providerDefinitionsById.get('codex')).toMatchObject({
-            richDefinition: {
-                provenance: 'first_party',
-                definition: expect.objectContaining({
-                    id: 'codex',
-                }),
+            id: 'codex',
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
+            definition: {
+                kindVersion: 1,
+                id: 'codex',
+                ownedBackendIds: ['codex'],
             },
+            runtimeSpec: expect.objectContaining({
+                id: 'codex',
+                binaryName: 'codex',
+            }),
+            catalogEntry: expect.objectContaining({
+                id: 'codex',
+                cliSubcommand: 'codex',
+            }),
+            pluginId: 'happier.agent.codex',
         });
+        expect(registry.providerDefinitionsById.get('codex')).not.toHaveProperty('richDefinition');
         expect(registry.backendDefinitionsById.get('codex')).toMatchObject({
-            richDefinition: {
-                provenance: 'first_party',
-                definition: expect.objectContaining({
-                    id: 'codex',
-                    providerId: 'codex',
-                }),
+            id: 'codex',
+            providerId: 'codex',
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
+            definition: {
+                kindVersion: 1,
+                id: 'codex',
+                providerId: 'codex',
             },
+            runtimeKind: 'appServer',
+            pluginId: 'happier.agent.codex',
         });
+        expect(registry.backendDefinitionsById.get('codex')).not.toHaveProperty('richDefinition');
         expect(registry.backendDefinitionsById.get('codex')).not.toHaveProperty('getRuntimeCore');
         expect(registry.providerDefinitionsById.get('acme.ohmypi')).toMatchObject({
             richDefinition: {
@@ -361,8 +379,16 @@ describe('resolveMergedContributionRegistry', () => {
                 definition: expect.objectContaining({
                     runtimeKind: 'acp',
                     capabilities: expect.objectContaining({
-                        terminalRuntime: true,
+                        executionRun: expect.objectContaining({
+                            supported: true,
+                        }),
                     }),
+                    surfaceHandlers: expect.arrayContaining([
+                        expect.objectContaining({
+                            kind: 'terminalRuntime',
+                            operation: 'launch',
+                        }),
+                    ]),
                     install: expect.objectContaining({
                         sourcePreference: 'system-first',
                     }),
@@ -439,7 +465,7 @@ describe('resolveMergedContributionRegistry', () => {
                     providerId: 'acme.missing.provider',
                     engine: createTestAcpBackendEngine(),
                     capabilities: {},
-                    runtimeCoreHooks: [],
+                    surfaceHandlers: [],
                 },
             ],
         });
@@ -483,6 +509,111 @@ describe('resolveMergedContributionRegistry', () => {
                 code: 'plugin_manifest_semantic_invalid',
             }),
         ]);
+    });
+
+    it('projects review-only execution-run backends without creating session providers', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-review-backend-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-review-backend-'));
+        const store = createPluginStateStore({ happyHomeDir });
+
+        await writePluginManifest(pluginRoot, {
+            id: 'acme.review.coderabbit',
+            displayName: 'CodeRabbit Review',
+            description: 'Review-only CodeRabbit engine',
+            runtime: {
+                apiVersion: 1,
+                capabilities: ['executionRunProfiles'],
+            },
+            contributes: {
+                backends: [
+                    {
+                        kindVersion: 1,
+                        id: 'acme-review',
+                        agentId: 'acme-review',
+                        engine: { kind: 'custom' },
+                        capabilities: {
+                            session: { supported: false },
+                            executionRun: {
+                                supported: true,
+                                review: {
+                                    intents: ['review'],
+                                    modes: ['change_scoped_review'],
+                                    directCommentWrite: false,
+                                },
+                            },
+                        },
+                        surfaceHandlers: [],
+                    },
+                ],
+                executionRunProfiles: [
+                    {
+                        id: 'acme.review',
+                        kind: 'executionRun.profile',
+                        version: '1',
+                        intent: 'review',
+                        displayKey: 'plugins.coderabbit.executionRuns.review.label',
+                    },
+                ],
+            },
+        });
+
+        await store.write({
+            t: 'happier_plugin_state_v1',
+            schemaVersion: 1,
+            plugins: {
+                'acme.review.coderabbit': {
+                    source: {
+                        kind: 'path',
+                        locator: pluginRoot,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                        resolvedPath: pluginRoot,
+                        manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+                    },
+                    compatibility: {
+                        status: 'unknown',
+                        diagnostics: [],
+                    },
+                    install: {
+                        mode: 'link',
+                        manifestVersion: '1.0.0',
+                        manifestDigest: null,
+                        installedPath: null,
+                    },
+                    state: {
+                        enabled: true,
+                    },
+                },
+            },
+        });
+
+        const registry = await resolveMergedContributionRegistry({ happyHomeDir });
+
+        expect(registry.providerDefinitionsById.get('acme-review')).toBeUndefined();
+        expect(registry.catalogEntriesById['acme-review']).toBeUndefined();
+        expect(registry.backendDefinitionsById.get('acme-review')).toMatchObject({
+            id: 'acme-review',
+            providerId: 'acme-review',
+            pluginId: 'acme.review.coderabbit',
+            capabilities: {
+                session: expect.objectContaining({ supported: false }),
+                executionRun: expect.objectContaining({
+                    supported: true,
+                    review: expect.objectContaining({
+                        directCommentWrite: false,
+                    }),
+                }),
+            },
+        });
+        expect(registry.backendDefinitionsById.get('acme-review')).not.toHaveProperty('getRuntimeCore');
+        expect(registry.executionRunProfilesById?.get('acme.review')).toMatchObject({
+            pluginId: 'acme.review.coderabbit',
+            definition: expect.objectContaining({
+                id: 'acme.review',
+                intent: 'review',
+            }),
+        });
+        expect(registry.pluginDiagnosticsByPluginId['acme.review.coderabbit']).toEqual([]);
     });
 
     it('records a diagnostic and excludes plugin providers whose owned backend ids do not resolve', async () => {
@@ -561,10 +692,10 @@ describe('resolveMergedContributionRegistry', () => {
                 {
                     kind: 'hook',
                     hookApiVersion: 1,
-                    id: 'backend.terminalRuntime.bindTranscript',
-                    category: 'integration',
+                    id: 'backend.resolveRuntimePrerequisites',
+                    category: 'decision',
                     scope: 'backend',
-                    executionKind: 'integrate',
+                    executionKind: 'decide',
                     handler: {
                         target: 'plugin',
                     },
@@ -608,7 +739,7 @@ describe('resolveMergedContributionRegistry', () => {
             expect.objectContaining({
                 pluginId: 'acme.hook-export-missing',
                 definition: expect.objectContaining({
-                    id: 'backend.terminalRuntime.bindTranscript',
+                    id: 'backend.resolveRuntimePrerequisites',
                     handler: expect.objectContaining({
                         target: 'plugin',
                     }),
@@ -632,7 +763,7 @@ describe('resolveMergedContributionRegistry', () => {
                     providerId: 'codex',
                     engine: createTestAcpBackendEngine(),
                     capabilities: {},
-                    runtimeCoreHooks: [],
+                    surfaceHandlers: [],
                 },
             ],
         });
@@ -705,7 +836,7 @@ describe('resolveMergedContributionRegistry', () => {
                     capabilities: {},
                     providerAgentId: 'openai',
                     iconAgentId: 'omp',
-                    runtimeCoreHooks: [],
+                    surfaceHandlers: [],
                 },
             ],
         });
@@ -772,7 +903,7 @@ describe('resolveMergedContributionRegistry', () => {
         ]));
     });
 
-    it('keeps plugin backends visible for projection while withholding live runtime runtimeCore when no exact built-in compatibility carrier exists', async () => {
+    it('keeps plugin backends visible for projection while withholding live runtime no exact no exact built-in compatibility carrier exists', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-runtime-gating-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-gating-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -799,9 +930,9 @@ describe('resolveMergedContributionRegistry', () => {
                     providerId: 'acme.runtime',
                     engine: createTestAcpBackendEngine(),
                     capabilities: {},
-                    runtimeCoreHooks: [
+                    surfaceHandlers: [
                         {
-                            runtimeCoreHookApiVersion: 1,
+                            surfaceApiVersion: 1,
                             id: 'launch-adapter',
                             kind: 'terminalRuntime',
                             operation: 'launch',
@@ -852,7 +983,7 @@ describe('resolveMergedContributionRegistry', () => {
             providerId: 'acme.runtime',
         });
         expect(registry.backendDefinitionsById.get('acme.runtime.backend')).not.toHaveProperty('getRuntimeCore');
-        expect(registry.runtimeCoreHooksByBackendId.get('acme.runtime.backend')).toEqual([
+        expect(registry.surfaceHandlersByBackendId.get('acme.runtime.backend')).toEqual([
             expect.objectContaining({
                 backendId: 'acme.runtime.backend',
                 definition: expect.objectContaining({
@@ -867,5 +998,95 @@ describe('resolveMergedContributionRegistry', () => {
                 message: expect.stringMatching(/cannot become a live session runtime/i),
             }),
         ]));
+    });
+
+    it('normalizes external legacy provider CLI runtime facts to agent vocabulary while projecting the runtime spec', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-agent-cli-runtime-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-agent-cli-runtime-'));
+        const store = createPluginStateStore({ happyHomeDir });
+
+        await writePluginManifest(pluginRoot, {
+            id: 'acme.runtime',
+            displayName: 'Acme Runtime',
+            description: 'Runtime with plugin-authored agent CLI facts',
+            contributes: [
+                {
+                    kind: 'provider',
+                    kindVersion: 1,
+                    id: 'acme.runtime',
+                    display: {
+                        name: 'Acme Runtime',
+                        tags: ['plugin'],
+                    },
+                    providerCliRuntime: {
+                        id: 'acme.runtime',
+                        title: 'Acme Runtime',
+                        binaryName: 'acme-runtime',
+                        sourcePreferenceDefault: 'system-first',
+                        managedInstall: null,
+                        manualInstallKind: 'command',
+                        manualInstallRecipes: null,
+                        acceptsJavaScriptFileOverride: false,
+                    },
+                    ownedBackendIds: [],
+                },
+            ],
+        });
+
+        await store.write({
+            t: 'happier_plugin_state_v1',
+            schemaVersion: 1,
+            plugins: {
+                'acme.runtime': {
+                    source: {
+                        kind: 'path',
+                        locator: pluginRoot,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                        resolvedPath: pluginRoot,
+                        manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+                    },
+                    compatibility: {
+                        status: 'unknown',
+                        diagnostics: [],
+                    },
+                    install: {
+                        mode: 'link',
+                        manifestVersion: '1.0.0',
+                        manifestDigest: null,
+                        installedPath: null,
+                    },
+                    state: {
+                        enabled: true,
+                    },
+                },
+            },
+        });
+
+        const registry = await resolveMergedContributionRegistry({ happyHomeDir });
+        const provider = registry.providerDefinitionsById.get('acme.runtime');
+
+        expect(provider).toBeDefined();
+        if (!provider) {
+            throw new Error('Expected acme.runtime provider contribution to be registered');
+        }
+        expect(provider.richDefinition).toBeDefined();
+        if (!provider.richDefinition) {
+            throw new Error('Expected acme.runtime provider contribution to keep its rich definition');
+        }
+
+        expect(provider.runtimeSpec).toEqual(expect.objectContaining({
+            id: 'acme.runtime',
+            title: 'Acme Runtime',
+            binaryName: 'acme-runtime',
+        }));
+        expect(provider.richDefinition.definition).toEqual(expect.objectContaining({
+            agentCliRuntime: expect.objectContaining({
+                id: 'acme.runtime',
+                title: 'Acme Runtime',
+                binaryName: 'acme-runtime',
+            }),
+        }));
+        expect(provider.richDefinition.definition).not.toHaveProperty('providerCliRuntime');
     });
 });

@@ -115,20 +115,6 @@ function resolveDeclaredBundledPluginWorkspacePackageNames({ repoRoot }) {
   return packageNames;
 }
 
-function resolveBundledWorkspaceSrcDir({ repoRoot, packageName }) {
-  if (packageName.startsWith(PLUGINS_PACKAGE_PREFIX)) {
-    const pluginId = packageName.slice(PLUGINS_PACKAGE_PREFIX.length);
-    return resolve(repoRoot, 'packages', 'plugins', pluginId);
-  }
-
-  const workspaceName = packageName.split('/').at(-1);
-  if (!workspaceName) {
-    throw new Error(`Unable to resolve workspace name from bundled dependency: ${packageName}`);
-  }
-
-  return resolve(repoRoot, 'packages', workspaceName);
-}
-
 export async function bundleWorkspaceDeps(opts = {}) {
   // `repoRoot`/`happyCliDir` refer to the target repository we are bundling into.
   // In tests, this is a sandbox directory. The implementation helpers (cli-common workspaces)
@@ -141,6 +127,7 @@ export async function bundleWorkspaceDeps(opts = {}) {
     const {
       bundleWorkspacePackages,
       readBundledWorkspacePackageNames,
+      resolveWorkspaceBundlesFromPackageJson,
       vendorBundledPackageRuntimeDependencies,
     } = await loadCliCommonWorkspacesModule(SCRIPT_REPO_ROOT);
 
@@ -169,12 +156,10 @@ export async function bundleWorkspaceDeps(opts = {}) {
       );
     }
 
-    const bundledWorkspacePackageNames = readBundledWorkspacePackageNames(hostPackageJsonRaw);
-    const bundles = bundledWorkspacePackageNames.map((packageName) => ({
-      packageName,
-      srcDir: resolveBundledWorkspaceSrcDir({ repoRoot: targetRepoRoot, packageName }),
-      destDir: resolve(happyCliDir, 'node_modules', ...packageName.split('/')),
-    }));
+    const bundles = resolveWorkspaceBundlesFromPackageJson({
+      repoRoot: targetRepoRoot,
+      hostPackageDir: happyCliDir,
+    });
     bundleWorkspacePackages({ bundles });
 
     for (const b of bundles) {

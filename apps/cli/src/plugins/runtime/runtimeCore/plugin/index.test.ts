@@ -11,7 +11,7 @@ function createRuntimeTurnOperations() {
     sendTurnPrompt: vi.fn(async () => undefined),
     steerInFlightTurn: vi.fn(async () => undefined),
     waitForTurnCompletion: vi.fn(async () => undefined),
-    subscribeRuntimeMessages: vi.fn(() => () => undefined),
+    subscribeRuntimeEvents: vi.fn(() => () => undefined),
     respondToPermission: vi.fn(async () => undefined),
     cancelTurn: vi.fn(async () => undefined),
     readSessionIdentity: vi.fn(() => ({ sessionId: 'plugin-session-1' })),
@@ -105,9 +105,11 @@ function createBindingFactory(params: Readonly<{
       terminalRuntime: {
         launch: params.launch,
       } as never,
-      externalSessions: null,
+      externalSession: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     },
   });
 }
@@ -257,7 +259,7 @@ describe('createPluginRuntimeCoreFactory', () => {
       directory: '/tmp/plugin-backend',
       metadata: { machine: 'host-only' } as never,
       machineId: 'machine-1',
-      session: {} as never,
+      session: { sessionId: 'host-session-1' } as never,
       transcriptSession: {} as never,
       messageBuffer: {} as never,
       mcpServers: { sample: { type: 'stdio', command: 'echo' } } as never,
@@ -269,6 +271,9 @@ describe('createPluginRuntimeCoreFactory', () => {
 
     expect(launch).toHaveBeenCalledTimes(1);
     expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'host-session-1',
+      directory: '/tmp/plugin-backend',
+      metadata: { machine: 'host-only' },
       backend: {
         id: 'acme.sample.backend',
         providerId: 'acme.sample.provider',
@@ -312,7 +317,6 @@ describe('createPluginRuntimeCoreFactory', () => {
     const launchParamsRecord = launchCall.at(0) as Record<string, unknown>;
     expect(launchParamsRecord).not.toHaveProperty('backendId');
     expect(launchParamsRecord).not.toHaveProperty('providerId');
-    expect(launchParamsRecord).not.toHaveProperty('directory');
     expect(launchParamsRecord).not.toHaveProperty('backendTarget');
     expect(launchParamsRecord).not.toHaveProperty('startedBy');
     expect(launchParamsRecord).not.toHaveProperty('terminalRuntime');
@@ -329,7 +333,6 @@ describe('createPluginRuntimeCoreFactory', () => {
     });
     expect(launchParamsRecord).not.toHaveProperty('accountSettingsContext');
     expect(launchParamsRecord).not.toHaveProperty('hostOptions');
-    expect(launchParamsRecord).not.toHaveProperty('metadata');
     expect(launchParamsRecord).not.toHaveProperty('machineId');
     expect(launchParamsRecord).not.toHaveProperty('session');
     expect(launchParamsRecord).not.toHaveProperty('transcriptSession');

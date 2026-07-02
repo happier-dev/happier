@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ScmBackendContribution } from '@happier-dev/protocol';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -11,8 +11,36 @@ import { resolveBuiltInContributions } from '@/plugins/projection/registry/resol
 import { writePluginReloadStateSnapshot } from '@/plugins/runtime/reload/state';
 import { createPluginStateStore } from '@/plugins/store/state';
 import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
+import { dispatchPluginHookEvent } from '@/plugins/runtime/hooks/execution/dispatchPluginHookEvent';
 
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+
+const {
+    axiosPostMock,
+    readCredentialsMock,
+    readSettingsMock,
+    readInstallationIdentityIfExistsSyncMock,
+} = vi.hoisted(() => ({
+    axiosPostMock: vi.fn<(...args: unknown[]) => unknown>(),
+    readCredentialsMock: vi.fn<(...args: unknown[]) => unknown>(),
+    readSettingsMock: vi.fn<(...args: unknown[]) => unknown>(),
+    readInstallationIdentityIfExistsSyncMock: vi.fn<(...args: unknown[]) => unknown>(),
+}));
+
+vi.mock('axios', () => ({
+    default: {
+        post: axiosPostMock,
+    },
+}));
+
+vi.mock('@/persistence', () => ({
+    readCredentials: readCredentialsMock,
+    readSettings: readSettingsMock,
+}));
+
+vi.mock('@/daemon/identity/store', () => ({
+    readInstallationIdentityIfExistsSync: readInstallationIdentityIfExistsSyncMock,
+}));
 
 async function writePlugin(
     rootDir: string,
@@ -64,9 +92,9 @@ async function writePlugin(
                             kind: 'custom',
                         },
                         capabilities: {},
-                        runtimeCoreHooks: [
+                        surfaceHandlers: [
                             {
-                                runtimeCoreHookApiVersion: 1,
+                                surfaceApiVersion: 1,
                                 id: 'backend.terminalRuntime.launch',
                                 kind: 'terminalRuntime',
                                 operation: 'launch',
@@ -79,10 +107,10 @@ async function writePlugin(
                     }],
                     hooks: [{
                         hookApiVersion: 1,
-                        id: 'backend.terminalRuntime.bindTranscript',
-                        category: 'integration',
+                        id: 'backend.resolveRuntimePrerequisites',
+                        category: 'decision',
                         scope: 'backend',
-                        executionKind: 'integrate',
+                        executionKind: 'decide',
                         handler: {
                             target: 'plugin',
                         },
@@ -103,6 +131,7 @@ async function writeActivationManifest(
         id: string;
         runtimeCapabilities: readonly string[];
         permissions: readonly string[];
+        optionalPermissions?: readonly Record<string, unknown>[];
         contributes?: Record<string, unknown>;
     }>,
 ): Promise<string> {
@@ -126,6 +155,7 @@ async function writeActivationManifest(
             },
             capabilities: {
                 permissions: params.permissions.map((capability) => ({ capability })),
+                optionalPermissions: params.optionalPermissions ?? [],
             },
             targets: {
                 daemon: {
@@ -263,6 +293,22 @@ function createScmBackendContribution(id: string): ScmBackendContribution {
 }
 
 describe('resolveExecutablePluginRuntimeRegistry', () => {
+    beforeEach(() => {
+        axiosPostMock.mockReset();
+        readCredentialsMock.mockReset();
+        readSettingsMock.mockReset();
+        readInstallationIdentityIfExistsSyncMock.mockReset();
+        readCredentialsMock.mockResolvedValue(null);
+        readSettingsMock.mockResolvedValue({ machineId: 'machine-1' });
+        readInstallationIdentityIfExistsSyncMock.mockReturnValue({
+            version: 1,
+            installationId: 'installation-1',
+            createdAt: 1,
+            publicKey: 'public-key',
+            privateKey: 'private-key',
+        });
+    });
+
     it('activates the bundled opencode plugin by default and exposes a backend engine registration', async () => {
         const contributes = createResolvedContributionRegistry(resolveBuiltInContributions());
         const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
@@ -274,14 +320,14 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
         expect(engine?.registration.backendId).toBe('opencode');
     });
 
-    it('merges activation-time executable actions, resources, UI descriptors, and execution-run profiles into the authoritative contribution snapshot', async () => {
+    it('merges activation-time executable actions without exposing descriptor-only static registration methods', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-activated-root-'));
         const daemonEntryPath = join(pluginRoot, 'daemon.mjs');
         const manifestPath = await writeActivationManifest(pluginRoot, {
             id: 'acme.activated',
-            runtimeCapabilities: ['actions', 'resources', 'uiDescriptors', 'executionRunProfiles', 'hooks'],
-            permissions: ['actions.register', 'resources.register', 'ui.descriptors', 'hooks.register'],
+            runtimeCapabilities: ['actions', 'hooks'],
+            permissions: ['actions.register', 'hooks.register'],
             contributes: {
                 actions: [
                     {
@@ -331,11 +377,11 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
                 ],
                 hooks: [
                     {
-                        id: 'session.started',
+                        id: 'session.message.send',
                         category: 'lifecycle',
                         scope: 'session',
                         executionKind: 'observe',
-                        handler: { target: 'plugin', registrationId: 'session.started' },
+                        handler: { target: 'plugin', registrationId: 'session.message.send' },
                     },
                 ],
             },
@@ -345,6 +391,9 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             daemonEntryPath,
             [
                 'export async function activate(api) {',
+                '  for (const key of ["registerResource", "registerUiDescriptor", "registerExecutionRunProfile"]) {',
+                '    if (key in api) throw new Error(`${key} must be manifest-owned`);',
+                '  }',
                 '  api.registerAction({',
                 '    id: "acme.activated.action",',
                 '    title: "Activated Action",',
@@ -352,43 +401,8 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
                 '    surface: "cli",',
                 '    handler: async () => "activated-action",',
                 '  });',
-                '  api.registerResource({',
-                '    kindVersion: 1,',
-                '    id: "acme.activated.prompt",',
-                '    type: "prompt",',
-                '    title: "Activated Prompt",',
-                '    path: "resources/prompt.md",',
-                '    digest: "sha256:prompt",',
-                '    contentType: "text/markdown",',
-                '  });',
-                '  api.registerUiDescriptor({',
-                '    kindVersion: 1,',
-                '    id: "acme.activated.settings",',
-                '    surface: "settings",',
-                '    title: "Activated Settings",',
-                '    description: "Runtime settings surface",',
-                '    fields: [',
-                '      {',
-                '        id: "enabled",',
-                '        kind: "boolean",',
-                '        title: "Enabled",',
-                '      },',
-                '    ],',
-                '  });',
-                '  api.registerExecutionRunProfile({',
-                '    id: "acme.activated.review-profile",',
-                '    kind: "executionRun.profile",',
-                '    version: "1.0.0",',
-                '    intent: "review",',
-                '    displayKey: "acme.activated.reviewProfile",',
-                '    capabilityGates: [],',
-                '    permissionGates: [],',
-                '    redaction: "none",',
-                '    hidden: false,',
-                '    actionIds: ["acme.activated.action"],',
-                '  });',
                 '  api.registerHook({',
-                '    hookId: "session.started",',
+                '    hookId: "session.message.send",',
                 '    handler: async () => "activated-hook",',
                 '  });',
                 '}',
@@ -444,30 +458,86 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             },
             provenance: {},
         })).resolves.toBe('activated-action');
-        expect(runtimeRegistry.contributes.resourcesById?.get('acme.activated.prompt')).toMatchObject({
-            pluginId: 'acme.activated',
-            definition: {
-                id: 'acme.activated.prompt',
-                path: 'resources/prompt.md',
+        await expect(runtimeRegistry.hookHandlersByHookId.get('session.message.send')?.[0]?.handler()).resolves.toBe('activated-hook');
+    });
+
+    it('loads trusted optional grants from the server by default during activation', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-server-grant-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-server-grant-root-'));
+        const pluginId = 'acme.optional.server.default';
+        const daemonEntryPath = join(pluginRoot, 'daemon.mjs');
+        const manifestPath = await writeActivationManifest(pluginRoot, {
+            id: pluginId,
+            runtimeCapabilities: [],
+            permissions: [],
+            optionalPermissions: [{ capability: 'env', scope: 'HAPPIER_OPTIONAL_TOKEN' }],
+        });
+        await writeFile(daemonEntryPath, 'export async function activate() {}\n', 'utf8');
+        readCredentialsMock.mockResolvedValue({
+            token: 'token-1',
+            encryption: { type: 'legacy', secret: new Uint8Array() },
+        });
+        axiosPostMock.mockResolvedValue({
+            status: 200,
+            data: {
+                grants: [{
+                    v: 1,
+                    id: 'grant-1',
+                    accountId: 'account-1',
+                    pluginId,
+                    capability: 'env',
+                    targetScope: { kind: 'account' },
+                    authoritySource: {
+                        kind: 'machine_installation',
+                        machineId: 'machine-1',
+                        installationId: 'installation-1',
+                    },
+                    status: 'active',
+                    grantedByUserId: 'user-1',
+                    grantedAt: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                }],
+                pendingRequests: [],
             },
         });
-        expect(runtimeRegistry.contributes.uiDescriptorsById?.get('acme.activated.settings')).toMatchObject({
-            pluginId: 'acme.activated',
-            definition: {
-                id: 'acme.activated.settings',
-                surface: 'settings',
-            },
+
+        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir,
+            contributes: createResolvedContributionRegistry({
+                providers: [],
+                backends: [],
+                activationTargets: [
+                    {
+                        provenance: 'external',
+                        source: { kind: 'path' },
+                        pluginId,
+                        manifestPath,
+                        manifestDigest: 'sha256:server-grant',
+                        daemonEntryPath,
+                        sourceSpec: {
+                            kind: 'path',
+                            locator: pluginRoot,
+                            trustPolicy: 'local_trusted',
+                            installPolicy: 'link',
+                        },
+                    },
+                ],
+            }),
         });
-        expect(runtimeRegistry.contributes.executionRunProfilesById?.get('acme.activated.review-profile')).toMatchObject({
-            pluginId: 'acme.activated',
-            definition: {
-                id: 'acme.activated.review-profile',
-                kind: 'executionRun.profile',
-                intent: 'review',
-                actionIds: ['acme.activated.action'],
-            },
-        });
-        await expect(runtimeRegistry.hookHandlersByHookId.get('session.started')?.[0]?.handler()).resolves.toBe('activated-hook');
+
+        expect(runtimeRegistry.trustedOptionalPermissionsByPluginId?.get(pluginId)).toEqual(new Set(['env']));
+        expect(runtimeRegistry.envAllowedNamesByPluginId?.get(pluginId)).toEqual(new Set(['HAPPIER_OPTIONAL_TOKEN']));
+        expect(axiosPostMock).toHaveBeenCalledWith(
+            expect.stringContaining('/v1/plugins/permissions/grants/list'),
+            expect.objectContaining({
+                pluginId,
+                includeRevoked: false,
+            }),
+            expect.objectContaining({
+                headers: { Authorization: 'Bearer token-1' },
+            }),
+        );
     });
 
     it('keeps manifest lifecycle declarations canonical when id-less activation registers out of order', async () => {
@@ -596,8 +666,54 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
                 providers: [],
                 backends: [],
                 actions: [],
-                resources: [],
-                uiDescriptors: [],
+                resources: [{
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'examples.ui-descriptor-plugin',
+                    manifestPath,
+                    manifestDigest: 'sha256:ui-descriptor-example',
+                    daemonEntryPath,
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: pluginRoot,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                    definition: {
+                        kindVersion: 1,
+                        id: 'examples.ui.prompt',
+                        type: 'prompt',
+                        path: 'resources/review-prompt.md',
+                        contentType: 'text/markdown',
+                    },
+                }],
+                uiDescriptors: [{
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'examples.ui-descriptor-plugin',
+                    manifestPath,
+                    manifestDigest: 'sha256:ui-descriptor-example',
+                    daemonEntryPath,
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: pluginRoot,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                    definition: {
+                        kindVersion: 1,
+                        id: 'examples.ui.settings',
+                        surface: 'settings',
+                        title: 'Example Plugin Settings',
+                        description: 'Host-rendered descriptor declared in the manifest.',
+                        fields: [{
+                            id: 'enabled',
+                            kind: 'boolean',
+                            title: 'Enabled',
+                            options: [],
+                        }],
+                    },
+                }],
                 activationTargets: [
                     {
                         provenance: 'external',
@@ -749,7 +865,7 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
         await writePlugin(
             pluginRoot,
             {},
-            'export default async function bindTranscript() { return "runtime-bound"; }\n',
+            'export default async function resolveTranscriptBinding() { return "runtime-bound"; }\n',
         );
 
         await store.write({
@@ -787,22 +903,22 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
         expect(typeof runtimeRegistry.readHookEventEnvelopeV1).toBe('function');
         expect(runtimeRegistry.readHookEventEnvelopeV1({
             hookVersion: 1,
-            hookEventId: 'session.started',
+            hookEventId: 'session.message.send',
             category: 'lifecycle',
             scope: 'session',
             timestampMs: 1,
             payload: {},
-        })?.eventId).toBe('session.started');
+        })?.eventId).toBe('session.message.send');
         expect(runtimeRegistry.readHookEventEnvelopeV1({
             hookVersion: 2,
-            eventId: 'session.started',
+            eventId: 'session.message.send',
             category: 'lifecycle',
             scope: 'session',
             timestampMs: 1,
             payload: {},
         })).toBe(null);
 
-        expect(runtimeRegistry.contributes.runtimeCoreHooksByBackendId.get('acme.runtime.backend')).toEqual([
+        expect(runtimeRegistry.contributes.surfaceHandlersByBackendId.get('acme.runtime.backend')).toEqual([
             expect.objectContaining({
                 backendId: 'acme.runtime.backend',
                 definition: expect.objectContaining({
@@ -812,9 +928,38 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             }),
         ]);
         expect(runtimeRegistry.contributes.hookRegistrations).toHaveLength(1);
-        const handlers = runtimeRegistry.hookHandlersByHookId.get('backend.terminalRuntime.bindTranscript');
-        expect(handlers).toHaveLength(1);
-        await expect(handlers?.[0]?.handler()).resolves.toBe('runtime-bound');
+        const handlers = runtimeRegistry.hookHandlersByHookId.get('backend.resolveRuntimePrerequisites');
+        const runtimeHandlers = handlers?.filter((handler) => handler.pluginId === 'acme.runtime') ?? [];
+        expect(runtimeHandlers).toHaveLength(1);
+        await expect(runtimeHandlers[0]?.handler()).resolves.toBe('runtime-bound');
+        expect(
+            handlers?.filter((handler) => handler.pluginId === 'happier.agent.codex')
+                .map((handler) => handler.registration.definition.filters),
+        ).toEqual([{ backendId: 'codex' }]);
+        await expect(dispatchPluginHookEvent({
+            runtimeRegistry,
+            event: {
+                hookVersion: 1,
+                hookEventId: 'backend.resolveRuntimePrerequisites',
+                category: 'decision',
+                scope: 'backend',
+                backendId: 'acme.runtime.backend',
+                timestampMs: 1,
+                payload: {
+                    backendId: 'acme.runtime.backend',
+                    targetRef: {
+                        kind: 'backend',
+                        backendId: 'acme.runtime.backend',
+                        configuredBackendId: 'acme.runtime.backend',
+                        sourceKind: 'configured',
+                    },
+                    timestampMs: 1,
+                },
+            },
+        })).resolves.toEqual(expect.objectContaining({
+            matchedHandlerCount: 1,
+            outcomes: [expect.objectContaining({ pluginId: 'acme.runtime' })],
+        }));
         expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.runtime']).toEqual([]);
     });
 
@@ -849,9 +994,9 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
                             kind: 'custom',
                         },
                         capabilities: {},
-                        runtimeCoreHooks: [
+                        surfaceHandlers: [
                             {
-                                runtimeCoreHookApiVersion: 1,
+                                surfaceApiVersion: 1,
                                 id: 'backend.terminalRuntime.launch',
                                 kind: 'terminalRuntime',
                                 operation: 'launch',
@@ -864,13 +1009,13 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
                     }],
                     hooks: [{
                         hookApiVersion: 1,
-                        id: 'backend.terminalRuntime.bindTranscript',
-                        category: 'integration',
+                        id: 'backend.resolveRuntimePrerequisites',
+                        category: 'decision',
                         scope: 'backend',
-                        executionKind: 'integrate',
+                        executionKind: 'decide',
                         handler: {
                             target: 'plugin',
-                            exportName: 'bindTranscript',
+                            exportName: 'resolveTranscriptBinding',
                         },
                     }],
                 },
@@ -910,13 +1055,47 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
 
         const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
 
-        expect(runtimeRegistry.contributes.runtimeCoreHooksByBackendId.get('acme.runtime.invalid.backend')).toEqual([
+        expect(runtimeRegistry.contributes.surfaceHandlersByBackendId.get('acme.runtime.invalid.backend')).toEqual([
             expect.objectContaining({
                 backendId: 'acme.runtime.invalid.backend',
             }),
         ]);
         expect(runtimeRegistry.contributes.hookRegistrations).toHaveLength(1);
-        expect(runtimeRegistry.hookHandlersByHookId.get('backend.terminalRuntime.bindTranscript')).toBeUndefined();
+        const handlers = runtimeRegistry.hookHandlersByHookId.get('backend.resolveRuntimePrerequisites') ?? [];
+        expect(handlers).toEqual([
+            expect.objectContaining({
+                pluginId: 'happier.agent.codex',
+                registration: expect.objectContaining({
+                    definition: expect.objectContaining({
+                        filters: { backendId: 'codex' },
+                    }),
+                }),
+            }),
+        ]);
+        await expect(dispatchPluginHookEvent({
+            runtimeRegistry,
+            event: {
+                hookVersion: 1,
+                hookEventId: 'backend.resolveRuntimePrerequisites',
+                category: 'decision',
+                scope: 'backend',
+                backendId: 'acme.runtime.invalid.backend',
+                timestampMs: 1,
+                payload: {
+                    backendId: 'acme.runtime.invalid.backend',
+                    targetRef: {
+                        kind: 'backend',
+                        backendId: 'acme.runtime.invalid.backend',
+                        configuredBackendId: 'acme.runtime.invalid.backend',
+                        sourceKind: 'configured',
+                    },
+                    timestampMs: 1,
+                },
+            },
+        })).resolves.toEqual(expect.objectContaining({
+            matchedHandlerCount: 0,
+            outcomes: [],
+        }));
         expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.runtime.invalid']).toEqual([
             expect.objectContaining({
                 code: 'plugin_manifest_semantic_invalid',
@@ -1012,7 +1191,7 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
         await writePlugin(
             pluginRoot,
             {},
-            'export default async function bindTranscript() { return "runtime-bound"; }\n',
+            'export default async function resolveTranscriptBinding() { return "runtime-bound"; }\n',
         );
 
         await store.write({
@@ -1051,7 +1230,10 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
         });
 
         expect(reused.contributes).toBe(initial.contributes);
-        expect(reused.hookHandlersByHookId.get('backend.terminalRuntime.bindTranscript')).toHaveLength(1);
+        expect(
+            reused.hookHandlersByHookId.get('backend.resolveRuntimePrerequisites')
+                ?.filter((handler) => handler.pluginId === 'acme.runtime'),
+        ).toHaveLength(1);
     });
 
     it('uses the persisted reload generation to invalidate daemon module caches between runtime resolutions', async () => {
@@ -1065,11 +1247,11 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             contributes: {
                 hooks: [
                     {
-                        id: 'session.started',
+                        id: 'session.message.send',
                         category: 'lifecycle',
                         scope: 'session',
                         executionKind: 'observe',
-                        handler: { target: 'plugin', registrationId: 'session.started' },
+                        handler: { target: 'plugin', registrationId: 'session.message.send' },
                     },
                 ],
             },
@@ -1080,7 +1262,7 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             [
                 'export async function activate(api) {',
                 '  api.registerHook({',
-                '    hookId: "session.started",',
+                '    hookId: "session.message.send",',
                 '    handler: async () => "generation-one",',
                 '  });',
                 '}',
@@ -1114,7 +1296,7 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             happyHomeDir,
             contributes,
         });
-        await expect(first.hookHandlersByHookId.get('session.started')?.[0]?.handler()).resolves.toBe('generation-one');
+        await expect(first.hookHandlersByHookId.get('session.message.send')?.[0]?.handler()).resolves.toBe('generation-one');
 
         await writePluginReloadStateSnapshot(happyHomeDir, {
             t: 'happier_plugin_reload_state_v1',
@@ -1129,7 +1311,7 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             [
                 'export async function activate(api) {',
                 '  api.registerHook({',
-                '    hookId: "session.started",',
+                '    hookId: "session.message.send",',
                 '    handler: async () => "generation-two",',
                 '  });',
                 '}',
@@ -1143,6 +1325,6 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             contributes,
         });
 
-        await expect(second.hookHandlersByHookId.get('session.started')?.[0]?.handler()).resolves.toBe('generation-two');
+        await expect(second.hookHandlersByHookId.get('session.message.send')?.[0]?.handler()).resolves.toBe('generation-two');
     });
 });

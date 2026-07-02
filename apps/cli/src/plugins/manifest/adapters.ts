@@ -1,25 +1,25 @@
 import {
-    isSupportedBackendRuntimeAdapterOperationV1,
-    type BackendRuntimeAdapterKindV1,
+    isSupportedBackendSurfaceOperationV1,
+    type BackendSurfaceKindV1,
 } from '@happier-dev/protocol';
 
-function normalizeBackendRuntimeAdapterOperation(value: unknown): string {
+function normalizeBackendSurfaceOperation(value: unknown): string {
     return String(value ?? '').trim();
 }
 
-export function isSupportedBackendRuntimeAdapterOperation(params: Readonly<{
-    kind: BackendRuntimeAdapterKindV1;
+export function isSupportedBackendSurfaceOperation(params: Readonly<{
+    kind: BackendSurfaceKindV1;
     operation: string;
 }>): boolean {
-    return isSupportedBackendRuntimeAdapterOperationV1({
+    return isSupportedBackendSurfaceOperationV1({
         kind: params.kind,
-        operation: normalizeBackendRuntimeAdapterOperation(params.operation),
+        operation: normalizeBackendSurfaceOperation(params.operation),
     });
 }
 
-export function buildBackendRuntimeAdapterDispatchKey(params: Readonly<{
-    kind: BackendRuntimeAdapterKindV1;
+export function buildBackendSurfaceDispatchKey(params: Readonly<{
+    kind: BackendSurfaceKindV1;
     operation: string;
 }>): string {
-    return `${params.kind}:${normalizeBackendRuntimeAdapterOperation(params.operation)}`;
+    return `${params.kind}:${normalizeBackendSurfaceOperation(params.operation)}`;
 }

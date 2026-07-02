@@ -1,6 +1,8 @@
-export default async function bindTranscript() {
+export default async function resolveTranscriptBinding() {
     return 'integration-bound';
 }
+
+export { resolveTranscriptBinding };
 
 function createRuntimeTurnOperations() {
     let handler = null;
@@ -22,7 +24,7 @@ function createRuntimeTurnOperations() {
             }
         },
         async waitForTurnCompletion() {},
-        subscribeRuntimeMessages(nextHandler) {
+        subscribeRuntimeEvents(nextHandler) {
             handler = nextHandler;
             return () => {
                 if (handler === nextHandler) {
@@ -87,15 +89,11 @@ export async function resolveTakeoverSpawnOptions() {
     return null;
 }
 
-export async function evaluateEligibility() {
+export async function evaluateAvailability() {
     return { eligible: true, scope: 'local', metadata: { source: 'integration' } };
 }
 
-export async function probeReachability() {
-    return { reachable: true };
-}
-
-export async function runAttach() {
+export async function attach() {
     return 0;
 }
 

@@ -27,7 +27,7 @@ function createRuntimeRegistry(
             uiDescriptors: Object.freeze([]),
             activationTargets: Object.freeze([]),
             hookRegistrations: Object.freeze([]),
-            runtimeCoreHooksByBackendId: new Map(),
+            surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: Object.freeze({}),
             providerDefinitionsById: new Map(),
             backendDefinitionsById: new Map(),
@@ -289,6 +289,28 @@ describe('createPluginReloadController', () => {
                 registryStatus: 'active',
             }),
         }));
+    });
+
+    it('publishes installed plugin manifest projections after active reload without changing reload status if publishing fails', async () => {
+        const registry = createRuntimeRegistry('acme.plugin');
+        const publishInstalledManifestProjections = vi.fn(async () => {
+            throw new Error('projection sync failed');
+        });
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => registry,
+            publishInstalledManifestProjections,
+        });
+
+        const result = await controller.reload({ pluginId: 'acme.plugin' });
+
+        expect(result).toEqual(expect.objectContaining({
+            ok: true,
+            generation: 1,
+            registryStatus: 'active',
+        }));
+        expect(publishInstalledManifestProjections).toHaveBeenCalledWith({
+            pluginIds: ['acme.plugin'],
+        });
     });
 
     it('queues a follow-up targeted reload when a different plugin id is requested while a reload is already in flight', async () => {

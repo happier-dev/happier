@@ -1,8 +1,7 @@
 import { extname } from 'node:path';
 
 import {
-  BackendRuntimeAdapterOperationCatalogV1,
-  BackendRuntimeAdapterV1Schema,
+  BackendSurfaceOperationCatalogV1,
   isHookHandlerTargetV1,
   isReservedHappierPluginId,
 } from '@happier-dev/protocol';
@@ -11,8 +10,7 @@ import { compareVersions } from '@happier-dev/cli-common/update';
 import { configuration } from '../../configuration';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { normalizePluginBackendContributionAcpDefinition } from '@/agent/acp/runtime/definition/plugin';
-import { isSupportedBackendRuntimeAdapterOperation } from './adapters';
+import { isSupportedBackendSurfaceOperation } from './adapters';
 import { readCanonicalPluginManifest } from './normalize';
 import type { CanonicalPluginManifest } from './types';
 
@@ -55,7 +53,7 @@ function readUnsupportedPluginTargetDiagnostics(input: unknown): PluginCompatibi
   return diagnostics;
 }
 
-function readUnsupportedBackendRuntimeAdapterTargetDiagnostics(input: unknown): PluginCompatibilityDiagnostic[] {
+function readUnsupportedBackendSurfaceTargetDiagnostics(input: unknown): PluginCompatibilityDiagnostic[] {
   if (!isRecord(input)) {
     return [];
   }
@@ -76,8 +74,8 @@ function readUnsupportedBackendRuntimeAdapterTargetDiagnostics(input: unknown): 
       continue;
     }
 
-    const runtimeCoreHooks = backendDefinition.runtimeCoreHooks;
-    if (!Array.isArray(runtimeCoreHooks)) {
+    const surfaceHandlers = backendDefinition.surfaceHandlers;
+    if (!Array.isArray(surfaceHandlers)) {
       continue;
     }
 
@@ -85,12 +83,12 @@ function readUnsupportedBackendRuntimeAdapterTargetDiagnostics(input: unknown): 
       ? backendDefinition.id.trim()
       : 'unknown';
 
-    for (const runtimeCoreHook of runtimeCoreHooks) {
-      if (!isRecord(runtimeCoreHook)) {
+    for (const surfaceHandler of surfaceHandlers) {
+      if (!isRecord(surfaceHandler)) {
         continue;
       }
 
-      const handler = runtimeCoreHook.handler;
+      const handler = surfaceHandler.handler;
       if (!isRecord(handler)) {
         continue;
       }
@@ -100,12 +98,12 @@ function readUnsupportedBackendRuntimeAdapterTargetDiagnostics(input: unknown): 
         continue;
       }
 
-      const runtimeCoreHookId = typeof runtimeCoreHook.id === 'string' && runtimeCoreHook.id.trim().length > 0
-        ? runtimeCoreHook.id.trim()
+      const surfaceHandlerId = typeof surfaceHandler.id === 'string' && surfaceHandler.id.trim().length > 0
+        ? surfaceHandler.id.trim()
         : 'unknown';
       diagnostics.push({
         code: 'plugin_manifest_semantic_invalid',
-        message: `Plugin backend '${backendId}' runtime adapter '${runtimeCoreHookId}' uses unsupported handler target '${handlerTarget}'`,
+        message: `Plugin backend '${backendId}' backend surface handler '${surfaceHandlerId}' uses unsupported handler target '${handlerTarget}'`,
       });
     }
   }
@@ -159,7 +157,7 @@ function readUnsupportedHookTargetDiagnostics(input: unknown): PluginCompatibili
 function pushDuplicateIdDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   values: readonly string[],
-  kind: 'provider' | 'backend' | 'action' | 'tool' | 'command' | 'resource' | 'ui descriptor' | 'notification category' | 'notification channel' | 'SCM hosting provider' | 'SCM backend' | 'installable' | 'hook' | 'lifecycle handler',
+  kind: 'provider' | 'backend' | 'action' | 'tool' | 'command' | 'resource' | 'ui descriptor' | 'notification category' | 'notification channel' | 'event' | 'SCM hosting provider' | 'SCM backend' | 'installable' | 'request interceptor' | 'hook' | 'lifecycle handler',
 ): void {
   const seen = new Set<string>();
   for (const value of values) {
@@ -206,37 +204,37 @@ function pushAmbiguousIdlessLifecycleHandlerDiagnostics(
   }
 }
 
-function pushDuplicateRuntimeAdapterIdDiagnostics(
+function pushDuplicateSurfaceHandlerIdDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   manifest: CanonicalPluginManifest,
 ): void {
   for (const backend of manifest.contributes.backends) {
     const seen = new Set<string>();
-    for (const runtimeCoreHook of backend.runtimeCoreHooks) {
-      if (seen.has(runtimeCoreHook.id)) {
+    for (const surfaceHandler of backend.surfaceHandlers) {
+      if (seen.has(surfaceHandler.id)) {
         diagnostics.push({
           code: 'plugin_manifest_semantic_invalid',
-          message: `Duplicate runtime adapter id for backend '${backend.id}': ${runtimeCoreHook.id}`,
+          message: `Duplicate backend surface handler id for backend '${backend.id}': ${surfaceHandler.id}`,
         });
         continue;
       }
-      seen.add(runtimeCoreHook.id);
+      seen.add(surfaceHandler.id);
     }
   }
 }
 
-function pushDuplicateRuntimeAdapterOperationDiagnostics(
+function pushDuplicateSurfaceHandlerOperationDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   manifest: CanonicalPluginManifest,
 ): void {
   for (const backend of manifest.contributes.backends) {
     const seen = new Set<string>();
-    for (const runtimeCoreHook of backend.runtimeCoreHooks) {
-      const operationKey = `${runtimeCoreHook.kind}:${runtimeCoreHook.operation}`;
+    for (const surfaceHandler of backend.surfaceHandlers) {
+      const operationKey = `${surfaceHandler.kind}:${surfaceHandler.operation}`;
       if (seen.has(operationKey)) {
         diagnostics.push({
           code: 'plugin_manifest_semantic_invalid',
-          message: `Duplicate runtime adapter operation for backend '${backend.id}': ${operationKey}`,
+          message: `Duplicate backend surface handler operation for backend '${backend.id}': ${operationKey}`,
         });
         continue;
       }
@@ -245,72 +243,62 @@ function pushDuplicateRuntimeAdapterOperationDiagnostics(
   }
 }
 
-function pushUnsupportedRuntimeAdapterOperationIdDiagnostics(
+function pushUnsupportedSurfaceHandlerOperationIdDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   manifest: CanonicalPluginManifest,
 ): void {
-  // Runtime-adapter operations are the stable plugin-facing ABI names.
+  // Backend-surface operations are the stable plugin-facing ABI names.
   // Protocol parsing stays additive; host semantic validation fails closed when
   // the current runtime does not execute the declared operation for that kind.
   for (const backend of manifest.contributes.backends) {
-    for (const runtimeCoreHook of backend.runtimeCoreHooks) {
+    for (const surfaceHandler of backend.surfaceHandlers) {
       if (
-        !isSupportedBackendRuntimeAdapterOperation({
-          kind: runtimeCoreHook.kind,
-          operation: runtimeCoreHook.operation,
+        !isSupportedBackendSurfaceOperation({
+          kind: surfaceHandler.kind,
+          operation: surfaceHandler.operation,
         })
       ) {
         diagnostics.push({
           code: 'plugin_manifest_semantic_invalid',
-          message: `Plugin backend '${backend.id}' uses unsupported runtime adapter operation '${runtimeCoreHook.operation}' for kind '${runtimeCoreHook.kind}'`,
+          message: `Plugin backend '${backend.id}' uses unsupported backend surface operation '${surfaceHandler.operation}' for kind '${surfaceHandler.kind}'`,
         });
       }
     }
   }
 }
 
-function backendSupportsExecutionRun(backend: CanonicalPluginManifest['contributes']['backends'][number]): boolean {
-  return backend.capabilities.executionRun.supported !== false;
-}
-
-function hasExecutionRunRuntimeCoreLaunchProof(
-  backend: CanonicalPluginManifest['contributes']['backends'][number],
-): boolean {
-  try {
-    normalizePluginBackendContributionAcpDefinition({ backend });
-    return true;
-  } catch {
-    // Non-ACP backends still require explicit runtimeCore hook proof below.
-  }
-
-  return backend.runtimeCoreHooks.some((runtimeCoreHook) => {
-    const parsedRuntimeCoreHook = BackendRuntimeAdapterV1Schema.safeParse(runtimeCoreHook);
-    if (!parsedRuntimeCoreHook.success) {
-      return false;
-    }
-    return parsedRuntimeCoreHook.data.kind === 'terminalRuntime'
-      && parsedRuntimeCoreHook.data.operation === BackendRuntimeAdapterOperationCatalogV1.terminalRuntime.launch
-      && parsedRuntimeCoreHook.data.handler.target === 'daemon'
-      && typeof parsedRuntimeCoreHook.data.handler.exportName === 'string'
-      && parsedRuntimeCoreHook.data.handler.exportName.trim().length > 0;
-  });
-}
-
-function pushMissingExecutionRunRuntimeCoreDiagnostics(
+function pushConditionalSurfaceAvailabilityDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   manifest: CanonicalPluginManifest,
 ): void {
   for (const backend of manifest.contributes.backends) {
-    if (!backendSupportsExecutionRun(backend)) {
-      continue;
+    const availabilityHandlerKinds = new Set(
+      backend.surfaceHandlers
+        .filter((surfaceHandler) => (
+          surfaceHandler.operation === BackendSurfaceOperationCatalogV1[surfaceHandler.kind].evaluateAvailability
+          && surfaceHandler.support !== 'unsupported'
+          && surfaceHandler.handler.target === 'daemon'
+        ))
+        .map((surfaceHandler) => surfaceHandler.kind),
+    );
+
+    for (const surfaceHandler of backend.surfaceHandlers) {
+      if (
+        surfaceHandler.support !== 'conditional'
+        || surfaceHandler.operation === BackendSurfaceOperationCatalogV1[surfaceHandler.kind].evaluateAvailability
+      ) {
+        continue;
+      }
+
+      if (availabilityHandlerKinds.has(surfaceHandler.kind)) {
+        continue;
+      }
+
+      diagnostics.push({
+        code: 'plugin_manifest_semantic_invalid',
+        message: `Plugin backend '${backend.id}' declares conditional backend surface operation '${surfaceHandler.kind}:${surfaceHandler.operation}' without a daemon evaluateAvailability handler for surface '${surfaceHandler.kind}'`,
+      });
     }
-    if (hasExecutionRunRuntimeCoreLaunchProof(backend)) {
-      continue;
-    }
-    diagnostics.push({
-      code: 'plugin_manifest_semantic_invalid',
-      message: `Plugin backend '${backend.id}' declares execution-run support but does not declare a runtimeCore terminalRuntime launch adapter`,
-    });
   }
 }
 
@@ -389,7 +377,7 @@ export function validatePluginManifest(
 ): PluginManifestValidationResult {
   const unsupportedTargetDiagnostics = [
     ...readUnsupportedPluginTargetDiagnostics(input),
-    ...readUnsupportedBackendRuntimeAdapterTargetDiagnostics(input),
+    ...readUnsupportedBackendSurfaceTargetDiagnostics(input),
     ...readUnsupportedHookTargetDiagnostics(input),
   ];
   if (unsupportedTargetDiagnostics.length > 0) {
@@ -426,6 +414,7 @@ export function validatePluginManifest(
     || manifest.contributes.tools.length > 0
     || manifest.contributes.commands.length > 0
     || (manifest.contributes.scmBackends ?? []).length > 0
+    || (manifest.contributes.requestInterceptors ?? []).length > 0
     || manifest.contributes.hooks.length > 0
     || manifest.contributes.lifecycleHandlers.length > 0;
 
@@ -452,9 +441,11 @@ export function validatePluginManifest(
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.uiDescriptors), 'ui descriptor');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.notifications ?? []), 'notification category');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.notificationChannels ?? []), 'notification channel');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.events ?? []), 'event');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.scmHostingProviders ?? []), 'SCM hosting provider');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.scmBackends ?? []), 'SCM backend');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.installables ?? []), 'installable');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.requestInterceptors ?? []), 'request interceptor');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.hooks), 'hook');
   pushDuplicateIdDiagnostics(
     diagnostics,
@@ -464,10 +455,10 @@ export function validatePluginManifest(
     'lifecycle handler',
   );
   pushAmbiguousIdlessLifecycleHandlerDiagnostics(diagnostics, manifest);
-  pushDuplicateRuntimeAdapterIdDiagnostics(diagnostics, manifest);
-  pushDuplicateRuntimeAdapterOperationDiagnostics(diagnostics, manifest);
-  pushUnsupportedRuntimeAdapterOperationIdDiagnostics(diagnostics, manifest);
-  pushMissingExecutionRunRuntimeCoreDiagnostics(diagnostics, manifest);
+  pushDuplicateSurfaceHandlerIdDiagnostics(diagnostics, manifest);
+  pushDuplicateSurfaceHandlerOperationDiagnostics(diagnostics, manifest);
+  pushUnsupportedSurfaceHandlerOperationIdDiagnostics(diagnostics, manifest);
+  pushConditionalSurfaceAvailabilityDiagnostics(diagnostics, manifest);
   pushUnsupportedDaemonEntryDiagnostics(diagnostics, manifest);
 
   if (diagnostics.length > 0) {

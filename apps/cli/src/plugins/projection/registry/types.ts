@@ -7,25 +7,37 @@ import type {
 import type {
   ActionDefinitionV1,
   BackendDefinitionV1,
-  BackendRuntimeAdapterV1,
+  BackendSurfaceDeclarationV1,
   PluginBackendCapabilitiesV1,
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
   PluginExecutionRunProfileContributionV2,
+  PluginHostedWebContributionV1,
+  PluginReactNativeBundleContributionV1,
+  PluginSessionHeaderActionDescriptorV1,
+  PluginSessionSurfaceDescriptorV1,
   PluginMcpDiscoveryProviderContributionV1,
   PluginMcpServerContributionV1,
+  PluginRequestInterceptorContributionV1,
   InstallableDependencyDescriptor,
   ScmBackendContribution,
   PluginSettingsContributionV2,
+  PluginStructuredMessageDescriptorV1,
+  PluginUiArtifactContributionV1,
   ScmHostingProviderContribution,
   PluginConnectedAccountDescriptorContributionV2,
+  PluginEventContributionV1,
   PluginSourceSpecV1,
   PluginContributionIdentityV1,
+  PluginUiTranslationsContributionV1,
   HookRegistrationV1,
   ProviderDefinitionV1,
 } from '@happier-dev/protocol';
 import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
-import type { CliRuntimeCoreGetter } from '@/agent/runtime/registry/engineRegistryTypes';
+import type {
+    BackendRuntimeOwnerTakeoverMarker,
+    CliRuntimeCoreGetter,
+} from '@/agent/runtime/registry/engineRegistryTypes';
 
 import type { AgentCatalogEntry } from '@/backends/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
@@ -70,7 +82,10 @@ export type ResolvedBackendRichDefinition = Readonly<
     }
     | {
         provenance: 'external';
-        definition: BackendDefinitionV1;
+        definition: Omit<BackendDefinitionV1, 'capabilities' | 'surfaceHandlers'> & Readonly<{
+            capabilities: PluginBackendCapabilitiesV1;
+            surfaceHandlers: readonly BackendSurfaceDeclarationV1[];
+        }>;
     }
 >;
 
@@ -98,8 +113,9 @@ export type ResolvedBackendContribution = Readonly<{
     richDefinition?: ResolvedBackendRichDefinition;
     runtimeKind?: string | null;
     capabilities?: PluginBackendCapabilitiesV1;
-    runtimeCoreHooks?: readonly BackendRuntimeAdapterV1[];
+    surfaceHandlers?: readonly BackendSurfaceDeclarationV1[];
     getRuntimeCore?: CliRuntimeCoreGetter;
+    runtimeOwner?: BackendRuntimeOwnerTakeoverMarker;
     sourceSpec?: PluginSourceSpecV1;
     pluginId?: string;
     manifestPath?: string;
@@ -251,6 +267,83 @@ export type ResolvedUiDescriptorContribution = Readonly<{
     definition: ResolvedUiDescriptorDefinition;
 }>;
 
+export type ResolvedUiTranslationsContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginUiTranslationsContributionV1;
+}>;
+
+export type ResolvedStructuredMessageContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginStructuredMessageDescriptorV1;
+}>;
+
+export type ResolvedSessionSurfaceContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginSessionSurfaceDescriptorV1;
+}>;
+
+export type ResolvedSessionHeaderActionContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginSessionHeaderActionDescriptorV1;
+}>;
+
+export type ResolvedHostedWebContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginHostedWebContributionV1;
+}>;
+
+export type ResolvedReactNativeBundleContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginReactNativeBundleContributionV1;
+}>;
+
+export type ResolvedUiArtifactContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginUiArtifactContributionV1;
+}>;
+
 export type ResolvedNotificationCategoryContribution = Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
@@ -271,6 +364,22 @@ export type ResolvedNotificationChannelContribution = Readonly<{
     daemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginNotificationChannelContributionV2;
+}>;
+
+export type ResolvedEventDefinition = Readonly<PluginEventContributionV1 & {
+    id: string;
+    localId: string;
+}>;
+
+export type ResolvedEventContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: ResolvedEventDefinition;
 }>;
 
 export type ResolvedSettingsContribution = Readonly<{
@@ -328,6 +437,17 @@ export type ResolvedInstallableContribution = Readonly<{
     definition: InstallableDependencyDescriptor;
 }>;
 
+export type ResolvedRequestInterceptorContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginRequestInterceptorContributionV1;
+}>;
+
 export type ResolvedScmHostingProviderContribution = Readonly<{
     id: string;
     provenance: ResolvedContributionProvenance;
@@ -365,15 +485,15 @@ export type ResolvedConnectedAccountDescriptorContribution = Readonly<{
     definition: PluginConnectedAccountDescriptorContributionV2;
 }>;
 
-export type ResolvedBackendRuntimeAdapterContribution = Readonly<{
+export type ResolvedBackendSurfaceContribution = Readonly<{
     backendId: string;
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     /**
-     * Stable plugin-facing runtime-adapter descriptor plus host-local handler
+     * Stable plugin-facing backend-surface descriptor plus host-local handler
      * metadata.
      */
-    definition: BackendRuntimeAdapterV1;
+    definition: BackendSurfaceDeclarationV1;
     pluginId?: string;
     manifestPath?: string;
     manifestDigest?: string;
@@ -411,13 +531,22 @@ export type ResolvedContributionInputs = Readonly<{
     commands?: readonly ResolvedCommandContribution[];
     resources?: readonly ResolvedResourceContribution[];
     uiDescriptors?: readonly ResolvedUiDescriptorContribution[];
+    uiTranslations?: readonly ResolvedUiTranslationsContribution[];
+    structuredMessages?: readonly ResolvedStructuredMessageContribution[];
+    sessionSurfaces?: readonly ResolvedSessionSurfaceContribution[];
+    sessionHeaderActions?: readonly ResolvedSessionHeaderActionContribution[];
+    hostedWeb?: readonly ResolvedHostedWebContribution[];
+    reactNativeBundles?: readonly ResolvedReactNativeBundleContribution[];
+    uiArtifacts?: readonly ResolvedUiArtifactContribution[];
     settings?: readonly ResolvedSettingsContribution[];
     notifications?: readonly ResolvedNotificationCategoryContribution[];
     notificationChannels?: readonly ResolvedNotificationChannelContribution[];
+    events?: readonly ResolvedEventContribution[];
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
     installables?: readonly ResolvedInstallableContribution[];
+    requestInterceptors?: readonly ResolvedRequestInterceptorContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
     scmBackends?: readonly ResolvedScmBackendContribution[];
     connectedAccountDescriptors?: readonly ResolvedConnectedAccountDescriptorContribution[];
@@ -436,13 +565,22 @@ export type ResolvedContributionRegistry = Readonly<{
     commands?: readonly ResolvedCommandContribution[];
     resources: readonly ResolvedResourceContribution[];
     uiDescriptors: readonly ResolvedUiDescriptorContribution[];
+    uiTranslations?: readonly ResolvedUiTranslationsContribution[];
+    structuredMessages?: readonly ResolvedStructuredMessageContribution[];
+    sessionSurfaces?: readonly ResolvedSessionSurfaceContribution[];
+    sessionHeaderActions?: readonly ResolvedSessionHeaderActionContribution[];
+    hostedWeb?: readonly ResolvedHostedWebContribution[];
+    reactNativeBundles?: readonly ResolvedReactNativeBundleContribution[];
+    uiArtifacts?: readonly ResolvedUiArtifactContribution[];
     settings?: readonly ResolvedSettingsContribution[];
     notifications?: readonly ResolvedNotificationCategoryContribution[];
     notificationChannels?: readonly ResolvedNotificationChannelContribution[];
+    events?: readonly ResolvedEventContribution[];
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
     installables?: readonly ResolvedInstallableContribution[];
+    requestInterceptors?: readonly ResolvedRequestInterceptorContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
     scmBackends?: readonly ResolvedScmBackendContribution[];
     connectedAccountDescriptors?: readonly ResolvedConnectedAccountDescriptorContribution[];
@@ -454,16 +592,23 @@ export type ResolvedContributionRegistry = Readonly<{
     commandsById?: ReadonlyMap<string, ResolvedCommandContribution>;
     resourcesById?: ReadonlyMap<string, ResolvedResourceContribution>;
     uiDescriptorsById?: ReadonlyMap<string, ResolvedUiDescriptorContribution>;
+    structuredMessagesById?: ReadonlyMap<string, ResolvedStructuredMessageContribution>;
+    sessionSurfacesById?: ReadonlyMap<string, ResolvedSessionSurfaceContribution>;
+    sessionHeaderActionsById?: ReadonlyMap<string, ResolvedSessionHeaderActionContribution>;
+    hostedWebById?: ReadonlyMap<string, ResolvedHostedWebContribution>;
+    reactNativeBundlesById?: ReadonlyMap<string, ResolvedReactNativeBundleContribution>;
+    uiArtifactsById?: ReadonlyMap<string, ResolvedUiArtifactContribution>;
     settingsById?: ReadonlyMap<string, ResolvedSettingsContribution>;
     notificationsById?: ReadonlyMap<string, ResolvedNotificationCategoryContribution>;
     notificationChannelsById?: ReadonlyMap<string, ResolvedNotificationChannelContribution>;
+    eventsById?: ReadonlyMap<string, ResolvedEventContribution>;
     executionRunProfilesById?: ReadonlyMap<string, ResolvedExecutionRunProfileContribution>;
     installablesByKey?: ReadonlyMap<string, ResolvedInstallableContribution>;
     scmHostingProvidersById?: ReadonlyMap<string, ResolvedScmHostingProviderContribution>;
     scmBackendsById?: ReadonlyMap<string, ResolvedScmBackendContribution>;
     connectedAccountDescriptorsById?: ReadonlyMap<string, ResolvedConnectedAccountDescriptorContribution>;
     lifecycleHandlersById?: ReadonlyMap<string, ResolvedLifecycleHandlerContribution>;
-    runtimeCoreHooksByBackendId: ReadonlyMap<string, readonly ResolvedBackendRuntimeAdapterContribution[]>;
+    surfaceHandlersByBackendId: ReadonlyMap<string, readonly ResolvedBackendSurfaceContribution[]>;
     catalogEntriesById: Readonly<Record<string, ResolvedCatalogEntry>>;
     providerDefinitionsById: ReadonlyMap<string, ResolvedProviderContribution>;
     backendDefinitionsById: ReadonlyMap<string, ResolvedBackendContribution>;
