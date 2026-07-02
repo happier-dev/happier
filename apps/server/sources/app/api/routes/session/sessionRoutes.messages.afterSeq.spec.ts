@@ -39,7 +39,12 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         expect(sessionMessageFindMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { sessionId: "s1", sidechainId: null, messageRole: "user", seq: { gt: 2 } },
+                where: {
+                    sessionId: "s1",
+                    sidechainId: null,
+                    OR: [{ messageRole: "user" }, { messageRole: null }],
+                    seq: { gt: 2 },
+                },
                 orderBy: { seq: "asc" },
                 take: 3,
             }),
@@ -54,6 +59,27 @@ describe("sessionRoutes v1 messages pagination", () => {
             nextBeforeSeq: null,
             nextAfterSeq: 4,
         });
+    });
+
+    it("includes legacy null-role rows in user role filters for encrypted history recovery", async () => {
+        checkSessionAccess.mockResolvedValue({ level: "owner" });
+        sessionMessageFindMany.mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions/:sessionId/messages");
+        await route.invoke({
+            params: { sessionId: "s1" },
+            query: { role: "user", limit: 50 },
+        });
+
+        expect(sessionMessageFindMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: {
+                    sessionId: "s1",
+                    sidechainId: null,
+                    OR: [{ messageRole: "user" }, { messageRole: null }],
+                },
+            }),
+        );
     });
 
     it("rejects unsupported role filters", async () => {
@@ -84,7 +110,7 @@ describe("sessionRoutes v1 messages pagination", () => {
                 where: {
                     sessionId: "s1",
                     sidechainId: null,
-                    messageRole: { in: ["user", "agent", "event"] },
+                    OR: [{ messageRole: { in: ["user", "agent", "event"] } }, { messageRole: null }],
                 },
                 take: 3,
             }),

@@ -29,6 +29,7 @@ import { machineTransferHandler } from "./socket/machineTransferHandler";
 import { machineLiveStreamRelayHandler } from "./socket/machineLiveStreamRelayHandler";
 import { transferRelayV2Handler } from "./socket/transferRelayV2Handler";
 import { registerPeerTcpTunnelRelaySocketHandler } from "./socket/peer/mediation/tunnel/registerRelay";
+import { createPeerTcpTunnelRelayBridge } from "./socket/peer/mediation/tunnel/relayBridge";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
@@ -43,6 +44,7 @@ import { readMachineLiveStreamFeatureEnv, readMachineTransferFeatureEnv, readMac
 import { resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
 import { createMachineSocketOwnershipRegistry } from "./socket/machineSocketOwnershipRegistry";
 import { activityCache } from "@/app/presence/sessionCache";
+import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, type PeerTcpTunnelRelayEnvelope } from "@happier-dev/protocol";
 
 export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
 
@@ -162,6 +164,60 @@ export function startSocket(app: Fastify) {
         io,
     });
     eventRouter.setIo(io);
+    const tunnelRelayBridge = createPeerTcpTunnelRelayBridge(io);
+    const tunnelRelayAuthorizationTrustRoots = peerMediationFeatureEnv.grantSigningKeys.map((key) => ({
+        keyId: key.keyId,
+        publicKeyBase64Url: key.publicKey,
+    }));
+    const tunnelRelayHandlerOptions = {
+        io: tunnelRelayBridge.io,
+        relayAuthorizationTrustRoots: tunnelRelayAuthorizationTrustRoots,
+        serverRoutedEnabled: serverRoutedTunnelEnabled,
+        maxBytes: machineTunnelFeatureEnv.serverRoutedMaxBytes,
+        maxActiveTunnelsPerSocket: machineTunnelFeatureEnv.serverRoutedMaxActiveTunnelsPerSocket,
+        maxFrameBytes: machineTunnelFeatureEnv.serverRoutedMaxFrameBytes,
+        supportedEncodings: machineTunnelFeatureEnv.serverRoutedSupportedEncodings,
+        preferredEncoding: machineTunnelFeatureEnv.serverRoutedPreferredEncoding,
+        allowV1Fallback: machineTunnelFeatureEnv.serverRoutedAllowV1Fallback,
+        maxBinaryHeaderBytes: machineTunnelFeatureEnv.serverRoutedMaxBinaryHeaderBytes,
+        maxRawPayloadBytes: machineTunnelFeatureEnv.serverRoutedMaxRawPayloadBytes,
+        maxFramedMessageBytes: machineTunnelFeatureEnv.serverRoutedMaxFramedMessageBytes,
+        substreams: machineTunnelFeatureEnv.serverRoutedSubstreams,
+        maxIdleMs: machineTunnelFeatureEnv.maxIdleMs,
+        maxDurationMs: machineTunnelFeatureEnv.maxDurationMs,
+        allowedPorts: machineTunnelFeatureEnv.allowedPorts,
+    } as const;
+    app.createPeerTcpTunnelRelayTransport = ({ accountId }) => {
+        const transport = tunnelRelayBridge.createTransport({ accountId });
+        let relayHandler: ((payload?: unknown) => void | Promise<void>) | null = null;
+        let disconnectHandler: (() => void | Promise<void>) | null = null;
+        registerPeerTcpTunnelRelaySocketHandler(accountId, {
+            data: { clientType: "user-scoped" },
+            on: (event, handler) => {
+                if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) {
+                    relayHandler = handler;
+                } else if (event === "disconnect") {
+                    disconnectHandler = handler as () => void | Promise<void>;
+                }
+            },
+            emit: () => undefined,
+        }, tunnelRelayHandlerOptions);
+
+        return {
+            send: (event, envelope: PeerTcpTunnelRelayEnvelope) => {
+                if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT && relayHandler) {
+                    void relayHandler(envelope);
+                    return;
+                }
+                transport.send(event, envelope);
+            },
+            subscribe: transport.subscribe,
+            close: () => {
+                void disconnectHandler?.();
+                transport.close();
+            },
+        };
+    };
 
     io.use(async (socket, next) => {
         const handshakeStartedAt = Date.now();
@@ -562,10 +618,7 @@ export function startSocket(app: Fastify) {
             io,
             serverRoutedLiveStreamEnabled,
             relayCaps: machineLiveStreamFeatureEnv.serverRoutedCaps,
-            relayAuthorizationTrustRoots: peerMediationFeatureEnv.grantSigningKeys.map((key) => ({
-                keyId: key.keyId,
-                publicKeyBase64Url: key.publicKey,
-            })),
+            relayAuthorizationTrustRoots: tunnelRelayAuthorizationTrustRoots,
         });
         transferRelayV2Handler(userId, socket, {
             io,
@@ -574,14 +627,7 @@ export function startSocket(app: Fastify) {
             serverRelayTransferMaxActiveTransfersPerSocket: machineTransferFeatureEnv.serverRoutedMaxActiveTransfersPerSocket,
         });
         registerPeerTcpTunnelRelaySocketHandler(userId, socket, {
-            io,
-            serverRoutedEnabled: serverRoutedTunnelEnabled,
-            maxBytes: machineTunnelFeatureEnv.serverRoutedMaxBytes,
-            maxActiveTunnelsPerSocket: machineTunnelFeatureEnv.serverRoutedMaxActiveTunnelsPerSocket,
-            maxFrameBytes: machineTunnelFeatureEnv.serverRoutedMaxFrameBytes,
-            maxIdleMs: machineTunnelFeatureEnv.maxIdleMs,
-            maxDurationMs: machineTunnelFeatureEnv.maxDurationMs,
-            allowedPorts: machineTunnelFeatureEnv.allowedPorts,
+            ...tunnelRelayHandlerOptions,
         });
         artifactUpdateHandler(userId, socket);
         accessKeyHandler(userId, socket);

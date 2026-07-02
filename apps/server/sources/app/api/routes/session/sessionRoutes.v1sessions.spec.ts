@@ -12,6 +12,7 @@ import {
     sessionShareFindMany,
     txSessionCreate,
 } from "./sessionRoutes.testkit";
+import { DEFAULT_SESSION_ROLLBACK_ELIGIBLE_TURN_RELATION_LIMIT } from "./v2SessionHotReadLimits";
 
 describe("sessionRoutes v1 sessions snapshot", () => {
     const resetStoragePolicyEnv = createEnvReset();
@@ -54,12 +55,114 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
         const { response: res } = await route.invoke();
 
+        expect(sessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+            select: expect.objectContaining({
+                turns: expect.objectContaining({ take: DEFAULT_SESSION_ROLLBACK_ELIGIBLE_TURN_RELATION_LIMIT }),
+            }),
+        }));
+        expect(sessionShareFindMany).toHaveBeenCalledWith(expect.objectContaining({
+            select: expect.objectContaining({
+                session: expect.objectContaining({
+                    select: expect.objectContaining({
+                        turns: expect.objectContaining({ take: DEFAULT_SESSION_ROLLBACK_ELIGIBLE_TURN_RELATION_LIMIT }),
+                    }),
+                }),
+            }),
+        }));
         expect(res).toEqual({
             sessions: [
                 expect.objectContaining({
                     id: "s1",
                     pendingCount: 2,
                     pendingVersion: 7,
+                }),
+            ],
+        });
+    });
+
+    it("GET /v1/sessions returns materialized turn observed timestamps for owned sessions", async () => {
+        const now = new Date(1);
+        sessionFindMany.mockResolvedValue([
+            {
+                id: "s1",
+                seq: 1,
+                createdAt: now,
+                updatedAt: now,
+                metadata: "m1",
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                dataEncryptionKey: null,
+                pendingCount: 0,
+                pendingVersion: 0,
+                active: true,
+                lastActiveAt: now,
+                latestTurnId: "turn-1",
+                latestTurnStatus: "in_progress",
+                latestTurnStatusObservedAt: BigInt(1234),
+            },
+        ]);
+        sessionShareFindMany.mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
+        const { response: res } = await route.invoke();
+
+        expect(res).toEqual({
+            sessions: [
+                expect.objectContaining({
+                    id: "s1",
+                    latestTurnStatus: "in_progress",
+                    latestTurnStatusObservedAt: 1234,
+                }),
+            ],
+        });
+    });
+
+    it("GET /v1/sessions falls back when rollback turn columns are unavailable", async () => {
+        const now = new Date(1);
+        sessionFindMany
+            .mockRejectedValueOnce(Object.assign(new Error("Column SessionTurn.rollbackState does not exist"), { code: "P2022" }))
+            .mockResolvedValueOnce([
+                {
+                    id: "s1",
+                    seq: 1,
+                    createdAt: now,
+                    updatedAt: now,
+                    meaningfulActivityAt: now,
+                    archivedAt: null,
+                    encryptionMode: "e2ee",
+                    metadata: "m1",
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    lastViewedSessionSeq: 1,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    latestTurnId: "turn-1",
+                    latestTurnStatus: "completed",
+                    latestTurnStatusObservedAt: BigInt(1234),
+                    lastRuntimeIssue: null,
+                    dataEncryptionKey: null,
+                    pendingCount: 0,
+                    pendingVersion: 0,
+                    active: true,
+                    lastActiveAt: now,
+                },
+            ]);
+        sessionShareFindMany.mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
+        const { response: res } = await route.invoke();
+
+        expect(sessionFindMany).toHaveBeenCalledTimes(2);
+        expect(sessionFindMany.mock.calls[1]?.[0]?.select).not.toHaveProperty("turns");
+        expect(res).toEqual({
+            sessions: [
+                expect.objectContaining({
+                    id: "s1",
+                    latestTurnStatus: "completed",
+                    latestTurnStatusObservedAt: 1234,
+                    rollbackEligibleTurnStarts: [],
                 }),
             ],
         });

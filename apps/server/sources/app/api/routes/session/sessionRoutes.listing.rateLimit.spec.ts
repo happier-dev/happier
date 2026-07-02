@@ -16,4 +16,13 @@ describe("sessionRoutes listing rate limits", () => {
             expect.objectContaining({ max: expect.any(Number), timeWindow: expect.any(String) }),
         );
     });
+
+    it("registers the v2 session detail route with an explicit rate limit", async () => {
+        const builder = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
+        const route = builder.app.routes.get("GET /v2/sessions/:sessionId");
+
+        expect((route?.opts as any)?.config?.rateLimit).toEqual(
+            expect.objectContaining({ max: expect.any(Number), timeWindow: expect.any(String) }),
+        );
+    });
 });

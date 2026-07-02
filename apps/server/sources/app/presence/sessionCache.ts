@@ -3,14 +3,17 @@ import { log } from "@/utils/logging/log";
 import { sessionCacheCounter, databaseUpdatesSkippedCounter, recordPresenceFlushRetry } from "@/app/monitoring/metrics/index";
 import { checkSessionAccess } from "@/app/share/accessControl";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
+import { createSessionPresenceUpdateManyArgs } from "./sessionPresenceWritePlan";
 
 interface SessionCacheEntry {
     validUntil: number;
     lastUpdateSent: number;
     pendingUpdate: number | null;
+    pendingThinking: boolean | null;
     userId: string;
     sessionId: string;
     active: boolean;
+    thinking: boolean | null;
 }
 
 interface MachineCacheEntry {
@@ -107,6 +110,8 @@ class ActivityCache {
                 },
             ),
             pendingUpdate: existing?.pendingUpdate ?? null,
+            pendingThinking: existing?.pendingThinking ?? null,
+            thinking: existing?.thinking ?? null,
         });
     }
 
@@ -134,9 +139,11 @@ class ActivityCache {
             validUntil: now + this.CACHE_TTL,
             lastUpdateSent: params.lastActiveAt?.getTime() ?? 0,
             pendingUpdate: null,
+            pendingThinking: null,
             userId,
             sessionId,
             active: params.active,
+            thinking: null,
         };
     }
 
@@ -276,19 +283,25 @@ class ActivityCache {
         }
     }
 
-    queueSessionUpdate(sessionId: string, userId: string, timestamp: number): boolean {
+    queueSessionUpdate(sessionId: string, userId: string, timestamp: number, thinking?: boolean): boolean {
         this.maybeCleanup(Date.now());
         const cacheKey = `${sessionId}:${userId}`;
         const cached = this.sessionCache.get(cacheKey);
         if (!cached) {
             return false; // Should validate first
         }
+        const nextThinking = typeof thinking === "boolean" ? thinking : null;
+        const thinkingChanged = nextThinking !== null && cached.thinking !== nextThinking;
 
         // If the session is currently marked inactive, force a DB write to flip it back to active
         // even if `lastActiveAt` is already recent (e.g. after a restart or previously-buggy writes).
-        if (!cached.active) {
+        if (!cached.active || thinkingChanged) {
             cached.pendingUpdate = timestamp;
+            cached.pendingThinking = nextThinking;
             cached.active = true;
+            if (nextThinking !== null) {
+                cached.thinking = nextThinking;
+            }
             return true;
         }
         
@@ -296,6 +309,10 @@ class ActivityCache {
         const timeDiff = Math.abs(timestamp - cached.lastUpdateSent);
         if (timeDiff > this.UPDATE_THRESHOLD) {
             cached.pendingUpdate = timestamp;
+            cached.pendingThinking = nextThinking;
+            if (nextThinking !== null) {
+                cached.thinking = nextThinking;
+            }
             return true;
         }
         
@@ -341,13 +358,17 @@ class ActivityCache {
         return false; // No update needed
     }
 
-    markSessionUpdateSent(sessionId: string, userId: string, timestamp: number): void {
+    markSessionUpdateSent(sessionId: string, userId: string, timestamp: number, thinking?: boolean): void {
         const cacheKey = `${sessionId}:${userId}`;
         const cached = this.sessionCache.get(cacheKey);
         if (!cached) return;
         cached.lastUpdateSent = timestamp;
         cached.pendingUpdate = null;
+        cached.pendingThinking = null;
         cached.active = true;
+        if (typeof thinking === "boolean") {
+            cached.thinking = thinking;
+        }
     }
 
     markSessionInactive(sessionId: string, userId: string, timestamp: number): void {
@@ -388,7 +409,7 @@ class ActivityCache {
         if (now < this.dbFlushBackoffUntil) return;
         let shouldAbortFlush = false;
 
-        const sessionUpdatesById = new Map<string, { timestamp: number; entries: SessionCacheEntry[] }>();
+        const sessionUpdatesById = new Map<string, { timestamp: number; thinking: boolean | null; entries: SessionCacheEntry[] }>();
         const machineUpdates: { machineId: string; timestamp: number; entry: MachineCacheEntry }[] = [];
         
         // Collect session updates
@@ -397,9 +418,12 @@ class ActivityCache {
                 const timestamp = entry.pendingUpdate;
                 const existing = sessionUpdatesById.get(entry.sessionId);
                 if (!existing) {
-                    sessionUpdatesById.set(entry.sessionId, { timestamp, entries: [entry] });
+                    sessionUpdatesById.set(entry.sessionId, { timestamp, thinking: entry.pendingThinking, entries: [entry] });
                 } else {
-                    existing.timestamp = Math.max(existing.timestamp, timestamp);
+                    if (timestamp >= existing.timestamp) {
+                        existing.timestamp = timestamp;
+                        existing.thinking = entry.pendingThinking;
+                    }
                     existing.entries.push(entry);
                 }
             }
@@ -420,11 +444,12 @@ class ActivityCache {
         if (sessionUpdatesById.size > 0) {
             let okCount = 0;
             try {
-                const operations = Array.from(sessionUpdatesById.entries()).map(([sessionId, update]) =>
-                    db.session.updateMany({
-                        where: { id: sessionId },
-                        data: { lastActiveAt: new Date(update.timestamp), active: true }
-                    }),
+                const operations = Array.from(sessionUpdatesById.entries()).flatMap(([sessionId, update]) =>
+                    createSessionPresenceUpdateManyArgs({
+                        sessionId,
+                        timestamp: update.timestamp,
+                        thinking: update.thinking,
+                    }).map((args) => db.session.updateMany(args)),
                 );
                 await db.$transaction(operations);
 
@@ -436,6 +461,9 @@ class ActivityCache {
                         // The flush snapshot uses the pendingUpdate value observed at collection time.
                         const pending = entry.pendingUpdate;
                         entry.pendingUpdate = pending !== null && pending > timestamp ? pending : null;
+                        if (entry.pendingUpdate === null) {
+                            entry.pendingThinking = null;
+                        }
                         entry.active = true;
                     }
                 }

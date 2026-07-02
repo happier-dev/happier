@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { encodeBase64, BOX_BUNDLE_PUBLIC_KEY_BYTES } from "@happier-dev/protocol";
+import tweetnacl from "tweetnacl";
+
+import { decodeBase64, encodeBase64, openBoxBundle, BOX_BUNDLE_PUBLIC_KEY_BYTES } from "@happier-dev/protocol";
 
 import {
     ConnectedServiceOauthExchangeError,
@@ -13,6 +15,21 @@ import { createEnvReset } from "../../../testkit/env";
 function buildRecipientPublicKeyB64Url(): string {
     const bytes = new Uint8Array(BOX_BUNDLE_PUBLIC_KEY_BYTES).fill(7);
     return encodeBase64(bytes, "base64url");
+}
+
+function buildRecipientKeyPair(): Readonly<{ publicKeyB64Url: string; secretKey: Uint8Array }> {
+    const secretKey = new Uint8Array(32).fill(7);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(secretKey).publicKey;
+    return { publicKeyB64Url: encodeBase64(publicKey, "base64url"), secretKey };
+}
+
+function buildJwt(payload: Readonly<Record<string, unknown>>): string {
+    const encoder = new TextEncoder();
+    return [
+        encodeBase64(encoder.encode(JSON.stringify({ alg: "none" })), "base64url"),
+        encodeBase64(encoder.encode(JSON.stringify(payload)), "base64url"),
+        "sig",
+    ].join(".");
 }
 
 describe("exchangeConnectedServiceOauthTokens", () => {
@@ -76,6 +93,51 @@ describe("exchangeConnectedServiceOauthTokens", () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(typeof res.bundleB64Url).toBe("string");
         expect(res.bundleB64Url.length).toBeGreaterThan(0);
+    });
+
+    it("extracts OpenAI Codex account email from id_token claims during exchange", async () => {
+        const idToken = buildJwt({
+            chatgpt_account_id: "acct-from-token",
+            "https://api.openai.com/profile": {
+                email: "codex-user@example.test",
+            },
+        });
+        const fetchMock = vi.fn(async (_url: any, init: any) => {
+            const body = String(init?.body ?? "");
+            expect(body).toContain("grant_type=authorization_code");
+            expect(body).toContain("code=c");
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    access_token: "at",
+                    refresh_token: "rt",
+                    id_token: idToken,
+                    expires_in: 3600,
+                }),
+                text: async () => "",
+            } as any;
+        });
+
+        const recipient = buildRecipientKeyPair();
+        const res = await exchangeConnectedServiceOauthTokens({
+            serviceId: "openai-codex",
+            publicKeyB64Url: recipient.publicKeyB64Url,
+            code: "c",
+            verifier: "v",
+            redirectUri: "http://localhost:54545/oauth2callback",
+            now: 1700000000000,
+            fetcher: fetchMock as any,
+        });
+
+        const opened = openBoxBundle({
+            bundle: decodeBase64(res.bundleB64Url, "base64url"),
+            recipientSecretKeyOrSeed: recipient.secretKey,
+        });
+        expect(opened).toBeTruthy();
+        const json = JSON.parse(new TextDecoder().decode(opened!));
+        expect(json.providerAccountId).toBe("acct-from-token");
+        expect(json.providerEmail).toBe("codex-user@example.test");
     });
 
     it("rejects claude-subscription exchange when state is missing", async () => {

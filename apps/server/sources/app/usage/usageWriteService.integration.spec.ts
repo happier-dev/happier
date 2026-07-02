@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { eventRouter } from "@/app/events/eventRouter";
+import { register } from "@/app/monitoring/metrics/registry";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { recordLegacyUsageReport, recordUsageEvent } from "./usageWriteService";
@@ -8,6 +10,23 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildUsageEphemeral: vi.fn(() => ({ type: "usage" })),
 }));
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+
+type MetricSample = {
+    labels: Record<string, string>;
+    value: number;
+};
+
+async function readMetricSamples(name: string): Promise<MetricSample[]> {
+    const metrics = await register.getMetricsAsJSON();
+    const metric = metrics.find((entry) => entry.name === name);
+    if (!metric) return [];
+    return metric.values.map((value) => ({
+        labels: Object.fromEntries(
+            Object.entries(value.labels ?? {}).map(([key, labelValue]) => [key, String(labelValue)]),
+        ),
+        value: Number(value.value),
+    }));
+}
 
 describe("usageWriteService", () => {
     let harness: LightSqliteHarness;
@@ -23,6 +42,7 @@ describe("usageWriteService", () => {
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
+        register.resetMetrics();
         harness.resetEnv();
     });
 
@@ -34,6 +54,69 @@ describe("usageWriteService", () => {
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("does not rewrite or re-emit unchanged session legacy usage reports", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-usage-service-unchanged" },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                accountId: account.id,
+                tag: "usage-service-unchanged",
+                encryptionMode: "e2ee",
+                metadata: "ciphertext",
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                seq: 0,
+                pendingVersion: 0,
+                pendingCount: 0,
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        const first = await recordLegacyUsageReport({
+            accountId: account.id,
+            key: "legacy-unchanged",
+            sessionId: session.id,
+            tokens: { total: 12, input: 7, output: 5 },
+            cost: { total: 0.12 },
+        });
+        const duplicate = await recordLegacyUsageReport({
+            accountId: account.id,
+            key: "legacy-unchanged",
+            sessionId: session.id,
+            tokens: { total: 12, input: 7, output: 5 },
+            cost: { total: 0.12 },
+        });
+
+        expect(first).toMatchObject({ ok: true, changed: true, usageEventId: expect.any(String) });
+        expect(duplicate).toMatchObject({
+            ok: true,
+            changed: false,
+            usageEventId: null,
+            report: first.ok ? first.report : expect.anything(),
+        });
+
+        expect(await db.usageReport.count({ where: { accountId: account.id } })).toBe(1);
+        expect(await db.usageEvent.count({ where: { accountId: account.id } })).toBe(1);
+        expect(eventRouter.emitEphemeral).toHaveBeenCalledTimes(1);
+
+        expect(await readMetricSamples("usage_report_writes_total")).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    labels: { scope: "session", result: "created" },
+                    value: 1,
+                }),
+                expect.objectContaining({
+                    labels: { scope: "session", result: "unchanged" },
+                    value: 1,
+                }),
+            ]),
+        );
     });
 
     it("writes sessionless legacy usage reports into the append-only ledger", async () => {
@@ -76,6 +159,63 @@ describe("usageWriteService", () => {
                 inputTokens: 4,
                 outputTokens: 3,
                 reportedCostUsd: 0.07,
+            },
+        ]);
+    });
+
+    it("canonicalizes duplicate account-level legacy usage reports before writing the next delta", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-usage-service-account-dedup" },
+            select: { id: true },
+        });
+        await db.usageReport.create({
+            data: {
+                accountId: account.id,
+                sessionId: null,
+                key: "legacy-account-total",
+                data: { tokens: { total: 1, input: 1 }, cost: { total: 0.01 } },
+            },
+        });
+        await db.usageReport.create({
+            data: {
+                accountId: account.id,
+                sessionId: null,
+                key: "legacy-account-total",
+                data: { tokens: { total: 2, input: 2 }, cost: { total: 0.02 } },
+            },
+        });
+
+        const result = await recordLegacyUsageReport({
+            accountId: account.id,
+            key: "legacy-account-total",
+            sessionId: null,
+            tokens: { total: 7, input: 7 },
+            cost: { total: 0.07 },
+        });
+
+        expect(result).toMatchObject({ ok: true, changed: true, usageEventId: expect.any(String) });
+        await expect(db.usageReport.findMany({
+            where: {
+                accountId: account.id,
+                sessionId: null,
+                key: "legacy-account-total",
+            },
+            select: { sessionId: true, data: true },
+        })).resolves.toEqual([
+            {
+                sessionId: null,
+                data: { tokens: { total: 7, input: 7 }, cost: { total: 0.07 } },
+            },
+        ]);
+        await expect(db.usageEvent.findMany({
+            where: { accountId: account.id, source: "legacy_usage_report" },
+            select: { sessionId: true, totalTokens: true, inputTokens: true, reportedCostUsd: true },
+        })).resolves.toEqual([
+            {
+                sessionId: null,
+                totalTokens: 5,
+                inputTokens: 5,
+                reportedCostUsd: 0.05,
             },
         ]);
     });

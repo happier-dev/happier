@@ -72,6 +72,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
             resolvedSession = await inTx(async (tx) => {
             log({ module: "session-create", userId, tag }, `Creating new session for user ${userId} with tag ${tag}`);
 
+            const createdAt = new Date();
             const created = await tx.session.create({
                 data: {
                     accountId: userId,
@@ -79,6 +80,9 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                     encryptionMode: effectiveEncryptionMode,
                     metadata,
                     agentState: agentState ?? null,
+                    createdAt,
+                    lastActiveAt: createdAt,
+                    meaningfulActivityAt: createdAt,
                     dataEncryptionKey:
                         effectiveEncryptionMode === "plain"
                             ? undefined
@@ -156,6 +160,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 activeAt: resolvedSession.lastActiveAt.getTime(),
                 createdAt: resolvedSession.createdAt.getTime(),
                 updatedAt: resolvedSession.updatedAt.getTime(),
+                meaningfulActivityAt: (resolvedSession.meaningfulActivityAt ?? resolvedSession.createdAt).getTime(),
                 lastMessage: null
             }
         });

@@ -3,6 +3,7 @@ import { db } from '@/storage/db';
 import { register } from '@/app/monitoring/metrics/index';
 import { log } from '@/utils/logging/log';
 import { readMetricsServerConfigFromEnv } from '@/config/monitoring';
+import { createHealthyMonitoringResponse, sendDatabaseReadinessResponse } from './readiness';
 
 export async function createMetricsServer() {
     const app = fastify({
@@ -29,7 +30,11 @@ export async function createMetricsServer() {
     });
 
     app.get('/health', async (_request, reply) => {
-        reply.send({ status: 'ok', timestamp: new Date().toISOString() });
+        reply.send(createHealthyMonitoringResponse());
+    });
+
+    app.get('/ready', async (_request, reply) => {
+        await sendDatabaseReadinessResponse(reply);
     });
 
     return app;

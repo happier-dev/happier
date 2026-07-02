@@ -65,6 +65,7 @@ model Account {
     AccountPetAsset        AccountPetAsset[]
     ServiceAccountToken    ServiceAccountToken[]
     ServiceAccountQuotaSnapshot ServiceAccountQuotaSnapshot[]
+    ConnectedServiceAuthGroup ConnectedServiceAuthGroup[]
     RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
     RelationshipsTo        UserRelationship[]         @relation("RelationshipsTo")
     Artifact               Artifact[]
@@ -78,11 +79,35 @@ model Account {
     PublicShareAccessLogs  PublicShareAccessLog[]     @relation("PublicShareAccessLogs")
     PublicShareBlockedUsers PublicShareBlockedUser[]  @relation("PublicShareBlockedUsers")
     AccountChanges         AccountChange[]
+    AccountSettingsSnapshots AccountSettingsSnapshot[]
     SessionPendingMessage  SessionPendingMessage[]
+    SessionSystemRecord    SessionSystemRecord[]
+    ReviewComments         ReviewComment[]
+    ReviewCommentEvents    ReviewCommentEvent[]
+    PluginPermissionGrants PluginPermissionGrant[]
+    PluginPermissionGrantRequests PluginPermissionGrantRequest[]
+    PluginPermissionGrantEvents PluginPermissionGrantEvent[]
+    PluginManifestProjections AccountPluginManifestProjection[]
     AccountIdentity        AccountIdentity[]
     automations            Automation[]
     automationRuns         AutomationRun[]
     SessionFolderAssignment SessionFolderAssignment[]
+}
+
+model AccountSettingsSnapshot {
+    id              String   @id @default(cuid())
+    accountId       String
+    version         Int
+    settingsDbValue String? @db.LongText
+    encryptionMode  String
+    contentKind     String
+    createdAt       DateTime @default(now())
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, version])
+    @@index([accountId, version])
+    @@index([createdAt])
 }
 
 enum AccountIdentityEligibilityStatus {
@@ -314,14 +339,24 @@ model Session {
     lastViewedSessionSeq            Int?
     pendingPermissionRequestCount   Int                 @default(0)
     pendingUserActionRequestCount   Int                 @default(0)
+    pendingRequestObservedAt        DateTime?
+    latestTurnId                    String?
     latestTurnStatus                String?
+    latestTurnStatusObservedAt      BigInt?
     lastRuntimeIssue                String?
+    latestReadyEventSeq             Int?
+    latestReadyEventAt              DateTime?
+    thinking                        Boolean             @default(false)
+    thinkingAt                      DateTime?
     active            Boolean             @default(true)
     archivedAt        DateTime?
     lastActiveAt      DateTime            @default(now())
+    meaningfulActivityAt DateTime?
     createdAt         DateTime            @default(now())
     updatedAt         DateTime            @updatedAt
     messages          SessionMessage[]
+    turns             SessionTurn[]
+    turnMutationReceipts SessionTurnMutationReceipt[]
     pendingMessages   SessionPendingMessage[]
     usageReports      UsageReport[]
     usageEvents       UsageEvent[]
@@ -329,13 +364,58 @@ model Session {
     shares            SessionShare[]
     publicShare       PublicSessionShare?
     sessionFolderAssignments SessionFolderAssignment[]
+    systemRecords    SessionSystemRecord[]
     accountChanges    AccountChange[]    @relation("AccountChangeSession")
     producedByAutomationRuns AutomationRun[] @relation("AutomationRunProducedSession")
 
     @@unique([accountId, tag])
     @@index([accountId, updatedAt])
+    @@index([accountId, meaningfulActivityAt, id])
     @@index([accountId, archivedAt])
     @@index([lastActiveAt, updatedAt])
+}
+
+model SessionTurn {
+    id                      String   @id @default(cuid())
+    sessionId               String
+    session                 Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+    turnId                  String
+    provider                String?
+    providerTurnId          String?
+    status                  String
+    startedAt               BigInt
+    updatedAt               BigInt
+    terminalAt              BigInt?
+    lastRuntimeIssueJson    String?
+    transcriptAnchorsJson   String?
+    rollbackState           String?
+    rollbackReason          String?
+    providerRollbackOrdinal Int?
+    rollbackUpdatedAt       BigInt?
+    lastMutationId          String?
+    createdAt               DateTime @default(now())
+
+    @@unique([sessionId, turnId])
+    @@index([sessionId, updatedAt])
+    @@index([sessionId, status])
+    @@index([sessionId, rollbackState])
+    @@index([sessionId, provider, providerTurnId])
+}
+
+model SessionTurnMutationReceipt {
+    id         String   @id @default(cuid())
+    sessionId  String
+    session    Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+    mutationId String
+    turnId     String?
+    action     String
+    decision   String
+    observedAt BigInt
+    appliedAt  BigInt
+    createdAt  DateTime @default(now())
+
+    @@unique([sessionId, mutationId])
+    @@index([sessionId, appliedAt])
 }
 
 model SessionFolderAssignment {
@@ -352,6 +432,25 @@ model SessionFolderAssignment {
     @@unique([accountId, sessionId])
     @@index([accountId, folderId, updatedAt])
     @@index([sessionId])
+}
+
+model SessionSystemRecord {
+    id        String   @id @default(cuid())
+    accountId String
+    sessionId String
+    namespace String
+    kind      String
+    localId   String
+    content   Json
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId, namespace, localId])
+    @@index([accountId, sessionId, namespace, kind, updatedAt, id])
+    @@index([sessionId, namespace, kind, updatedAt, id])
 }
 
 model SessionMessage {
@@ -543,6 +642,7 @@ model Machine {
     accountChanges     AccountChange[] @relation("AccountChangeMachine")
     automationAssignments AutomationAssignment[]
     automationClaimedRuns AutomationRun[] @relation("AutomationRunClaimedByMachine")
+    pluginManifestProjections AccountPluginManifestProjection[]
 
     @@unique([accountId, id])
     @@index([accountId])
@@ -730,6 +830,7 @@ model ServiceAccountToken {
     lastUsedAt DateTime?
     createdAt  DateTime  @default(now())
     updatedAt  DateTime  @updatedAt
+    members    ConnectedServiceAuthGroupMember[]
 
     @@unique([accountId, vendor, profileId])
     @@index([accountId])
@@ -751,6 +852,47 @@ model ServiceAccountQuotaSnapshot {
 
     @@unique([accountId, vendor, profileId])
     @@index([accountId])
+}
+
+model ConnectedServiceAuthGroup {
+    id              String   @id @default(cuid())
+    accountId       String
+    vendor          String
+    groupId         String
+    displayName     String?
+    policyJson      String
+    activeProfileId String?
+    generation      Int      @default(0)
+    stateJson       String?
+    createdAt       DateTime @default(now())
+    updatedAt       DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    members ConnectedServiceAuthGroupMember[]
+
+    @@unique([accountId, vendor, groupId])
+    @@index([accountId, vendor])
+}
+
+model ConnectedServiceAuthGroupMember {
+    id        String   @id @default(cuid())
+    groupDbId String
+    accountId String
+    vendor    String
+    groupId   String
+    profileId String
+    priority  Int      @default(100)
+    enabled   Boolean  @default(true)
+    stateJson String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    group      ConnectedServiceAuthGroup @relation(fields: [groupDbId], references: [id], onDelete: Cascade)
+    credential ServiceAccountToken @relation(fields: [accountId, vendor, profileId], references: [accountId, vendor, profileId], onDelete: Cascade)
+
+    @@unique([accountId, vendor, groupId, profileId])
+    @@index([groupDbId])
+    @@index([accountId, vendor, profileId])
 }
 
 //
@@ -863,6 +1005,191 @@ model UserKVStore {
 
     @@unique([accountId, key])
     @@index([accountId])
+}
+
+//
+// Review Comments
+//
+
+model ReviewComment {
+    id                   String   @id
+    accountId            String   @map("account_id")
+    projectId            String   @map("project_id")
+    workspaceId          String?  @map("workspace_id")
+    sessionId            String?  @map("session_id")
+    runId                String?  @map("run_id")
+    engineId             String?  @map("engine_id")
+    findingId            String?  @map("finding_id")
+    threadId             String   @map("thread_id")
+    parentCommentId      String?  @map("parent_comment_id")
+    state                String
+    flagsJson            String   @map("flags_json")
+    anchorJson           String   @map("anchor_json")
+    anchorFilePath       String?  @map("anchor_file_path")
+    anchorFolderPath     String?  @map("anchor_folder_path")
+    snapshotEnvelopeJson String   @map("snapshot_envelope_json")
+    bodyEnvelopeJson     String   @map("body_envelope_json")
+    bodyVersion          Int      @map("body_version")
+    authorJson           String   @map("author_json")
+    editsJson            String   @map("edits_json")
+    dispositionsJson     String   @map("dispositions_json")
+    evidenceJson         String?  @map("evidence_json")
+    transitionsJson      String   @map("transitions_json")
+    fingerprintJson      String?  @map("fingerprint_json")
+    linkedRefsJson       String?  @map("linked_refs_json")
+    suggestedFixJson     String?  @map("suggested_fix_json")
+    metadataJson         String?  @map("metadata_json")
+    tombstoneJson        String?  @map("tombstone_json")
+    serverRevision       Int      @map("server_revision")
+    createdAt            BigInt   @map("created_at")
+    updatedAt            BigInt   @map("updated_at")
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    events  ReviewCommentEvent[]
+
+    @@index([projectId, state, updatedAt])
+    @@index([projectId, runId, updatedAt])
+    @@index([projectId, engineId, updatedAt])
+    @@index([projectId, anchorFilePath, updatedAt])
+    @@map("review_comments")
+}
+
+model ReviewCommentEvent {
+    eventId           String   @id @map("event_id")
+    commentId         String   @map("comment_id")
+    accountId         String   @map("account_id")
+    projectId         String   @map("project_id")
+    eventKind         String   @map("event_kind")
+    eventEnvelopeJson String   @map("event_envelope_json")
+    bulkActionId      String?  @map("bulk_action_id")
+    clientMutationId  String?  @map("client_mutation_id")
+    actorJson         String   @map("actor_json")
+    authorDeviceId    String?  @map("author_device_id")
+    clientLamport     BigInt?  @map("client_lamport")
+    serverRevision    Int      @map("server_revision")
+    createdAt         BigInt   @map("created_at")
+
+    account Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    comment ReviewComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+    @@index([commentId, serverRevision])
+    @@index([accountId, projectId, createdAt])
+    @@map("review_comment_events")
+}
+
+//
+// Plugin Permission Grants
+//
+
+model PluginPermissionGrant {
+    id                String  @id
+    accountId         String  @map("account_id")
+    pluginId          String  @map("plugin_id")
+    capability        String
+    scopeKind         String  @map("scope_kind")
+    scopeProjectId    String? @map("scope_project_id")
+    scopeWorkspaceId  String? @map("scope_workspace_id")
+    authorityKind     String  @default("bundled") @map("authority_kind")
+    authorityMachineId String? @map("authority_machine_id")
+    authorityInstallationId String? @map("authority_installation_id")
+    status            String
+    activeIdentityKey String? @map("active_identity_key")
+    requestId         String? @map("request_id")
+    grantedByUserId   String  @map("granted_by_user_id")
+    grantedAt         BigInt  @map("granted_at")
+    revokedByUserId   String? @map("revoked_by_user_id")
+    revokedAt         BigInt? @map("revoked_at")
+    createdAt         BigInt  @map("created_at")
+    updatedAt         BigInt  @map("updated_at")
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@index([accountId, pluginId, capability, scopeKind, scopeProjectId, scopeWorkspaceId, authorityKind, authorityMachineId, authorityInstallationId, status, updatedAt], map: "plugin_permission_grants_scope_idx")
+    @@index([accountId, requestId], map: "plugin_permission_grants_request_idx")
+    @@unique([accountId, activeIdentityKey], map: "plugin_permission_grants_active_identity_key")
+    @@map("plugin_permission_grants")
+}
+
+model PluginPermissionGrantRequest {
+    id                String  @id
+    accountId         String  @map("account_id")
+    pluginId          String  @map("plugin_id")
+    capability        String
+    scopeKind         String  @map("scope_kind")
+    scopeProjectId    String? @map("scope_project_id")
+    scopeWorkspaceId  String? @map("scope_workspace_id")
+    authorityKind     String  @default("bundled") @map("authority_kind")
+    authorityMachineId String? @map("authority_machine_id")
+    authorityInstallationId String? @map("authority_installation_id")
+    requesterJson     String  @map("requester_json")
+    reason            String
+    status            String
+    grantId           String? @map("grant_id")
+    createdByUserId   String? @map("created_by_user_id")
+    decidedByUserId   String? @map("decided_by_user_id")
+    decidedAt         BigInt? @map("decided_at")
+    createdAt         BigInt  @map("created_at")
+    updatedAt         BigInt  @map("updated_at")
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@index([accountId, pluginId, capability, scopeKind, scopeProjectId, scopeWorkspaceId, authorityKind, authorityMachineId, authorityInstallationId, status, updatedAt], map: "plugin_permission_requests_scope_idx")
+    @@index([accountId, grantId], map: "plugin_permission_requests_grant_idx")
+    @@map("plugin_permission_grant_requests")
+}
+
+model PluginPermissionGrantEvent {
+    eventId           String  @id @map("event_id")
+    accountId         String  @map("account_id")
+    pluginId          String  @map("plugin_id")
+    capability        String
+    scopeKind         String  @map("scope_kind")
+    scopeProjectId    String? @map("scope_project_id")
+    scopeWorkspaceId  String? @map("scope_workspace_id")
+    authorityKind     String  @default("bundled") @map("authority_kind")
+    authorityMachineId String? @map("authority_machine_id")
+    authorityInstallationId String? @map("authority_installation_id")
+    eventKind         String  @map("event_kind")
+    actorJson         String  @map("actor_json")
+    requestId         String? @map("request_id")
+    grantId           String? @map("grant_id")
+    previousStateJson String? @map("previous_state_json")
+    nextStateJson     String? @map("next_state_json")
+    reason            String?
+    createdAt         BigInt  @map("created_at")
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@index([accountId, pluginId, capability, eventKind, createdAt], map: "plugin_permission_events_kind_idx")
+    @@index([accountId, requestId], map: "plugin_permission_events_request_idx")
+    @@index([accountId, grantId], map: "plugin_permission_events_grant_idx")
+    @@map("plugin_permission_grant_events")
+}
+
+model AccountPluginManifestProjection {
+    accountId                String  @map("account_id")
+    machineId                String  @map("machine_id")
+    pluginId                 String  @map("plugin_id")
+    schemaVersion            Int     @map("schema_version")
+    pluginVersion            String  @map("plugin_version")
+    displayName              String  @map("display_name")
+    manifestDigest           String  @map("manifest_digest")
+    sourceJson               String? @map("source_json")
+    requiredPermissionsJson  String  @map("required_permissions_json")
+    optionalPermissionsJson  String  @map("optional_permissions_json")
+    enabled                  Boolean @default(true)
+    disabledAt               BigInt? @map("disabled_at")
+    createdAt                BigInt  @map("created_at")
+    updatedAt                BigInt  @map("updated_at")
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    machine Machine @relation(fields: [accountId, machineId], references: [accountId, id], onDelete: Cascade)
+
+    @@id([accountId, machineId, pluginId])
+    @@index([accountId, pluginId, enabled], map: "account_plugin_manifest_projection_plugin_lookup_idx")
+    @@index([accountId, machineId, pluginId, enabled], map: "account_plugin_manifest_projection_machine_lookup_idx")
+    @@index([accountId, enabled, updatedAt], map: "account_plugin_manifest_projection_list_idx")
+    @@map("account_plugin_manifest_projections")
 }
 
 //

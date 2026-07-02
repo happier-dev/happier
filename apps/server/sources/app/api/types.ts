@@ -1,6 +1,7 @@
 import { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { ZodTypeProvider } from "fastify-type-provider-zod";
 import { IncomingMessage, Server, ServerResponse } from "http";
+import type { PeerTcpTunnelRelayTransportFactory } from "@/app/local/services/preview/tunnel";
 
 export type Fastify = FastifyInstance<
     Server<typeof IncomingMessage, typeof ServerResponse>,
@@ -26,5 +27,6 @@ declare module 'fastify' {
             | { ok: true; result: unknown }
             | { ok: false; error: string; errorCode?: string }
         >;
+        createPeerTcpTunnelRelayTransport?: PeerTcpTunnelRelayTransportFactory;
     }
 }

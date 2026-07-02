@@ -25,6 +25,7 @@ describe("monitoring/metrics/index", () => {
         expect(register.getSingleMetric("redis_command_failures_total")).toBeTruthy();
         expect(register.getSingleMetric("event_fanout_emits_total")).toBeTruthy();
         expect(register.getSingleMetric("event_fanout_target_count")).toBeTruthy();
+        expect(register.getSingleMetric("event_fanout_payload_bytes")).toBeTruthy();
         expect(register.getSingleMetric("event_fanout_drops_total")).toBeTruthy();
         expect(register.getSingleMetric("http_hot_endpoint_requests_total")).toBeTruthy();
         expect(register.getSingleMetric("rpc_calls_total")).toBeTruthy();
@@ -38,6 +39,7 @@ describe("monitoring/metrics/index", () => {
         expect(register.getSingleMetric("session_write_create_message_duration_seconds")).toBeTruthy();
         expect(register.getSingleMetric("session_message_role_mismatch_total")).toBeTruthy();
         expect(register.getSingleMetric("database_transaction_retries_total")).toBeTruthy();
+        expect(register.getSingleMetric("usage_report_writes_total")).toBeTruthy();
         expect(register.getSingleMetric("session_scoped_binding_duration_seconds")).toBeTruthy();
         expect(register.getSingleMetric("runtime_event_loop_lag_seconds")).toBeTruthy();
         expect(register.getSingleMetric("runtime_heap_used_bytes")).toBeTruthy();

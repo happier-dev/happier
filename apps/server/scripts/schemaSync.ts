@@ -107,6 +107,7 @@ function generateProviderSchemaFromPostgres(
 	        body = body.replace(/^(\s*agentState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*daemonState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*settings\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	        body = body.replace(/^(\s*settingsDbValue\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	    }
 
     const header = [

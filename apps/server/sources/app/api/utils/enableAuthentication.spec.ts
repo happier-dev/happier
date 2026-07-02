@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const verifyToken = vi.fn();
 const enforceLoginEligibility = vi.fn();
+const log = vi.fn();
 
 vi.mock("@/app/auth/auth", () => ({
     auth: { verifyToken },
@@ -12,11 +13,16 @@ vi.mock("@/app/auth/enforceLoginEligibility", () => ({
     enforceLoginEligibility,
 }));
 
+vi.mock("@/utils/logging/log", () => ({
+    log,
+}));
+
 describe("enableAuthentication (defensive error handling)", () => {
     beforeEach(() => {
         vi.resetModules();
         verifyToken.mockReset();
         enforceLoginEligibility.mockReset();
+        log.mockReset();
     });
 
     it("never responds with an undefined error when login eligibility rejects", async () => {
@@ -102,6 +108,35 @@ describe("enableAuthentication (defensive error handling)", () => {
 
         expect(res.statusCode).toBe(401);
         expect(res.json()).toEqual({ error: "Invalid token", code: "account-not-found" });
+
+        await app.close();
+    });
+
+    it("does not emit per-request auth success logs by default", async () => {
+        verifyToken.mockResolvedValueOnce({ userId: "u1" });
+        enforceLoginEligibility.mockResolvedValueOnce({ ok: true });
+
+        const { enableAuthentication } = await import("./enableAuthentication");
+        const app = Fastify({ logger: false }) as any;
+        enableAuthentication(app);
+        app.get("/private", { preHandler: app.authenticate }, async () => ({ ok: true }));
+        await app.ready();
+
+        const res = await app.inject({
+            method: "GET",
+            url: "/private",
+            headers: { authorization: "Bearer t" },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(log).not.toHaveBeenCalledWith(
+            expect.objectContaining({ module: "auth-decorator" }),
+            expect.stringContaining("Auth success"),
+        );
+        expect(log).not.toHaveBeenCalledWith(
+            expect.objectContaining({ module: "auth-decorator" }),
+            expect.stringContaining("Auth check"),
+        );
 
         await app.close();
     });

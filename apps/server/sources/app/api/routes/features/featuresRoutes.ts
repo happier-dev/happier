@@ -6,6 +6,7 @@ import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCata
 import {
     applyPublicSignupProvisioningRestrictionsToFeaturesPayload,
 } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
+import { readCachedServerIdentityIdForHotPath } from "@/app/serverIdentity/serverIdentity";
 
 export function featuresRoutes(app: Fastify) {
     app.get(
@@ -22,9 +23,16 @@ export function featuresRoutes(app: Fastify) {
         },
         async (request, reply) => {
             const payload = resolveFeaturesFromEnv(process.env);
+            const serverIdentityId = readCachedServerIdentityIdForHotPath(process.env);
             reply.header("Cache-Control", "no-store");
             return reply.send(applyPublicSignupProvisioningRestrictionsToFeaturesPayload({
-                payload,
+                payload: {
+                    ...payload,
+                    capabilities: {
+                        ...payload.capabilities,
+                        serverIdentity: { serverIdentityId },
+                    },
+                },
                 env: process.env,
                 requestIp: request.ip,
             }));

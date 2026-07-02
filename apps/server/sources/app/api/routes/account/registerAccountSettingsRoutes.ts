@@ -13,6 +13,7 @@ import {
     AccountSettingsV2UpdateResponseSchema,
     type AccountSettingsStoredContentEnvelope,
 } from "@happier-dev/protocol";
+import { recordAccountSettingsSnapshotsForWrite } from "@/app/accountSettings/accountSettingsHistoryRepository";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { openPlainAccountSettingsDbValue, storePlainAccountSettingsDbValue } from "@/app/encryption/accountSettingsStorage";
 
@@ -136,6 +137,22 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                         currentSettings: account?.settings || null
                     };
                 }
+
+                await recordAccountSettingsSnapshotsForWrite({
+                    tx,
+                    previous: {
+                        accountId: userId,
+                        version: expectedVersion,
+                        settingsDbValue: currentUser.settings,
+                        encryptionMode: mode,
+                    },
+                    next: {
+                        accountId: userId,
+                        version: expectedVersion + 1,
+                        settingsDbValue: settings,
+                        encryptionMode: mode,
+                    },
+                });
 
                 const settingsUpdate = {
                     value: settings,
@@ -311,6 +328,22 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                         currentContent: refreshedContent,
                     };
                 }
+
+                await recordAccountSettingsSnapshotsForWrite({
+                    tx,
+                    previous: {
+                        accountId: userId,
+                        version: expectedVersion,
+                        settingsDbValue: currentUser.settings,
+                        encryptionMode: mode,
+                    },
+                    next: {
+                        accountId: userId,
+                        version: expectedVersion + 1,
+                        settingsDbValue: nextSettingsDbValue,
+                        encryptionMode: mode,
+                    },
+                });
 
                 const cursor = await markAccountChanged(tx, {
                     accountId: userId,

@@ -6,6 +6,7 @@ import { ConnectedServiceIdSchema, type ConnectedServiceId } from "@happier-dev/
 
 import { isConnectedServiceCredentialMetadataV2 } from "./credentialMetadataV2";
 import { isConnectedServiceCredentialMetadataV3 } from "../connectedServicesV3/credentialMetadataV3";
+import { deriveConnectedServiceCredentialStatus } from "../credentialHealthMetadata";
 
 export function registerConnectedServiceProfilesRoutesV2(app: Fastify): void {
   app.get("/v2/connect/:serviceId/profiles", {
@@ -17,7 +18,7 @@ export function registerConnectedServiceProfilesRoutesV2(app: Fastify): void {
           serviceId: ConnectedServiceIdSchema,
           profiles: z.array(z.object({
             profileId: z.string().min(1),
-            status: z.enum(["connected", "needs_reauth"]),
+            status: z.enum(["connected", "refreshing", "needs_reauth", "refresh_failed_retryable"]),
             kind: z.enum(["oauth", "token"]).nullable().optional(),
             providerEmail: z.string().nullable().optional(),
             providerAccountId: z.string().nullable().optional(),
@@ -42,7 +43,7 @@ export function registerConnectedServiceProfilesRoutesV2(app: Fastify): void {
       const metaV3 = !meta && isConnectedServiceCredentialMetadataV3(row.metadata) ? row.metadata : null;
       return {
         profileId: row.profileId,
-        status: meta || metaV3 ? "connected" as const : "needs_reauth" as const,
+        status: deriveConnectedServiceCredentialStatus(meta ?? metaV3),
         kind: meta?.kind ?? metaV3?.kind ?? null,
         providerEmail: meta?.providerEmail ?? metaV3?.providerEmail ?? null,
         providerAccountId: meta?.providerAccountId ?? metaV3?.providerAccountId ?? null,

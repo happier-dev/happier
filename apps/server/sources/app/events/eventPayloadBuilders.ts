@@ -39,6 +39,7 @@ export function buildNewSessionUpdate(session: {
     lastActiveAt: Date;
     createdAt: Date;
     updatedAt: Date;
+    meaningfulActivityAt?: Date | null;
 }, updateSeq: number, updateId: string): UpdatePayload {
     return {
         id: updateId,
@@ -57,7 +58,8 @@ export function buildNewSessionUpdate(session: {
             active: session.active,
             activeAt: session.lastActiveAt.getTime(),
             createdAt: session.createdAt.getTime(),
-            updatedAt: session.updatedAt.getTime()
+            updatedAt: session.updatedAt.getTime(),
+            meaningfulActivityAt: (session.meaningfulActivityAt ?? session.createdAt).getTime()
         },
         createdAt: Date.now()
     };
@@ -100,10 +102,17 @@ export function buildUpdateSessionUpdate(
     metadata?: { value: string | null; version: number },
     agentState?: { value: string | null; version: number },
     projection?: {
+        active?: boolean;
+        activeAt?: number;
         lastViewedSessionSeq?: number;
         pendingPermissionRequestCount?: number;
         pendingUserActionRequestCount?: number;
+        pendingRequestObservedAt?: number | null;
+        latestReadyEventSeq?: number | null;
+        latestReadyEventAt?: number | null;
+        latestTurnId?: string | null;
         latestTurnStatus?: PrimaryTurnStatusV1 | null;
+        latestTurnStatusObservedAt?: number | null;
         lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
         archivedAt?: number | null;
     },
@@ -118,6 +127,8 @@ export function buildUpdateSessionUpdate(
             sid: sessionId,
             metadata,
             agentState,
+            ...(projection && "active" in projection ? { active: projection.active } : {}),
+            ...(typeof projection?.activeAt === "number" ? { activeAt: projection.activeAt } : {}),
             ...(typeof projection?.lastViewedSessionSeq === 'number' ? { lastViewedSessionSeq: projection.lastViewedSessionSeq } : {}),
             ...(typeof projection?.pendingPermissionRequestCount === 'number'
                 ? { pendingPermissionRequestCount: projection.pendingPermissionRequestCount }
@@ -125,7 +136,20 @@ export function buildUpdateSessionUpdate(
             ...(typeof projection?.pendingUserActionRequestCount === 'number'
                 ? { pendingUserActionRequestCount: projection.pendingUserActionRequestCount }
                 : {}),
+            ...(typeof projection?.pendingRequestObservedAt === 'number' || projection?.pendingRequestObservedAt === null
+                ? { pendingRequestObservedAt: projection.pendingRequestObservedAt }
+                : {}),
+            ...(typeof projection?.latestReadyEventSeq === 'number' || projection?.latestReadyEventSeq === null
+                ? { latestReadyEventSeq: projection.latestReadyEventSeq }
+                : {}),
+            ...(typeof projection?.latestReadyEventAt === 'number' || projection?.latestReadyEventAt === null
+                ? { latestReadyEventAt: projection.latestReadyEventAt }
+                : {}),
+            ...(projection && 'latestTurnId' in projection ? { latestTurnId: projection.latestTurnId ?? null } : {}),
             ...(projection && 'latestTurnStatus' in projection ? { latestTurnStatus: projection.latestTurnStatus ?? null } : {}),
+            ...(projection && 'latestTurnStatusObservedAt' in projection
+                ? { latestTurnStatusObservedAt: projection.latestTurnStatusObservedAt ?? null }
+                : {}),
             ...(projection && 'lastRuntimeIssue' in projection ? { lastRuntimeIssue: projection.lastRuntimeIssue ?? null } : {}),
             ...(typeof projection?.archivedAt === 'number' || projection?.archivedAt === null
                 ? { archivedAt: projection.archivedAt }
@@ -136,10 +160,19 @@ export function buildUpdateSessionUpdate(
 }
 
 export function buildPendingChangedUpdate(
-    data: { sessionId: string; pendingVersion: number; pendingCount: number; changedByAccountId?: string },
+    data: {
+        sessionId: string;
+        pendingVersion: number;
+        pendingCount: number;
+        changedByAccountId?: string;
+        meaningfulActivityAt?: Date | number;
+    },
     updateSeq: number,
     updateId: string,
 ): UpdatePayload {
+    const meaningfulActivityAt = data.meaningfulActivityAt instanceof Date
+        ? data.meaningfulActivityAt.getTime()
+        : data.meaningfulActivityAt;
     return {
         id: updateId,
         seq: updateSeq,
@@ -151,6 +184,9 @@ export function buildPendingChangedUpdate(
             pendingVersion: data.pendingVersion,
             pendingCount: data.pendingCount,
             ...(typeof data.changedByAccountId === "string" ? { changedByAccountId: data.changedByAccountId } : {}),
+            ...(typeof meaningfulActivityAt === "number" && Number.isFinite(meaningfulActivityAt)
+                ? { meaningfulActivityAt }
+                : {}),
         },
         createdAt: Date.now(),
     };
@@ -528,6 +564,7 @@ export function buildSessionSharedUpdate(share: {
         avatar: any | null;
     };
     accessLevel: 'view' | 'edit' | 'admin';
+    canApprovePermissions: boolean;
     encryptedDataKey: Uint8Array | null;
     createdAt: Date;
 }, updateSeq: number, updateId: string): UpdatePayload {
@@ -542,6 +579,7 @@ export function buildSessionSharedUpdate(share: {
             shareId: share.id,
             sharedBy: share.sharedByUser,
             accessLevel: share.accessLevel,
+            canApprovePermissions: share.canApprovePermissions,
             ...(share.encryptedDataKey ? { encryptedDataKey: Buffer.from(share.encryptedDataKey).toString('base64') } : {}),
             createdAt: share.createdAt.getTime()
         },
@@ -553,6 +591,7 @@ export function buildSessionShareUpdatedUpdate(
     shareId: string,
     sessionId: string,
     accessLevel: 'view' | 'edit' | 'admin',
+    canApprovePermissions: boolean,
     updatedAt: Date,
     updateSeq: number,
     updateId: string
@@ -567,6 +606,7 @@ export function buildSessionShareUpdatedUpdate(
             sid: sessionId,
             shareId,
             accessLevel,
+            canApprovePermissions,
             updatedAt: updatedAt.getTime()
         },
         createdAt: Date.now()

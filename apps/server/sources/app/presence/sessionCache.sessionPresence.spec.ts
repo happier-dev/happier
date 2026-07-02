@@ -101,6 +101,66 @@ describe("ActivityCache session presence", () => {
         expect(queuedAgain).toBe(false);
     });
 
+    it("persists thinking state changes without letting legacy heartbeats override terminal turn projections", async () => {
+        ({ activityCache } = await import("./sessionCache"));
+        activityCache.enableDbFlush();
+
+        const timestamp = Date.now();
+        await activityCache.isSessionValid("s1", "u1");
+
+        expect(activityCache.queueSessionUpdate("s1", "u1", timestamp, true)).toBe(true);
+        await (activityCache as any).flushPendingUpdates();
+
+        expect(dbMocks.db.session.updateMany).toHaveBeenNthCalledWith(1,
+            expect.objectContaining({
+                where: expect.objectContaining({ id: "s1" }),
+                data: expect.objectContaining({
+                    active: true,
+                    lastActiveAt: new Date(timestamp),
+                }),
+            }),
+        );
+        expect(dbMocks.db.session.updateMany).toHaveBeenNthCalledWith(2,
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    id: "s1",
+                    latestTurnStatus: { in: ["completed", "cancelled", "failed"] },
+                    thinking: true,
+                }),
+                data: { thinking: false },
+            }),
+        );
+        expect(dbMocks.db.session.updateMany).toHaveBeenNthCalledWith(3,
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    id: "s1",
+                    OR: [
+                        { latestTurnStatus: null },
+                        { latestTurnStatus: { notIn: ["completed", "cancelled", "failed"] } },
+                    ],
+                }),
+                data: expect.objectContaining({
+                    thinking: true,
+                    thinkingAt: new Date(timestamp),
+                }),
+            }),
+        );
+
+        expect(activityCache.queueSessionUpdate("s1", "u1", timestamp + 1_000, true)).toBe(false);
+        expect(activityCache.queueSessionUpdate("s1", "u1", timestamp + 2_000, false)).toBe(true);
+        await (activityCache as any).flushPendingUpdates();
+
+        expect(dbMocks.db.session.updateMany).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({ id: "s1" }),
+                data: expect.objectContaining({
+                    thinking: false,
+                    thinkingAt: new Date(timestamp + 2_000),
+                }),
+            }),
+        );
+    });
+
     it("flushes multiple pending sessions in one transaction batch", async () => {
         ({ activityCache } = await import("./sessionCache"));
         activityCache.enableDbFlush();

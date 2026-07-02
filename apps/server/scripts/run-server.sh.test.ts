@@ -162,7 +162,7 @@ describe('run-server.sh', () => {
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
     expect(yarnLines[0]).toContain('YARN --cwd apps/server prisma migrate deploy --schema prisma/sqlite/schema.prisma');
-    expect(lines.join('\n')).toContain('ENV DATABASE_URL=file:/data/server-light/happier-server-light.sqlite');
+    expect(lines.join('\n')).toContain('ENV DATABASE_URL=file:///data/server-light/happier-server-light.sqlite?socket_timeout=30');
     expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start:light');
   });
 });

@@ -70,7 +70,7 @@ describe('migrate.light.new.ts', () => {
 
         expect(prismaCall).toBeDefined();
         const env = (prismaCall?.[2] as { env?: NodeJS.ProcessEnv } | undefined)?.env;
-        const expected = pathToFileURL(join(tmpDir, 'happy server #light.sqlite')).href;
+        const expected = `${pathToFileURL(join(tmpDir, 'happy server #light.sqlite')).href}?socket_timeout=30`;
         expect(env?.DATABASE_URL).toBe(expected);
     });
 });

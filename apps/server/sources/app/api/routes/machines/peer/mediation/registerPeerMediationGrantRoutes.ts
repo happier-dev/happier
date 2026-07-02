@@ -5,7 +5,9 @@ import {
     DirectRouteGrantScopeV1Schema,
     LiveStreamGrantScopeV1Schema,
     MachineLiveStreamCapsV1Schema,
+    PeerTcpTunnelDestinationV1Schema,
     PEER_MEDIATION_RECEIPTS,
+    TcpTunnelGrantScopeV1Schema,
     clampDirectRouteGrantTtlMs,
     type FeatureId,
     type DirectRouteGrantScopeV1,
@@ -14,7 +16,7 @@ import {
     type PeerFlowKindV1,
 } from "@happier-dev/protocol";
 
-import { readMachineLiveStreamFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { readMachineLiveStreamFeatureEnv, readMachineTunnelFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     createServerFeatureGatePreHandler,
     isPeerMediationGrantSigningAdvertisedForRequest,
@@ -24,6 +26,7 @@ import {
     resolvePeerMediationGrantSigningConfig,
 } from "@/app/machines/peer/mediation/mintDirectRouteGrantV1";
 import { mintMachineLiveStreamRelayAuthorizationV1 } from "@/app/machines/peer/mediation/stream";
+import { mintPeerTcpTunnelRelayAuthorizationV1 } from "@/app/machines/peer/mediation/tunnel";
 
 type PeerMediationGrantRouteRequest = Readonly<{
     body?: unknown;
@@ -67,9 +70,19 @@ const LiveStreamServerRelayAuthorizationRequestSchema = z.object({
     scope: LiveStreamGrantScopeV1Schema,
 }).strict();
 
-const PeerMediationGrantRequestSchema = z.discriminatedUnion("routeKind", [
+const TcpTunnelServerRelayAuthorizationRequestSchema = z.object({
+    machineId: z.string().min(1),
+    flowKind: z.literal("tcp_tunnel"),
+    routeKind: z.literal("server_relay"),
+    ttlMs: z.number().int().positive(),
+    destination: PeerTcpTunnelDestinationV1Schema,
+    scope: TcpTunnelGrantScopeV1Schema,
+}).strict();
+
+const PeerMediationGrantRequestSchema = z.union([
     LoopbackPeerMediationGrantRequestSchema,
     LiveStreamServerRelayAuthorizationRequestSchema,
+    TcpTunnelServerRelayAuthorizationRequestSchema,
 ]);
 
 function resolveDirectPeerFeatureId(flowKind: PeerFlowKindV1): FeatureId {
@@ -86,7 +99,11 @@ function resolveDirectPeerFeatureId(flowKind: PeerFlowKindV1): FeatureId {
 }
 
 function resolveRouteGrantFeatureId(input: z.infer<typeof PeerMediationGrantRequestSchema>): FeatureId {
-    if (input.routeKind === "server_relay") return "machines.liveStream.serverRouted";
+    if (input.routeKind === "server_relay") {
+        return input.flowKind === "tcp_tunnel"
+            ? "machines.tunnel.serverRouted"
+            : "machines.liveStream.serverRouted";
+    }
     return resolveDirectPeerFeatureId(input.flowKind);
 }
 
@@ -138,6 +155,13 @@ function resolveServerRelayedLiveStreamTtlMs(requestedTtlMs: number): number {
     return Math.min(
         Math.max(1, Math.floor(requestedTtlMs)),
         DIRECT_ROUTE_GRANT_TTL_MS.serverRelayedLiveStream,
+    );
+}
+
+function resolveServerRelayedTcpTunnelTtlMs(requestedTtlMs: number): number {
+    return Math.min(
+        Math.max(1, Math.floor(requestedTtlMs)),
+        DIRECT_ROUTE_GRANT_TTL_MS.serverRelayedTcpTunnel,
     );
 }
 
@@ -223,6 +247,30 @@ export function registerPeerMediationGrantRoutes(
         }
 
         if (parsed.data.routeKind === "server_relay") {
+            if (parsed.data.flowKind === "tcp_tunnel") {
+                const featureEnv = readMachineTunnelFeatureEnv(env);
+                return mintPeerTcpTunnelRelayAuthorizationV1({
+                    accountId,
+                    targetMachineId: parsed.data.machineId,
+                    destination: parsed.data.destination,
+                    scope: parsed.data.scope,
+                    nowMs: nowMs(),
+                    ttlMs: resolveServerRelayedTcpTunnelTtlMs(parsed.data.ttlMs),
+                    serverGateEnabled: featureEnv.serverRoutedEnabled,
+                    serverCaps: {
+                        allowedPorts: featureEnv.allowedPorts,
+                        maxBytes: featureEnv.serverRoutedMaxBytes,
+                        maxFrameBytes: featureEnv.serverRoutedMaxFrameBytes,
+                        maxIdleMs: featureEnv.maxIdleMs,
+                        maxDurationMs: featureEnv.maxDurationMs,
+                    },
+                    signingKey: {
+                        keyId: signing.keyId,
+                        secretKey: signing.secretKey,
+                    },
+                });
+            }
+
             const featureEnv = readMachineLiveStreamFeatureEnv(env);
             if (!featureEnv.serverRoutedEnabled || !featureEnv.serverRoutedCaps) {
                 return {

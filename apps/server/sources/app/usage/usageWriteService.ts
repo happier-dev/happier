@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type {
     UsageEventIngestRequest,
     UsageObservationCost,
@@ -6,8 +7,10 @@ import type {
 } from "@happier-dev/protocol";
 import { Prisma } from "@prisma/client";
 import { buildUsageEphemeral, eventRouter } from "@/app/events/eventRouter";
+import { usageReportWritesCounter } from "@/app/monitoring/metrics/index";
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { db } from "@/storage/db";
+import { AsyncLock } from "@/utils/runtime/lock";
 import {
     normalizeLegacyUsageCost,
     normalizeLegacyUsageTokens,
@@ -27,6 +30,7 @@ export type LegacyUsageReportInput = Readonly<{
 export type RecordLegacyUsageReportResult =
     | {
         ok: true;
+        changed: boolean;
         report: {
             id: string;
             createdAt: Date;
@@ -38,6 +42,39 @@ export type RecordLegacyUsageReportResult =
         ok: false;
         error: 'invalid-params' | 'session-not-found';
       };
+
+type UsageReportWriteMetric = Readonly<{
+    scope: "account" | "session";
+    result: "created" | "updated" | "unchanged" | "session_not_found";
+}>;
+
+type AccountLegacyUsageWriteLockState = {
+    readonly lock: AsyncLock;
+    refs: number;
+};
+
+const accountLegacyUsageWriteLocks = new Map<string, AccountLegacyUsageWriteLockState>();
+
+async function inAccountLegacyUsageWriteLock<T>(
+    params: Readonly<{ accountId: string; key: string }>,
+    run: () => Promise<T>,
+): Promise<T> {
+    const lockKey = `${params.accountId}\0${params.key}`;
+    let state = accountLegacyUsageWriteLocks.get(lockKey);
+    if (!state) {
+        state = { lock: new AsyncLock(), refs: 0 };
+        accountLegacyUsageWriteLocks.set(lockKey, state);
+    }
+    state.refs += 1;
+    try {
+        return await state.lock.inLock(run);
+    } finally {
+        state.refs -= 1;
+        if (state.refs === 0 && accountLegacyUsageWriteLocks.get(lockKey) === state) {
+            accountLegacyUsageWriteLocks.delete(lockKey);
+        }
+    }
+}
 
 export type RecordUsageEventResult =
     | {
@@ -253,18 +290,29 @@ export async function recordLegacyUsageReport(
     const accountId = params.accountId.trim();
     const key = params.key.trim();
     const sessionId = typeof params.sessionId === 'string' && params.sessionId.trim() ? params.sessionId : null;
+    const scope = sessionId ? "session" : "account";
+    let writeMetric: UsageReportWriteMetric | null = null;
 
     if (!accountId || !key || typeof params.tokens.total !== 'number' || typeof params.cost.total !== 'number') {
         return { ok: false, error: 'invalid-params' };
     }
 
-    return await inTx(async (tx) => {
+    const write = async (): Promise<RecordLegacyUsageReportResult> => await inTx<RecordLegacyUsageReportResult>(async (tx) => {
         if (sessionId && !(await ensureSessionOwnedByAccount(tx, { accountId, sessionId }))) {
+            writeMetric = { scope: "session", result: "session_not_found" };
             return { ok: false, error: 'session-not-found' };
         }
 
-        const previous = sessionId
-            ? await tx.usageReport.findUnique({
+        let previous: {
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            data: Prisma.JsonValue;
+        } | null = null;
+        let removedDuplicateAccountReports = false;
+
+        if (sessionId) {
+            previous = await tx.usageReport.findUnique({
                 where: {
                     accountId_sessionId_key: {
                         accountId,
@@ -272,21 +320,56 @@ export async function recordLegacyUsageReport(
                         key,
                     },
                 },
-                select: { data: true },
-            })
-            : await tx.usageReport.findFirst({
+                select: { id: true, createdAt: true, updatedAt: true, data: true },
+            });
+        } else {
+            const existingReports = await tx.usageReport.findMany({
                 where: {
                     accountId,
                     sessionId: null,
                     key,
                 },
-                select: { data: true },
+                orderBy: [
+                    { updatedAt: "desc" },
+                    { createdAt: "desc" },
+                    { id: "desc" },
+                ],
+                select: { id: true, createdAt: true, updatedAt: true, data: true },
             });
+            const [survivor, ...duplicates] = existingReports;
+            previous = survivor ?? null;
+            if (duplicates.length > 0) {
+                await tx.usageReport.deleteMany({
+                    where: {
+                        accountId,
+                        sessionId: null,
+                        key,
+                        id: { in: duplicates.map((report) => report.id) },
+                    },
+                });
+                removedDuplicateAccountReports = true;
+            }
+        }
 
         const usageData: PrismaJson.UsageReportData = {
             tokens: params.tokens,
             cost: params.cost,
         };
+
+        if (previous && isDeepStrictEqual(previous.data, usageData)) {
+            writeMetric = { scope, result: removedDuplicateAccountReports ? "updated" : "unchanged" };
+            return {
+                ok: true,
+                changed: removedDuplicateAccountReports,
+                report: {
+                    id: previous.id,
+                    createdAt: previous.createdAt,
+                    updatedAt: previous.updatedAt,
+                },
+                usageEventId: null,
+            };
+        }
+
         const now = new Date();
         const report = sessionId
             ? await tx.usageReport.upsert({
@@ -314,19 +397,9 @@ export async function recordLegacyUsageReport(
                 },
             })
             : await (async () => {
-                const existing = await tx.usageReport.findFirst({
-                    where: {
-                        accountId,
-                        sessionId: null,
-                        key,
-                    },
-                    select: {
-                        id: true,
-                    },
-                });
-                if (existing) {
+                if (previous) {
                     return await tx.usageReport.update({
-                        where: { id: existing.id },
+                        where: { id: previous.id },
                         data: {
                             data: usageData,
                             updatedAt: now,
@@ -386,10 +459,21 @@ export async function recordLegacyUsageReport(
             });
         }
 
+        writeMetric = { scope, result: previous ? "updated" : "created" };
         return {
             ok: true,
+            changed: true,
             report,
             usageEventId,
         };
     });
+    const result = sessionId
+        ? await write()
+        : await inAccountLegacyUsageWriteLock({ accountId, key }, write);
+
+    if (writeMetric) {
+        usageReportWritesCounter.inc(writeMetric);
+    }
+
+    return result;
 }

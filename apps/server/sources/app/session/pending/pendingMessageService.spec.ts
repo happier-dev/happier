@@ -13,10 +13,11 @@ vi.mock("@/app/session/pending/resolveSessionPendingAccess", () => ({
     resolveSessionPendingViewAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
 }));
 
-const applyPendingSessionStateChange = vi.fn(async (..._args: any[]) => ({
+const applyPendingSessionStateChange = vi.fn(async (params: { meaningfulActivityAt?: Date } = {}) => ({
     pendingCount: 1,
     pendingVersion: 1,
     participantCursors: [],
+    ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
 }));
 vi.mock("@/app/session/pending/applyPendingSessionStateChange", () => ({
     applyPendingSessionStateChange: (...args: any[]) => applyPendingSessionStateChange(...args),
@@ -36,7 +37,12 @@ describe("pendingMessageService", () => {
         resolveSessionPendingEditAccess.mockReset();
         resolveSessionPendingEditAccess.mockResolvedValue({ ok: true, isOwner: true });
         applyPendingSessionStateChange.mockReset();
-        applyPendingSessionStateChange.mockResolvedValue({ pendingCount: 1, pendingVersion: 1, participantCursors: [] });
+        applyPendingSessionStateChange.mockImplementation(async (params: { meaningfulActivityAt?: Date } = {}) => ({
+            pendingCount: 1,
+            pendingVersion: 1,
+            participantCursors: [],
+            ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
+        }));
         storagePolicyEnv.restore();
 
         currentTx = {
@@ -81,6 +87,7 @@ describe("pendingMessageService", () => {
         });
 
         expect(res.ok).toBe(true);
+        expect(res.meaningfulActivityAt).toEqual(createdAt);
         expect(currentTx.sessionPendingMessage.create).toHaveBeenCalledWith(
             expect.objectContaining({
                 data: expect.objectContaining({
@@ -242,6 +249,33 @@ describe("pendingMessageService", () => {
                 data: { content: { t: "plain", v: { type: "user", text: "hi" } }, messageRole: "user" },
             }),
         );
+    });
+
+    it("updates pending content in place without changing queue position", async () => {
+        storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+
+        currentTx.session.findUnique.mockResolvedValue({ encryptionMode: "plain", pendingCount: 3, pendingVersion: 7 });
+        currentTx.sessionPendingMessage.findUnique.mockResolvedValue({ id: "p2", status: "queued" });
+        currentTx.sessionPendingMessage.update = vi.fn();
+
+        const res = await updatePendingMessageCompat({
+            actorUserId: "u1",
+            sessionId: "s1",
+            localId: "p2",
+            content: { t: "plain", v: { type: "user", text: "edited middle row" } },
+        });
+
+        expect(res.ok).toBe(true);
+        expect(currentTx.sessionPendingMessage.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { sessionId_localId: { sessionId: "s1", localId: "p2" } },
+                data: {
+                    content: { t: "plain", v: { type: "user", text: "edited middle row" } },
+                    messageRole: "user",
+                },
+            }),
+        );
+        expect(currentTx.sessionPendingMessage.create).not.toHaveBeenCalled();
     });
 
     it("allocates queued positions from a session counter so racing enqueues keep their order", async () => {

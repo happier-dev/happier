@@ -7,12 +7,16 @@ export function resolveConnectedServicesFeature(
     const featureEnv = readConnectedServicesFeatureEnv(env);
     const enabled = featureEnv.enabled;
     const quotasEnabled = featureEnv.quotasEnabled;
+    const accountGroupsEnabled = featureEnv.accountGroupsEnabled;
+    const accountFallbackEnabled = featureEnv.accountFallbackEnabled;
 
     return {
         features: {
             connectedServices: {
                 enabled,
                 quotas: { enabled: quotasEnabled },
+                accountGroups: { enabled: accountGroupsEnabled },
+                accountFallback: { enabled: accountFallbackEnabled },
             },
         },
     };

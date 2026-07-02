@@ -7,6 +7,7 @@ import { SessionMessageRoleSchema, SessionStoredMessageContentSchema, type Sessi
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
+import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { checkSessionAccess } from "@/app/share/accessControl";
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
@@ -46,6 +47,22 @@ function resolveRequestedMessageRoles(query: Readonly<{ role?: unknown; roles?: 
     }
 
     return { ok: true, roles: Array.from(new Set(roles)) };
+}
+
+function buildRequestedMessageRoleWhere(roles: readonly SessionMessageRole[]): Prisma.SessionMessageWhereInput | null {
+    if (roles.length === 0) return null;
+
+    const concreteRoleFilter = roles.length === 1 ? roles[0] : { in: [...roles] };
+    if (!roles.includes("user")) {
+        return { messageRole: concreteRoleFilter };
+    }
+
+    return {
+        OR: [
+            { messageRole: concreteRoleFilter },
+            { messageRole: null },
+        ],
+    };
 }
 
 export function registerSessionMessageRoutes(app: Fastify) {
@@ -194,8 +211,8 @@ export function registerSessionMessageRoutes(app: Fastify) {
         const where: Prisma.SessionMessageWhereInput = { sessionId };
         if (scope === "main") where.sidechainId = null;
         if (scope === "sidechain") where.sidechainId = sidechainId;
-        if (roles.length === 1) where.messageRole = roles[0];
-        if (roles.length > 1) where.messageRole = { in: roles };
+        const roleWhere = buildRequestedMessageRoleWhere(roles);
+        if (roleWhere) Object.assign(where, roleWhere);
         if (beforeSeq !== undefined) {
             where.seq = { lt: beforeSeq };
         }
@@ -270,12 +287,14 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     localId: z.string().optional(),
                     sidechainId: z.string().min(1).nullable().optional(),
                     messageRole: z.unknown().optional(),
+                    sessionEventType: z.literal("ready").optional(),
                 }),
                 z.object({
                     content: SessionStoredMessageContentSchema,
                     localId: z.string().optional(),
                     sidechainId: z.string().min(1).nullable().optional(),
                     messageRole: z.unknown().optional(),
+                    sessionEventType: z.literal("ready").optional(),
                 }),
             ]),
             response: {
@@ -300,7 +319,8 @@ export function registerSessionMessageRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
-        const body = request.body as Readonly<{ localId?: string; sidechainId?: string | null; messageRole?: unknown } & ({ ciphertext: string } | { content: SessionStoredMessageContent })>;
+        const body = request.body as Readonly<{ localId?: string; sidechainId?: string | null; messageRole?: unknown; sessionEventType?: "ready" } & ({ ciphertext: string } | { content: SessionStoredMessageContent })>;
+        const trustedSessionEventType = body.sessionEventType === "ready" ? "ready" : undefined;
         const localId = typeof body.localId === "string" ? body.localId : undefined;
         const parsedSidechainId = parseSessionMessageSidechainId(body.sidechainId, { emptyString: "invalid" });
         if (!parsedSidechainId.ok) {
@@ -327,6 +347,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                       localId: effectiveLocalId,
                       sidechainId,
                       messageRole: body.messageRole,
+                      ...(trustedSessionEventType ? { trustedSessionEventType } : {}),
                   })
                 : await createSessionMessage({
                       actorUserId: userId,
@@ -335,6 +356,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                       localId: effectiveLocalId,
                       sidechainId,
                       messageRole: body.messageRole,
+                      ...(trustedSessionEventType ? { trustedSessionEventType } : {}),
                   });
 
         if (!result.ok) {
@@ -357,6 +379,10 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     recipientFilter: { type: 'all-interested-in-session', sessionId },
                 });
             }));
+            await publishSessionReadyProjectionUpdate({
+                sessionId,
+                readyProjection: result.readyProjection,
+            });
         } else if (result.didUpdate) {
             await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
                 const payload = buildMessageUpdatedUpdate(result.message, sessionId, cursor, randomKeyNaked(12));

@@ -209,5 +209,19 @@ describe("eventRouter (rooms)", () => {
             },
             value: 1,
         });
+
+        const payloadSamples = await readMetricSamples("event_fanout_payload_bytes");
+        expect(payloadSamples).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    labels: expect.objectContaining({
+                        dispatch_mode: "room",
+                        event_name: "update",
+                        filter_type: "all-interested-in-session",
+                        payload_type: "new-message",
+                    }),
+                }),
+            ]),
+        );
     });
 });

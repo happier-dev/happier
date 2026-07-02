@@ -3,6 +3,10 @@ import tweetnacl from "tweetnacl";
 
 import { FEATURE_ENV_KEYS } from "@/app/features/catalog/featureEnvSchema";
 import { createRouteTestBuilder } from "../../../../testkit/routeTestBuilder";
+import {
+    PeerTcpTunnelRelayAuthorizationV1Schema,
+    createPeerTcpTunnelRelayAuthorizationSigningInputV1,
+} from "@happier-dev/protocol";
 import { RPC_METHODS } from "@happier-dev/protocol/rpc";
 
 import { registerPeerMediationGrantRoutes } from "./registerPeerMediationGrantRoutes";
@@ -99,6 +103,77 @@ describe("registerPeerMediationGrantRoutes", () => {
                 },
             },
         });
+    });
+
+    it("mints a signed server relay authorization for TCP tunnels without changing direct-route grant semantics", async () => {
+        const keyPair = tweetnacl.sign.keyPair();
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines/peer/mediation/route-grants",
+            defaultRequest: {
+                body: {
+                    machineId: "machine_1",
+                    flowKind: "tcp_tunnel",
+                    routeKind: "server_relay",
+                    ttlMs: 900_000,
+                    destination: { host: "127.0.0.1", port: 3000 },
+                    scope: {
+                        kind: "tcp_tunnel",
+                        tunnelId: "tun_1",
+                        allowedPorts: [3000],
+                        maxIdleMs: 30_000,
+                        maxDurationMs: 300_000,
+                        maxTotalBytes: 64 * 1024 * 1024,
+                    },
+                },
+            },
+            registerRoutes: (app) => registerPeerMediationGrantRoutes(app, {
+                env: {
+                    [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: "true",
+                    [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: "3000,5173",
+                    [FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxBytes]: `${64 * 1024 * 1024}`,
+                    [FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxFrameBytes]: `${64 * 1024}`,
+                    [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningKeyId]: "grant-key-1",
+                    [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
+                },
+                nowMs: () => 1_000,
+            }),
+        });
+
+        const { response } = await route.invoke({ userId: "account_1" });
+
+        expect(response).toMatchObject({
+            ok: true,
+            receipt: "peer.route_grant.minted",
+            relayAuthorization: {
+                payload: {
+                    accountId: "account_1",
+                    targetMachineId: "machine_1",
+                    flowKind: "tcp_tunnel",
+                    routeKind: "server_relay",
+                    tunnelId: "tun_1",
+                    destination: { host: "127.0.0.1", port: 3000 },
+                    maxFrameBytes: 64 * 1024,
+                    maxIdleMs: 30_000,
+                    maxDurationMs: 300_000,
+                    maxTotalBytes: 64 * 1024 * 1024,
+                    iat: 1_000,
+                    exp: 301_000,
+                },
+            },
+        });
+
+        const parsedAuthorization = PeerTcpTunnelRelayAuthorizationV1Schema.safeParse(
+            (response as { relayAuthorization?: unknown }).relayAuthorization,
+        );
+        expect(parsedAuthorization.success).toBe(true);
+        if (!parsedAuthorization.success) return;
+
+        expect(tweetnacl.sign.detached.verify(
+            Buffer.from(createPeerTcpTunnelRelayAuthorizationSigningInputV1(parsedAuthorization.data.payload), "utf8"),
+            Buffer.from(parsedAuthorization.data.signature.valueBase64Url, "base64url"),
+            keyPair.publicKey,
+        )).toBe(true);
     });
 
     it("rejects machine RPC grants for server-required methods", async () => {

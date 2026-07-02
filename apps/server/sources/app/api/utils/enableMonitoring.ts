@@ -1,5 +1,5 @@
-import { db } from "@/storage/db";
-import { Fastify } from "../types";
+import type { FastifyReply, FastifyRequest } from "fastify";
+import type { Fastify } from "../types";
 import {
     classifyHotEndpointFamily,
     httpHotEndpointRequestDurationHistogram,
@@ -7,11 +7,21 @@ import {
     httpRequestDurationHistogram,
     httpRequestsCounter,
 } from "@/app/monitoring/metrics/index";
-import { log } from "@/utils/logging/log";
+import {
+    createHealthyMonitoringResponse,
+    type DatabaseReadinessProbe,
+    type MonitoringReadinessEnv,
+    sendDatabaseReadinessResponse,
+} from "@/app/monitoring/readiness";
 
-export function enableMonitoring(app: Fastify) {
+type EnableMonitoringOptions = Readonly<{
+    env?: MonitoringReadinessEnv;
+    databaseReadinessProbe?: DatabaseReadinessProbe;
+}>;
+
+export function enableMonitoring(app: Fastify, options: EnableMonitoringOptions = {}) {
     // Add metrics hooks
-    app.addHook('onRequest', async (request, reply) => {
+    app.addHook('onRequest', async (request, _reply) => {
         request.startTime = Date.now();
     });
 
@@ -35,23 +45,12 @@ export function enableMonitoring(app: Fastify) {
         }
     });
 
-    app.get('/health', async (request, reply) => {
-        try {
-            // Test database connectivity
-            await db.$queryRaw`SELECT 1`;
-            reply.send({
-                status: 'ok',
-                timestamp: new Date().toISOString(),
-                service: 'happier-server'
-            });
-        } catch (error) {
-            log({ module: 'health', level: 'error' }, `Health check failed: ${error}`);
-            reply.code(503).send({
-                status: 'error',
-                timestamp: new Date().toISOString(),
-                service: 'happier-server',
-                error: 'Database connectivity failed'
-            });
-        }
-    });
+    const livenessHandler = async (_request: FastifyRequest) => createHealthyMonitoringResponse();
+
+    const readinessHandler = async (_request: FastifyRequest, reply: FastifyReply) => {
+        await sendDatabaseReadinessResponse(reply, options);
+    };
+
+    app.get('/health', livenessHandler);
+    app.get('/ready', readinessHandler);
 }

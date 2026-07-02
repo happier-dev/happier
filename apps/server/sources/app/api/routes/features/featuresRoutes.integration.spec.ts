@@ -9,11 +9,34 @@ import {
 
 const resetEnv = createEnvReset({
     ...process.env,
+    HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: undefined,
+    HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: undefined,
+    HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: undefined,
+    HAPPIER_HOME_DIR: undefined,
+    HAPPIER_STACK_CLI_HOME_DIR: undefined,
+    HAPPY_HOME_DIR: undefined,
+    HAPPIER_PUBLIC_SERVER_URL: undefined,
+    HAPPIER_PUBLIC_SERVER_URL_INFER_TTL_MS: undefined,
+    HAPPIER_PUBLIC_SERVER_URL_INFERRED: undefined,
+    HAPPIER_WEBAPP_URL: undefined,
+    HAPPY_WEBAPP_URL: undefined,
     HAPPIER_RELAY_ACCESS_INFER_PUBLIC_URL: "0",
     HAPPIER_TAILSCALE_INFER_PUBLIC_URL: "0",
 });
 
-async function getFeaturesPayload(requestOverrides: Record<string, unknown> = {}) {
+type ServerIdentityRouteModuleMock = Readonly<{
+    getOrCreateServerIdentityId: (env?: NodeJS.ProcessEnv) => Promise<string>;
+    readPinnedServerIdentityId: (env?: NodeJS.ProcessEnv) => string | null;
+    readCachedServerIdentityIdForHotPath: (env?: NodeJS.ProcessEnv) => string | null;
+}>;
+
+async function getFeaturesPayload(
+    requestOverrides: Record<string, unknown> = {},
+    serverIdentityMock?: ServerIdentityRouteModuleMock,
+) {
+    if (serverIdentityMock) {
+        vi.doMock("@/app/serverIdentity/serverIdentity", () => serverIdentityMock);
+    }
     const { featuresRoutes } = await import("./featuresRoutes");
     const route = createRouteTestBuilder({
         method: "GET",
@@ -29,13 +52,54 @@ async function getFeaturesPayload(requestOverrides: Record<string, unknown> = {}
 describe("featuresRoutes", () => {
     beforeEach(() => {
         vi.resetModules();
+        vi.doUnmock("@/app/serverIdentity/serverIdentity");
         resetPublicServerUrlInferenceCacheForTests();
         resetEnv();
     });
 
     afterEach(() => {
+        vi.doUnmock("@/app/serverIdentity/serverIdentity");
         resetPublicServerUrlInferenceCacheForTests();
         resetEnv();
+    });
+
+    describe("server identity", () => {
+        it("returns a compatibility-safe server identity capability", async () => {
+            resetEnv({
+                HAPPIER_SERVER_IDENTITY_ID: "srv_routeIdentity123",
+            });
+
+            const { payload } = await getFeaturesPayload();
+            expect(payload.capabilities.serverIdentity).toEqual({
+                serverIdentityId: "srv_routeIdentity123",
+            });
+            expect(payload.capabilities.server).not.toHaveProperty("serverIdentityId");
+        });
+
+        it("keeps the route usable without initialized identity storage", async () => {
+            const { payload } = await getFeaturesPayload();
+
+            expect(payload.capabilities.serverIdentity).toEqual({
+                serverIdentityId: null,
+            });
+        });
+
+        it("reads from the process hot-path cache without invoking storage-backed resolution", async () => {
+            const getOrCreateServerIdentityId = vi.fn(async () => "srv_storageResolver123");
+            const readCachedServerIdentityIdForHotPath = vi.fn(() => "srv_hotCache123");
+
+            const { payload } = await getFeaturesPayload({}, {
+                getOrCreateServerIdentityId,
+                readPinnedServerIdentityId: () => null,
+                readCachedServerIdentityIdForHotPath,
+            });
+
+            expect(payload.capabilities.serverIdentity).toEqual({
+                serverIdentityId: "srv_hotCache123",
+            });
+            expect(readCachedServerIdentityIdForHotPath).toHaveBeenCalledTimes(1);
+            expect(getOrCreateServerIdentityId).not.toHaveBeenCalled();
+        });
     });
 
     describe("friends", () => {
@@ -556,10 +620,14 @@ describe("featuresRoutes", () => {
 
                 resetEnv({
                     HOME: homeDir,
+                    HAPPIER_HOME_DIR: undefined,
+                    HAPPIER_STACK_CLI_HOME_DIR: undefined,
                     HAPPIER_PUBLIC_SERVER_URL: undefined,
+                    HAPPIER_PUBLIC_SERVER_URL_INFERRED: undefined,
                     HAPPIER_TAILSCALE_BIN: tailscaleBin,
                     HAPPIER_TAILSCALE_INFER_PUBLIC_URL: "0",
                     HAPPIER_RELAY_ACCESS_INFER_PUBLIC_URL: "1",
+                    PORT: "3005",
                 });
 
                 await resolveCachedCanonicalPublicServerUrl(process.env);

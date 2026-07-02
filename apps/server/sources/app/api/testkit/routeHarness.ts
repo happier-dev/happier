@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 
-type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
+type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT" | "HEAD" | "OPTIONS";
 type RouteHandler = (request: any, reply: any) => unknown | Promise<unknown>;
 type RouteRateLimit = Readonly<{ keyGenerator?: (...args: any[]) => unknown }> & Record<string, unknown>;
 type RouteConfig = Readonly<{ rateLimit?: RouteRateLimit }> & Record<string, unknown>;
@@ -27,6 +27,14 @@ export type FakeRouteApp = {
         (path: string, opts: any, handler: RouteHandler): void;
     };
     put: {
+        (path: string, handler: RouteHandler): void;
+        (path: string, opts: any, handler: RouteHandler): void;
+    };
+    head: {
+        (path: string, handler: RouteHandler): void;
+        (path: string, opts: any, handler: RouteHandler): void;
+    };
+    options: {
         (path: string, handler: RouteHandler): void;
         (path: string, opts: any, handler: RouteHandler): void;
     };
@@ -74,6 +82,14 @@ export function createFakeRouteApp(): FakeRouteApp {
         put(path: string, optsOrHandler: unknown, maybeHandler?: unknown) {
             const { opts, handler } = resolveOptsAndHandler(path, optsOrHandler, maybeHandler);
             register("PUT", path, opts ?? {}, handler);
+        },
+        head(path: string, optsOrHandler: unknown, maybeHandler?: unknown) {
+            const { opts, handler } = resolveOptsAndHandler(path, optsOrHandler, maybeHandler);
+            register("HEAD", path, opts ?? {}, handler);
+        },
+        options(path: string, optsOrHandler: unknown, maybeHandler?: unknown) {
+            const { opts, handler } = resolveOptsAndHandler(path, optsOrHandler, maybeHandler);
+            register("OPTIONS", path, opts ?? {}, handler);
         },
     };
 }

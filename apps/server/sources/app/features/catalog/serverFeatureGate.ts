@@ -44,6 +44,8 @@ type RouteApp = {
     patch: RouteMethod;
     delete: RouteMethod;
     put: RouteMethod;
+    head: RouteMethod;
+    options: RouteMethod;
 };
 
 function resolvePreHandlers(existing: unknown): RoutePreHandler[] {
@@ -103,6 +105,14 @@ export function createServerFeatureGatedRouteApp<TApp extends RouteApp>(
     gated.put = (path: string, optsOrHandler: unknown, maybeHandler?: unknown) => {
         const { opts, handler } = resolveOptsAndHandler(path, optsOrHandler, maybeHandler);
         return app.put(path, withLeadingPreHandler(opts, gate), handler);
+    };
+    gated.head = (path: string, optsOrHandler: unknown, maybeHandler?: unknown) => {
+        const { opts, handler } = resolveOptsAndHandler(path, optsOrHandler, maybeHandler);
+        return app.head(path, withLeadingPreHandler(opts, gate), handler);
+    };
+    gated.options = (path: string, optsOrHandler: unknown, maybeHandler?: unknown) => {
+        const { opts, handler } = resolveOptsAndHandler(path, optsOrHandler, maybeHandler);
+        return app.options(path, withLeadingPreHandler(opts, gate), handler);
     };
 
     return gated;

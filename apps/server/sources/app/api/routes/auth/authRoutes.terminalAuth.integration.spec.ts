@@ -235,6 +235,9 @@ describe("authRoutes (terminal auth request) (integration)", () => {
     });
 
     it("allows claiming an authorized request with the correct claim secret and returns token + response", async () => {
+        harness.resetEnv({
+            HAPPIER_SERVER_IDENTITY_ID: "srv_authClaimIdentity",
+        });
         const { body: signInBody } = createSignInRequest();
 
         const app = createTestApp();
@@ -291,6 +294,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             state: "authorized",
             token: expect.any(String),
             response: "hello",
+            serverIdentityId: "srv_authClaimIdentity",
         });
         expect(claimJson.token.length).toBeGreaterThan(10);
 
@@ -614,6 +618,9 @@ describe("authRoutes (terminal auth request) (integration)", () => {
     });
 
     it("keeps legacy behavior without claimSecretHash (token + response via /v1/auth/request) while enforcing TTL", async () => {
+        harness.resetEnv({
+            HAPPIER_SERVER_IDENTITY_ID: "srv_authRequestIdentity",
+        });
         const { body: signInBody } = createSignInRequest();
 
         const app = createTestApp();
@@ -666,6 +673,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             state: "authorized",
             token: expect.any(String),
             response: "hello",
+            serverIdentityId: "srv_authRequestIdentity",
         });
 
         await app.close();

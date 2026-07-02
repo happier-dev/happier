@@ -311,14 +311,14 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "owner", kind: "session", entityId: "s1" }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "u2", kind: "session", entityId: "s1" }));
 
-        expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(1, "s1", 201, "upd-c", undefined, { value: "a2", version: 2 }, {
+        expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(1, "s1", 201, "upd-c", undefined, { value: "a2", version: 2 }, expect.objectContaining({
             pendingPermissionRequestCount: 2,
             pendingUserActionRequestCount: 1,
-        });
-        expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(2, "s1", 202, "upd-d", undefined, { value: "a2", version: 2 }, {
+        }));
+        expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(2, "s1", 202, "upd-d", undefined, { value: "a2", version: 2 }, expect.objectContaining({
             pendingPermissionRequestCount: 2,
             pendingUserActionRequestCount: 1,
-        });
+        }));
 
         expect(emitUpdate).toHaveBeenCalledTimes(2);
         expect(callback).toHaveBeenCalledWith({ result: "success", version: 2, agentState: "a2" });

@@ -7,7 +7,7 @@ import {
     type RouteRequestOverrides,
 } from "./requestFixtures";
 
-type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
+type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT" | "HEAD" | "OPTIONS";
 
 export type RouteTestBuilderOptions = Readonly<{
     method: RouteMethod;

@@ -222,6 +222,13 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.capabilities.machines.tunnel.serverRouted).toMatchObject({
             maxActiveTunnelsPerSocket: 8,
             maxFrameBytes: 64 * 1024,
+            supportedEncodings: ["json_base64_v1", "binary_frame_v2"],
+            preferredEncoding: "binary_frame_v2",
+            allowV1Fallback: true,
+            substreams: {
+                maxConcurrentSubstreams: 32,
+                maxTotalSubstreams: 1024,
+            },
             disabledReason: "relay_disabled_by_server_policy",
         });
     });

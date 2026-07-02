@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { generateMySqlSchemaFromPostgres, generateSqliteSchemaFromPostgres } from "./schemaSync";
 
@@ -99,39 +101,49 @@ model InviteToken {
         expect(matches).toHaveLength(2);
     });
 
-	    it("uses LongText for large encrypted state blobs in MySQL", () => {
-	        const master = `
-	generator client {
-	    provider = "prisma-client-js"
-	}
+    it("uses LongText for large encrypted state blobs in MySQL", () => {
+        const master = `
+generator client {
+    provider = "prisma-client-js"
+}
 
 datasource db {
     provider = "postgresql"
     url      = env("DATABASE_URL")
 }
 
-	model Session {
-	    id        String @id
-	    metadata  String
-	    agentState String?
-	}
+model Session {
+    id        String @id
+    metadata  String
+    agentState String?
+}
 
-	model Account {
-	    id       String @id
-	    settings String?
-	}
+model Account {
+    id       String @id
+    settings String?
+}
 
-	model Machine {
-	    id         String @id
-	    metadata   String
-	    daemonState String?
-	}
-	`;
+model Machine {
+    id         String @id
+    metadata   String
+    daemonState String?
+}
+`;
 
-	        const mysql = generateMySqlSchemaFromPostgres(master);
-	        expect(mysql).toContain("metadata  String @db.LongText");
-	        expect(mysql).toContain("agentState String? @db.LongText");
-	        expect(mysql).toContain("settings String? @db.LongText");
-	        expect(mysql).toContain("daemonState String? @db.LongText");
-	    });
-	});
+        const mysql = generateMySqlSchemaFromPostgres(master);
+        expect(mysql).toContain("metadata  String @db.LongText");
+        expect(mysql).toContain("agentState String? @db.LongText");
+        expect(mysql).toContain("settings String? @db.LongText");
+        expect(mysql).toContain("daemonState String? @db.LongText");
+    });
+
+    it("generates provider schemas from the canonical SessionTurn storage contract", () => {
+        const master = readFileSync(join(process.cwd(), "prisma", "schema.prisma"), "utf-8");
+
+        for (const generated of [generateSqliteSchemaFromPostgres(master), generateMySqlSchemaFromPostgres(master)]) {
+            expect(generated).toContain("providerRollbackOrdinal Int?");
+            expect(generated).not.toContain("rollbackProviderOrdinal");
+            expect(generated).not.toContain("primaryTurnProjectionStateJson");
+        }
+    });
+});

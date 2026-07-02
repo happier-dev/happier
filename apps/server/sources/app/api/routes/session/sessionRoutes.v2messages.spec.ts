@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+    buildUpdateSessionUpdate,
     buildNewMessageUpdate,
     buildMessageUpdatedUpdate,
     createSessionMessage,
     emitUpdate,
     createSessionRouteTestBuilder,
+    getSessionParticipantUserIds,
+    markAccountChanged,
     resetSessionRouteMocks,
 } from "./sessionRoutes.testkit";
 
@@ -105,6 +108,40 @@ describe("sessionRoutes v2 messages", () => {
             didWrite: true,
             message: { id: "m1", seq: 10, localId: "l1", createdAt: createdAt.getTime() },
         });
+    });
+
+    it("ignores public ready hints when creating a message", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        createSessionMessage.mockResolvedValue({
+            ok: true,
+            didWrite: true,
+            didUpdate: false,
+            message: { id: "m-ready", seq: 10, localId: "ready-local", content: { t: "encrypted", c: "c" }, createdAt, updatedAt: createdAt },
+            participantCursors: [
+                { accountId: "u1", cursor: 111 },
+                { accountId: "u2", cursor: 222 },
+            ],
+        });
+
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/messages");
+        await route.invoke({
+            params: { sessionId: "s1" },
+            headers: {},
+            body: { ciphertext: "cipher", localId: "ready-local", messageRole: "event", sessionEventType: "ready" },
+        });
+
+        expect(createSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+            actorUserId: "u1",
+            sessionId: "s1",
+            ciphertext: "cipher",
+            localId: "ready-local",
+            sidechainId: null,
+            messageRole: "event",
+            trustedSessionEventType: "ready",
+        }));
+        expect(buildNewMessageUpdate).toHaveBeenCalledTimes(2);
+        expect(buildUpdateSessionUpdate).not.toHaveBeenCalled();
+        expect(emitUpdate).toHaveBeenCalledTimes(2);
     });
 
     it("forwards sidechainId to the message write service when provided", async () => {

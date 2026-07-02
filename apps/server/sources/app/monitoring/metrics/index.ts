@@ -10,3 +10,5 @@ export * from "./runtimeMetrics";
 export * from "./databaseMetrics";
 export * from "./sessionWriteMetrics";
 export * from "./sessionBindingMetrics";
+export * from "./quotaSnapshotMetrics";
+export * from "./usageMetrics";

@@ -21,7 +21,7 @@ const buildSessionSharedUpdate = vi.fn((_share: any, updSeq: number, updId: stri
     seq: updSeq,
     body: { t: "session-shared" },
 }));
-const buildSessionShareUpdatedUpdate = vi.fn((_shareId: string, _sessionId: string, _level: any, _updatedAt: any, updSeq: number, updId: string) => ({
+const buildSessionShareUpdatedUpdate = vi.fn((_shareId: string, _sessionId: string, _level: any, _canApprovePermissions: boolean, _updatedAt: any, updSeq: number, updId: string) => ({
     id: updId,
     seq: updSeq,
     body: { t: "session-share-updated" },
@@ -194,6 +194,49 @@ describe("shareRoutes (AccountChange integration)", () => {
         );
     });
 
+    it("POST downgrade to view clears existing permission approval delegation on upsert", async () => {
+        dbMocks.db.session.findUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain" });
+        txDbMocks.db.sessionShare.upsert.mockImplementation(async (args: any) => ({
+            id: "share-1",
+            sessionId: "s1",
+            sharedWithUserId: "recipient",
+            accessLevel: args.update.accessLevel,
+            canApprovePermissions: args.update.canApprovePermissions,
+            encryptedDataKey: null,
+            sharedWithUser: { id: "recipient" },
+            sharedByUser: { id: "owner" },
+            createdAt: new Date(1),
+            updatedAt: new Date(1),
+        }));
+
+        const { shareRoutes } = await import("./shareRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/sessions/:sessionId/shares",
+            registerRoutes(app) {
+                shareRoutes(app as any);
+            },
+        });
+
+        await route.invoke({
+            userId: "owner",
+            params: { sessionId: "s1" },
+            body: {
+                userId: "recipient",
+                accessLevel: "view",
+            },
+        });
+
+        expect(txDbMocks.db.sessionShare.upsert).toHaveBeenCalledWith(
+            expect.objectContaining({
+                update: expect.objectContaining({
+                    accessLevel: "view",
+                    canApprovePermissions: false,
+                }),
+            }),
+        );
+    });
+
     it("PATCH marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
         const route = createRouteTestBuilder({
@@ -225,6 +268,54 @@ describe("shareRoutes (AccountChange integration)", () => {
                     body: expect.objectContaining({ t: "session-share-updated" }),
                 }),
             }),
+        );
+    });
+
+    it("PATCH downgrade to view clears existing permission approval delegation", async () => {
+        dbMocks.db.sessionShare.findFirst.mockResolvedValue({ accessLevel: "edit", canApprovePermissions: true });
+        txDbMocks.db.sessionShare.update.mockImplementation(async (args: any) => ({
+            id: "share-1",
+            sessionId: "s1",
+            sharedWithUserId: "recipient",
+            accessLevel: args.data.accessLevel,
+            canApprovePermissions: args.data.canApprovePermissions,
+            sharedWithUser: { id: "recipient" },
+            createdAt: new Date(1),
+            updatedAt: new Date(2),
+        }));
+
+        const { shareRoutes } = await import("./shareRoutes");
+        const route = createRouteTestBuilder({
+            method: "PATCH",
+            path: "/v1/sessions/:sessionId/shares/:shareId",
+            registerRoutes(app) {
+                shareRoutes(app as any);
+            },
+        });
+
+        const { reply } = await route.invoke({
+            userId: "owner",
+            params: { sessionId: "s1", shareId: "share-1" },
+            body: { accessLevel: "view" },
+        });
+
+        expect(reply.code).not.toHaveBeenCalledWith(400);
+        expect(txDbMocks.db.sessionShare.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    accessLevel: "view",
+                    canApprovePermissions: false,
+                }),
+            }),
+        );
+        expect(buildSessionShareUpdatedUpdate).toHaveBeenCalledWith(
+            "share-1",
+            "s1",
+            "view",
+            false,
+            expect.any(Date),
+            12,
+            "upd-id",
         );
     });
 

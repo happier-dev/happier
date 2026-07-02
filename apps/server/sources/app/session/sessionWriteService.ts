@@ -8,11 +8,16 @@ import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv"
 import {
     isStoredContentKindAllowedForSessionByStoragePolicy,
     PrimaryTurnStatusV1Schema,
+    TranscriptRawRecordV1Schema,
+    SessionTurnMutationV1Schema,
     SessionRuntimeIssueV1Schema,
     type PrimaryTurnStatusV1,
     type SessionMessageRole,
     type SessionRuntimeIssueV1,
     type SessionStoredContentKind,
+    type SessionTurnMutationDecisionV1,
+    type SessionTurnMutationReceiptV1,
+    type SessionTurnMutationV1,
 } from "@happier-dev/protocol";
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
 import { isDeepStrictEqual } from "node:util";
@@ -26,10 +31,7 @@ import {
 import { parseSessionMessageRole, resolveSessionMessageRole } from "./messageRole/resolveSessionMessageRole";
 
 type ParticipantCursor = SessionParticipantCursor;
-type RuntimeIssueSummaryV1 = Readonly<{
-    latestTurnStatus: PrimaryTurnStatusV1;
-    lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
-}>;
+
 type SessionMessageWriteRow = {
     id: string;
     seq: number;
@@ -57,6 +59,63 @@ function toSessionMessageWriteRow(row: Omit<SessionMessageWriteRow, "messageRole
         ...row,
         messageRole: parseSessionMessageRole(row.messageRole),
     };
+}
+
+export async function updateSessionMessageActivityProjection(
+    tx: Tx,
+    params: Readonly<{
+        sessionId: string;
+        created: Pick<SessionMessageWriteRow, "seq" | "createdAt">;
+        trustedSessionEventType?: "ready";
+    }>,
+): Promise<SessionReadyProjectionUpdate | undefined> {
+    await tx.session.updateMany({
+        where: { id: params.sessionId, seq: params.created.seq },
+        data: {
+            meaningfulActivityAt: params.created.createdAt,
+        },
+    });
+
+    if (params.trustedSessionEventType !== "ready") return undefined;
+
+    const readyProjection: SessionReadyProjectionUpdate = {
+        latestReadyEventSeq: params.created.seq,
+        latestReadyEventAt: params.created.createdAt.getTime(),
+    };
+    const update = await tx.session.updateMany({
+        where: {
+            id: params.sessionId,
+            OR: [
+                { latestReadyEventSeq: null },
+                { latestReadyEventSeq: { lt: params.created.seq } },
+            ],
+        },
+        data: {
+            latestReadyEventSeq: params.created.seq,
+            latestReadyEventAt: params.created.createdAt,
+        },
+    });
+    return update.count > 0 ? readyProjection : undefined;
+}
+
+export function resolveReadyProjectionEventType(params: Readonly<{
+    actorUserId: string;
+    sessionOwnerId: string;
+    content: PrismaJson.SessionMessageContent;
+    requestedSessionEventType?: "ready";
+}>): "ready" | undefined {
+    if (params.actorUserId !== params.sessionOwnerId) return undefined;
+    if (params.requestedSessionEventType === "ready") return "ready";
+    if (params.content.t !== "plain") return undefined;
+
+    const parsed = TranscriptRawRecordV1Schema.safeParse(params.content.v);
+    if (!parsed.success) return undefined;
+
+    return parsed.data.role === "agent"
+        && parsed.data.content.type === "event"
+        && parsed.data.content.data.type === "ready"
+        ? "ready"
+        : undefined;
 }
 
 function selectSessionActivityBadgeInputs() {
@@ -89,22 +148,54 @@ function toSessionActivityBadgeInputs(
     };
 }
 
-function parseRuntimeIssueSummary(input: unknown): RuntimeIssueSummaryV1 | null {
-    if (!input || typeof input !== "object" || Array.isArray(input)) return null;
-    const record = input as Record<string, unknown>;
-    const latestTurnStatus = PrimaryTurnStatusV1Schema.safeParse(record.latestTurnStatus);
-    if (!latestTurnStatus.success) return null;
-    if (!("lastRuntimeIssue" in record)) {
-        return { latestTurnStatus: latestTurnStatus.data };
+function parseStoredPrimaryTurnStatus(value: unknown): PrimaryTurnStatusV1 | null {
+    const parsed = PrimaryTurnStatusV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+}
+
+function parseStoredRuntimeIssue(value: unknown): SessionRuntimeIssueV1 | null {
+    if (!value) return null;
+    if (typeof value === "string") {
+        try {
+            const parsed = SessionRuntimeIssueV1Schema.safeParse(JSON.parse(value));
+            return parsed.success ? parsed.data : null;
+        } catch {
+            return null;
+        }
     }
-    const lastRuntimeIssue = record.lastRuntimeIssue === null
-        ? null
-        : SessionRuntimeIssueV1Schema.safeParse(record.lastRuntimeIssue);
-    if (lastRuntimeIssue !== null && !lastRuntimeIssue.success) return null;
-    return {
-        latestTurnStatus: latestTurnStatus.data,
-        lastRuntimeIssue: lastRuntimeIssue === null ? null : lastRuntimeIssue.data,
-    };
+    const parsed = SessionRuntimeIssueV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+}
+
+function buildLegacyThinkingProjectionWriteData(params: Readonly<{
+    latestTurnStatus: unknown;
+    latestTurnStatusObservedAt: bigint | number | null;
+}>): { thinking?: boolean; thinkingAt?: Date } {
+    const latestTurnStatus = parseStoredPrimaryTurnStatus(params.latestTurnStatus);
+    const observedAt =
+        typeof params.latestTurnStatusObservedAt === "bigint"
+            ? Number(params.latestTurnStatusObservedAt)
+            : params.latestTurnStatusObservedAt;
+    if (typeof observedAt !== "number" || !Number.isFinite(observedAt)) {
+        return {};
+    }
+    if (latestTurnStatus === "in_progress") {
+        return {
+            thinking: true,
+            thinkingAt: new Date(observedAt),
+        };
+    }
+    if (
+        latestTurnStatus === "completed"
+        || latestTurnStatus === "cancelled"
+        || latestTurnStatus === "failed"
+    ) {
+        return {
+            thinking: false,
+            thinkingAt: new Date(observedAt),
+        };
+    }
+    return {};
 }
 
 type EnsureSessionEditAccessResult =
@@ -189,9 +280,41 @@ function isSessionMessageLocalIdConstraintTarget(target: unknown): boolean {
     return true;
 }
 
+function readUnknownProperty(value: unknown, key: string): unknown {
+    if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+        return undefined;
+    }
+    return (value as Record<string, unknown>)[key];
+}
+
+function readPrismaErrorMetadata(error: unknown): { target?: unknown; message?: unknown } {
+    const meta = readUnknownProperty(error, "meta");
+    return {
+        target: readUnknownProperty(meta, "target"),
+        message: readUnknownProperty(meta, "message"),
+    };
+}
+
 function isSessionMessageLocalIdConflict(error: unknown): boolean {
+    const { target } = readPrismaErrorMetadata(error);
     return isPrismaErrorCode(error, "P2002")
-        && isSessionMessageLocalIdConstraintTarget((error as { meta?: { target?: unknown } }).meta?.target);
+        && isSessionMessageLocalIdConstraintTarget(target);
+}
+
+function isDuplicateSessionTurnMutationRace(error: unknown): boolean {
+    if (!isPrismaErrorCode(error, "P2002")) return false;
+    const { target } = readPrismaErrorMetadata(error);
+    const targetFields = Array.isArray(target)
+        ? target.filter((value): value is string => typeof value === "string")
+        : typeof target === "string"
+            ? [target]
+            : [];
+    if (targetFields.length === 0) return true;
+    const joined = targetFields.join(",");
+    return (
+        (joined.includes("sessionId") && joined.includes("mutationId"))
+        || (joined.includes("sessionId") && joined.includes("turnId"))
+    );
 }
 
 export type CreateSessionMessageResult =
@@ -202,6 +325,7 @@ export type CreateSessionMessageResult =
         badgeAttentionChanged: boolean;
         message: SessionMessageWriteRow;
         participantCursors: ParticipantCursor[];
+        readyProjection?: SessionReadyProjectionUpdate;
       }
     | {
         ok: true;
@@ -227,6 +351,12 @@ type CreateSessionMessageParamsBase = Readonly<{
     localId?: string | null;
     sidechainId?: string | null;
     messageRole?: unknown;
+    trustedSessionEventType?: "ready";
+}>;
+
+export type SessionReadyProjectionUpdate = Readonly<{
+    latestReadyEventSeq: number;
+    latestReadyEventAt: number;
 }>;
 
 export async function createSessionMessage(
@@ -315,9 +445,12 @@ export async function createSessionMessage(
             const next = await tx.session.update({
                 where: { id: sessionId },
                 select: { seq: true },
-                data: { seq: { increment: 1 } },
+                data: {
+                    seq: { increment: 1 },
+                },
             });
 
+            const messageCreatedAt = new Date();
             const created = await tx.sessionMessage.create({
                 data: {
                     sessionId,
@@ -326,8 +459,19 @@ export async function createSessionMessage(
                     localId,
                     sidechainId,
                     messageRole: resolvedRole,
+                    createdAt: messageCreatedAt,
                 },
                 select: SESSION_MESSAGE_WRITE_SELECT,
+            });
+            const readyProjection = await updateSessionMessageActivityProjection(tx, {
+                sessionId,
+                created,
+                trustedSessionEventType: resolveReadyProjectionEventType({
+                    actorUserId,
+                    sessionOwnerId: access.sessionOwnerId,
+                    content,
+                    requestedSessionEventType: params.trustedSessionEventType,
+                }),
             });
             observeCreateSessionMessageStage({
                 stage: "persist",
@@ -369,12 +513,14 @@ export async function createSessionMessage(
                 badgeAttentionChanged,
                 message: toSessionMessageWriteRow(created),
                 participantCursors,
+                ...(readyProjection ? { readyProjection } : {}),
             };
         }, { isolationLevel: "ReadCommitted" });
     } catch (e) {
         if (localId && isSessionMessageLocalIdConflict(e)) {
-            const target = (e as any)?.meta?.target ?? (e as any)?.meta?.message;
-            if (!isSessionMessageLocalIdConstraintTarget((e as any)?.meta?.target) && !String(target ?? "").includes("SessionMessage_sessionId_localId_key")) {
+            const metadata = readPrismaErrorMetadata(e);
+            const target = metadata.target ?? metadata.message;
+            if (!isSessionMessageLocalIdConstraintTarget(metadata.target) && !String(target ?? "").includes("SessionMessage_sessionId_localId_key")) {
                 log({ module: "session-write", level: "error", sessionId, target }, "Unexpected P2002 while creating session message");
                 observeCreateSessionMessageStage({
                     stage: "total",
@@ -633,8 +779,7 @@ export type UpdateSessionAgentStateResult =
         badgeAttentionChanged: boolean;
         pendingPermissionRequestCount?: number;
         pendingUserActionRequestCount?: number;
-        latestTurnStatus?: PrimaryTurnStatusV1 | null;
-        lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
+        pendingRequestObservedAt?: number | null;
       }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "version-mismatch" | "internal"; current?: { version: number; agentState: string | null } };
 
@@ -645,7 +790,6 @@ export async function updateSessionAgentState(params: {
     agentStateCiphertext: string | null;
     pendingPermissionRequestCount?: number;
     pendingUserActionRequestCount?: number;
-    runtimeIssueSummaryV1?: RuntimeIssueSummaryV1;
 }): Promise<UpdateSessionAgentStateResult> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
@@ -660,12 +804,17 @@ export async function updateSessionAgentState(params: {
         typeof params.pendingUserActionRequestCount === "number" && Number.isFinite(params.pendingUserActionRequestCount)
             ? Math.max(0, Math.floor(params.pendingUserActionRequestCount))
             : undefined;
-    const runtimeIssueSummaryV1 = parseRuntimeIssueSummary(params.runtimeIssueSummaryV1);
+    const hasPendingRequestCountUpdate =
+        typeof pendingPermissionRequestCount === "number"
+        || typeof pendingUserActionRequestCount === "number";
+    const pendingRequestObservedAt =
+        hasPendingRequestCountUpdate
+            ? ((pendingPermissionRequestCount ?? 0) + (pendingUserActionRequestCount ?? 0)) > 0
+                ? Date.now()
+                : null
+            : undefined;
 
     if (!sessionId || !actorUserId || !Number.isFinite(expectedVersion) || agentStateCiphertext === undefined) {
-        return { ok: false, error: "invalid-params" };
-    }
-    if (params.runtimeIssueSummaryV1 !== undefined && runtimeIssueSummaryV1 === null) {
         return { ok: false, error: "invalid-params" };
     }
 
@@ -693,7 +842,10 @@ export async function updateSessionAgentState(params: {
             }
 
             const { count } = await tx.session.updateMany({
-                where: { id: sessionId, agentStateVersion: expectedVersion },
+                where: {
+                    id: sessionId,
+                    agentStateVersion: expectedVersion,
+                },
                 data: {
                     agentState: agentStateCiphertext,
                     agentStateVersion: expectedVersion + 1,
@@ -703,13 +855,8 @@ export async function updateSessionAgentState(params: {
                     ...(typeof pendingUserActionRequestCount === "number"
                         ? { pendingUserActionRequestCount }
                         : {}),
-                    ...(runtimeIssueSummaryV1
-                        ? {
-                            latestTurnStatus: runtimeIssueSummaryV1.latestTurnStatus,
-                            ...("lastRuntimeIssue" in runtimeIssueSummaryV1
-                                ? { lastRuntimeIssue: runtimeIssueSummaryV1.lastRuntimeIssue === null ? null : JSON.stringify(runtimeIssueSummaryV1.lastRuntimeIssue) }
-                                : {}),
-                        }
+                    ...(pendingRequestObservedAt !== undefined
+                        ? { pendingRequestObservedAt: pendingRequestObservedAt === null ? null : new Date(pendingRequestObservedAt) }
                         : {}),
                 },
             });
@@ -717,7 +864,11 @@ export async function updateSessionAgentState(params: {
             if (count === 0) {
                 const fresh = await tx.session.findUnique({
                     where: { id: sessionId },
-                    select: { agentStateVersion: true, agentState: true },
+                    select: {
+                        agentStateVersion: true,
+                        agentState: true,
+                        ...selectSessionActivityBadgeInputs(),
+                    },
                 });
                 if (!fresh) {
                     return { ok: false, error: "session-not-found" };
@@ -744,6 +895,7 @@ export async function updateSessionAgentState(params: {
                     ...(typeof pendingUserActionRequestCount === "number"
                         ? { pendingUserActionRequestCount }
                         : {}),
+                    ...(pendingRequestObservedAt !== undefined ? { pendingRequestObservedAt } : {}),
                 },
             );
 
@@ -755,11 +907,729 @@ export async function updateSessionAgentState(params: {
                 badgeAttentionChanged,
                 ...(typeof pendingPermissionRequestCount === "number" ? { pendingPermissionRequestCount } : {}),
                 ...(typeof pendingUserActionRequestCount === "number" ? { pendingUserActionRequestCount } : {}),
-                ...(runtimeIssueSummaryV1 ? { latestTurnStatus: runtimeIssueSummaryV1.latestTurnStatus } : {}),
-                ...(runtimeIssueSummaryV1 && "lastRuntimeIssue" in runtimeIssueSummaryV1 ? { lastRuntimeIssue: runtimeIssueSummaryV1.lastRuntimeIssue ?? null } : {}),
+                ...(pendingRequestObservedAt !== undefined ? { pendingRequestObservedAt } : {}),
             };
         });
     } catch {
+        return { ok: false, error: "internal" };
+    }
+}
+
+export type ApplySessionTurnMutationNoOpReason =
+    | "duplicate-mutation"
+    | "terminal-turn"
+    | "no-current-turn";
+
+export type ApplySessionTurnMutationResult =
+    | {
+        ok: true;
+        didApply: boolean;
+        reason?: ApplySessionTurnMutationNoOpReason;
+        receipt: SessionTurnMutationReceiptV1;
+        latestTurnId: string | null;
+        latestTurnStatus: PrimaryTurnStatusV1 | null;
+        latestTurnStatusObservedAt: number | null;
+        lastRuntimeIssue: SessionRuntimeIssueV1 | null;
+        participantCursors: ParticipantCursor[];
+        badgeAttentionChanged: boolean;
+      }
+    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal" };
+
+type SessionTurnApplicationRow = Readonly<{
+    id: string;
+    sessionId: string;
+    turnId: string;
+    provider: string | null;
+    providerTurnId: string | null;
+    status: string;
+    startedAt: bigint | number;
+    updatedAt: bigint | number;
+    terminalAt: bigint | number | null;
+    lastRuntimeIssueJson: string | null;
+    transcriptAnchorsJson: string | null;
+    rollbackState: string | null;
+    rollbackReason: string | null;
+    providerRollbackOrdinal: number | null;
+    rollbackUpdatedAt: bigint | number | null;
+    lastMutationId: string | null;
+}>;
+
+type SessionTurnMaterializedSession = Readonly<{
+    latestTurnId?: string | null;
+    latestTurnStatus?: string | null;
+    latestTurnStatusObservedAt?: bigint | number | null;
+    lastRuntimeIssue?: string | null;
+}>;
+
+function toObservedAtNumber(value: bigint | number | null | undefined): number | null {
+    if (typeof value === "bigint") return Number(value);
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toObservedAtBigInt(value: number): bigint {
+    return BigInt(Math.max(0, Math.floor(value)));
+}
+
+function readObservedAtNumber(value: unknown): number | null {
+    return typeof value === "bigint" || typeof value === "number" ? toObservedAtNumber(value) : null;
+}
+
+function isSessionTurnTerminalStatus(status: string | null | undefined): boolean {
+    return status === "completed" || status === "cancelled" || status === "failed";
+}
+
+function materializedSessionTurnState(session: SessionTurnMaterializedSession): Pick<
+    Extract<ApplySessionTurnMutationResult, { ok: true }>,
+    "latestTurnId" | "latestTurnStatus" | "latestTurnStatusObservedAt" | "lastRuntimeIssue"
+> {
+    return {
+        latestTurnId: session.latestTurnId ?? null,
+        latestTurnStatus: parseStoredPrimaryTurnStatus(session.latestTurnStatus),
+        latestTurnStatusObservedAt: toObservedAtNumber(session.latestTurnStatusObservedAt),
+        lastRuntimeIssue: parseStoredRuntimeIssue(session.lastRuntimeIssue),
+    };
+}
+
+function sessionTurnRowStatus(row: SessionTurnApplicationRow | null): PrimaryTurnStatusV1 | null {
+    return parseStoredPrimaryTurnStatus(row?.status);
+}
+
+function sessionTurnRowRuntimeIssue(row: SessionTurnApplicationRow | null): SessionRuntimeIssueV1 | null {
+    return parseStoredRuntimeIssue(row?.lastRuntimeIssueJson);
+}
+
+function buildTranscriptAnchorsJson(mutation: SessionTurnMutationV1): string | undefined {
+    if (mutation.action !== "append_transcript_anchors" && mutation.action !== "mark_rollback_eligible") {
+        return undefined;
+    }
+    return mutation.transcriptAnchors ? JSON.stringify(mutation.transcriptAnchors) : undefined;
+}
+
+function parseTranscriptAnchorsJson(value: string | null | undefined): Record<string, unknown> {
+    if (typeof value !== "string" || value.trim().length === 0) return {};
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : {};
+    } catch {
+        return {};
+    }
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : undefined;
+}
+
+function isTrustedAnchorSeq(value: unknown): value is number {
+    return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0;
+}
+
+function hasTrustedRollbackAnchorsJson(value: string | null | undefined): boolean {
+    const anchors = parseTranscriptAnchorsJson(value);
+    return isTrustedAnchorSeq(anchors.startUserMessageSeq) && isTrustedAnchorSeq(anchors.endSeqInclusive);
+}
+
+function mergeTranscriptAnchorsJson(
+    currentJson: string | null | undefined,
+    mutation: SessionTurnMutationV1,
+): string | undefined {
+    if (mutation.action !== "append_transcript_anchors" && mutation.action !== "mark_rollback_eligible") {
+        return undefined;
+    }
+    if (!mutation.transcriptAnchors) return undefined;
+    const existing = parseTranscriptAnchorsJson(currentJson);
+    const incoming = mutation.transcriptAnchors as Record<string, unknown>;
+    const merged: Record<string, unknown> = { ...existing, ...incoming };
+    const existingSeqs = Array.isArray(existing.userMessageSeqs) ? existing.userMessageSeqs : [];
+    const incomingSeqs = Array.isArray(incoming.userMessageSeqs) ? incoming.userMessageSeqs : [];
+    const userMessageSeqs = [...existingSeqs, ...incomingSeqs]
+        .map(readFiniteNumber)
+        .filter((value): value is number => value !== undefined);
+    if (userMessageSeqs.length > 0) {
+        merged.userMessageSeqs = [...new Set(userMessageSeqs)].sort((a, b) => a - b);
+    }
+    return JSON.stringify(merged);
+}
+
+function resolveSessionTurnTerminalStatus(mutation: SessionTurnMutationV1): PrimaryTurnStatusV1 | null {
+    if (mutation.action === "complete") return "completed";
+    if (mutation.action === "fail") return "failed";
+    if (mutation.action === "cancel" || mutation.action === "end_session") return "cancelled";
+    return null;
+}
+
+function resolveSessionTurnLastRuntimeIssue(mutation: SessionTurnMutationV1): SessionRuntimeIssueV1 | null {
+    return mutation.action === "fail" ? mutation.issue : null;
+}
+
+function normalizeRecoveryContextPart(value: unknown): string | null {
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readFailedTurnObservedAt(turn: SessionTurnApplicationRow): number {
+    const terminalAt = toObservedAtNumber(turn.terminalAt) ?? 0;
+    const updatedAt = toObservedAtNumber(turn.updatedAt) ?? 0;
+    const issueAt = sessionTurnRowRuntimeIssue(turn)?.occurredAt ?? 0;
+    return Math.max(terminalAt, updatedAt, issueAt);
+}
+
+function doesProviderContextMatchFailedTurn(
+    turn: SessionTurnApplicationRow,
+    mutation: SessionTurnMutationV1,
+): boolean {
+    const mutationProviderTurnId = normalizeRecoveryContextPart(
+        "providerTurnId" in mutation ? mutation.providerTurnId : undefined,
+    );
+    if (!mutationProviderTurnId) return false;
+
+    const issue = sessionTurnRowRuntimeIssue(turn);
+    const providerTurnIds = new Set(
+        [turn.providerTurnId, issue?.providerTurnId]
+            .map(normalizeRecoveryContextPart)
+            .filter((value): value is string => value !== null),
+    );
+    if (!providerTurnIds.has(mutationProviderTurnId)) return false;
+
+    const providers = new Set(
+        [turn.provider, issue?.provider]
+            .map(normalizeRecoveryContextPart)
+            .filter((value): value is string => value !== null),
+    );
+    const mutationProvider = normalizeRecoveryContextPart(mutation.provider);
+    return providers.size === 0 || (mutationProvider !== null && providers.has(mutationProvider));
+}
+
+function isNewerMatchingRecoveryLifecycleEvidence(params: Readonly<{
+    turn: SessionTurnApplicationRow;
+    mutation: SessionTurnMutationV1;
+    terminalStatus: PrimaryTurnStatusV1 | null;
+}>): boolean {
+    if (sessionTurnRowStatus(params.turn) !== "failed") return false;
+    if (params.mutation.action !== "begin" && params.terminalStatus !== "completed") return false;
+    if (params.mutation.observedAt <= readFailedTurnObservedAt(params.turn)) return false;
+    return doesProviderContextMatchFailedTurn(params.turn, params.mutation);
+}
+
+function mapSessionTurnNoOpReasonToDecision(reason: ApplySessionTurnMutationNoOpReason): SessionTurnMutationDecisionV1 {
+    if (reason === "duplicate-mutation") return "duplicate-mutation";
+    if (reason === "terminal-turn") return "stale-terminal";
+    return "missing-turn";
+}
+
+function buildSessionTurnMutationReceipt(params: {
+    mutation: SessionTurnMutationV1;
+    decision: SessionTurnMutationDecisionV1;
+    appliedAt?: number;
+    turnId?: string | null;
+}): SessionTurnMutationReceiptV1 {
+    return {
+        v: 1,
+        sessionId: params.mutation.sessionId,
+        mutationId: params.mutation.mutationId,
+        ...(params.turnId ? { turnId: params.turnId } : "turnId" in params.mutation && params.mutation.turnId ? { turnId: params.mutation.turnId } : {}),
+        action: params.mutation.action,
+        decision: params.decision,
+        observedAt: params.mutation.observedAt,
+        appliedAt: params.appliedAt ?? Date.now(),
+    };
+}
+
+function isSessionTurnMutationDecision(value: unknown): value is SessionTurnMutationDecisionV1 {
+    return value === "applied"
+        || value === "duplicate-mutation"
+        || value === "duplicate-terminal"
+        || value === "missing-turn"
+        || value === "stale-in-progress"
+        || value === "stale-terminal";
+}
+
+function storedSessionTurnMutationReceipt(params: {
+    row: {
+        sessionId?: unknown;
+        mutationId?: unknown;
+        turnId?: unknown;
+        action?: unknown;
+        decision?: unknown;
+        observedAt?: unknown;
+        appliedAt?: unknown;
+    };
+    mutation: SessionTurnMutationV1;
+}): SessionTurnMutationReceiptV1 {
+    const turnId = typeof params.row.turnId === "string" ? params.row.turnId : undefined;
+    const observedAt = readObservedAtNumber(params.row.observedAt) ?? params.mutation.observedAt;
+    const appliedAt = readObservedAtNumber(params.row.appliedAt) ?? Date.now();
+    return {
+        v: 1,
+        sessionId: typeof params.row.sessionId === "string" ? params.row.sessionId : params.mutation.sessionId,
+        mutationId: typeof params.row.mutationId === "string" ? params.row.mutationId : params.mutation.mutationId,
+        ...(turnId ? { turnId } : {}),
+        action: params.mutation.action,
+        decision: isSessionTurnMutationDecision(params.row.decision) ? params.row.decision : "duplicate-mutation",
+        observedAt,
+        appliedAt,
+    };
+}
+
+function buildSessionTurnReceiptData(
+    mutation: SessionTurnMutationV1,
+    decision: SessionTurnMutationDecisionV1,
+    appliedAt: number,
+    turnId?: string | null,
+) {
+    return {
+        sessionId: mutation.sessionId,
+        mutationId: mutation.mutationId,
+        turnId: turnId ?? ("turnId" in mutation ? mutation.turnId ?? null : null),
+        action: mutation.action,
+        decision,
+        observedAt: toObservedAtBigInt(mutation.observedAt),
+        appliedAt: toObservedAtBigInt(appliedAt),
+    };
+}
+
+async function createSessionTurnMutationReceipt(
+    tx: Tx,
+    mutation: SessionTurnMutationV1,
+    decision: SessionTurnMutationDecisionV1,
+    turnId?: string | null,
+): Promise<
+    | { status: "created"; receipt: SessionTurnMutationReceiptV1 }
+    | { status: "duplicate"; receipt: SessionTurnMutationReceiptV1 | null }
+> {
+    const appliedAt = Date.now();
+    try {
+        await tx.sessionTurnMutationReceipt.create({
+            data: buildSessionTurnReceiptData(mutation, decision, appliedAt, turnId),
+        });
+        return {
+            status: "created",
+            receipt: buildSessionTurnMutationReceipt({
+                mutation,
+                decision,
+                appliedAt,
+                turnId,
+            }),
+        };
+    } catch (error) {
+        if (isPrismaErrorCode(error, "P2002")) {
+            const existingReceipt = await tx.sessionTurnMutationReceipt.findUnique({
+                where: {
+                    sessionId_mutationId: {
+                        sessionId: mutation.sessionId,
+                        mutationId: mutation.mutationId,
+                    },
+                },
+            });
+            return {
+                status: "duplicate",
+                receipt: existingReceipt ? storedSessionTurnMutationReceipt({ row: existingReceipt, mutation }) : null,
+            };
+        }
+        throw error;
+    }
+}
+
+async function updateSessionTurnMutationReceipt(
+    tx: Tx,
+    mutation: SessionTurnMutationV1,
+    decision: SessionTurnMutationDecisionV1,
+    turnId: string | null,
+): Promise<SessionTurnMutationReceiptV1> {
+    const appliedAt = Date.now();
+    await tx.sessionTurnMutationReceipt.update({
+        where: {
+            sessionId_mutationId: {
+                sessionId: mutation.sessionId,
+                mutationId: mutation.mutationId,
+            },
+        },
+        data: {
+            turnId,
+            action: mutation.action,
+            decision,
+            observedAt: toObservedAtBigInt(mutation.observedAt),
+            appliedAt: toObservedAtBigInt(appliedAt),
+        },
+    });
+    return buildSessionTurnMutationReceipt({
+        mutation,
+        decision,
+        appliedAt,
+        turnId,
+    });
+}
+
+async function loadMaterializedSessionTurnState(tx: Tx, sessionId: string) {
+    const session = await tx.session.findUnique({
+        where: { id: sessionId },
+        select: {
+            latestTurnId: true,
+            latestTurnStatus: true,
+            latestTurnStatusObservedAt: true,
+            lastRuntimeIssue: true,
+        },
+    });
+    return session ? materializedSessionTurnState(session) : null;
+}
+
+function createSessionTurnNoOpResult(params: {
+    reason: ApplySessionTurnMutationNoOpReason;
+    state: ReturnType<typeof materializedSessionTurnState>;
+    receipt: SessionTurnMutationReceiptV1;
+}): Extract<ApplySessionTurnMutationResult, { ok: true }> {
+    return {
+        ok: true,
+        didApply: false,
+        reason: params.reason,
+        receipt: params.receipt,
+        ...params.state,
+        participantCursors: [],
+        badgeAttentionChanged: false,
+    };
+}
+
+function createSessionTurnAppliedResult(params: {
+    mutation: SessionTurnMutationV1;
+    turn: SessionTurnApplicationRow;
+    receipt: SessionTurnMutationReceiptV1;
+    state?: ReturnType<typeof materializedSessionTurnState>;
+    participantCursors: ParticipantCursor[];
+    badgeAttentionChanged: boolean;
+}): Extract<ApplySessionTurnMutationResult, { ok: true }> {
+    return {
+        ok: true,
+        didApply: true,
+        receipt: params.receipt,
+        latestTurnId: params.state?.latestTurnId ?? params.turn.turnId,
+        latestTurnStatus: params.state?.latestTurnStatus ?? sessionTurnRowStatus(params.turn),
+        latestTurnStatusObservedAt: params.state?.latestTurnStatusObservedAt ?? params.mutation.observedAt,
+        lastRuntimeIssue: params.state?.lastRuntimeIssue ?? sessionTurnRowRuntimeIssue(params.turn),
+        participantCursors: params.participantCursors,
+        badgeAttentionChanged: params.badgeAttentionChanged,
+    };
+}
+
+async function applySessionTurnMutationWithOwnerAccess(params: {
+    actorUserId: string;
+    turnMutation: SessionTurnMutationV1;
+}): Promise<ApplySessionTurnMutationResult> {
+    return await inTx(async (tx) => {
+        const access = await ensureSessionEditAccess(tx, {
+            actorUserId: params.actorUserId,
+            sessionId: params.turnMutation.sessionId,
+        });
+        if (!access.ok) {
+            return { ok: false, error: access.error };
+        }
+
+        const existingReceipt = await tx.sessionTurnMutationReceipt.findUnique({
+            where: {
+                sessionId_mutationId: {
+                    sessionId: params.turnMutation.sessionId,
+                    mutationId: params.turnMutation.mutationId,
+                },
+            },
+        });
+        if (existingReceipt) {
+            const state = await loadMaterializedSessionTurnState(tx, params.turnMutation.sessionId);
+            if (!state) return { ok: false, error: "session-not-found" };
+            return createSessionTurnNoOpResult({
+                reason: "duplicate-mutation",
+                state,
+                receipt: storedSessionTurnMutationReceipt({ row: existingReceipt, mutation: params.turnMutation }),
+            });
+        }
+
+        const reservationResult = await createSessionTurnMutationReceipt(tx, params.turnMutation, "stale-in-progress");
+        if (reservationResult.status === "duplicate") {
+            const state = await loadMaterializedSessionTurnState(tx, params.turnMutation.sessionId);
+            if (!state) return { ok: false, error: "session-not-found" };
+            return createSessionTurnNoOpResult({
+                reason: "duplicate-mutation",
+                state,
+                receipt: reservationResult.receipt ?? buildSessionTurnMutationReceipt({
+                    mutation: params.turnMutation,
+                    decision: "duplicate-mutation",
+                }),
+            });
+        }
+
+        const session = await tx.session.findUnique({
+            where: { id: params.turnMutation.sessionId },
+            select: {
+                ...selectSessionActivityBadgeInputs(),
+                latestTurnId: true,
+                latestTurnStatusObservedAt: true,
+            },
+        });
+        if (!session) {
+            return { ok: false, error: "session-not-found" };
+        }
+
+        const requestedTurnId = "turnId" in params.turnMutation ? params.turnMutation.turnId : undefined;
+        const targetTurnId = requestedTurnId ?? session.latestTurnId ?? null;
+        if (!targetTurnId) {
+            const reason = "no-current-turn";
+            const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, mapSessionTurnNoOpReasonToDecision(reason), null);
+            return createSessionTurnNoOpResult({
+                reason,
+                state: materializedSessionTurnState(session),
+                receipt,
+            });
+        }
+
+        const currentTurn = await tx.sessionTurn.findUnique({
+            where: {
+                sessionId_turnId: {
+                    sessionId: params.turnMutation.sessionId,
+                    turnId: targetTurnId,
+                },
+            },
+        }) as SessionTurnApplicationRow | null;
+        const terminalStatus = resolveSessionTurnTerminalStatus(params.turnMutation);
+        const isRecoveryLifecycleEvidence = currentTurn
+            ? isNewerMatchingRecoveryLifecycleEvidence({
+                turn: currentTurn,
+                mutation: params.turnMutation,
+                terminalStatus,
+            })
+            : false;
+
+        if (params.turnMutation.action === "begin" && currentTurn && isSessionTurnTerminalStatus(currentTurn.status) && !isRecoveryLifecycleEvidence) {
+            const reason = "terminal-turn";
+            const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, mapSessionTurnNoOpReasonToDecision(reason), targetTurnId);
+            return createSessionTurnNoOpResult({
+                reason,
+                state: materializedSessionTurnState(session),
+                receipt,
+            });
+        }
+
+        if (params.turnMutation.action !== "begin" && !currentTurn) {
+            const reason = "no-current-turn";
+            const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, mapSessionTurnNoOpReasonToDecision(reason), targetTurnId);
+            return createSessionTurnNoOpResult({
+                reason,
+                state: materializedSessionTurnState(session),
+                receipt,
+            });
+        }
+
+        // A session-end settlement (e.g. the daemon settling a killed runner's open turn) only
+        // cancels a turn that was already open when the end was observed. A NEWER turn — begun
+        // after the observed exit by a replacement runner while the settlement was still queued —
+        // must not be cancelled by the stale settlement.
+        if (params.turnMutation.action === "end_session" && currentTurn && currentTurn.status === "in_progress") {
+            const startedAtMs = toObservedAtNumber(currentTurn.startedAt);
+            if (startedAtMs !== null && startedAtMs > params.turnMutation.observedAt) {
+                const reason = "terminal-turn";
+                const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, mapSessionTurnNoOpReasonToDecision(reason), targetTurnId);
+                return createSessionTurnNoOpResult({
+                    reason,
+                    state: materializedSessionTurnState(session),
+                    receipt,
+                });
+            }
+        }
+
+        const updatesRollbackFacet = params.turnMutation.action === "mark_rollback_eligible" || params.turnMutation.action === "mark_rolled_back";
+        if (currentTurn && isSessionTurnTerminalStatus(currentTurn.status) && !updatesRollbackFacet && !isRecoveryLifecycleEvidence) {
+            const reason = "terminal-turn";
+            const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, mapSessionTurnNoOpReasonToDecision(reason), targetTurnId);
+            return createSessionTurnNoOpResult({
+                reason,
+                state: materializedSessionTurnState(session),
+                receipt,
+            });
+        }
+
+        if (terminalStatus && requestedTurnId && session.latestTurnId && requestedTurnId !== session.latestTurnId) {
+            const latestTurn = await tx.sessionTurn.findUnique({
+                where: {
+                    sessionId_turnId: {
+                        sessionId: params.turnMutation.sessionId,
+                        turnId: session.latestTurnId,
+                    },
+                },
+            }) as SessionTurnApplicationRow | null;
+            if (latestTurn?.status === "in_progress") {
+                const reason = "terminal-turn";
+                const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, mapSessionTurnNoOpReasonToDecision(reason), targetTurnId);
+                return createSessionTurnNoOpResult({
+                    reason,
+                    state: materializedSessionTurnState(session),
+                    receipt,
+                });
+            }
+        }
+
+        if (updatesRollbackFacet && (!currentTurn || currentTurn.status !== "completed")) {
+            const reason = "terminal-turn";
+            const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, mapSessionTurnNoOpReasonToDecision(reason), targetTurnId);
+            return createSessionTurnNoOpResult({
+                reason,
+                state: materializedSessionTurnState(session),
+                receipt,
+            });
+        }
+
+        const observedAt = toObservedAtBigInt(params.turnMutation.observedAt);
+        const transcriptAnchorsJson = currentTurn
+            ? mergeTranscriptAnchorsJson(currentTurn.transcriptAnchorsJson, params.turnMutation)
+            : buildTranscriptAnchorsJson(params.turnMutation);
+        const lastRuntimeIssue = resolveSessionTurnLastRuntimeIssue(params.turnMutation);
+        const lastRuntimeIssueJson = lastRuntimeIssue === null ? null : JSON.stringify(lastRuntimeIssue);
+
+        if (params.turnMutation.action === "mark_rollback_eligible" && !hasTrustedRollbackAnchorsJson(transcriptAnchorsJson ?? currentTurn?.transcriptAnchorsJson)) {
+            const reason = "terminal-turn";
+            const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, mapSessionTurnNoOpReasonToDecision(reason), targetTurnId);
+            return createSessionTurnNoOpResult({
+                reason,
+                state: materializedSessionTurnState(session),
+                receipt,
+            });
+        }
+
+        let appliedTurn: SessionTurnApplicationRow;
+        if (!currentTurn) {
+            try {
+                appliedTurn = await tx.sessionTurn.create({
+                    data: {
+                        sessionId: params.turnMutation.sessionId,
+                        turnId: targetTurnId,
+                        provider: params.turnMutation.provider ?? null,
+                        providerTurnId: "providerTurnId" in params.turnMutation ? params.turnMutation.providerTurnId ?? null : null,
+                        status: "in_progress",
+                        startedAt: observedAt,
+                        updatedAt: observedAt,
+                        terminalAt: null,
+                        lastRuntimeIssueJson: null,
+                        transcriptAnchorsJson: transcriptAnchorsJson ?? null,
+                        rollbackState: null,
+                        rollbackReason: null,
+                        providerRollbackOrdinal: null,
+                        rollbackUpdatedAt: null,
+                        lastMutationId: params.turnMutation.mutationId,
+                    },
+                }) as SessionTurnApplicationRow;
+            } catch (error) {
+                if (!isPrismaErrorCode(error, "P2002")) {
+                    throw error;
+                }
+                const state = await loadMaterializedSessionTurnState(tx, params.turnMutation.sessionId);
+                if (!state) return { ok: false, error: "session-not-found" };
+                const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, "duplicate-mutation", targetTurnId);
+                return createSessionTurnNoOpResult({
+                    reason: "duplicate-mutation",
+                    state,
+                    receipt,
+                });
+            }
+        } else {
+            const isRecoveryBegin = isRecoveryLifecycleEvidence && params.turnMutation.action === "begin";
+            const nextStatus = isRecoveryBegin ? "in_progress" : terminalStatus ?? currentTurn.status;
+            appliedTurn = await tx.sessionTurn.update({
+                where: { id: currentTurn.id },
+                data: {
+                    provider: params.turnMutation.provider ?? currentTurn.provider,
+                    ...("providerTurnId" in params.turnMutation && params.turnMutation.providerTurnId
+                        ? { providerTurnId: params.turnMutation.providerTurnId }
+                        : {}),
+                    status: nextStatus,
+                    ...(isRecoveryBegin ? { startedAt: observedAt } : {}),
+                    updatedAt: observedAt,
+                    ...(isRecoveryBegin ? { terminalAt: null } : terminalStatus ? { terminalAt: observedAt } : {}),
+                    ...(isRecoveryBegin || terminalStatus ? { lastRuntimeIssueJson } : {}),
+                    ...(transcriptAnchorsJson !== undefined ? { transcriptAnchorsJson } : {}),
+                    ...(params.turnMutation.action === "mark_rollback_eligible"
+                        ? {
+                            rollbackState: "eligible",
+                            providerRollbackOrdinal: params.turnMutation.providerRollbackOrdinal ?? currentTurn.providerRollbackOrdinal,
+                            rollbackUpdatedAt: observedAt,
+                        }
+                        : {}),
+                    ...(params.turnMutation.action === "mark_rolled_back"
+                        ? {
+                            rollbackState: "rolled_back",
+                            providerRollbackOrdinal: params.turnMutation.providerRollbackOrdinal ?? currentTurn.providerRollbackOrdinal,
+                            rollbackUpdatedAt: observedAt,
+                        }
+                        : {}),
+                    lastMutationId: params.turnMutation.mutationId,
+                },
+            }) as SessionTurnApplicationRow;
+        }
+
+        const nextLatestTurnId = params.turnMutation.action === "begin" ? targetTurnId : session.latestTurnId ?? targetTurnId;
+        const shouldMaterialize = nextLatestTurnId === targetTurnId
+            && (params.turnMutation.action === "begin" || terminalStatus !== null);
+        const nextActivityInputs = {
+            ...toSessionActivityBadgeInputs(session),
+            ...(shouldMaterialize ? { latestTurnStatus: appliedTurn.status } : {}),
+            ...(shouldMaterialize ? { lastRuntimeIssue: appliedTurn.lastRuntimeIssueJson ?? null } : {}),
+        };
+        if (shouldMaterialize) {
+            await tx.session.update({
+                where: { id: params.turnMutation.sessionId },
+                data: {
+                    latestTurnId: targetTurnId,
+                    latestTurnStatus: appliedTurn.status,
+                    latestTurnStatusObservedAt: observedAt,
+                    lastRuntimeIssue: appliedTurn.lastRuntimeIssueJson ?? null,
+                    ...buildLegacyThinkingProjectionWriteData({
+                        latestTurnStatus: appliedTurn.status,
+                        latestTurnStatusObservedAt: observedAt,
+                    }),
+                },
+            });
+        }
+
+        const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, "applied", targetTurnId);
+
+        const participantCursors = shouldMaterialize
+            ? await markSessionParticipantsChanged({
+                tx,
+                sessionId: params.turnMutation.sessionId,
+                participantUserIds: access.participantUserIds,
+            })
+            : [];
+        const badgeAttentionChanged = shouldMaterialize
+            ? didSessionActivityBadgeContributionChange(toSessionActivityBadgeInputs(session), nextActivityInputs)
+            : false;
+
+        return createSessionTurnAppliedResult({
+            mutation: params.turnMutation,
+            turn: appliedTurn,
+            receipt,
+            ...(!shouldMaterialize ? { state: materializedSessionTurnState(session) } : {}),
+            participantCursors,
+            badgeAttentionChanged,
+        });
+    });
+}
+
+export async function applySessionTurnMutation(params: {
+    actorUserId: string;
+    mutation: unknown;
+}): Promise<ApplySessionTurnMutationResult> {
+    const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
+    const mutation = SessionTurnMutationV1Schema.safeParse(params.mutation);
+    if (!actorUserId || !mutation.success) {
+        return { ok: false, error: "invalid-params" };
+    }
+    const turnMutation = mutation.data;
+
+    try {
+        return await applySessionTurnMutationWithOwnerAccess({ actorUserId, turnMutation });
+    } catch (error) {
+        if (isDuplicateSessionTurnMutationRace(error)) {
+            try {
+                return await applySessionTurnMutationWithOwnerAccess({ actorUserId, turnMutation });
+            } catch {
+                return { ok: false, error: "internal" };
+            }
+        }
         return { ok: false, error: "internal" };
     }
 }

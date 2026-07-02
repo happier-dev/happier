@@ -1,6 +1,8 @@
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 
 import { type Fastify } from "../../types";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { db } from "@/storage/db";
 import {
     ConnectedServiceIdSchema,
@@ -8,6 +10,9 @@ import {
     type ConnectedServiceId,
 } from "@happier-dev/protocol";
 import { NotFoundSchema } from "../../schemas/notFoundSchema";
+import { ConnectedServiceProfileIdSchema } from "./connectedServicesV2/profileIdSchema";
+import { persistQuotaSnapshotWithIdempotency } from "./connectedServiceQuotaSnapshotIdempotency";
+import { registerProviderAccountUsageRoutesV2 } from "./providerAccountUsageRoutesV2";
 
 const MAX_QUOTA_SNAPSHOT_CIPHERTEXT_CHARS = 200_000;
 
@@ -38,12 +43,15 @@ function decodeQuotaSnapshotCiphertext(bytes: Uint8Array): string {
 }
 
 export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
+    registerProviderAccountUsageRoutesV2(app);
+
     app.post("/v2/connect/:serviceId/profiles/:profileId/quotas", {
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "connectedServices.quotas.write") },
         preHandler: app.authenticate,
         schema: {
             params: z.object({
                 serviceId: ConnectedServiceIdSchema,
-                profileId: z.string().min(1),
+                profileId: ConnectedServiceProfileIdSchema,
             }),
             body: z.object({
                 sealed: SealedConnectedServiceQuotaSnapshotV1Schema.extend({
@@ -53,6 +61,7 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                     fetchedAt: z.number().int().nonnegative(),
                     staleAfterMs: z.number().int().nonnegative(),
                     status: z.enum(["ok", "unavailable", "estimated", "error"]),
+                    materialFingerprint: z.string().min(1).max(256).optional(),
                 }),
             }),
             response: { 200: z.object({ success: z.literal(true) }) },
@@ -64,39 +73,34 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
         const sealed = request.body.sealed;
         const meta = request.body.metadata;
 
-        const metadata: Record<string, unknown> = { v: 1, format: sealed.format };
+        const metadata = {
+            v: 1,
+            format: sealed.format,
+            ...(meta.materialFingerprint ? { materialFingerprint: meta.materialFingerprint } : {}),
+        } satisfies Prisma.InputJsonObject;
 
-        await db.serviceAccountQuotaSnapshot.upsert({
-            where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
-            update: {
-                updatedAt: new Date(),
-                snapshot: encodeQuotaSnapshotBytes(sealed.ciphertext),
-                status: meta.status,
-                fetchedAt: new Date(meta.fetchedAt),
-                staleAfterMs: meta.staleAfterMs,
-                metadata,
-            },
-            create: {
-                accountId: userId,
-                vendor: serviceId,
-                profileId,
-                snapshot: encodeQuotaSnapshotBytes(sealed.ciphertext),
-                status: meta.status,
-                fetchedAt: new Date(meta.fetchedAt),
-                staleAfterMs: meta.staleAfterMs,
-                metadata,
-            },
+        await persistQuotaSnapshotWithIdempotency({
+            route: "v2",
+            accountId: userId,
+            vendor: serviceId,
+            profileId,
+            snapshot: encodeQuotaSnapshotBytes(sealed.ciphertext),
+            status: meta.status,
+            fetchedAtMs: meta.fetchedAt,
+            staleAfterMs: meta.staleAfterMs,
+            metadata,
         });
 
         return reply.send({ success: true });
     });
 
     app.get("/v2/connect/:serviceId/profiles/:profileId/quotas", {
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "connectedServices.quotas.read") },
         preHandler: app.authenticate,
         schema: {
             params: z.object({
                 serviceId: ConnectedServiceIdSchema,
-                profileId: z.string().min(1),
+                profileId: ConnectedServiceProfileIdSchema,
             }),
             response: {
                 200: z.object({
@@ -154,11 +158,12 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
     });
 
     app.post("/v2/connect/:serviceId/profiles/:profileId/quotas/refresh", {
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "connectedServices.quotas.refresh") },
         preHandler: app.authenticate,
         schema: {
             params: z.object({
                 serviceId: ConnectedServiceIdSchema,
-                profileId: z.string().min(1),
+                profileId: ConnectedServiceProfileIdSchema,
             }),
             response: {
                 200: z.object({ success: z.literal(true) }),
@@ -202,11 +207,12 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
     });
 
     app.delete("/v2/connect/:serviceId/profiles/:profileId/quotas", {
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "connectedServices.quotas.write") },
         preHandler: app.authenticate,
         schema: {
             params: z.object({
                 serviceId: ConnectedServiceIdSchema,
-                profileId: z.string().min(1),
+                profileId: ConnectedServiceProfileIdSchema,
             }),
             response: {
                 200: z.object({ success: z.literal(true) }),

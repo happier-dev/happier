@@ -238,6 +238,63 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(listQueued.pending.map((p) => p.position)).toEqual([5, 6, 7]);
     });
 
+    it("persists and returns a ready projection when a queued owner-authored ready event is materialized", async () => {
+        const owner = await createAccount("owner");
+        const session = await createSession(owner.id);
+
+        await db.session.update({
+            where: { id: session.id },
+            data: { encryptionMode: "plain" },
+        });
+
+        const localId = `ready-${randomUUID()}`;
+        const readyContent = {
+            t: "plain",
+            v: {
+                role: "agent",
+                content: {
+                    type: "event",
+                    id: "ready-event-1",
+                    data: { type: "ready" },
+                },
+            },
+        } satisfies PrismaJson.SessionPendingMessageContent;
+
+        const enqueue = await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            content: readyContent,
+            messageRole: "event",
+        });
+        expect(enqueue.ok).toBe(true);
+
+        const materialize = await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id });
+        expect(materialize.ok).toBe(true);
+        if (!materialize.ok) throw new Error("unexpected materialize failure");
+        expect(materialize).toMatchObject({
+            didMaterialize: true,
+            didWriteMessage: true,
+            readyProjection: {
+                latestReadyEventSeq: expect.any(Number),
+                latestReadyEventAt: expect.any(Number),
+            },
+        });
+        if (!materialize.didMaterialize) throw new Error("expected materialization");
+        if (!materialize.readyProjection) throw new Error("expected ready projection");
+
+        const persistedSession = await db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: {
+                latestReadyEventSeq: true,
+                latestReadyEventAt: true,
+            },
+        });
+
+        expect(persistedSession.latestReadyEventSeq).toBe(materialize.message.seq);
+        expect(persistedSession.latestReadyEventAt?.getTime()).toBe(materialize.readyProjection.latestReadyEventAt);
+    });
+
     it("forbids non-owner participants from materializing pending", async () => {
         const owner = await createAccount("owner");
         const collaborator = await createAccount("collab");
@@ -289,6 +346,40 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(materialize.ok).toBe(true);
         if (!materialize.ok) throw new Error("unexpected materialize failure");
         expect(materialize.didMaterialize).toBe(true);
+
+        const after = await db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: { pendingCount: true, pendingVersion: true },
+        });
+        expect(after.pendingCount).toBe(0);
+        expect(after.pendingVersion).toBe(before.pendingVersion + 1);
+    });
+
+    it("clamps pendingCount at 0 when discarding a queued message from stale-low session state", async () => {
+        const owner = await createAccount("owner");
+        const session = await createSession(owner.id, { id: true });
+
+        const localId = `a-${randomUUID()}`;
+        const enqueue = await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            ciphertext: "cipher-a-1",
+        });
+        expect(enqueue.ok).toBe(true);
+
+        // Simulate a race or data inconsistency where the queued row exists but the denormalized counter is already 0.
+        await db.session.update({ where: { id: session.id }, data: { pendingCount: 0 } });
+        const before = await db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: { pendingCount: true, pendingVersion: true },
+        });
+
+        const discard = await discardPendingMessage({ actorUserId: owner.id, sessionId: session.id, localId, reason: "test" });
+        expect(discard.ok).toBe(true);
+        if (!discard.ok) throw new Error("expected discard to succeed");
+        expect(discard.pendingCount).toBe(0);
+        expect(discard.pendingVersion).toBe(before.pendingVersion + 1);
 
         const after = await db.session.findUniqueOrThrow({
             where: { id: session.id },

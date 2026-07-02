@@ -16,8 +16,10 @@ import { resolveMachineTransferFeature } from '../machineTransferFeature';
 import { resolveMachineTunnelFeature } from '../machineTunnelFeature';
 import { resolveMachineLiveStreamFeature } from '../machineLiveStreamFeature';
 import { resolveMachineRpcFeature } from '../machineRpcFeature';
+import { resolveLocalServicesFeature } from '../localServicesFeature';
 import { resolveSessionFoldersFeature } from '../sessionFoldersFeature';
 import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
+import { resolveSessionUsageLimitRecoveryFeature } from '../sessionUsageLimitRecoveryFeature';
 import { resolveTerminalFeature } from '../terminalFeature';
 import { resolveEncryptionFeature } from '../encryptionFeature';
 import { resolveE2eeFeature } from '../e2eeFeature';
@@ -44,10 +46,12 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolvePetsFeature(env),
     (env) => resolveMachineTransferFeature(env),
     (env) => resolveMachineTunnelFeature(env),
+    (env) => resolveLocalServicesFeature(env),
     (env) => resolveMachineLiveStreamFeature(env),
     (env) => resolveMachineRpcFeature(env),
     (env) => resolveSessionFoldersFeature(env),
     (env) => resolveSessionHandoffFeature(env),
+    (env) => resolveSessionUsageLimitRecoveryFeature(env),
     (env) => resolveTerminalFeature(env),
     (env) => resolveFriendsFeature(env),
     (env) => resolveOAuthFeature(env),

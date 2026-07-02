@@ -12,6 +12,7 @@ type ApiRateLimitDefaults = Readonly<{
 const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     "session.messages": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
     "session.messages.byLocalId": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
+    "session.detail": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
     "sessions.list": { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
     changes: { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
     features: { defaultMax: 120, defaultWindow: "1 minute", keyMode: "ip" },
@@ -21,6 +22,9 @@ const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     "kv.list": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
     "account.profile": { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
     "account.settings": { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
+    "connectedServices.quotas.read": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
+    "connectedServices.quotas.write": { defaultMax: 120, defaultWindow: "1 minute", keyMode: "user" },
+    "connectedServices.quotas.refresh": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "user" },
     "session.pending": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
     "session.pending.materialize": { defaultMax: 120, defaultWindow: "1 minute", keyMode: "user" },
     "diagnostics.bugReportSnapshot": { defaultMax: 30, defaultWindow: "1 minute", keyMode: "user" },

@@ -30,6 +30,15 @@ function parseEncryptedDataKeyV0(encryptedDataKeyB64: string): Uint8Array<ArrayB
     return bytes;
 }
 
+function resolveEffectiveShareApprovalCapability(input: Readonly<{
+    accessLevel: ShareAccessLevel;
+    requestedCanApprovePermissions?: boolean;
+    existingCanApprovePermissions?: boolean;
+}>): boolean {
+    if (input.accessLevel === "view") return false;
+    return input.requestedCanApprovePermissions ?? input.existingCanApprovePermissions ?? false;
+}
+
 /**
  * Session sharing API routes
  */
@@ -154,6 +163,10 @@ export function shareRoutes(app: Fastify) {
                 return reply.code(400).send({ error: 'Invalid encryptedDataKey' });
             }
         }
+        const effectiveCanApprovePermissions = resolveEffectiveShareApprovalCapability({
+            accessLevel: accessLevel as ShareAccessLevel,
+            requestedCanApprovePermissions: canApprovePermissions,
+        });
 
         const share = await inTx(async (tx) => {
             const share = await tx.sessionShare.upsert({
@@ -168,12 +181,14 @@ export function shareRoutes(app: Fastify) {
                     sharedByUserId: ownerId,
                     sharedWithUserId: userId,
                     accessLevel: accessLevel as ShareAccessLevel,
-                    ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
+                    canApprovePermissions: effectiveCanApprovePermissions,
                     encryptedDataKey: encryptedDataKeyBytes
                 },
                 update: {
                     accessLevel: accessLevel as ShareAccessLevel,
-                    ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
+                    ...(accessLevel === "view" || canApprovePermissions !== undefined
+                        ? { canApprovePermissions: effectiveCanApprovePermissions }
+                        : {}),
                     encryptedDataKey: encryptedDataKeyBytes
                 },
                 include: {
@@ -255,17 +270,23 @@ export function shareRoutes(app: Fastify) {
         }
 
         const nextAccessLevel = accessLevel ?? existing.accessLevel;
-        const nextCanApprovePermissions = canApprovePermissions ?? existing.canApprovePermissions;
-        if (nextCanApprovePermissions === true && nextAccessLevel === 'view') {
+        if (canApprovePermissions === true && nextAccessLevel === 'view') {
             return reply.code(400).send({ error: 'Permission approvals require edit or admin access' });
         }
+        const nextCanApprovePermissions = resolveEffectiveShareApprovalCapability({
+            accessLevel: nextAccessLevel as ShareAccessLevel,
+            requestedCanApprovePermissions: canApprovePermissions,
+            existingCanApprovePermissions: existing.canApprovePermissions,
+        });
 
         const share = await inTx(async (tx) => {
             const share = await tx.sessionShare.update({
                 where: { id: shareId },
                 data: {
                     ...(accessLevel !== undefined ? { accessLevel: accessLevel as ShareAccessLevel } : {}),
-                    ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
+                    ...(accessLevel === "view" || canApprovePermissions !== undefined
+                        ? { canApprovePermissions: nextCanApprovePermissions }
+                        : {}),
                 },
                 include: {
                     sharedWithUser: {
@@ -284,6 +305,7 @@ export function shareRoutes(app: Fastify) {
                     share.id,
                     share.sessionId,
                     share.accessLevel,
+                    share.canApprovePermissions,
                     share.updatedAt,
                     recipientCursor,
                     randomKeyNaked(12)

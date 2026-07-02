@@ -27,13 +27,15 @@ describe("presenceRecorder", () => {
         queueSessionUpdate.mockReturnValueOnce(false).mockReturnValueOnce(true);
 
         const { recordSessionAlive } = await import("./presenceRecorder");
-        await recordSessionAlive({ accountId: "u1", sessionId: "s1", timestamp: 10 });
-        await recordSessionAlive({ accountId: "u1", sessionId: "s1", timestamp: 11 });
+        await recordSessionAlive({ accountId: "u1", sessionId: "s1", timestamp: 10, thinking: false });
+        await recordSessionAlive({ accountId: "u1", sessionId: "s1", timestamp: 11, thinking: true });
 
+        expect(queueSessionUpdate).toHaveBeenNthCalledWith(1, "s1", "u1", 10, false);
+        expect(queueSessionUpdate).toHaveBeenNthCalledWith(2, "s1", "u1", 11, true);
         expect(publishSessionAlive).toHaveBeenCalledTimes(1);
         expect(publishSessionAlive).toHaveBeenCalledWith({ sessionId: "s1", timestamp: 11, accountId: "u1" });
         expect(markSessionUpdateSent).toHaveBeenCalledTimes(1);
-        expect(markSessionUpdateSent).toHaveBeenCalledWith("s1", "u1", 11);
+        expect(markSessionUpdateSent).toHaveBeenCalledWith("s1", "u1", 11, true);
     });
 
     it("does not publish when redis mode disabled", async () => {

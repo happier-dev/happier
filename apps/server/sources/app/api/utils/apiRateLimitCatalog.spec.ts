@@ -17,6 +17,20 @@ describe("apiRateLimitCatalog", () => {
         );
     });
 
+    it("uses a generous session detail default bucket", () => {
+        const env = {
+            HAPPIER_API_RATE_LIMITS_ENABLED: "1",
+        } as const;
+
+        const rateLimit = resolveApiHotEndpointRateLimit(env, "session.detail");
+        expect(rateLimit).toEqual(
+            expect.objectContaining({
+                max: 600,
+                timeWindow: "1 minute",
+            }),
+        );
+    });
+
     it("allows overriding max/window via env vars derived from the id", () => {
         const env = {
             HAPPIER_API_RATE_LIMITS_ENABLED: "1",

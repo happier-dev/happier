@@ -10,7 +10,10 @@ import {
 } from "@happier-dev/protocol";
 import { parseIntEnv } from "@/config/env";
 import { assertNonEmptyString } from "./connectValueParsers";
-import { extractOpenAiCodexAccountId } from "./openaiCodex/openaiCodexIdTokenClaims";
+import {
+    extractOpenAiCodexAccountId,
+    extractOpenAiCodexEmail,
+} from "./openaiCodex/openaiCodexIdTokenClaims";
 import {
     resolveClaudeSubscriptionOauthClientId,
     resolveClaudeSubscriptionOauthTokenUrl,
@@ -159,6 +162,7 @@ async function exchangeOpenAiCodex(params: Readonly<{
     const accessToken = typeof json?.access_token === "string" ? json.access_token : idToken;
     const refreshToken = assertNonEmptyString(json?.refresh_token, "refresh_token");
     const providerAccountId = extractOpenAiCodexAccountId(idToken);
+    const providerEmail = extractOpenAiCodexEmail(idToken);
 
     const expiresIn = Number.isFinite(json?.expires_in) ? Number(json.expires_in) : NaN;
     const expiresAt = Number.isFinite(expiresIn) && expiresIn > 0 ? params.now + Math.trunc(expiresIn) * 1000 : null;
@@ -170,7 +174,7 @@ async function exchangeOpenAiCodex(params: Readonly<{
         idToken,
         scope: null,
         tokenType: null,
-        providerEmail: null,
+        providerEmail,
         providerAccountId,
         expiresAt,
         raw: json,

@@ -7,13 +7,13 @@ import { ConnectedServiceIdSchema, type ConnectedServiceId } from "@happier-dev/
 import { ConnectedServiceProfileIdSchema } from "./profileIdSchema";
 import { NotFoundSchema } from "../../../schemas/notFoundSchema";
 
-export function registerConnectedServiceRefreshLeaseRoutesV2(
+function registerConnectedServiceRefreshLeaseRoute(
   app: Fastify,
-  params: Readonly<{ refreshLeaseMaxMs: number }>,
+  params: Readonly<{ refreshLeaseMaxMs: number; routePrefix: "/v2" | "/v3" }>,
 ): void {
   const refreshLeaseMaxMs = params.refreshLeaseMaxMs;
 
-  app.post("/v2/connect/:serviceId/profiles/:profileId/refresh-lease", {
+  app.post(`${params.routePrefix}/connect/:serviceId/profiles/:profileId/refresh-lease`, {
     preHandler: app.authenticate,
     schema: {
       params: z.object({
@@ -22,6 +22,7 @@ export function registerConnectedServiceRefreshLeaseRoutesV2(
       }),
       body: z.object({
         machineId: z.string().min(1),
+        ownerId: z.string().min(1).optional(),
         leaseMs: z.number().int().min(1),
       }),
       response: {
@@ -37,34 +38,54 @@ export function registerConnectedServiceRefreshLeaseRoutesV2(
     const serviceId = request.params.serviceId satisfies ConnectedServiceId;
     const profileId = request.params.profileId;
     const { machineId } = request.body;
+    const ownerId = request.body.ownerId?.trim() || machineId;
     const leaseMs = Math.min(request.body.leaseMs, refreshLeaseMaxMs);
 
     const now = Date.now();
+    const nowDate = new Date(now);
     const nextExpiry = new Date(now + leaseMs);
+
+    const acquired = await db.serviceAccountToken.updateMany({
+      where: {
+        accountId: userId,
+        vendor: serviceId,
+        profileId,
+        OR: [
+          { refreshLeaseExpiresAt: null },
+          { refreshLeaseExpiresAt: { lte: nowDate } },
+          { refreshLeaseOwnerMachineId: ownerId },
+        ],
+      },
+      data: {
+        refreshLeaseOwnerMachineId: ownerId,
+        refreshLeaseExpiresAt: nextExpiry,
+      },
+    });
+
+    if (acquired.count === 1) {
+      return reply.send({ acquired: true, leaseUntil: nextExpiry.getTime() });
+    }
 
     const row = await db.serviceAccountToken.findUnique({
       where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
-      select: { id: true, refreshLeaseOwnerMachineId: true, refreshLeaseExpiresAt: true },
+      select: { refreshLeaseExpiresAt: true },
     });
     if (!row) return reply.code(404).send({ error: "connect_credential_not_found" });
 
-    const currentExpiryMs = row.refreshLeaseExpiresAt ? row.refreshLeaseExpiresAt.getTime() : null;
-    const isExpired = currentExpiryMs !== null && currentExpiryMs <= now;
-    const canAcquire = currentExpiryMs === null || isExpired || row.refreshLeaseOwnerMachineId === machineId;
-
-    if (!canAcquire) {
-      return reply.send({ acquired: false, leaseUntil: currentExpiryMs ?? now });
-    }
-
-    const updated = await db.serviceAccountToken.update({
-      where: { id: row.id },
-      data: {
-        refreshLeaseOwnerMachineId: machineId,
-        refreshLeaseExpiresAt: nextExpiry,
-      },
-      select: { refreshLeaseExpiresAt: true },
-    });
-
-    return reply.send({ acquired: true, leaseUntil: updated.refreshLeaseExpiresAt?.getTime() ?? now });
+    return reply.send({ acquired: false, leaseUntil: row.refreshLeaseExpiresAt?.getTime() ?? now });
   });
+}
+
+export function registerConnectedServiceRefreshLeaseRoutesV2(
+  app: Fastify,
+  params: Readonly<{ refreshLeaseMaxMs: number }>,
+): void {
+  registerConnectedServiceRefreshLeaseRoute(app, { ...params, routePrefix: "/v2" });
+}
+
+export function registerConnectedServiceRefreshLeaseRoutesV3(
+  app: Fastify,
+  params: Readonly<{ refreshLeaseMaxMs: number }>,
+): void {
+  registerConnectedServiceRefreshLeaseRoute(app, { ...params, routePrefix: "/v3" });
 }

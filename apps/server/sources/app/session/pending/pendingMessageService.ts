@@ -3,6 +3,7 @@ import { applyPendingSessionStateChange } from "@/app/session/pending/applyPendi
 import { mapPendingMessageRow } from "@/app/session/pending/mapPendingMessageRow";
 import {
     resolveSessionPendingEditAccess,
+    resolveSessionPendingOwnerAccess,
     resolveSessionPendingViewAccess,
 } from "@/app/session/pending/resolveSessionPendingAccess";
 import type { PendingMessageRow } from "@/app/session/pending/mapPendingMessageRow";
@@ -22,6 +23,38 @@ export type { PendingMessageRow } from "@/app/session/pending/mapPendingMessageR
 export type ListPendingMessagesResult =
     | { ok: true; pending: PendingMessageRow[] }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal" };
+
+export type ReadSessionPendingStateResult =
+    | { ok: true; pendingCount: number; pendingVersion: number }
+    | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal" };
+
+export async function readSessionPendingState(params: {
+    actorUserId: string;
+    sessionId: string;
+}): Promise<ReadSessionPendingStateResult> {
+    const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
+    const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
+
+    if (!actorUserId || !sessionId) return { ok: false, error: "invalid-params" };
+
+    const access = await resolveSessionPendingOwnerAccess(actorUserId, sessionId);
+    if (!access.ok) return { ok: false, error: access.error };
+
+    try {
+        const session = await db.session.findUnique({
+            where: { id: sessionId },
+            select: { pendingCount: true, pendingVersion: true },
+        });
+        if (!session) return { ok: false, error: "session-not-found" };
+        return {
+            ok: true,
+            pendingCount: session.pendingCount ?? 0,
+            pendingVersion: session.pendingVersion ?? 0,
+        };
+    } catch {
+        return { ok: false, error: "internal" };
+    }
+}
 
 export async function listPendingMessages(params: {
     actorUserId: string;
@@ -88,6 +121,7 @@ export type EnqueuePendingMessageResult =
         pendingVersion: number;
         badgeAttentionChanged: boolean;
         participantCursors: ParticipantCursor[];
+        meaningfulActivityAt?: Date;
       }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal"; code?: EncryptionPolicyRejectionCode };
 
@@ -217,10 +251,11 @@ export async function enqueuePendingMessage(params: {
                 },
             });
 
-            const { pendingCount, pendingVersion, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
+            const { pendingCount, pendingVersion, participantCursors, badgeAttentionChanged, meaningfulActivityAt } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
                 pendingCountDelta: 1,
+                meaningfulActivityAt: created.createdAt,
             });
 
             return {
@@ -231,6 +266,7 @@ export async function enqueuePendingMessage(params: {
                 pendingVersion,
                 badgeAttentionChanged,
                 participantCursors,
+                meaningfulActivityAt,
             };
         });
     } catch {
@@ -239,7 +275,7 @@ export async function enqueuePendingMessage(params: {
 }
 
 export type UpdatePendingMessageResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; meaningfulActivityAt?: Date }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "internal"; code?: EncryptionPolicyRejectionCode };
 
 export async function updatePendingMessage(params: {
@@ -320,7 +356,7 @@ export async function updatePendingMessage(params: {
 }
 
 export type DeletePendingMessageResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; meaningfulActivityAt?: Date }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal" };
 
 export async function deletePendingMessage(params: {
@@ -375,7 +411,7 @@ export async function deletePendingMessage(params: {
 }
 
 export type DiscardPendingMessageResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; meaningfulActivityAt?: Date }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "internal" };
 
 export async function discardPendingMessage(params: {
@@ -436,7 +472,7 @@ export async function discardPendingMessage(params: {
 }
 
 export type RestorePendingMessageResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; meaningfulActivityAt?: Date }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "internal" };
 
 export async function restorePendingMessage(params: {
@@ -483,7 +519,7 @@ export async function restorePendingMessage(params: {
 }
 
 export type ReorderPendingMessagesResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
+    | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; meaningfulActivityAt?: Date }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal" };
 
 export async function reorderPendingMessages(params: {

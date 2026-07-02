@@ -7,6 +7,13 @@ import type { RouteRequestOverrides } from "../../testkit/requestFixtures";
 type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
 
 export const emitUpdate = vi.fn();
+export const emitEphemeral = vi.fn();
+export const buildSessionActivityEphemeral = vi.fn((_sessionId: string, active: boolean, time: number, waitingForUser: boolean) => ({
+    t: "session-activity",
+    active,
+    time,
+    waitingForUser,
+}));
 export const buildNewMessageUpdate = vi.fn((_message: any, _sessionId: string, seq: number, updateId: string) => ({
     id: updateId,
     seq,
@@ -33,6 +40,7 @@ export const buildUpdateSessionUpdate = vi.fn(
 export const randomKeyNaked = vi.fn(() => "upd-id");
 export const createSessionMessage = vi.fn();
 export const patchSession = vi.fn();
+export const applySessionTurnMutation = vi.fn();
 export const applySessionReadCursorOperation = vi.fn();
 export const checkSessionAccess = vi.fn(async () => ({ level: "owner" }));
 export const requireAccessLevel = vi.fn((access: any, required: any) => {
@@ -52,12 +60,15 @@ const sessionDbMocks = createDbMocks({
     sessionFolderAssignment: ["findMany"],
     sessionShare: ["findMany"],
     sessionMessage: ["findMany", "findFirst", "findUnique"],
+    sessionPendingMessage: ["count"],
+    sessionTurn: ["findMany"],
 } as const);
 
 const txDbMocks = createDbMocks({
     account: ["findUnique"],
     session: ["create", "findFirst", "findUnique", "update"],
     sessionFolderAssignment: ["deleteMany", "findMany", "updateMany", "upsert"],
+    sessionSystemRecord: ["create", "findUnique", "findMany", "findFirst", "update"],
 } as const);
 
 export const sessionFindMany = sessionDbMocks.db.session.findMany;
@@ -69,6 +80,8 @@ export const sessionFolderAssignmentFindMany = sessionDbMocks.db.sessionFolderAs
 export const sessionMessageFindMany = sessionDbMocks.db.sessionMessage.findMany;
 export const sessionMessageFindFirst = sessionDbMocks.db.sessionMessage.findFirst;
 export const sessionMessageFindUnique = sessionDbMocks.db.sessionMessage.findUnique;
+export const sessionPendingMessageCount = sessionDbMocks.db.sessionPendingMessage.count;
+export const sessionTurnFindMany = sessionDbMocks.db.sessionTurn.findMany;
 export const sessionShareFindMany = sessionDbMocks.db.sessionShare.findMany;
 
 export const txSessionFindFirst = txDbMocks.db.session.findFirst;
@@ -79,13 +92,19 @@ export const txSessionFolderAssignmentDeleteMany = txDbMocks.db.sessionFolderAss
 export const txSessionFolderAssignmentFindMany = txDbMocks.db.sessionFolderAssignment.findMany;
 export const txSessionFolderAssignmentUpdateMany = txDbMocks.db.sessionFolderAssignment.updateMany;
 export const txSessionFolderAssignmentUpsert = txDbMocks.db.sessionFolderAssignment.upsert;
+export const txSessionSystemRecordCreate = txDbMocks.db.sessionSystemRecord.create;
+export const txSessionSystemRecordFindUnique = txDbMocks.db.sessionSystemRecord.findUnique;
+export const txSessionSystemRecordFindMany = txDbMocks.db.sessionSystemRecord.findMany;
+export const txSessionSystemRecordFindFirst = txDbMocks.db.sessionSystemRecord.findFirst;
+export const txSessionSystemRecordUpdate = txDbMocks.db.sessionSystemRecord.update;
 export const txAccountFindUnique = txDbMocks.db.account.findUnique;
 
 vi.mock("@/app/events/eventRouter", () => ({
-    eventRouter: { emitUpdate },
+    eventRouter: { emitUpdate, emitEphemeral },
     buildNewMessageUpdate,
     buildMessageUpdatedUpdate,
     buildNewSessionUpdate,
+    buildSessionActivityEphemeral,
     buildUpdateSessionUpdate,
 }));
 
@@ -99,6 +118,7 @@ vi.mock("@/utils/keys/randomKeyNaked", () => ({
 }));
 
 vi.mock("@/app/session/sessionWriteService", () => ({
+    applySessionTurnMutation,
     applySessionReadCursorOperation,
     createSessionMessage,
     patchSession,
@@ -124,6 +144,18 @@ installDbModuleMock({
 });
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+export const markSessionInactive = vi.fn();
+vi.mock("@/app/presence/sessionCache", () => ({
+    activityCache: { markSessionInactive },
+}));
+export const refreshSessionParticipantBadgePushes = vi.fn(async () => {});
+vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({
+    refreshSessionParticipantBadgePushes,
+}));
+export const didSessionActivityBadgeContributionChange = vi.fn(() => false);
+vi.mock("@/app/activity/accountActivityBadge", () => ({
+    didSessionActivityBadgeContributionChange,
+}));
 vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () => true) }));
 export const markAccountChanged = vi.fn(async () => 1);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
@@ -140,6 +172,7 @@ export function resetSessionRouteMocks(): void {
     sessionDbMocks.reset();
     txDbMocks.reset();
     randomKeyNaked.mockReturnValue("upd-id");
+    applySessionTurnMutation.mockReset();
     applySessionReadCursorOperation.mockReset();
     checkSessionAccess.mockResolvedValue({ level: "owner" });
     getSessionParticipantUserIds.mockResolvedValue([]);
@@ -147,6 +180,11 @@ export function resetSessionRouteMocks(): void {
     sessionFindFirst.mockResolvedValue(null);
     sessionFindUnique.mockResolvedValue(null);
     accountFindUnique.mockResolvedValue({ encryptionMode: "e2ee" });
+    emitEphemeral.mockReset();
+    buildSessionActivityEphemeral.mockClear();
+    markSessionInactive.mockReset();
+    refreshSessionParticipantBadgePushes.mockClear();
+    didSessionActivityBadgeContributionChange.mockReturnValue(false);
     sessionUpdate.mockImplementation(async () => {
         throw new Error("sessionUpdate not configured for test");
     });
@@ -154,6 +192,8 @@ export function resetSessionRouteMocks(): void {
     sessionMessageFindMany.mockResolvedValue([]);
     sessionMessageFindFirst.mockResolvedValue(null);
     sessionMessageFindUnique.mockResolvedValue(null);
+    sessionPendingMessageCount.mockResolvedValue(0);
+    sessionTurnFindMany.mockResolvedValue([]);
     sessionShareFindMany.mockResolvedValue([]);
     txSessionFindFirst.mockResolvedValue(null);
     txSessionFindUnique.mockResolvedValue(null);
@@ -169,6 +209,15 @@ export function resetSessionRouteMocks(): void {
     txSessionFolderAssignmentUpdateMany.mockResolvedValue({ count: 0 });
     txSessionFolderAssignmentUpsert.mockImplementation(async () => {
         throw new Error("txSessionFolderAssignmentUpsert not configured for test");
+    });
+    txSessionSystemRecordCreate.mockImplementation(async () => {
+        throw new Error("txSessionSystemRecordCreate not configured for test");
+    });
+    txSessionSystemRecordFindUnique.mockResolvedValue(null);
+    txSessionSystemRecordFindMany.mockResolvedValue([]);
+    txSessionSystemRecordFindFirst.mockResolvedValue(null);
+    txSessionSystemRecordUpdate.mockImplementation(async () => {
+        throw new Error("txSessionSystemRecordUpdate not configured for test");
     });
     markAccountChangedAfterCommit.mockResolvedValue(1);
 }

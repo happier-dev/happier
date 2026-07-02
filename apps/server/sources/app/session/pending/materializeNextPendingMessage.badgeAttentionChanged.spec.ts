@@ -138,4 +138,52 @@ describe("materializeNextPendingMessage badgeAttentionChanged", () => {
             }),
         );
     });
+
+    it("does not clobber a concurrent enqueue when stale-low decrement fallback loses the race", async () => {
+        txSessionUpdate.mockReset();
+        txSessionUpdate.mockResolvedValueOnce({ seq: 1 });
+        txSessionUpdateMany
+            .mockResolvedValueOnce({ count: 0 })
+            .mockResolvedValueOnce({ count: 0 });
+        txSessionFindUniqueOrThrow.mockReset();
+        txSessionFindUniqueOrThrow
+            .mockResolvedValueOnce({
+                seq: 0,
+                pendingCount: 0,
+                pendingVersion: 6,
+                lastViewedSessionSeq: 0,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            })
+            .mockResolvedValueOnce({
+                seq: 1,
+                pendingCount: 1,
+                pendingVersion: 7,
+                lastViewedSessionSeq: 0,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            });
+
+        const result = await materializeNextPendingMessage({ actorUserId: "u1", sessionId: "s1" });
+
+        expect(txSessionUpdateMany).toHaveBeenCalledWith({
+            where: { id: "s1", pendingCount: { gt: 0 } },
+            data: { pendingCount: { decrement: 1 }, pendingVersion: { increment: 1 } },
+        });
+        expect(txSessionUpdateMany).toHaveBeenCalledWith({
+            where: { id: "s1", pendingCount: { lte: 0 } },
+            data: { pendingCount: 0, pendingVersion: { increment: 1 } },
+        });
+        expect(txSessionUpdate).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({
+            ok: true,
+            didMaterialize: true,
+            pendingCount: 1,
+            pendingVersion: 7,
+        });
+    });
 });

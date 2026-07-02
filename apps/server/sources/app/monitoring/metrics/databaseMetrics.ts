@@ -1,4 +1,4 @@
-import { Counter, Gauge } from "prom-client";
+import { Counter, Gauge, Histogram } from "prom-client";
 
 import { db } from "@/storage/db";
 import { delay } from "@/utils/runtime/delay";
@@ -17,6 +17,21 @@ export const databaseRecordCountGauge = new Gauge({
 export const databaseMetricsUpdateFailuresCounter = new Counter({
     name: "database_metrics_update_failures_total",
     help: "Total database metrics update failures",
+    registers: [register],
+});
+
+export const dbReadinessChecksCounter = new Counter({
+    name: "db_readiness_checks_total",
+    help: "Total database readiness checks by result and reason",
+    labelNames: ["result", "reason"] as const,
+    registers: [register],
+});
+
+export const dbReadinessDurationHistogram = new Histogram({
+    name: "db_readiness_duration_seconds",
+    help: "Database readiness check duration in seconds",
+    labelNames: ["result", "reason"] as const,
+    buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
     registers: [register],
 });
 

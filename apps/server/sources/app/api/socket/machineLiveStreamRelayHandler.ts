@@ -211,6 +211,18 @@ function isRelayStateExpired(state: MachineLiveStreamRelayState, nowMs: number):
     return nowMs >= state.expiresAtMs;
 }
 
+function pruneExpiredRelayStates(nowMs: number): void {
+    for (const [key, state] of streamStateByKey.entries()) {
+        if (isRelayStateExpired(state, nowMs)) streamStateByKey.delete(key);
+    }
+}
+
+function pruneInactiveSocketStreamKeys(socketStreamKeys: Set<MachineLiveStreamKey>): void {
+    for (const streamKey of socketStreamKeys) {
+        if (!streamStateByKey.has(streamKey)) socketStreamKeys.delete(streamKey);
+    }
+}
+
 function pruneRecentFrames(state: MachineLiveStreamRelayState, nowMs: number): void {
     const minMs = nowMs - 1_000;
     while (state.recentFrames.length > 0 && state.recentFrames[0]!.atMs < minMs) {
@@ -561,7 +573,10 @@ export function machineLiveStreamRelayHandler(
         }
         const envelope = parsed.data;
         const isSourceSocket = envelope.sourceMachineId === socketMachineId;
-        const isTargetControlSocket = envelope.message.kind === 'control' && envelope.targetMachineId === socketMachineId;
+        const isTargetControlSocket = (
+            envelope.message.kind === 'control'
+            || envelope.message.kind === 'sideband_control'
+        ) && envelope.targetMachineId === socketMachineId;
         if (!isSourceSocket && !isTargetControlSocket) {
             emitError(socket, 'source_machine_mismatch');
             return;
@@ -611,6 +626,8 @@ export function machineLiveStreamRelayHandler(
                 return;
             }
 
+            pruneExpiredRelayStates(nowMs);
+            pruneInactiveSocketStreamKeys(socketStreamKeys);
             const streamKey = buildStreamKey({
                 userId,
                 sourceMachineId: envelope.sourceMachineId,
@@ -758,6 +775,37 @@ export function machineLiveStreamRelayHandler(
                 io: ctx.io,
                 userId,
                 machineId: isSourceSocket ? envelope.targetMachineId : envelope.sourceMachineId,
+                envelope,
+            });
+            return;
+        }
+
+        if (envelope.message.kind === 'sideband_control') {
+            if (!isTargetControlSocket) {
+                emitError(socket, 'target_machine_control_required');
+                return;
+            }
+            const streamKey = buildStreamKey({
+                userId,
+                sourceMachineId: envelope.sourceMachineId,
+                targetMachineId: envelope.targetMachineId,
+                streamId: envelope.message.control.streamId,
+            });
+            const state = streamStateByKey.get(streamKey);
+            if (!state) {
+                emitError(socket, 'live_stream_start_required');
+                return;
+            }
+            const nowMs = ctx.nowMs?.() ?? Date.now();
+            if (isRelayStateExpired(state, nowMs)) {
+                removeStream(streamKey);
+                emitError(socket, 'live_stream_authorization_expired');
+                return;
+            }
+            emitToMachine({
+                io: ctx.io,
+                userId,
+                machineId: envelope.sourceMachineId,
                 envelope,
             });
             return;

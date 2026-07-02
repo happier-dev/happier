@@ -82,11 +82,11 @@ export function createSessionFolderAssignmentSessionWhere(params: Readonly<{
     accountId: string;
     folderIds: readonly string[];
     archived: boolean;
-    cursorSessionId?: string;
+    cursorWhere?: Prisma.SessionWhereInput;
 }>): Prisma.SessionWhereInput {
     return {
         archivedAt: params.archived ? { not: null } : null,
-        ...(params.cursorSessionId ? { id: { lt: params.cursorSessionId } } : {}),
+        ...(params.cursorWhere ?? {}),
         sessionFolderAssignments: {
             some: {
                 accountId: params.accountId,

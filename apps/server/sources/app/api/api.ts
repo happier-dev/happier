@@ -34,46 +34,27 @@ import { liveActivityTargetsRoutes } from "./routes/activity/liveActivityTargets
 import { liveActivityRemoteUpdateRoutes } from "./routes/activity/liveActivityRemoteUpdateRoutes";
 import { liveActivityHostedRelayRoutes } from "./routes/activity/liveActivityHostedRelayRoutes";
 import { registerPeerMediationGrantRoutes } from "./routes/machines/peer/mediation/registerPeerMediationGrantRoutes";
+import { registerReviewCommentRoutes } from "@/app/reviews/comments/routes";
+import { registerPluginInstallationManifestRoutes } from "@/app/plugins/installations/routes";
+import { registerPluginPermissionGrantRoutes } from "@/app/plugins/permissions/routes";
+import { registerLocalServiceRoutes } from "./routes/local/services/registerRoutes";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
     return host.length > 0 ? host : '0.0.0.0';
 }
 
-export async function startApi() {
+export const DEFAULT_API_CORS_MAX_AGE_SECONDS = 600;
 
-    // Configure
-    log('Starting API...');
+export function resolveApiCorsMaxAgeSeconds(env: Record<string, string | undefined>): number {
+    const raw = (env.HAPPIER_API_CORS_MAX_AGE_SECONDS ?? env.HAPPY_API_CORS_MAX_AGE_SECONDS ?? '').toString().trim();
+    if (!raw) return DEFAULT_API_CORS_MAX_AGE_SECONDS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_API_CORS_MAX_AGE_SECONDS;
+    return parsed;
+}
 
-    // Start API
-    const trustProxy = resolveApiTrustProxy(process.env);
-    const app = fastify({
-        loggerInstance: logger,
-        bodyLimit: 1024 * 1024 * 100, // 100MB
-        ...(typeof trustProxy !== "undefined" ? { trustProxy } : null),
-    });
-    app.register(import('@fastify/cors'), {
-        origin: '*',
-        // Keep permissive defaults for now. Tighten via a proxy/WAF or by
-        // changing this list once deployments are stable.
-        allowedHeaders: ['authorization', 'content-type'],
-        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
-    });
-    app.register(import('@fastify/rate-limit'), resolveApiRateLimitPluginOptions(process.env));
-
-    enableOptionalStatics(app);
-
-    // Create typed provider
-    app.setValidatorCompiler(validatorCompiler);
-    app.setSerializerCompiler(serializerCompiler);
-    const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as Fastify;
-
-    // Enable features
-    enableMonitoring(typed);
-    enableErrorHandlers(typed);
-    enableAuthentication(typed);
-
-    // Routes
+export function registerApiRoutes(typed: Fastify): void {
     authRoutes(typed);
     pushRoutes(typed);
     sessionRoutes(typed);
@@ -99,6 +80,52 @@ export async function startApi() {
     liveActivityRemoteUpdateRoutes(typed);
     liveActivityHostedRelayRoutes(typed);
     registerPeerMediationGrantRoutes(typed);
+    registerLocalServiceRoutes(typed);
+    registerPluginInstallationManifestRoutes(typed);
+    registerPluginPermissionGrantRoutes(typed);
+    registerReviewCommentRoutes(typed);
+}
+
+export async function startApi() {
+
+    // Configure
+    log('Starting API...');
+
+    // Start API
+    const trustProxy = resolveApiTrustProxy(process.env);
+    const app = fastify({
+        loggerInstance: logger,
+        bodyLimit: 1024 * 1024 * 100, // 100MB
+        ...(typeof trustProxy !== "undefined" ? { trustProxy } : null),
+    });
+    app.register(import('@fastify/cors'), {
+        origin: '*',
+        // Keep permissive defaults for now. Tighten via a proxy/WAF or by
+        // changing this list once deployments are stable.
+        allowedHeaders: ['authorization', 'content-type'],
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+        maxAge: resolveApiCorsMaxAgeSeconds(process.env),
+    });
+    app.register(import('@fastify/rate-limit'), resolveApiRateLimitPluginOptions(process.env));
+
+    enableOptionalStatics(app);
+
+    // Create typed provider
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as Fastify;
+
+    // Enable features
+    enableMonitoring(typed);
+    enableErrorHandlers(typed);
+    enableAuthentication(typed);
+
+    // Socket relay services must be available before route composition so
+    // server HTTP routes can open PMS relay tunnels without a test-only seam.
+    startSocket(typed);
+
+    // Routes
+    registerApiRoutes(typed);
 
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
@@ -106,9 +133,6 @@ export async function startApi() {
     onShutdown('api', async () => {
         await app.close();
     });
-
-    // Start Socket
-    startSocket(typed);
 
     // End
     log('API ready on port http://localhost:' + port);

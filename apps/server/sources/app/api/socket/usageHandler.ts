@@ -60,7 +60,9 @@ export function usageHandler(userId: string, socket: Socket) {
                         return;
                     }
 
-                    log({ module: 'websocket' }, `Usage report saved: key=${key}, sessionId=${sessionId || 'none'}, userId=${userId}`);
+                    if (result.changed) {
+                        log({ module: 'websocket' }, `Usage report saved: key=${key}, sessionId=${sessionId || 'none'}, userId=${userId}`);
+                    }
 
                     if (callback) {
                         callback({

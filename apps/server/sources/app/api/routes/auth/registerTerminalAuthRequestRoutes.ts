@@ -6,6 +6,7 @@ import { auth } from "@/app/auth/auth";
 import { debug } from "@/utils/logging/log";
 import { type Fastify } from "../../types";
 import { type TerminalAuthRequestPolicy } from "./terminalAuthRequestPolicy";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 
 const BASE64_URL_REGEX = /^[A-Za-z0-9_-]+$/;
 
@@ -15,6 +16,23 @@ type RegisterTerminalAuthRequestRoutesContext = {
     terminalAuthPolicy: TerminalAuthRequestPolicy;
     isTerminalAuthExpired: IsTerminalAuthExpired;
 };
+
+async function buildTerminalAuthAuthorizedPayload(params: {
+    token: string;
+    response: string;
+}): Promise<{
+    state: "authorized";
+    token: string;
+    response: string;
+    serverIdentityId: string;
+}> {
+    return {
+        state: "authorized",
+        token: params.token,
+        response: params.response,
+        serverIdentityId: await getOrCreateServerIdentityId(process.env),
+    };
+}
 
 export function registerTerminalAuthRequestRoutes(
     app: Fastify,
@@ -32,7 +50,12 @@ export function registerTerminalAuthRequestRoutes(
             response: {
                 200: z.union([
                     z.object({ state: z.literal('requested') }).strict(),
-                    z.object({ state: z.literal('authorized'), token: z.string(), response: z.string() }).strict(),
+                    z.object({
+                        state: z.literal('authorized'),
+                        token: z.string(),
+                        response: z.string(),
+                        serverIdentityId: z.string().optional(),
+                    }).strict(),
                     z.object({ state: z.literal('authorized') }).strict(),
                 ]),
                 409: z.object({ error: z.literal('claim_mismatch') }),
@@ -100,11 +123,10 @@ export function registerTerminalAuthRequestRoutes(
                 return reply.send({ state: "authorized" as const });
             }
             const token = await auth.createToken(answer.responseAccountId!, { session: answer.id });
-            return reply.send({
-                state: 'authorized',
-                token: token,
-                response: answer.response
-            });
+            return reply.send(await buildTerminalAuthAuthorizedPayload({
+                token,
+                response: answer.response,
+            }));
         }
 
         return reply.send({ state: 'requested' });
@@ -173,6 +195,7 @@ export function registerTerminalAuthRequestRoutes(
                         state: z.literal("authorized"),
                         token: z.string(),
                         response: z.string(),
+                        serverIdentityId: z.string().optional(),
                     }),
                 ]),
                 409: z.object({ error: z.literal("claim_not_supported") }),
@@ -248,11 +271,10 @@ export function registerTerminalAuthRequestRoutes(
         }
 
         const token = await auth.createToken(authRequest.responseAccountId!, { session: authRequest.id });
-        return reply.send({
-            state: "authorized",
+        return reply.send(await buildTerminalAuthAuthorizedPayload({
             token,
             response: authRequest.response,
-        });
+        }));
     });
 
     // Approve auth request

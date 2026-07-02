@@ -8,6 +8,7 @@ import {
     buildPublicShareCreatedUpdate,
     buildPublicShareDeletedUpdate,
     buildPublicShareUpdatedUpdate,
+    buildPendingChangedUpdate,
     buildUpdateSessionUpdate,
     buildSessionSharedUpdate,
     buildSessionShareRevokedUpdate,
@@ -71,11 +72,18 @@ describe("eventRouter payloads (protocol container)", () => {
             { value: "enc-meta", version: 2 },
             { value: null, version: 3 },
             {
+                active: false,
+                activeAt: 222,
                 lastViewedSessionSeq: 7,
                 pendingPermissionRequestCount: 2,
                 pendingUserActionRequestCount: 1,
+                pendingRequestObservedAt: 1_111,
+                latestReadyEventSeq: 8,
+                latestReadyEventAt: 1_222,
+                latestTurnId: "turn-1",
                 archivedAt: 1234,
                 latestTurnStatus: "failed",
+                latestTurnStatusObservedAt: 2_222,
                 lastRuntimeIssue: {
                     v: 1,
                     scope: "primary_session",
@@ -92,15 +100,42 @@ describe("eventRouter payloads (protocol container)", () => {
         expect(UpdateContainerSchema.safeParse(payload).success).toBe(true);
         expect((payload.body as any).id).toBe("s1");
         expect((payload.body as any).sid).toBe("s1");
+        expect((payload.body as any).active).toBe(false);
+        expect((payload.body as any).activeAt).toBe(222);
         expect((payload.body as any).lastViewedSessionSeq).toBe(7);
         expect((payload.body as any).pendingPermissionRequestCount).toBe(2);
         expect((payload.body as any).pendingUserActionRequestCount).toBe(1);
+        expect((payload.body as any).pendingRequestObservedAt).toBe(1_111);
+        expect((payload.body as any).latestReadyEventSeq).toBe(8);
+        expect((payload.body as any).latestReadyEventAt).toBe(1_222);
         expect((payload.body as any).archivedAt).toBe(1234);
+        expect((payload.body as any).latestTurnId).toBe("turn-1");
         expect((payload.body as any).latestTurnStatus).toBe("failed");
+        expect((payload.body as any).latestTurnStatusObservedAt).toBe(2_222);
         expect((payload.body as any).lastRuntimeIssue).toMatchObject({
             source: "provider_process_exit",
             provider: "pi",
         });
+    });
+
+    it("buildPendingChangedUpdate emits exact meaningful activity when supplied", () => {
+        const pendingChange = {
+            sessionId: "s1",
+            pendingVersion: 2,
+            pendingCount: 1,
+            changedByAccountId: "u1",
+            meaningfulActivityAt: new Date(1_234),
+        };
+        const payload = buildPendingChangedUpdate(
+            pendingChange,
+            104,
+            "upd-4",
+        );
+
+        expect(UpdateContainerSchema.safeParse(payload).success).toBe(true);
+        expect((payload.body as any).sessionId).toBe("s1");
+        expect((payload.body as any).sid).toBe("s1");
+        expect((payload.body as any).meaningfulActivityAt).toBe(1_234);
     });
 
     it("buildDeleteSessionUpdate emits a full container", () => {
@@ -159,13 +194,14 @@ describe("eventRouter payloads (protocol container)", () => {
                 sessionId: "s1",
                 sharedByUser: { id: "u1", firstName: null, lastName: null, username: "x", avatar: null },
                 accessLevel: "view",
+                canApprovePermissions: false,
                 encryptedDataKey: new Uint8Array([1, 2, 3]),
                 createdAt: new Date(1),
             },
             106,
             "upd-6",
         );
-        const updated = buildSessionShareUpdatedUpdate("shr-1", "s1", "edit", new Date(2), 107, "upd-7");
+        const updated = buildSessionShareUpdatedUpdate("shr-1", "s1", "edit", true, new Date(2), 107, "upd-7");
         const revoked = buildSessionShareRevokedUpdate("shr-1", "s1", 108, "upd-8");
 
         expect(UpdateContainerSchema.safeParse(shared).success).toBe(true);
@@ -173,7 +209,9 @@ describe("eventRouter payloads (protocol container)", () => {
         expect(UpdateContainerSchema.safeParse(revoked).success).toBe(true);
         expect((shared.body as any).sessionId).toBe("s1");
         expect((shared.body as any).sid).toBe("s1");
+        expect((shared.body as any).canApprovePermissions).toBe(false);
         expect((updated.body as any).sessionId).toBe("s1");
+        expect((updated.body as any).canApprovePermissions).toBe(true);
         expect((updated.body as any).sid).toBe("s1");
         expect((revoked.body as any).sessionId).toBe("s1");
         expect((revoked.body as any).sid).toBe("s1");

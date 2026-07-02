@@ -3,12 +3,20 @@ import { log } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 
+function shouldLogAuthDecoratorDiagnostics(): boolean {
+    return process.env.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS === "1"
+        || process.env.HAPPY_AUTH_DECORATOR_DIAGNOSTIC_LOGS === "1";
+}
+
 export function enableAuthentication(app: Fastify) {
     app.decorate('authenticate', async function (request: any, reply: any) {
         try {
             const authHeader = request.headers.authorization;
             // Never log bearer tokens or header contents.
-            log({ module: 'auth-decorator' }, `Auth check - path: ${request.url}, has header: ${!!authHeader}`);
+            const logDiagnostics = shouldLogAuthDecoratorDiagnostics();
+            if (logDiagnostics) {
+                log({ module: 'auth-decorator' }, `Auth check - path: ${request.url}, has header: ${!!authHeader}`);
+            }
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
                 log({ module: 'auth-decorator' }, `Auth failed - missing or invalid header`);
                 return reply.code(401).send({ error: 'Missing authorization header' });
@@ -36,7 +44,9 @@ export function enableAuthentication(app: Fastify) {
                 return reply.code(eligibility.statusCode).send({ error: eligibility.error ?? fallback });
             }
 
-            log({ module: 'auth-decorator' }, `Auth success - user: ${verified.userId}`);
+            if (logDiagnostics) {
+                log({ module: 'auth-decorator' }, `Auth success - user: ${verified.userId}`);
+            }
             request.userId = verified.userId;
         } catch (error) {
             return reply.code(401).send({ error: 'Authentication failed' });

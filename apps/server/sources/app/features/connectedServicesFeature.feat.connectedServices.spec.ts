@@ -9,6 +9,8 @@ describe("resolveConnectedServicesFeature", () => {
         expect(feature.features?.connectedServices).toEqual({
             enabled: true,
             quotas: { enabled: true },
+            accountGroups: { enabled: true },
+            accountFallback: { enabled: true },
         });
     });
 
@@ -21,6 +23,8 @@ describe("resolveConnectedServicesFeature", () => {
         expect(feature.features?.connectedServices).toEqual({
             enabled: false,
             quotas: { enabled: true },
+            accountGroups: { enabled: true },
+            accountFallback: { enabled: true },
         });
     });
 
@@ -33,6 +37,22 @@ describe("resolveConnectedServicesFeature", () => {
         expect(feature.features?.connectedServices).toEqual({
             enabled: true,
             quotas: { enabled: true },
+            accountGroups: { enabled: true },
+            accountFallback: { enabled: true },
+        });
+    });
+
+    it("reads account group and fallback enablement independently", () => {
+        const feature = resolveConnectedServicesFeature({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED: "0",
+            HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED: "0",
+        } as NodeJS.ProcessEnv);
+
+        expect(feature.features?.connectedServices).toEqual({
+            enabled: true,
+            quotas: { enabled: true },
+            accountGroups: { enabled: false },
+            accountFallback: { enabled: false },
         });
     });
 });

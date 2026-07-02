@@ -9,7 +9,10 @@ import {
 } from "@happier-dev/protocol";
 
 import { assertNonEmptyString } from "../connectValueParsers";
-import { extractOpenAiCodexAccountId } from "./openaiCodexIdTokenClaims";
+import {
+  extractOpenAiCodexAccountId,
+  extractOpenAiCodexEmail,
+} from "./openaiCodexIdTokenClaims";
 import { resolveOpenAiCodexOauthClientId, resolveOpenAiCodexOauthTokenUrl } from "../oauthConfig";
 
 const DEFAULT_OPENAI_ISSUER = "https://auth.openai.com";
@@ -142,6 +145,7 @@ async function exchangeOpenAiCodexAuthorizationCodeForTokens(params: Readonly<{
   const accessToken = typeof json?.access_token === "string" ? json.access_token : idToken;
   const refreshToken = assertNonEmptyString(json?.refresh_token, "refresh_token");
   const providerAccountId = extractOpenAiCodexAccountId(idToken);
+  const providerEmail = extractOpenAiCodexEmail(idToken);
 
   const expiresIn = Number.isFinite(json?.expires_in) ? Number(json.expires_in) : NaN;
   const expiresAt = Number.isFinite(expiresIn) && expiresIn > 0 ? params.now + Math.trunc(expiresIn) * 1000 : null;
@@ -153,7 +157,7 @@ async function exchangeOpenAiCodexAuthorizationCodeForTokens(params: Readonly<{
     idToken,
     scope: null,
     tokenType: null,
-    providerEmail: null,
+    providerEmail,
     providerAccountId,
     expiresAt,
     raw: json,

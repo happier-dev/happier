@@ -8,6 +8,31 @@ import {
 } from "./eventPayloadTypes";
 import type { SocketRoomBroadcastOperator, SocketRoomEmitter } from "./socketRoomEmitter";
 
+const MAX_EVENT_FANOUT_METRIC_LABEL_LENGTH = 80;
+const SAFE_EVENT_FANOUT_METRIC_LABEL_PATTERN = /^[a-zA-Z0-9_.:-]+$/;
+
+function normalizeEventFanoutMetricLabel(value: unknown): string {
+    if (typeof value !== "string" || value.length === 0 || value.length > MAX_EVENT_FANOUT_METRIC_LABEL_LENGTH) {
+        return "other";
+    }
+    if (!SAFE_EVENT_FANOUT_METRIC_LABEL_PATTERN.test(value)) {
+        return "other";
+    }
+    return value;
+}
+
+function resolveEventFanoutPayloadType(payload: any): string {
+    return normalizeEventFanoutMetricLabel(payload?.body?.t ?? payload?.type);
+}
+
+function estimateEventFanoutPayloadBytes(payload: any): number {
+    try {
+        return Buffer.byteLength(JSON.stringify(payload));
+    } catch {
+        return 0;
+    }
+}
+
 class EventRouter {
     private userConnections = new Map<string, Set<ClientConnection>>();
     private io: SocketRoomEmitter | null = null;
@@ -132,6 +157,9 @@ class EventRouter {
         recipientFilter: RecipientFilter;
         skipSenderConnection?: ClientConnection;
     }): void {
+        const payloadType = resolveEventFanoutPayloadType(params.payload);
+        const payloadBytes = estimateEventFanoutPayloadBytes(params.payload);
+
         if (this.io) {
             const skipSocketId = params.skipSenderConnection?.socket?.id;
             const target = this.getEmitterTargetForFilter(params.userId, params.recipientFilter);
@@ -147,6 +175,8 @@ class EventRouter {
                 dispatchMode: "room",
                 targetKind: "room",
                 targetCount: Array.isArray(target) ? target.length : 1,
+                payloadType,
+                payloadBytes,
             });
             return;
         }
@@ -201,6 +231,8 @@ class EventRouter {
             dispatchMode: "local",
             targetKind: "connection",
             targetCount: deliveredCount,
+            payloadType,
+            payloadBytes,
         });
     }
 

@@ -198,14 +198,112 @@ describe("session folder assignment routes", () => {
         expect(sessionFolderAssignmentFindMany).not.toHaveBeenCalled();
     });
 
-    it("queries folder sessions through the shared v2 session-list pagination path", async () => {
-        sessionFindMany.mockResolvedValue([
-            sessionListRow("s3"),
-            sessionListRow("s2"),
-            sessionListRow("s1"),
-        ]);
+    it("queries folder sessions through the shared v2 session-list pagination path across page 2", async () => {
+        sessionFindMany
+            .mockResolvedValueOnce([
+                sessionListRow("s9", { meaningfulActivityAt: new Date(9_000) }),
+                sessionListRow("s8", { meaningfulActivityAt: new Date(8_000) }),
+                sessionListRow("s7", { meaningfulActivityAt: new Date(7_000) }),
+            ])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+                sessionListRow("s7", { meaningfulActivityAt: new Date(7_000) }),
+            ])
+            .mockResolvedValueOnce([]);
 
-        const { response } = await invokeRawRoute({
+        const { response: firstPage } = await invokeRawRoute({
+            method: "POST",
+            path: "/v2/session-folder-assignments/query",
+            request: {
+                body: {
+                    folderIds: ["folder-a"],
+                    limit: 2,
+                    archived: false,
+                },
+            },
+        });
+
+        expect(firstPage).toEqual({
+            sessions: [
+                expect.objectContaining({ id: "s9", meaningfulActivityAt: 9_000 }),
+                expect.objectContaining({ id: "s8", meaningfulActivityAt: 8_000 }),
+            ],
+            nextCursor: protocol.encodeV2SessionListCursorV2({ sessionId: "s8", meaningfulActivityAt: 8_000 }),
+            hasNext: true,
+        });
+        expect(sessionFindMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            where: expect.objectContaining({
+                archivedAt: null,
+                meaningfulActivityAt: { not: null },
+                sessionFolderAssignments: {
+                    some: {
+                        accountId: "u1",
+                        folderId: { in: ["folder-a"] },
+                    },
+                },
+            }),
+            orderBy: [
+                { meaningfulActivityAt: "desc" },
+                { id: "desc" },
+            ],
+            take: 4,
+        }));
+
+        const { response: secondPage, reply: secondReply } = await invokeRawRoute({
+            method: "POST",
+            path: "/v2/session-folder-assignments/query",
+            request: {
+                body: {
+                    folderIds: ["folder-a"],
+                    cursor: (firstPage as { nextCursor: string }).nextCursor,
+                    limit: 2,
+                    archived: false,
+                },
+            },
+        });
+
+        expect(secondReply.code).not.toHaveBeenCalledWith(400);
+        expect(secondPage).toEqual({
+            sessions: [
+                expect.objectContaining({ id: "s7", meaningfulActivityAt: 7_000 }),
+            ],
+            nextCursor: null,
+            hasNext: false,
+        });
+        expect(sessionFindMany).toHaveBeenNthCalledWith(3, expect.objectContaining({
+            where: expect.objectContaining({
+                archivedAt: null,
+                meaningfulActivityAt: { not: null },
+                AND: [{
+                    OR: [
+                        { meaningfulActivityAt: { lt: new Date(8_000) } },
+                        { meaningfulActivityAt: new Date(8_000), id: { lt: "s8" } },
+                    ],
+                }],
+                sessionFolderAssignments: {
+                    some: {
+                        accountId: "u1",
+                        folderId: { in: ["folder-a"] },
+                    },
+                },
+            }),
+            orderBy: [
+                { meaningfulActivityAt: "desc" },
+                { id: "desc" },
+            ],
+            take: 4,
+        }));
+    });
+
+    it("accepts legacy v1 cursors for folder session pagination", async () => {
+        sessionFindFirst.mockResolvedValue({
+            id: "s5",
+            createdAt: new Date(5_000),
+            meaningfulActivityAt: new Date(4_500),
+        });
+        sessionFindMany.mockResolvedValue([]);
+
+        const { response, reply } = await invokeRawRoute({
             method: "POST",
             path: "/v2/session-folder-assignments/query",
             request: {
@@ -218,18 +316,11 @@ describe("session folder assignment routes", () => {
             },
         });
 
-        expect(response).toEqual({
-            sessions: [
-                expect.objectContaining({ id: "s3" }),
-                expect.objectContaining({ id: "s2" }),
-            ],
-            nextCursor: protocol.encodeV2SessionListCursorV1("s2"),
-            hasNext: true,
-        });
-        expect(sessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        expect(reply.code).not.toHaveBeenCalledWith(400);
+        expect(sessionFindFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
+                id: "s5",
                 archivedAt: null,
-                id: { lt: "s5" },
                 sessionFolderAssignments: {
                     some: {
                         accountId: "u1",
@@ -237,8 +328,123 @@ describe("session folder assignment routes", () => {
                     },
                 },
             }),
-            orderBy: { id: "desc" },
-            take: 3,
+            select: { id: true, createdAt: true, meaningfulActivityAt: true },
+        }));
+        expect(sessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                AND: [{
+                    OR: [
+                        { meaningfulActivityAt: { lt: new Date(4_500) } },
+                        { meaningfulActivityAt: new Date(4_500), id: { lt: "s5" } },
+                    ],
+                }],
+            }),
+        }));
+        expect(response).toEqual({ sessions: [], nextCursor: null, hasNext: false });
+    });
+
+    it("paginates null meaningfulActivityAt folder rows by createdAt without skipping the next page", async () => {
+        sessionFindMany
+            .mockResolvedValueOnce([
+                sessionListRow("s9", {
+                    createdAt: new Date(900),
+                    meaningfulActivityAt: new Date(9_000),
+                }),
+                sessionListRow("s7", {
+                    createdAt: new Date(700),
+                    meaningfulActivityAt: new Date(7_000),
+                }),
+            ])
+            .mockResolvedValueOnce([
+                sessionListRow("s8", {
+                    createdAt: new Date(8_000),
+                    meaningfulActivityAt: null,
+                }),
+            ])
+            .mockResolvedValueOnce([
+                sessionListRow("s7", {
+                    createdAt: new Date(700),
+                    meaningfulActivityAt: new Date(7_000),
+                }),
+            ])
+            .mockResolvedValueOnce([]);
+
+        const { response: firstPage } = await invokeRawRoute({
+            method: "POST",
+            path: "/v2/session-folder-assignments/query",
+            request: {
+                body: {
+                    folderIds: ["folder-a"],
+                    limit: 2,
+                    archived: false,
+                },
+            },
+        });
+
+        expect(firstPage).toEqual({
+            sessions: [
+                expect.objectContaining({ id: "s9", meaningfulActivityAt: 9_000 }),
+                expect.objectContaining({ id: "s8", meaningfulActivityAt: 8_000 }),
+            ],
+            nextCursor: protocol.encodeV2SessionListCursorV2({ sessionId: "s8", meaningfulActivityAt: 8_000 }),
+            hasNext: true,
+        });
+
+        const { response: secondPage } = await invokeRawRoute({
+            method: "POST",
+            path: "/v2/session-folder-assignments/query",
+            request: {
+                body: {
+                    folderIds: ["folder-a"],
+                    cursor: (firstPage as { nextCursor: string }).nextCursor,
+                    limit: 2,
+                    archived: false,
+                },
+            },
+        });
+
+        expect(secondPage).toEqual({
+            sessions: [
+                expect.objectContaining({ id: "s7", meaningfulActivityAt: 7_000 }),
+            ],
+            nextCursor: null,
+            hasNext: false,
+        });
+        expect(sessionFindMany).toHaveBeenNthCalledWith(3, expect.objectContaining({
+            where: expect.objectContaining({
+                archivedAt: null,
+                meaningfulActivityAt: { not: null },
+                AND: [{
+                    OR: [
+                        { meaningfulActivityAt: { lt: new Date(8_000) } },
+                        { meaningfulActivityAt: new Date(8_000), id: { lt: "s8" } },
+                    ],
+                }],
+                sessionFolderAssignments: {
+                    some: {
+                        accountId: "u1",
+                        folderId: { in: ["folder-a"] },
+                    },
+                },
+            }),
+        }));
+        expect(sessionFindMany).toHaveBeenNthCalledWith(4, expect.objectContaining({
+            where: expect.objectContaining({
+                archivedAt: null,
+                meaningfulActivityAt: null,
+                AND: [{
+                    OR: [
+                        { createdAt: { lt: new Date(8_000) } },
+                        { createdAt: new Date(8_000), id: { lt: "s8" } },
+                    ],
+                }],
+                sessionFolderAssignments: {
+                    some: {
+                        accountId: "u1",
+                        folderId: { in: ["folder-a"] },
+                    },
+                },
+            }),
         }));
     });
 

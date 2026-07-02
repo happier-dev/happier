@@ -17,6 +17,14 @@ export const eventFanoutTargetCountHistogram = new Histogram({
     registers: [register],
 });
 
+export const eventFanoutPayloadBytesHistogram = new Histogram({
+    name: "event_fanout_payload_bytes",
+    help: "Serialized event fanout payload size in bytes by event, filter, dispatch mode, and payload type",
+    labelNames: ["event_name", "filter_type", "dispatch_mode", "payload_type"] as const,
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000],
+    registers: [register],
+});
+
 export const eventFanoutDropsCounter = new Counter({
     name: "event_fanout_drops_total",
     help: "Total event fanout drops by event and reason",
@@ -30,6 +38,8 @@ export function recordEventFanoutEmit(params: Readonly<{
     dispatchMode: "room" | "local";
     targetKind: "room" | "connection";
     targetCount: number;
+    payloadType?: string;
+    payloadBytes?: number;
 }>): void {
     eventFanoutEmitsCounter.inc({
         event_name: params.eventName,
@@ -45,6 +55,17 @@ export function recordEventFanoutEmit(params: Readonly<{
         },
         Math.max(0, params.targetCount),
     );
+    if (params.payloadType && typeof params.payloadBytes === "number") {
+        eventFanoutPayloadBytesHistogram.observe(
+            {
+                event_name: params.eventName,
+                filter_type: params.filterType,
+                dispatch_mode: params.dispatchMode,
+                payload_type: params.payloadType,
+            },
+            Math.max(0, params.payloadBytes),
+        );
+    }
 }
 
 export function recordEventFanoutDrop(params: Readonly<{

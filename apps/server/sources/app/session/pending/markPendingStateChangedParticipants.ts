@@ -6,10 +6,19 @@ export async function markPendingStateChangedParticipants(params: {
     sessionId: string;
     pendingVersion: number;
     pendingCount: number;
+    meaningfulActivityAt?: Date;
 }): Promise<SessionParticipantCursor[]> {
+    const meaningfulActivityAt = params.meaningfulActivityAt instanceof Date
+        && Number.isFinite(params.meaningfulActivityAt.getTime())
+        ? params.meaningfulActivityAt.getTime()
+        : undefined;
     return await markSessionParticipantsChanged({
         tx: params.tx,
         sessionId: params.sessionId,
-        hint: { pendingVersion: params.pendingVersion, pendingCount: params.pendingCount },
+        hint: {
+            pendingVersion: params.pendingVersion,
+            pendingCount: params.pendingCount,
+            ...(typeof meaningfulActivityAt === "number" ? { meaningfulActivityAt } : {}),
+        },
     });
 }

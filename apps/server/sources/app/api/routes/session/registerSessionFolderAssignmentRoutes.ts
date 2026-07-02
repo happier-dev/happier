@@ -20,9 +20,11 @@ import {
     setSessionFolderAssignment,
 } from "@/app/session/folders/sessionFolderAssignmentQueries";
 import {
+    createV2SessionListCursorWhere,
     createV2SessionListPage,
-    decodeV2SessionListCursor,
     findV2SessionListRows,
+    resolveV2SessionListCursorForVisibleRows,
+    V2_SESSION_LIST_ORDER_BY,
 } from "./v2SessionListPage";
 import { type Fastify } from "../../types";
 
@@ -126,8 +128,18 @@ export function registerSessionFolderAssignmentRoutes(app: Fastify) {
             return reply.code(400).send({ error: "invalid-folder-session-query" });
         }
 
-        const cursorSessionId = decodeV2SessionListCursor(parsedBody.data.cursor);
-        if (cursorSessionId === null) {
+        const archived = parsedBody.data.archived ?? false;
+        const cursorRowWhere = createSessionFolderAssignmentSessionWhere({
+            accountId: request.userId,
+            folderIds: parsedBody.data.folderIds,
+            archived,
+        });
+        const decodedCursor = await resolveV2SessionListCursorForVisibleRows({
+            cursor: parsedBody.data.cursor,
+            userId: request.userId,
+            cursorRowWhere,
+        });
+        if (decodedCursor === null) {
             return reply.code(400).send({ error: "invalid-folder-session-query" });
         }
 
@@ -136,10 +148,10 @@ export function registerSessionFolderAssignmentRoutes(app: Fastify) {
             where: createSessionFolderAssignmentSessionWhere({
                 accountId: request.userId,
                 folderIds: parsedBody.data.folderIds,
-                archived: parsedBody.data.archived ?? false,
-                cursorSessionId,
+                archived,
+                cursorWhere: createV2SessionListCursorWhere(decodedCursor),
             }),
-            orderBy: { id: "desc" },
+            orderBy: V2_SESSION_LIST_ORDER_BY,
             take: (parsedBody.data.limit ?? 50) + 1,
         });
 

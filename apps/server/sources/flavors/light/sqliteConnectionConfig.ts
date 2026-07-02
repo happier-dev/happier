@@ -8,9 +8,13 @@ export function resolveLightSqliteBusyTimeoutMsFromEnv(env: NodeJS.ProcessEnv): 
 }
 
 export function resolveLightSqliteConnectionLimitFromEnv(env: NodeJS.ProcessEnv): number | undefined {
-    return resolvePrismaSqliteDatabaseUrlOptionsFromEnv(env).connectionLimit;
+    return resolveLightSqliteDatabaseUrlOptionsFromEnv(env).connectionLimit;
 }
 
 export function resolveLightSqliteDatabaseUrlOptionsFromEnv(env: NodeJS.ProcessEnv): PrismaSqliteDatabaseUrlOptions {
-    return resolvePrismaSqliteDatabaseUrlOptionsFromEnv(env);
+    const options = resolvePrismaSqliteDatabaseUrlOptionsFromEnv(env);
+    return {
+        ...options,
+        connectionLimit: options.connectionLimit ?? 1,
+    };
 }

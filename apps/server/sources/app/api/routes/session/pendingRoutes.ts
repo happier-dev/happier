@@ -2,6 +2,7 @@ import { z } from "zod";
 import { type Fastify } from "../../types";
 import { buildNewMessageUpdate, buildPendingChangedUpdate, eventRouter } from "@/app/events/eventRouter";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
+import { serializePendingMaterializedMessage } from "@/app/session/pending/serializePendingMaterializedMessage";
 import {
     deletePendingMessage,
     discardPendingMessage,
@@ -13,6 +14,7 @@ import {
     updatePendingMessage,
     type PendingMessageRow,
 } from "@/app/session/pending/pendingMessageService";
+import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
@@ -47,6 +49,7 @@ async function emitPendingChanged(params: {
     changedByAccountId: string;
     pendingCount: number;
     pendingVersion: number;
+    meaningfulActivityAt?: Date;
     participantCursors: Array<{ accountId: string; cursor: number }>;
 }): Promise<void> {
     const results = await Promise.allSettled(
@@ -57,6 +60,7 @@ async function emitPendingChanged(params: {
                     pendingCount: params.pendingCount,
                     pendingVersion: params.pendingVersion,
                     changedByAccountId: params.changedByAccountId,
+                    ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
                 },
                 cursor,
                 randomKeyNaked(12),
@@ -198,6 +202,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
+                meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
             });
             await refreshSessionParticipantBadgePushes({
@@ -262,6 +267,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
+                meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
             });
             await refreshSessionParticipantBadgePushes({
@@ -298,6 +304,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
+                meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
             });
             await refreshSessionParticipantBadgePushes({
@@ -334,6 +341,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
+                meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
             });
             await refreshSessionParticipantBadgePushes({
@@ -365,6 +373,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
+                meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
             });
             await refreshSessionParticipantBadgePushes({
@@ -428,7 +437,14 @@ export function sessionPendingRoutes(app: Fastify) {
                 if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
             }
-            if (!res.didMaterialize) return reply.send({ ok: true, didMaterialize: false });
+            if (!res.didMaterialize) {
+                return reply.send({
+                    ok: true,
+                    didMaterialize: false,
+                    pendingCount: res.pendingCount,
+                    pendingVersion: res.pendingVersion,
+                });
+            }
 
             if (res.didWriteMessage) {
                 const messageResults = await Promise.allSettled(
@@ -450,6 +466,10 @@ export function sessionPendingRoutes(app: Fastify) {
                         result.reason,
                     );
                 });
+                await publishSessionReadyProjectionUpdate({
+                    sessionId,
+                    readyProjection: res.readyProjection,
+                });
             }
 
             await emitPendingChanged({
@@ -457,6 +477,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
+                meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursorsPending,
             });
             await refreshSessionParticipantBadgePushes({
@@ -468,12 +489,9 @@ export function sessionPendingRoutes(app: Fastify) {
                 ok: true,
                 didMaterialize: true,
                 didWriteMessage: res.didWriteMessage,
-                message: {
-                    id: res.message.id,
-                    seq: res.message.seq,
-                    localId: res.message.localId,
-                    ...(typeof res.message.messageRole === "string" ? { messageRole: res.message.messageRole } : {}),
-                },
+                message: serializePendingMaterializedMessage(res.message),
+                pendingCount: res.pendingCount,
+                pendingVersion: res.pendingVersion,
             });
         },
     );

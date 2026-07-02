@@ -622,6 +622,67 @@ describe('machineLiveStreamRelayHandler', () => {
     expect(emittedFrames(emit).map((sentFrame) => sentFrame.sequence)).toEqual([1, 2]);
   });
 
+  it('routes typed sideband input control from the target machine to the source machine', async () => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const sourceSocket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
+    sourceSocket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+    const targetSocket = createFakeSocket({ emit: vi.fn(), id: 'target-socket' });
+    targetSocket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-target',
+    };
+    const ctx = {
+      io: { to },
+      serverRoutedLiveStreamEnabled: true,
+      relayCaps: {
+        ...relayCaps,
+        maxTotalBytes: 1_000,
+      },
+      relayAuthorizationTrustRoots,
+      relayWindowFrames: 4,
+      relayWindowBytes: 1_000,
+      nowMs: () => 1_000,
+    };
+
+    machineLiveStreamRelayHandler('user-1', sourceSocket as unknown as LiveStreamRelaySocket, ctx);
+    machineLiveStreamRelayHandler('user-1', targetSocket as unknown as LiveStreamRelaySocket, ctx);
+
+    await getSocketHandler(sourceSocket, MACHINE_LIVE_STREAM_SOCKET_EVENT)(
+      startMessage('stream_1', undefined, { maxTotalBytes: 1_000 }),
+    );
+    await getSocketHandler(targetSocket, MACHINE_LIVE_STREAM_SOCKET_EVENT)({
+      v: 1,
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      message: {
+        kind: 'sideband_control',
+        control: {
+          v: 1,
+          streamId: 'stream_1',
+          sourceId: 'source_1',
+          eventId: 'tap_1',
+          leaseId: 'lease_1',
+          kind: 'tap',
+          x: 0.25,
+          y: 0.75,
+        },
+      },
+    });
+
+    expect(to).toHaveBeenCalledWith('machine:machine-source:user-1');
+    expect(emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
+      message: expect.objectContaining({
+        kind: 'sideband_control',
+        control: expect.objectContaining({ kind: 'tap', eventId: 'tap_1' }),
+      }),
+    }));
+  });
+
   it('ignores stale target ack controls without draining queued frames', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emit = vi.fn();
@@ -981,6 +1042,51 @@ describe('machineLiveStreamRelayHandler', () => {
       type: 'machine-live-stream',
       error: 'max_concurrent_streams_per_account_exceeded',
     });
+    expect(secondEmit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
+      error: expect.stringMatching(/concurrent/),
+    }));
+  });
+
+  it('does not count expired streams against concurrency caps for a different stream id', async () => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const to = vi.fn(() => ({ emit: vi.fn() }));
+    const firstEmit = vi.fn();
+    const secondEmit = vi.fn();
+    const firstSocket = createFakeSocket({ emit: firstEmit, id: 'source-socket-1' });
+    firstSocket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+    const secondSocket = createFakeSocket({ emit: secondEmit, id: 'source-socket-2' });
+    secondSocket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+    let nowMs = 1_000;
+    const ctx = {
+      io: { to },
+      serverRoutedLiveStreamEnabled: true,
+      relayCaps: {
+        ...relayCaps,
+        maxConcurrentStreamsPerAccount: 1,
+        maxConcurrentStreamsPerSocket: 1,
+        maxConcurrentStreamsPerMachine: 1,
+      },
+      relayAuthorizationTrustRoots,
+      nowMs: () => nowMs,
+    };
+
+    machineLiveStreamRelayHandler('user-1', firstSocket as unknown as LiveStreamRelaySocket, ctx);
+    machineLiveStreamRelayHandler('user-1', secondSocket as unknown as LiveStreamRelaySocket, ctx);
+
+    await getSocketHandler(firstSocket, MACHINE_LIVE_STREAM_SOCKET_EVENT)(
+      startMessage('stream_1', relayAuthorization('stream_1', liveStreamCaps(), { exp: 1_100 })),
+    );
+    nowMs = 1_101;
+    await getSocketHandler(secondSocket, MACHINE_LIVE_STREAM_SOCKET_EVENT)(
+      startMessage('stream_2', relayAuthorization('stream_2', liveStreamCaps(), { iat: 1_100, exp: 2_000 })),
+    );
+
     expect(secondEmit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
       error: expect.stringMatching(/concurrent/),
     }));

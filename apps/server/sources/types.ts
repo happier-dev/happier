@@ -16,6 +16,25 @@ export type AccountProfile = {
         version: number;
     } | null;
     connectedServices: string[];
+    connectedServicesV2?: Array<{
+        serviceId: string;
+        profiles: Array<{
+            profileId: string;
+            status: "connected" | "refreshing" | "needs_reauth" | "refresh_failed_retryable";
+            kind?: "oauth" | "token" | null;
+            providerEmail?: string | null;
+            providerAccountId?: string | null;
+            expiresAt?: number | null;
+            lastUsedAt?: number | null;
+        }>;
+        groups?: Array<{
+            groupId: string;
+            displayName?: string | null;
+            activeProfileId?: string | null;
+            generation?: number;
+            memberProfileIds?: string[];
+        }>;
+    }>;
 }
 
 export type ArtifactInfo = {
