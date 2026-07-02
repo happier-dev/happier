@@ -38,15 +38,18 @@ async function waitForCount(
 }
 
 function machineOptionLocator(page: Page) {
-  return page.locator('[data-testid^="new-session-machine:"], [data-testid^="new-session-machine-option:"]');
+  try {
+    return page.locator('[data-testid^="new-session-machine:"], [data-testid^="new-session-machine-option:"]');
+  } catch {
+    return page.locator('[data-testid^="new-session-machine:"]');
+  }
 }
 
 type MachineClickResult = 'clicked' | 'absent' | 'present_not_actionable';
 
 async function clickFirstMachineMatch(page: Page, machineId: string): Promise<MachineClickResult> {
-  const exact = page.locator(
-    `[data-testid="new-session-machine:${machineId}"], [data-testid="new-session-machine-option:${machineId}"]`,
-  );
+  const oldExact = page.getByTestId(`new-session-machine:${machineId}`);
+  const exact = (await oldExact.count()) > 0 ? oldExact : page.getByTestId(`new-session-machine-option:${machineId}`);
   if ((await exact.count()) === 0) {
     return 'absent';
   }
