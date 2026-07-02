@@ -13,18 +13,18 @@ export function resolveProviderRunYarnInvocation(args, options = {}) {
 
 export function resolveProvidersRunTimeoutFallbackMs({ presetId, tier }) {
   // Provider suites can take a long time, especially when running multiple providers sequentially.
-  // Keep the default high enough that we don't kill healthy runs; users/CI can still override with
-  // HAPPIER_E2E_PROVIDER_RUN_TIMEOUT_MS / HAPPY_E2E_PROVIDER_RUN_TIMEOUT_MS.
+  // Keep the defaults bounded so smoke runs always terminalize in practical time, while still
+  // allowing explicit overrides via HAPPIER_E2E_PROVIDER_RUN_TIMEOUT_MS / HAPPY_E2E_PROVIDER_RUN_TIMEOUT_MS.
   const normalizedTier = tier === 'extended' ? 'extended' : 'smoke';
   const isAll = presetId === 'all';
 
   if (normalizedTier === 'extended') {
-    // "all:extended" can be multiple hours on developer machines.
-    return isAll ? 8 * 60 * 60 * 1000 : 4 * 60 * 60 * 1000;
+    // Extended runs can legitimately be multi-hour.
+    return isAll ? 6 * 60 * 60 * 1000 : 3 * 60 * 60 * 1000;
   }
 
   // smoke
-  return isAll ? 2 * 60 * 60 * 1000 : 60 * 60 * 1000;
+  return isAll ? 45 * 60 * 1000 : 20 * 60 * 1000;
 }
 
 export function parseArgs(argv) {
@@ -122,6 +122,9 @@ export async function main(argv = process.argv) {
     process.env.HAPPIER_E2E_PROVIDER_RUN_TIMEOUT_MS ?? process.env.HAPPY_E2E_PROVIDER_RUN_TIMEOUT_MS,
     fallbackTimeoutMs,
   );
+  if (!(env.HAPPIER_TEST_WRAPPER_TIMEOUT_MS ?? '').trim() && !(env.HAPPY_TEST_WRAPPER_TIMEOUT_MS ?? '').trim()) {
+    env.HAPPIER_TEST_WRAPPER_TIMEOUT_MS = String(timeoutMs);
+  }
   const activeChildren = new Set();
   let shuttingDown = false;
 
@@ -178,7 +181,8 @@ export async function main(argv = process.argv) {
       const pid = child.pid;
       // eslint-disable-next-line no-console
       console.error(
-        `[providers] timed out after ${timeoutMs}ms while running test:providers. ` +
+        `[providers] timed out after ${timeoutMs}ms while running test:providers ` +
+          `(preset=${parsed.presetId}, tier=${parsed.tier}). ` +
           'Set HAPPIER_E2E_PROVIDER_RUN_TIMEOUT_MS to override.',
       );
       if (!pid) {

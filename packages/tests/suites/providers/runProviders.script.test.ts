@@ -81,6 +81,11 @@ describe('providers run script args', () => {
 });
 
 describe('providers run script timeout', () => {
+  it('uses bounded smoke fallback timeouts to guarantee terminalization', () => {
+    expect(resolveProvidersRunTimeoutFallbackMs({ presetId: 'opencode', tier: 'smoke' })).toBe(20 * 60 * 1000);
+    expect(resolveProvidersRunTimeoutFallbackMs({ presetId: 'all', tier: 'smoke' })).toBe(45 * 60 * 1000);
+  });
+
   it('uses a longer default timeout for all:smoke than a single-provider smoke run', () => {
     const allSmoke = resolveProvidersRunTimeoutFallbackMs({ presetId: 'all', tier: 'smoke' });
     const oneSmoke = resolveProvidersRunTimeoutFallbackMs({ presetId: 'opencode', tier: 'smoke' });
