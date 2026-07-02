@@ -1,6 +1,7 @@
 import type { AgentId, CanonicalAgentId } from './types.js';
+import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
 import { getAgentLocalCliConfig } from './localCli.js';
-import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
+import { getAgentCliBinaryNames, getAgentCliRuntimeSpec } from './cli/runtime.js';
 import type { ProviderAuthAdapter } from './runtime/adjunctAdapters/types.js';
 
 export type AgentAuthProbeParser =
@@ -11,7 +12,8 @@ export type AgentAuthProbeParser =
   | 'opencodeAuthList'
   | 'piEnvOnly'
   | 'copilotGhAuth'
-  | 'kiroWhoamiJson';
+  | 'kiroWhoamiJson'
+  | 'cursorAboutJson';
 
 export type AgentAuthProbeBackgroundChecks = 'safe' | 'manual_only';
 
@@ -25,10 +27,10 @@ export type AgentAuthProbeConfig = Readonly<{
   credentialPaths?: ReadonlyArray<string>;
 }>;
 
-export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId, AgentAuthProbeConfig>> = Object.freeze({
+const AUTHORED_AGENT_AUTH_PROBE_CONFIG = Object.freeze({
   claude: {
     agentId: 'claude',
-    binaryNames: [getProviderCliRuntimeSpec('claude').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('claude').binaryName],
     statusCommand: null,
     parser: 'claudeCredentialsFile',
     backgroundChecks: 'safe',
@@ -37,23 +39,16 @@ export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId
   },
   codex: {
     agentId: 'codex',
-    binaryNames: [getProviderCliRuntimeSpec('codex').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('codex').binaryName],
     statusCommand: ['login', 'status'],
     parser: 'codexLoginStatus',
     backgroundChecks: 'safe',
     envVars: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
     credentialPaths: ['~/.codex/auth.json'],
   },
-  opencode: {
-    agentId: 'opencode',
-    binaryNames: [getProviderCliRuntimeSpec('opencode').binaryName],
-    statusCommand: ['auth', 'list'],
-    parser: 'opencodeAuthList',
-    backgroundChecks: 'safe',
-  },
   gemini: {
     agentId: 'gemini',
-    binaryNames: [getProviderCliRuntimeSpec('gemini').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('gemini').binaryName],
     statusCommand: null,
     parser: 'geminiCredentialFiles',
     backgroundChecks: 'safe',
@@ -69,42 +64,50 @@ export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId
   },
   auggie: {
     agentId: 'auggie',
-    binaryNames: [getProviderCliRuntimeSpec('auggie').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('auggie').binaryName],
     statusCommand: null,
     parser: 'unknown',
     backgroundChecks: 'safe',
   },
   qwen: {
     agentId: 'qwen',
-    binaryNames: [getProviderCliRuntimeSpec('qwen').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('qwen').binaryName],
     statusCommand: null,
     parser: 'unknown',
     backgroundChecks: 'safe',
   },
   kimi: {
     agentId: 'kimi',
-    binaryNames: [getProviderCliRuntimeSpec('kimi').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('kimi').binaryName],
     statusCommand: null,
     parser: 'unknown',
     backgroundChecks: 'safe',
   },
   kilo: {
     agentId: 'kilo',
-    binaryNames: [getProviderCliRuntimeSpec('kilo').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('kilo').binaryName],
     statusCommand: null,
     parser: 'unknown',
     backgroundChecks: 'safe',
   },
   kiro: {
     agentId: 'kiro',
-    binaryNames: [getProviderCliRuntimeSpec('kiro').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('kiro').binaryName],
     statusCommand: ['whoami', '--format', 'json'],
     parser: 'kiroWhoamiJson',
     backgroundChecks: 'manual_only',
   },
+  cursor: {
+    agentId: 'cursor',
+    binaryNames: getAgentCliBinaryNames('cursor'),
+    statusCommand: ['about', '--format', 'json'],
+    parser: 'cursorAboutJson',
+    backgroundChecks: 'safe',
+    envVars: ['CURSOR_API_KEY'],
+  },
   ohMyPi: {
     agentId: 'ohMyPi',
-    binaryNames: [getProviderCliRuntimeSpec('ohMyPi').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('ohMyPi').binaryName],
     statusCommand: null,
     parser: 'piEnvOnly',
     backgroundChecks: 'safe',
@@ -118,7 +121,7 @@ export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId
   },
   pi: {
     agentId: 'pi',
-    binaryNames: [getProviderCliRuntimeSpec('pi').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('pi').binaryName],
     statusCommand: null,
     parser: 'piEnvOnly',
     backgroundChecks: 'safe',
@@ -126,18 +129,32 @@ export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId
   },
   copilot: {
     agentId: 'copilot',
-    binaryNames: [getProviderCliRuntimeSpec('copilot').binaryName],
+    binaryNames: [getAgentCliRuntimeSpec('copilot').binaryName],
     statusCommand: null,
     parser: 'copilotGhAuth',
     backgroundChecks: 'safe',
     envVars: ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'],
   },
-});
+} satisfies Partial<Record<CanonicalAgentId, AgentAuthProbeConfig>>);
+
+export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId, AgentAuthProbeConfig>> =
+  mergeAuthoredWithGeneratedAgentFacts<AgentAuthProbeConfig>({
+    authored: AUTHORED_AGENT_AUTH_PROBE_CONFIG,
+    label: 'auth probe config',
+    readGenerated: (definition) => definition.authProbeConfig,
+  });
 
 export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId, AgentAuthProbeConfig>> = CANONICAL_AGENT_AUTH_PROBE_CONFIG;
 
-export function getAgentAuthProbeConfig(agentId: AgentId): AgentAuthProbeConfig {
-  return AGENT_AUTH_PROBE_CONFIG[agentId];
+export function getAgentAuthProbeConfig(
+  agentId: AgentId,
+  processEnv: NodeJS.ProcessEnv = process.env,
+): AgentAuthProbeConfig {
+  const config = AGENT_AUTH_PROBE_CONFIG[agentId];
+  return {
+    ...config,
+    binaryNames: getAgentCliBinaryNames(agentId, processEnv),
+  };
 }
 
 export function getProviderAuthAdapter(agentId: AgentId): ProviderAuthAdapter {

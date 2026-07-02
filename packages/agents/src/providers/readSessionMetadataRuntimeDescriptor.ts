@@ -4,6 +4,10 @@ import type {
   SupportedRuntimeDescriptorProviderId,
 } from '../runtime/identity/runtimeDescriptorTypes.js';
 import { asRecord } from '../runtime/identity/runtimeDescriptorShared.js';
+import {
+  readCodexSessionMetadataConnectedServiceBindings,
+  type CodexSessionMetadataConnectedServiceBinding,
+} from './codex/readSessionMetadataRuntimeDescriptor.js';
 
 export function readSessionMetadataRuntimeDescriptor(
   metadata: unknown,
@@ -20,8 +24,22 @@ export function readSessionMetadataRuntimeDescriptor(
 export function readSessionMetadataRuntimeDescriptor(
   metadata: unknown,
   providerId: SupportedRuntimeDescriptorProviderId,
+): SharedRuntimeDescriptorByProviderId[SupportedRuntimeDescriptorProviderId] | null;
+export function readSessionMetadataRuntimeDescriptor(
+  metadata: unknown,
+  providerId: SupportedRuntimeDescriptorProviderId,
 ): SharedRuntimeDescriptorByProviderId[SupportedRuntimeDescriptorProviderId] | null {
   const metadataRecord = asRecord(metadata);
   if (!metadataRecord) return null;
-  return getRuntimeDescriptorReader(providerId)(metadataRecord);
+  return getRuntimeDescriptorReader(providerId)?.(metadataRecord) ?? null;
+}
+
+export type SessionMetadataConnectedServiceBinding = CodexSessionMetadataConnectedServiceBinding;
+
+export function readSessionMetadataConnectedServiceBindings(
+  metadata: unknown,
+  providerId: string,
+): Readonly<Record<string, SessionMetadataConnectedServiceBinding>> {
+  if (providerId === 'codex') return readCodexSessionMetadataConnectedServiceBindings(metadata);
+  return {};
 }

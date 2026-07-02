@@ -12,6 +12,7 @@ describe('agent local control capability', () => {
       supported: true,
       topology: 'shared',
       attachStrategy: 'provider_attach',
+      remoteWritable: true,
     });
     expect(usesProviderAttachForLocalControl('opencode')).toBe(true);
     expect(usesTerminalHostedLocalControl('opencode')).toBe(false);
@@ -22,6 +23,7 @@ describe('agent local control capability', () => {
       supported: true,
       topology: 'exclusive',
       attachStrategy: 'terminal_host',
+      remoteWritable: false,
     });
     expect(usesProviderAttachForLocalControl('claude')).toBe(false);
     expect(usesTerminalHostedLocalControl('claude')).toBe(true);

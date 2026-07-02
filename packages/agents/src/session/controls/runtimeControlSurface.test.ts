@@ -45,17 +45,17 @@ describe('runtimeControlSurface', () => {
     });
   });
 
-  it('derives the Codex runtime surface from account settings when no persisted runtime identity exists', () => {
+  it('derives the Codex app-server runtime surface from legacy MCP account settings', () => {
     expect(resolveAgentRuntimeControlSurfaceForSession({
       agentId: 'codex',
       metadata: {},
       accountSettings: { codexBackendMode: 'mcp' },
     })).toMatchObject({
       sessionCapabilities: {
-        sessionFork: { conversation: 'unsupported' },
-        sessionRollback: { conversation: 'unsupported' },
+        sessionFork: { conversation: 'supported' },
+        sessionRollback: { conversation: 'supported' },
       },
-      localControl: null,
+      localControl: { supported: true, topology: 'exclusive', attachStrategy: 'terminal_host' },
     });
   });
 

@@ -1,5 +1,3 @@
-import type { CodexBackendMode } from './providerSettings/definitions/codex.js';
-import type { OpenCodeBackendMode } from './providerSettings/definitions/opencode.js';
 import type { AgentCore, AgentCoreRuntimeControlSurface, AgentId } from './types.js';
 import { getAgentCore } from './manifest.js';
 
@@ -12,15 +10,10 @@ export type PartialDeep<T> =
                 : T extends object ? { readonly [K in keyof T]?: PartialDeep<T[K]> }
                     : T;
 
-export type AgentRuntimeKindsByAgentId = Readonly<{
-    codex: CodexBackendMode;
-    opencode: OpenCodeBackendMode;
-}>;
-
-export type AgentRuntimeKindCapableAgentId = keyof AgentRuntimeKindsByAgentId;
-export type AgentRuntimeKind = AgentRuntimeKindsByAgentId[AgentRuntimeKindCapableAgentId];
+export type AgentRuntimeKindCapableAgentId = AgentId;
+export type AgentRuntimeKind = string;
 export type AgentRuntimeKindFor<TAgentId extends AgentId> = TAgentId extends AgentRuntimeKindCapableAgentId
-    ? AgentRuntimeKindsByAgentId[TAgentId]
+    ? AgentRuntimeKind
     : never;
 
 export type AgentRuntimeKindOverrideSurface = AgentCoreRuntimeControlSurface;
@@ -69,6 +62,7 @@ function readAgentRuntimeControlSurface(agentId: AgentId): AgentCoreRuntimeContr
         resume: entry.resume,
         handoff: entry.handoff,
         localControl: entry.localControl ?? null,
+        runtimeInput: entry.runtimeInput ?? null,
         tools: entry.tools,
     };
 }

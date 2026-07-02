@@ -34,9 +34,9 @@ function resolveProviderMirrorValue<F extends SessionStateFieldId>(
   if (fieldId === 'identity.runtimeDescriptor' && value === null) {
     return null;
   }
-  if (fieldId === 'identity.vendorSessionId' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    const vendorSessionId = (value as Readonly<{ value?: unknown }>).value;
-    return (typeof vendorSessionId === 'string' ? vendorSessionId : null) as SessionStateFieldValue<F> | null;
+  if (fieldId === 'identity.providerSessionId' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const providerSessionId = (value as Readonly<{ value?: unknown }>).value;
+    return (typeof providerSessionId === 'string' ? providerSessionId : null) as SessionStateFieldValue<F> | null;
   }
   if (fieldId === 'display.title' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
     const title = (value as Readonly<{ title?: unknown }>).title;

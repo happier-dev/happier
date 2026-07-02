@@ -8,7 +8,8 @@ export type AgentSessionCapabilityKey =
   | 'sessionListing'
   | 'sessionFork.conversation'
   | 'sessionFork.fromMessage'
-  | 'sessionRollback.conversation';
+  | 'sessionRollback.conversation'
+  | 'usageLimitRecovery.checkNow';
 
 export const UNSUPPORTED_AGENT_SESSION_CAPABILITIES: AgentSessionCapabilities = Object.freeze({
   sessionListing: 'unsupported',
@@ -18,6 +19,9 @@ export const UNSUPPORTED_AGENT_SESSION_CAPABILITIES: AgentSessionCapabilities = 
   }),
   sessionRollback: Object.freeze({
     conversation: 'unsupported',
+  }),
+  usageLimitRecovery: Object.freeze({
+    checkNow: 'unsupported',
   }),
 });
 
@@ -36,6 +40,8 @@ export function getAgentSessionCapability(agentId: AgentId, capability: AgentSes
       return capabilities.sessionFork.fromMessage;
     case 'sessionRollback.conversation':
       return capabilities.sessionRollback.conversation;
+    case 'usageLimitRecovery.checkNow':
+      return capabilities.usageLimitRecovery?.checkNow ?? 'unsupported';
   }
 }
 
@@ -88,5 +94,7 @@ function readCapabilityFromSurface(capabilities: AgentSessionCapabilities, capab
       return capabilities.sessionFork.fromMessage;
     case 'sessionRollback.conversation':
       return capabilities.sessionRollback.conversation;
+    case 'usageLimitRecovery.checkNow':
+      return capabilities.usageLimitRecovery?.checkNow ?? 'unsupported';
   }
 }

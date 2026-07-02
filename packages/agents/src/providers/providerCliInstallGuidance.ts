@@ -1,11 +1,11 @@
 import type { AgentId } from '../types.js';
 import {
-  getProviderCliRuntimeSpec,
-  type ProviderCliInstallCommand,
-  type ProviderCliInstallPlatform,
-} from './providerCliRuntime.js';
+  getAgentCliRuntimeSpec,
+  type AgentCliInstallCommand,
+  type AgentCliInstallPlatform,
+} from '../cli/runtime.js';
 
-function formatProviderCliInstallCommand(command: ProviderCliInstallCommand): string {
+function formatAgentCliInstallCommand(command: AgentCliInstallCommand): string {
   if (command.cmd === 'bash' && command.args[0] === '-lc' && typeof command.args[1] === 'string') {
     return command.args[1];
   }
@@ -26,19 +26,19 @@ function formatProviderCliInstallCommand(command: ProviderCliInstallCommand): st
 }
 
 type PlatformRecipeLine = Readonly<{
-  platforms: ReadonlyArray<ProviderCliInstallPlatform>;
+  platforms: ReadonlyArray<AgentCliInstallPlatform>;
   command: string;
 }>;
 
 function buildPlatformRecipeLines(providerId: AgentId): ReadonlyArray<PlatformRecipeLine> {
-  const recipes = getProviderCliRuntimeSpec(providerId).manualInstallRecipes;
+  const recipes = getAgentCliRuntimeSpec(providerId).manualInstallRecipes;
   if (!recipes) return [];
 
   const grouped = new Map<string, PlatformRecipeLine>();
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
     const firstRecipe = recipes[platform]?.[0];
     if (!firstRecipe) continue;
-    const command = formatProviderCliInstallCommand(firstRecipe);
+    const command = formatAgentCliInstallCommand(firstRecipe);
     const existing = grouped.get(command);
     if (existing) {
       grouped.set(command, { ...existing, platforms: [...existing.platforms, platform] });
@@ -49,7 +49,7 @@ function buildPlatformRecipeLines(providerId: AgentId): ReadonlyArray<PlatformRe
   return [...grouped.values()];
 }
 
-function formatPlatformLabel(platforms: ReadonlyArray<ProviderCliInstallPlatform>): string {
+function formatPlatformLabel(platforms: ReadonlyArray<AgentCliInstallPlatform>): string {
   if (platforms.includes('darwin') && platforms.includes('linux') && platforms.length === 2) {
     return 'macOS/Linux';
   }
@@ -62,7 +62,7 @@ function formatPlatformLabel(platforms: ReadonlyArray<ProviderCliInstallPlatform
 }
 
 export function getProviderCliInstallGuideUrl(providerId: AgentId): string | null {
-  const spec = getProviderCliRuntimeSpec(providerId);
+  const spec = getAgentCliRuntimeSpec(providerId);
   return spec.installGuideUrl ?? spec.docsUrl ?? null;
 }
 

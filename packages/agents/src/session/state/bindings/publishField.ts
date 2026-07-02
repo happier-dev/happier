@@ -1,6 +1,11 @@
 import type { SessionMetadata, SessionStateFieldId } from '@happier-dev/protocol';
 
-import type { MetadataUpdatePort, SessionStateBinding, SessionStateFieldWriteValue } from '../_types.js';
+import type {
+  MetadataUpdatePort,
+  SessionStateBinding,
+  SessionStateFieldWriteValue,
+  SessionStateStoredValue,
+} from '../_types.js';
 import {
   acpConfigOptionIntentBinding,
   acpSessionModeIntentBinding,
@@ -8,17 +13,21 @@ import {
   permissionModeIntentBinding,
 } from './intent.js';
 import { runtimeDescriptorBinding } from './runtimeDescriptor.js';
+import { sessionWorkStateBinding } from './workState.js';
+import { sessionUsageLimitRecoveryBinding } from './usageLimitRecovery.js';
 import { summaryTextBinding } from './summaryText.js';
-import { getLegacyVendorSessionIdMetadataKeys, vendorSessionIdBinding } from './vendorSessionId.js';
+import { getLegacyProviderSessionIdMetadataKeys, providerSessionIdBinding } from './providerSessionId.js';
 
 const SESSION_STATE_METADATA_BINDINGS = {
   'identity.runtimeDescriptor': runtimeDescriptorBinding,
-  'identity.vendorSessionId': vendorSessionIdBinding,
+  'identity.providerSessionId': providerSessionIdBinding,
   'intent.model': modelIntentBinding,
   'intent.permissionMode': permissionModeIntentBinding,
   'intent.acpSessionMode': acpSessionModeIntentBinding,
   'intent.acpConfigOption': acpConfigOptionIntentBinding,
   'display.title': summaryTextBinding,
+  'runtime.workState': sessionWorkStateBinding,
+  'runtime.usageLimitRecovery': sessionUsageLimitRecoveryBinding,
 } satisfies Partial<{ [F in SessionStateFieldId]: SessionStateBinding<F> }>;
 
 function getBinding<F extends SessionStateFieldId>(fieldId: F): SessionStateBinding<F> | null {
@@ -55,8 +64,8 @@ export function clearSessionStateFieldFromMetadata(
       delete next.runtimeDescriptorV1;
       delete next.agentRuntimeDescriptorV1;
       break;
-    case 'identity.vendorSessionId':
-      for (const key of getLegacyVendorSessionIdMetadataKeys()) {
+    case 'identity.providerSessionId':
+      for (const key of getLegacyProviderSessionIdMetadataKeys()) {
         delete next[key];
       }
       break;
@@ -77,6 +86,12 @@ export function clearSessionStateFieldFromMetadata(
       break;
     case 'display.title':
       delete next.summary;
+      break;
+    case 'runtime.workState':
+      delete next.sessionWorkStateV1;
+      break;
+    case 'runtime.usageLimitRecovery':
+      delete next.sessionUsageLimitRecoveryV1;
       break;
     case 'view.readState':
     case 'view.attention':
@@ -134,6 +149,59 @@ export async function publishSessionStateFieldToMetadata<F extends SessionStateF
     return;
   }
   const updater = createSessionStateFieldMetadataUpdater(params.fieldId, params.value);
+  if ('metadataPort' in params) {
+    const result = await params.metadataPort.update(
+      params.sessionId,
+      updater,
+      {
+        reason: params.reason,
+        ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
+      },
+    );
+    if (!result.ok) {
+      throw new Error(`Session state metadata update failed: ${result.reason}`);
+    }
+    return;
+  }
+
+  await params.updateSessionMetadataWithRetry(params.sessionId, updater);
+}
+
+type PublishSessionStateFieldMutationToMetadataParams<F extends SessionStateFieldId> = Readonly<{
+  sessionId: string;
+  fieldId: F;
+  mutateValue: (
+    currentValue: SessionStateStoredValue<F>['value'],
+    metadata: SessionMetadata,
+  ) => SessionStateFieldWriteValue<F>;
+} & (
+  | Readonly<{
+    updateSessionMetadataWithRetry: (
+    sessionId: string,
+    updater: (metadata: SessionMetadata) => SessionMetadata,
+    ) => Promise<unknown>;
+  }>
+  | Readonly<{
+    metadataPort: MetadataUpdatePort;
+    reason: string;
+    maxAttempts?: number;
+  }>
+)>;
+
+export async function publishSessionStateFieldMutationToMetadata<F extends SessionStateFieldId>(
+  params: PublishSessionStateFieldMutationToMetadataParams<F>,
+): Promise<void> {
+  const binding = getBinding(params.fieldId);
+  if (!binding) {
+    return;
+  }
+
+  const updater = (metadata: SessionMetadata): SessionMetadata => {
+    const current = binding.read(metadata).value;
+    const nextValue = params.mutateValue(current, metadata);
+    return binding.write(metadata, { value: nextValue });
+  };
+
   if ('metadataPort' in params) {
     const result = await params.metadataPort.update(
       params.sessionId,

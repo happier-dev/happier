@@ -1,5 +1,6 @@
 import type { AgentId, CanonicalAgentId } from './types.js';
-import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
+import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
+import { getAgentCliRuntimeSpec } from './cli/runtime.js';
 
 export type AgentCliSupportKind = 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
 
@@ -29,7 +30,7 @@ type AgentLocalCliConfigInput = Readonly<{
 }>;
 
 function createAgentLocalCliConfig(agentId: AgentId, input: AgentLocalCliConfigInput): AgentLocalCliConfig {
-  const binaryName = getProviderCliRuntimeSpec(agentId).binaryName;
+  const binaryName = getAgentCliRuntimeSpec(agentId).binaryName;
   return {
     agentId,
     detectKey: binaryName,
@@ -45,7 +46,7 @@ function createAgentLocalCliConfig(agentId: AgentId, input: AgentLocalCliConfigI
   };
 }
 
-export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId, AgentLocalCliConfig>> = Object.freeze({
+const AUTHORED_AGENT_LOCAL_CLI_CONFIG = Object.freeze({
   claude: createAgentLocalCliConfig('claude', {
     machineLoginKey: 'claude-code',
     supportKind: 'login_terminal',
@@ -59,13 +60,6 @@ export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId,
     supportKind: 'login_terminal',
     loginLaunch: {
       args: ['login'],
-    },
-  }),
-  opencode: createAgentLocalCliConfig('opencode', {
-    machineLoginKey: 'opencode',
-    supportKind: 'login_terminal',
-    loginLaunch: {
-      args: ['auth', 'login'],
     },
   }),
   gemini: createAgentLocalCliConfig('gemini', {
@@ -113,6 +107,11 @@ export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId,
       args: ['login'],
     },
   }),
+  cursor: createAgentLocalCliConfig('cursor', {
+    machineLoginKey: 'cursor-agent',
+    supportKind: 'status_only',
+    loginLaunch: null,
+  }),
   ohMyPi: createAgentLocalCliConfig('ohMyPi', {
     machineLoginKey: 'oh-my-pi',
     supportKind: 'manual_only',
@@ -130,7 +129,14 @@ export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId,
       args: ['login'],
     },
   }),
-});
+} satisfies Partial<Record<CanonicalAgentId, AgentLocalCliConfig>>);
+
+export const CANONICAL_AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId, AgentLocalCliConfig>> =
+  mergeAuthoredWithGeneratedAgentFacts({
+    authored: AUTHORED_AGENT_LOCAL_CLI_CONFIG,
+    label: 'local CLI config',
+    readGenerated: (definition) => definition.localCli,
+  });
 
 export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<CanonicalAgentId, AgentLocalCliConfig>> = CANONICAL_AGENT_LOCAL_CLI_CONFIG;
 

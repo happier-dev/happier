@@ -25,10 +25,24 @@ describe('agent tools delivery capability', () => {
     expect(isAgentToolsUnsupported('claude')).toBe(false);
   });
 
-  it('classifies shell bridge providers through helper APIs', () => {
-    expect(getAgentToolsCapability('gemini')).toEqual({ delivery: 'shell_bridge', support: 'experimental' });
-    expect(usesNativeMcpTools('gemini')).toBe(false);
-    expect(usesShellBridgeTools('gemini')).toBe(true);
+  it('classifies Gemini native MCP delivery through helper APIs', () => {
+    expect(getAgentToolsCapability('gemini')).toEqual({ delivery: 'native_mcp', support: 'supported' });
+    expect(usesNativeMcpTools('gemini')).toBe(true);
+    expect(usesShellBridgeTools('gemini')).toBe(false);
     expect(isAgentToolsUnsupported('gemini')).toBe(false);
+  });
+
+  it('classifies shell bridge providers through helper APIs', () => {
+    expect(getAgentToolsCapability('auggie')).toEqual({ delivery: 'shell_bridge', support: 'experimental' });
+    expect(usesNativeMcpTools('auggie')).toBe(false);
+    expect(usesShellBridgeTools('auggie')).toBe(true);
+    expect(isAgentToolsUnsupported('auggie')).toBe(false);
+  });
+
+  it('routes Cursor Happier tools through the shell bridge', () => {
+    expect(getAgentToolsCapability('cursor')).toEqual({ delivery: 'shell_bridge', support: 'experimental' });
+    expect(usesNativeMcpTools('cursor')).toBe(false);
+    expect(usesShellBridgeTools('cursor')).toBe(true);
+    expect(isAgentToolsUnsupported('cursor')).toBe(false);
   });
 });

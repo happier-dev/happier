@@ -4,16 +4,17 @@ import {
     type AgentResumeConfig,
     type CanonicalAgentId,
 } from './types.js';
-import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
+import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
+import { getAgentCliRuntimeSpec } from './cli/runtime.js';
 import type { ProviderConnectedServicesAdapter } from './runtime/adjunctAdapters/types.js';
 
 export const DEFAULT_AGENT_ID: AgentId = 'claude';
 
 function providerDetectKey(agentId: AgentId): string {
-    return getProviderCliRuntimeSpec(agentId).binaryName;
+    return getAgentCliRuntimeSpec(agentId).binaryName;
 }
 
-export const CANONICAL_AGENTS_CORE = {
+const AUTHORED_CANONICAL_AGENTS_CORE = {
     claude: {
         id: 'claude',
         cliSubcommand: 'claude',
@@ -22,6 +23,25 @@ export const CANONICAL_AGENTS_CORE = {
         cloudConnect: { vendorKey: 'anthropic', status: 'wired' },
         connectedServices: {
             supportedServiceIds: ['claude-subscription', 'anthropic'],
+            sessionAuthSwitch: {
+                continuityMode: 'restart_same_home',
+                supportedTransitions: ['same_connected_group'],
+                providerStateSharingRequired: {
+                    serviceIds: ['claude-subscription', 'anthropic'],
+                    supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+                },
+            },
+            providerStateSharing: {
+                config: {
+                    supported: true,
+                    modes: ['linked', 'copied', 'isolated'],
+                },
+                state: {
+                    supported: true,
+                    modes: ['isolated', 'shared'],
+                    sharedStatePrivacyRiskAcknowledgementRequired: true,
+                },
+            },
             supportedKindsByServiceId: {
                 'claude-subscription': ['oauth', 'token'],
                 anthropic: ['token'],
@@ -33,9 +53,14 @@ export const CANONICAL_AGENTS_CORE = {
             sessionListing: 'supported',
             sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
             sessionRollback: { conversation: 'unsupported' },
+            usageLimitRecovery: { checkNow: 'supported' },
         },
         handoff: { vendorStateTransfer: 'supported' },
         localControl: { supported: true, topology: 'exclusive', attachStrategy: 'terminal_host' },
+        runtimeInput: {
+            inFlightSteerSupported: true,
+            terminalPromptInjectionSupported: true,
+        },
         tools: { delivery: 'native_mcp', support: 'supported' },
     },
     codex: {
@@ -46,6 +71,25 @@ export const CANONICAL_AGENTS_CORE = {
         cloudConnect: { vendorKey: 'openai', status: 'wired' },
         connectedServices: {
             supportedServiceIds: ['openai-codex', 'openai'],
+            sessionAuthSwitch: {
+                continuityMode: 'restart_shared_state_required',
+                supportedTransitions: ['same_connected_group'],
+                providerStateSharingRequired: {
+                    serviceIds: ['openai-codex'],
+                    supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+                },
+            },
+            providerStateSharing: {
+                config: {
+                    supported: true,
+                    modes: ['linked', 'copied', 'isolated'],
+                },
+                state: {
+                    supported: true,
+                    modes: ['isolated', 'shared'],
+                    sharedStatePrivacyRiskAcknowledgementRequired: true,
+                },
+            },
             supportedKindsByServiceId: {
                 'openai-codex': ['oauth'],
                 openai: ['token'],
@@ -57,6 +101,7 @@ export const CANONICAL_AGENTS_CORE = {
             sessionListing: 'supported',
             sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },
             sessionRollback: { conversation: 'supported' },
+            usageLimitRecovery: { checkNow: 'supported' },
         },
         runtimeKinds: {
             defaultKind: 'appServer',
@@ -68,6 +113,7 @@ export const CANONICAL_AGENTS_CORE = {
                         sessionCapabilities: {
                             sessionFork: { conversation: 'unsupported' },
                             sessionRollback: { conversation: 'unsupported' },
+                            usageLimitRecovery: { checkNow: 'unsupported' },
                         },
                         handoff: { vendorStateTransfer: 'unsupported' },
                         localControl: null,
@@ -79,6 +125,7 @@ export const CANONICAL_AGENTS_CORE = {
                         sessionCapabilities: {
                             sessionFork: { conversation: 'unsupported' },
                             sessionRollback: { conversation: 'unsupported' },
+                            usageLimitRecovery: { checkNow: 'unsupported' },
                         },
                     },
                 },
@@ -89,47 +136,6 @@ export const CANONICAL_AGENTS_CORE = {
         localControl: { supported: true, topology: 'exclusive', attachStrategy: 'terminal_host' },
         tools: { delivery: 'native_mcp', support: 'supported' },
     },
-    opencode: {
-        id: 'opencode',
-        cliSubcommand: 'opencode',
-        detectKey: providerDetectKey('opencode'),
-        flavorAliases: ['open-code'],
-        cloudConnect: null,
-        connectedServices: {
-            supportedServiceIds: ['openai-codex', 'openai', 'anthropic'],
-            supportedKindsByServiceId: {
-                'openai-codex': ['oauth'],
-                openai: ['token'],
-                anthropic: ['token'],
-            },
-        },
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'opencodeSessionId' },
-        sessionStorage: { direct: true, persisted: true },
-        sessionCapabilities: {
-            sessionListing: 'supported',
-            sessionFork: { conversation: 'supported', fromMessage: 'supported' },
-            sessionRollback: { conversation: 'unsupported' },
-        },
-        runtimeKinds: {
-            defaultKind: 'server',
-            byKind: {
-                server: { kind: 'server' },
-                acp: {
-                    kind: 'acp',
-                    overrides: {
-                        sessionStorage: { direct: false },
-                        sessionCapabilities: {
-                            sessionFork: { fromMessage: 'unsupported' },
-                        },
-                        localControl: null,
-                    },
-                },
-            },
-        },
-        handoff: { vendorStateTransfer: 'supported' },
-        localControl: { supported: true, topology: 'shared', attachStrategy: 'provider_attach' },
-        tools: { delivery: 'native_mcp', support: 'supported' },
-    },
     gemini: {
         id: 'gemini',
         cliSubcommand: 'gemini',
@@ -138,6 +144,10 @@ export const CANONICAL_AGENTS_CORE = {
         cloudConnect: { vendorKey: 'gemini', status: 'wired' },
         connectedServices: {
             supportedServiceIds: ['gemini'],
+            sessionAuthSwitch: {
+                continuityMode: 'restart_same_home',
+                supportedTransitions: ['native_to_connected', 'connected_to_connected'],
+            },
             supportedKindsByServiceId: {
                 gemini: ['oauth'],
             },
@@ -148,9 +158,10 @@ export const CANONICAL_AGENTS_CORE = {
             sessionListing: 'unsupported',
             sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
             sessionRollback: { conversation: 'unsupported' },
+            usageLimitRecovery: { checkNow: 'supported' },
         },
         handoff: { vendorStateTransfer: 'unsupported' },
-        tools: { delivery: 'shell_bridge', support: 'experimental' },
+        tools: { delivery: 'native_mcp', support: 'supported' },
     },
     auggie: {
         id: 'auggie',
@@ -238,6 +249,28 @@ export const CANONICAL_AGENTS_CORE = {
         localControl: { supported: true, topology: 'exclusive', attachStrategy: 'unsupported' },
         tools: { delivery: 'native_mcp', support: 'supported' },
     },
+    cursor: {
+        id: 'cursor',
+        cliSubcommand: 'cursor',
+        detectKey: providerDetectKey('cursor'),
+        flavorAliases: ['cursor-agent'],
+        cloudConnect: null,
+        connectedServices: null,
+        resume: {
+            vendorResume: 'experimental',
+            vendorResumeIdField: 'cursorSessionId',
+            experimentalResumePolicy: 'runtime_checked',
+        },
+        sessionStorage: { direct: true, persisted: true },
+        sessionCapabilities: {
+            sessionListing: 'unsupported',
+            sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+            sessionRollback: { conversation: 'unsupported' },
+        },
+        handoff: { vendorStateTransfer: 'unsupported' },
+        localControl: { supported: true, topology: 'exclusive', attachStrategy: 'unsupported' },
+        tools: { delivery: 'shell_bridge', support: 'experimental' },
+    },
     ohMyPi: {
         id: 'ohMyPi',
         cliSubcommand: 'ohMyPi',
@@ -272,6 +305,25 @@ export const CANONICAL_AGENTS_CORE = {
         cloudConnect: null,
         connectedServices: {
             supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
+            sessionAuthSwitch: {
+                continuityMode: 'restart_same_home',
+                supportedTransitions: ['connected_to_connected'],
+                providerStateSharingRequired: {
+                    supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+                },
+            },
+            providerStateSharing: {
+                config: {
+                    supported: false,
+                    modes: ['isolated'],
+                    unavailableReason: 'not_implemented',
+                },
+                state: {
+                    supported: true,
+                    modes: ['isolated', 'shared'],
+                    sharedStatePrivacyRiskAcknowledgementRequired: true,
+                },
+            },
             supportedKindsByServiceId: {
                 'openai-codex': ['oauth'],
                 openai: ['token'],
@@ -279,14 +331,19 @@ export const CANONICAL_AGENTS_CORE = {
                 anthropic: ['token'],
             },
         },
-        resume: { vendorResume: 'unsupported', vendorResumeIdField: 'piSessionId' },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'piSessionId' },
         sessionStorage: { direct: false, persisted: true },
         sessionCapabilities: {
             sessionListing: 'unsupported',
             sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
             sessionRollback: { conversation: 'unsupported' },
+            usageLimitRecovery: { checkNow: 'supported' },
         },
         handoff: { vendorStateTransfer: 'unsupported' },
+        runtimeInput: {
+            inFlightSteerSupported: true,
+            terminalPromptInjectionSupported: false,
+        },
         tools: { delivery: 'shell_bridge', support: 'experimental' },
     },
     copilot: {
@@ -306,7 +363,14 @@ export const CANONICAL_AGENTS_CORE = {
         handoff: { vendorStateTransfer: 'unsupported' },
         tools: { delivery: 'shell_bridge', support: 'experimental' },
     },
-} as const satisfies Record<CanonicalAgentId, AgentCore>;
+} as const satisfies Partial<Record<CanonicalAgentId, AgentCore>>;
+
+export const CANONICAL_AGENTS_CORE: Readonly<Record<CanonicalAgentId, AgentCore>> =
+    mergeAuthoredWithGeneratedAgentFacts<AgentCore>({
+        authored: AUTHORED_CANONICAL_AGENTS_CORE,
+        label: 'agent core',
+        readGenerated: (definition) => definition.core,
+    });
 
 export const AGENTS_CORE = CANONICAL_AGENTS_CORE;
 
@@ -329,4 +393,9 @@ export function getProviderConnectedServicesAdapter(agentId: AgentId): ProviderC
 
 export function getAgentResumeConfig(agentId: AgentId): AgentResumeConfig {
     return getAgentCore(agentId).resume;
+}
+
+export function isRuntimeCheckedExperimentalVendorResume(agentId: AgentId): boolean {
+    const resume = getAgentResumeConfig(agentId);
+    return resume.vendorResume === 'experimental' && resume.experimentalResumePolicy === 'runtime_checked';
 }

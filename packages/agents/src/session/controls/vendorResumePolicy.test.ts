@@ -23,20 +23,41 @@ describe('vendorResumePolicy', () => {
       agentRuntimeDescriptorV1: {
         v: 1,
         providerId: 'codex',
-        provider: { backendMode: 'appServer', vendorSessionId: 'runtime_thread' },
+        provider: { backendMode: 'appServer', providerSessionId: 'runtime_thread' },
       },
       codexSessionId: 'legacy_thread',
     })).toBe('runtime_thread');
   });
 
-  it('rejects unsupported agents', () => {
+  it('allows Pi resume when a session id is present', () => {
     expect(
       evaluateVendorResumeEligibility({
         agentId: 'pi',
         metadata: { piSessionId: 'p1' },
         accountSettings: {},
       }),
-    ).toEqual({ eligible: false, reasonCode: 'agent_unsupported' });
+    ).toEqual({ eligible: true, vendorResumeId: 'p1' });
+  });
+
+  it('prefers Pi absolute session-file metadata over bare session ids for resume', () => {
+    expect(
+      evaluateVendorResumeEligibility({
+        agentId: 'pi',
+        metadata: {
+          piSessionId: 'p1',
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'pi',
+            provider: {
+              resumeStrategy: 'sessionFileAbsolutePreferred',
+              providerSessionId: 'p1',
+              sessionFile: '/tmp/pi/sessions/2026-05-27T00-00-00-000Z_p1.jsonl',
+            },
+          },
+        },
+        accountSettings: {},
+      }),
+    ).toEqual({ eligible: true, vendorResumeId: '/tmp/pi/sessions/2026-05-27T00-00-00-000Z_p1.jsonl' });
   });
 
   it('rejects when vendor resume id is missing', () => {
@@ -77,6 +98,26 @@ describe('vendorResumePolicy', () => {
         accountSettings: { codexBackendMode: 'appServer' },
       }),
     ).toEqual({ eligible: true, vendorResumeId: 'x1' });
+  });
+
+  it('allows runtime-checked experimental Cursor resume when a session id is present', () => {
+    expect(
+      evaluateVendorResumeEligibility({
+        agentId: 'cursor',
+        metadata: { cursorSessionId: 'cursor-session-1' },
+        accountSettings: {},
+      }),
+    ).toEqual({ eligible: true, vendorResumeId: 'cursor-session-1' });
+  });
+
+  it('keeps experimental Kiro resume disabled by default', () => {
+    expect(
+      evaluateVendorResumeEligibility({
+        agentId: 'kiro',
+        metadata: { kiroSessionId: 'kiro-session-1' },
+        accountSettings: {},
+      }),
+    ).toEqual({ eligible: false, reasonCode: 'experimental_disabled' });
   });
 
   it('allows ohMyPi resume when a session id is present', () => {

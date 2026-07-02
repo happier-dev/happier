@@ -26,7 +26,7 @@ describe('vendorHandoffPolicy', () => {
       agentRuntimeDescriptorV1: {
         v: 1,
         providerId: 'codex',
-        provider: { backendMode: 'appServer', vendorSessionId: 'runtime_thread' },
+        provider: { backendMode: 'appServer', providerSessionId: 'runtime_thread' },
       },
       codexSessionId: 'legacy_thread',
     })).toBe('runtime_thread');
@@ -84,7 +84,7 @@ describe('vendorHandoffPolicy', () => {
             providerId: 'opencode',
             provider: {
               backendMode: 'acp',
-              vendorSessionId: 'o1',
+              providerSessionId: 'o1',
             },
           },
         },

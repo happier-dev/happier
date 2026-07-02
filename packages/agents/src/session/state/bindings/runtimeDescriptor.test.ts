@@ -14,7 +14,7 @@ describe('runtimeDescriptor session-state binding', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'canonical-thread',
+          providerSessionId: 'canonical-thread',
         },
       },
       agentRuntimeDescriptorV1: {
@@ -22,7 +22,7 @@ describe('runtimeDescriptor session-state binding', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'server',
-          vendorSessionId: 'legacy-session',
+          providerSessionId: 'legacy-session',
         },
       },
     })).toEqual({
@@ -31,7 +31,7 @@ describe('runtimeDescriptor session-state binding', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'canonical-thread',
+          providerSessionId: 'canonical-thread',
         },
       },
       updatedAt: null,
@@ -44,7 +44,7 @@ describe('runtimeDescriptor session-state binding', () => {
       providerId: 'pi',
       provider: {
         resumeStrategy: 'sessionFileBySessionId',
-        vendorSessionId: 'pi-session',
+        providerSessionId: 'pi-session',
       },
     } as const;
 
@@ -63,7 +63,7 @@ describe('runtimeDescriptor session-state binding', () => {
       providerId: 'opencode',
       provider: {
         backendMode: 'server',
-        vendorSessionId: 'oc-session',
+        providerSessionId: 'oc-session',
       },
     })).toEqual({
       path: '/tmp/project',
@@ -73,7 +73,7 @@ describe('runtimeDescriptor session-state binding', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'server',
-          vendorSessionId: 'oc-session',
+          providerSessionId: 'oc-session',
         },
       },
     });

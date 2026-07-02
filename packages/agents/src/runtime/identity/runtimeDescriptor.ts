@@ -1,15 +1,12 @@
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 
-import {
-  getRuntimeDescriptorReader,
-  isSupportedRuntimeDescriptorProviderId,
-} from './runtimeDescriptorReaderRegistry.js';
+import { getRuntimeDescriptorReader } from './runtimeDescriptorReaderRegistry.js';
 import { asRecord, normalizeTrimmedString } from './runtimeDescriptorShared.js';
 
 export type RuntimeDescriptor = Readonly<{
   providerId: string;
   runtimeKind: string | null;
-  vendorSessionId: string | null;
+  providerSessionId: string | null;
   runtimeHandle: Readonly<Record<string, unknown>> | null;
   rawProvider: Readonly<Record<string, unknown>>;
 }>;
@@ -20,6 +17,11 @@ function readRuntimeHandleFromProviderExtra(provider: Record<string, unknown>): 
   return asRecord(providerExtra.runtimeHandle);
 }
 
+function readProviderSessionIdCompat(provider: Readonly<Record<string, unknown>>): string | null {
+  return normalizeTrimmedString(provider.providerSessionId)
+    ?? normalizeTrimmedString(provider.vendorSessionId); // legacy vendorSessionId read-compat
+}
+
 export function readNormalizedRuntimeDescriptor(metadata: unknown): RuntimeDescriptor | null {
   const metadataRecord = asRecord(metadata);
   if (!metadataRecord) return null;
@@ -27,14 +29,14 @@ export function readNormalizedRuntimeDescriptor(metadata: unknown): RuntimeDescr
   const parsed = readRuntimeDescriptorV1FromMetadata(metadataRecord);
   if (!parsed) return null;
 
-  if (isSupportedRuntimeDescriptorProviderId(parsed.providerId)) {
-    const providerReader = getRuntimeDescriptorReader(parsed.providerId);
+  const providerReader = getRuntimeDescriptorReader(parsed.providerId);
+  if (providerReader) {
     const providerDescriptor = providerReader(metadataRecord);
     if (providerDescriptor) {
       return {
         providerId: providerDescriptor.providerId,
         runtimeKind: normalizeTrimmedString(providerDescriptor.runtimeKind),
-        vendorSessionId: normalizeTrimmedString(providerDescriptor.vendorSessionId),
+        providerSessionId: normalizeTrimmedString(providerDescriptor.providerSessionId),
         runtimeHandle: readRuntimeHandleFromProviderExtra(parsed.provider as Record<string, unknown>)
           ?? providerDescriptor.runtimeHandle,
         rawProvider: parsed.provider as Readonly<Record<string, unknown>>,
@@ -47,7 +49,7 @@ export function readNormalizedRuntimeDescriptor(metadata: unknown): RuntimeDescr
   return {
     providerId: parsed.providerId,
     runtimeKind: normalizeTrimmedString(provider.backendMode),
-    vendorSessionId: normalizeTrimmedString(provider.vendorSessionId),
+    providerSessionId: readProviderSessionIdCompat(provider),
     runtimeHandle: readRuntimeHandleFromProviderExtra(provider),
     rawProvider: provider,
   };

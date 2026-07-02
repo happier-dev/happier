@@ -20,6 +20,9 @@ describe('sessionCapabilities', () => {
       sessionRollback: {
         conversation: 'unsupported',
       },
+      usageLimitRecovery: {
+        checkNow: 'supported',
+      },
     });
 
     expect(AGENTS_CORE.codex.sessionCapabilities).toEqual({
@@ -30,6 +33,9 @@ describe('sessionCapabilities', () => {
       },
       sessionRollback: {
         conversation: 'supported',
+      },
+      usageLimitRecovery: {
+        checkNow: 'supported',
       },
     });
 
@@ -42,6 +48,23 @@ describe('sessionCapabilities', () => {
       sessionRollback: {
         conversation: 'unsupported',
       },
+      usageLimitRecovery: {
+        checkNow: 'supported',
+      },
+    });
+
+    expect(AGENTS_CORE.pi.sessionCapabilities).toEqual({
+      sessionListing: 'unsupported',
+      sessionFork: {
+        conversation: 'unsupported',
+        fromMessage: 'unsupported',
+      },
+      sessionRollback: {
+        conversation: 'unsupported',
+      },
+      usageLimitRecovery: {
+        checkNow: 'supported',
+      },
     });
   });
 
@@ -50,11 +73,20 @@ describe('sessionCapabilities', () => {
     expect(getAgentSessionCapability('codex', 'sessionFork.conversation')).toBe('supported');
     expect(getAgentSessionCapability('codex', 'sessionFork.fromMessage')).toBe('unsupported');
     expect(getAgentSessionCapability('codex', 'sessionRollback.conversation')).toBe('supported');
+    expect(getAgentSessionCapability('codex', 'usageLimitRecovery.checkNow')).toBe('supported');
+    expect(getAgentSessionCapability('opencode', 'usageLimitRecovery.checkNow')).toBe('supported');
+    expect(getAgentSessionCapability('claude', 'usageLimitRecovery.checkNow')).toBe('supported');
+    expect(getAgentSessionCapability('gemini', 'usageLimitRecovery.checkNow')).toBe('supported');
+    expect(getAgentSessionCapability('pi', 'usageLimitRecovery.checkNow')).toBe('supported');
   });
 
   it('provides a boolean helper for supported session capabilities', () => {
     expect(isAgentSessionCapabilitySupported('opencode', 'sessionFork.fromMessage')).toBe(true);
     expect(isAgentSessionCapabilitySupported('claude', 'sessionRollback.conversation')).toBe(false);
+    expect(isAgentSessionCapabilitySupported('opencode', 'usageLimitRecovery.checkNow')).toBe(true);
+    expect(isAgentSessionCapabilitySupported('claude', 'usageLimitRecovery.checkNow')).toBe(true);
+    expect(isAgentSessionCapabilitySupported('gemini', 'usageLimitRecovery.checkNow')).toBe(true);
+    expect(isAgentSessionCapabilitySupported('pi', 'usageLimitRecovery.checkNow')).toBe(true);
   });
 
   it('downgrades codex conversation capabilities when the session is not app-server backed', () => {
@@ -76,6 +108,29 @@ describe('sessionCapabilities', () => {
         },
       }),
     ).toBe('supported');
+
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'codex',
+        capability: 'usageLimitRecovery.checkNow',
+        metadata: { codexSessionId: 'c1', codexBackendMode: 'mcp' },
+      }),
+    ).toBe('unsupported');
+
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'codex',
+        capability: 'usageLimitRecovery.checkNow',
+        metadata: {
+          codexSessionId: 'c1',
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'codex',
+            provider: { backendMode: 'appServer' },
+          },
+        },
+      }),
+    ).toBe('supported');
   });
 
   it('downgrades opencode fork-from-message to server-only sessions', () => {
@@ -94,6 +149,22 @@ describe('sessionCapabilities', () => {
         metadata: { opencodeBackendMode: 'acp' },
       }),
     ).toBe('supported');
+
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'opencode',
+        capability: 'usageLimitRecovery.checkNow',
+        metadata: { opencodeBackendMode: 'server' },
+      }),
+    ).toBe('supported');
+
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'opencode',
+        capability: 'usageLimitRecovery.checkNow',
+        metadata: { opencodeBackendMode: 'acp' },
+      }),
+    ).toBe('unsupported');
   });
 
   it('prefers the canonical opencode runtime descriptor over legacy backend metadata', () => {

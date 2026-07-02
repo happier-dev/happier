@@ -15,7 +15,10 @@ export const CODEX_PROVIDER_FIELDS = {
   codexBackendMode: {
     // Back-compat: `mcp_resume` was a legacy fork that has been removed. Treat it as ACP.
     schema: z
-      .enum(['mcp', 'mcp_resume', 'acp', 'appServer'])
+      .union([
+        z.enum(['acp', 'appServer']),
+        z.enum(['mcp', 'mcp_resume']),
+      ])
       .transform((value): CodexBackendMode => normalizeCodexBackendMode(value) ?? 'acp'),
     default: 'appServer' satisfies CodexBackendMode,
     description: 'Preferred Codex backend mode',

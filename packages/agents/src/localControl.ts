@@ -10,6 +10,7 @@ export type AgentLocalControlCapability = Readonly<{
   supported: boolean;
   topology: AgentLocalControlTopology;
   attachStrategy: AgentLocalControlAttachStrategy;
+  remoteWritable: boolean;
 }>;
 
 export function getAgentLocalControlCapability(agentId: AgentId): AgentLocalControlCapability | null {
@@ -20,6 +21,7 @@ export function getAgentLocalControlCapability(agentId: AgentId): AgentLocalCont
     supported: true,
     topology: localControl.topology ?? 'exclusive',
     attachStrategy: localControl.attachStrategy ?? 'unsupported',
+    remoteWritable: localControl.remoteWritable === true,
   };
 }
 

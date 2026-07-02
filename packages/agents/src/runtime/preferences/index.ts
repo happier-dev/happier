@@ -1,5 +1,5 @@
 import type { AgentId } from '../../types.js';
-import { getProviderCliRuntimeSpec } from '../../providers/providerCliRuntime.js';
+import { getAgentCliRuntimeSpec } from '../../cli/runtime.js';
 import { getAgentRuntimeKindsManifest } from '../../runtimeKinds.js';
 import type { RuntimePreferencesAdapter } from '../adjunctAdapters/types.js';
 import {
@@ -8,9 +8,8 @@ import {
   resolveCodexSpawnExtrasForRuntime,
   resolveCodexSpawnExtrasFromSettings,
 } from './codex.js';
-import { resolveOpenCodeSessionRuntimePreferences } from './opencode.js';
 export type { CodexBackendMode } from './codex.js';
-export type { OpenCodeBackendMode } from '../../providerSettings/index.js';
+export type { KimiAcpPythonSelector } from '../../providerSettings/index.js';
 export {
   isCodexVendorResumeBackendEnabled,
   resolveCodexSessionRuntimePreferences,
@@ -18,10 +17,9 @@ export {
   resolveCodexSpawnExtrasForRuntime,
   resolveCodexSpawnExtrasFromSettings,
 } from './codex.js';
-export { resolveOpenCodeSessionRuntimePreferences } from './opencode.js';
 
 export function getProviderRuntimePreferencesAdapter(agentId: AgentId): RuntimePreferencesAdapter {
-  const runtimeSpec = getProviderCliRuntimeSpec(agentId);
+  const runtimeSpec = getAgentCliRuntimeSpec(agentId);
   const defaultRuntimeKind = getAgentRuntimeKindsManifest(agentId)?.defaultKind ?? null;
 
   return {

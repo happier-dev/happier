@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { buildClaudeRemoteOutgoingMessageMetaExtras } from '../../providers/claude/messageMeta.js';
 import {
   getProviderMessageMetaEnricher,
   resolveProviderOutgoingMessageMetaExtras,
@@ -21,22 +20,12 @@ describe('getProviderMessageMetaEnricher', () => {
     expect(registrySource).not.toMatch(/providers\//);
   });
 
-  it('projects the Claude message-meta enricher and keeps other providers empty', () => {
-    const enricher = getProviderMessageMetaEnricher('claude');
-    expect(enricher?.buildOutgoingMessageMetaExtras).toEqual(buildClaudeRemoteOutgoingMessageMetaExtras);
-    expect(enricher?.buildOutgoingMessageMetaExtras?.({
-      claudeRemoteAgentSdkEnabled: false,
-      claudeRemoteSettingSourcesV2: ['user', 'project'],
-    })).toEqual(
-      buildClaudeRemoteOutgoingMessageMetaExtras({
-        claudeRemoteAgentSdkEnabled: false,
-        claudeRemoteSettingSourcesV2: ['user', 'project'],
-      }),
-    );
+  it('does not implicitly register plugin-owned provider enrichers', () => {
+    expect(getProviderMessageMetaEnricher('claude')).toEqual({});
     expect(getProviderMessageMetaEnricher('codex')).toEqual({});
   });
 
-  it('delegates provider extras resolution through the canonical enricher', () => {
+  it('returns empty extras when no provider enricher is registered', () => {
     expect(resolveProviderOutgoingMessageMetaExtras({
       agentId: 'claude',
       settings: {
@@ -44,11 +33,6 @@ describe('getProviderMessageMetaEnricher', () => {
         claudeRemoteDebugCategories: ['api'],
       },
       session: {},
-    })).toEqual(
-      buildClaudeRemoteOutgoingMessageMetaExtras({
-        claudeRemoteSettingSourcesV2: ['project'],
-        claudeRemoteDebugCategories: ['api'],
-      }),
-    );
+    })).toEqual({});
   });
 });

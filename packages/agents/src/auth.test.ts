@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS, CANONICAL_AGENT_IDS } from './types.js';
+import { AGENT_IDS, AGENT_PROVIDER_IDS } from './types.js';
 import {
   AGENT_AUTH_PROBE_CONFIG,
+  type AgentAuthProbeConfig,
   CANONICAL_AGENT_AUTH_PROBE_CONFIG,
   getAgentAuthProbeConfig,
 } from './auth.js';
@@ -13,11 +14,11 @@ import {
 
 describe('AGENT_AUTH_PROBE_CONFIG', () => {
   it('keeps the shared auth probe artifact map canonical-only', () => {
-    expect(Object.keys(AGENT_AUTH_PROBE_CONFIG).sort()).toEqual([...CANONICAL_AGENT_IDS].sort());
+    expect(Object.keys(AGENT_AUTH_PROBE_CONFIG).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
   });
 
   it('keeps legacy customAcp out of the canonical auth probe artifacts', () => {
-    expect(Object.keys(CANONICAL_AGENT_AUTH_PROBE_CONFIG).sort()).toEqual([...CANONICAL_AGENT_IDS].sort());
+    expect(Object.keys(CANONICAL_AGENT_AUTH_PROBE_CONFIG).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
     expect(CANONICAL_AGENT_AUTH_PROBE_CONFIG).not.toHaveProperty('customAcp');
   });
 
@@ -49,6 +50,25 @@ describe('AGENT_AUTH_PROBE_CONFIG', () => {
     });
   });
 
+  it('declares Cursor auth probing via about json with API-key fallback', () => {
+    const cursor = (AGENT_AUTH_PROBE_CONFIG as Readonly<Record<string, AgentAuthProbeConfig>>).cursor;
+
+    expect(cursor).toEqual(expect.objectContaining({
+      agentId: 'cursor',
+      binaryNames: ['cursor-agent', 'agent'],
+      statusCommand: ['about', '--format', 'json'],
+      parser: 'cursorAboutJson',
+      backgroundChecks: 'safe',
+      envVars: ['CURSOR_API_KEY'],
+    }));
+  });
+
+  it('drops the legacy Cursor fallback binary when the env disables it', () => {
+    expect(getAgentAuthProbeConfig('cursor', {
+      HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED: '0',
+    } as NodeJS.ProcessEnv).binaryNames).toEqual(['cursor-agent']);
+  });
+
   it('supports both current and legacy Claude credential file layouts', () => {
     expect(getAgentAuthProbeConfig('claude').credentialPaths).toEqual([
       '~/.claude/.credentials.json',
@@ -76,7 +96,7 @@ describe('AGENT_AUTH_PROBE_CONFIG', () => {
   it('keeps explicit compat auth metadata aligned with the explicit compat local CLI metadata', () => {
     expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentAuthProbeConfig()).toEqual({
       agentId: 'customAcp',
-      binaryNames: [legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec().binaryName],
+      binaryNames: [legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec().binaryName],
       statusCommand: null,
       parser: 'unknown',
       backgroundChecks: 'manual_only',

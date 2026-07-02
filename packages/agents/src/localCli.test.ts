@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS, CANONICAL_AGENT_IDS } from './types.js';
+import { AGENT_IDS, AGENT_PROVIDER_IDS } from './types.js';
 import { legacyCustomAcpCompat } from './index.js';
-import { CANONICAL_AGENT_LOCAL_CLI_CONFIG, getAgentLocalCliConfig, AGENT_LOCAL_CLI_CONFIG } from './localCli.js';
+import {
+  type AgentLocalCliConfig,
+  CANONICAL_AGENT_LOCAL_CLI_CONFIG,
+  getAgentLocalCliConfig,
+  AGENT_LOCAL_CLI_CONFIG,
+} from './localCli.js';
 
 describe('AGENT_LOCAL_CLI_CONFIG', () => {
   it('keeps the shared local CLI artifact map canonical-only', () => {
-    expect(Object.keys(AGENT_LOCAL_CLI_CONFIG).sort()).toEqual([...CANONICAL_AGENT_IDS].sort());
+    expect(Object.keys(AGENT_LOCAL_CLI_CONFIG).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
   });
 
   it('keeps legacy customAcp out of the canonical local CLI artifacts', () => {
-    expect(Object.keys(CANONICAL_AGENT_LOCAL_CLI_CONFIG).sort()).toEqual([...CANONICAL_AGENT_IDS].sort());
+    expect(Object.keys(CANONICAL_AGENT_LOCAL_CLI_CONFIG).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
     expect(CANONICAL_AGENT_LOCAL_CLI_CONFIG).not.toHaveProperty('customAcp');
   });
 
@@ -46,6 +51,18 @@ describe('AGENT_LOCAL_CLI_CONFIG', () => {
       machineLoginKey: 'claude-code',
       supportKind: 'login_terminal',
     });
+  });
+
+  it('declares Cursor as status-only local CLI auth until terminal login behavior is source-real', () => {
+    const cursor = (AGENT_LOCAL_CLI_CONFIG as Readonly<Record<string, AgentLocalCliConfig>>).cursor;
+
+    expect(cursor).toEqual(expect.objectContaining({
+      agentId: 'cursor',
+      detectKey: 'cursor-agent',
+      machineLoginKey: 'cursor-agent',
+      supportKind: 'status_only',
+      loginLaunch: null,
+    }));
   });
 
   it('still serves legacy customAcp through explicit compat lookup only', () => {

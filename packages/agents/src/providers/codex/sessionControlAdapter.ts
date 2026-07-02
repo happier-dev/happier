@@ -1,17 +1,17 @@
 import { type AgentRuntimeKind, resolveDefaultAgentRuntimeKind } from '../../runtimeKinds.js';
 import {
-  isCodexVendorResumeBackendEnabled,
   resolveCodexRuntimeBackendModeFromSettings,
 } from '../../runtime/preferences/codex.js';
 import { normalizeCodexBackendMode } from '../../providerSettings/definitions/codex.js';
 import {
   resolvePersistedCodexRuntimeIdentity,
-  resolvePersistedCodexVendorSessionId,
+  resolvePersistedCodexProviderSessionId,
 } from './runtimeIdentity.js';
 
 function resolveCodexConfiguredRuntimeKind(accountSettings?: Record<string, unknown> | null): AgentRuntimeKind | null {
+  const defaultBackendMode = normalizeCodexBackendMode(resolveDefaultAgentRuntimeKind('codex'));
   return resolveCodexRuntimeBackendModeFromSettings(accountSettings ?? {}, {
-    defaultBackendMode: resolveDefaultAgentRuntimeKind('codex'),
+    defaultBackendMode,
   });
 }
 
@@ -20,18 +20,33 @@ function resolveCodexPersistedSessionRuntimeKind(metadata: unknown): AgentRuntim
 }
 
 function resolveCodexVendorResumeId(metadata: unknown): string | null {
-  return resolvePersistedCodexVendorSessionId(metadata);
+  return resolvePersistedCodexProviderSessionId(metadata);
+}
+
+function isExplicitCodexVendorResumeBackendEnabled(settings: Readonly<Record<string, unknown>>): boolean {
+  if (typeof settings.codexBackendMode === 'string') {
+    const trimmed = settings.codexBackendMode.trim();
+    return trimmed === 'acp' || trimmed === 'appServer' || trimmed === 'mcp_resume';
+  }
+  return settings.experimentalCodexAcp === true;
+}
+
+function isCodexRuntimeIdentityVendorResumeBackendEnabled(mode: AgentRuntimeKind): boolean {
+  return mode === 'acp' || mode === 'appServer';
 }
 
 function isCodexExperimentalVendorResumeEnabled(input: Readonly<{
   metadata: unknown;
   accountSettings: Record<string, unknown> | null;
 }>): boolean {
-  const runtimeKind = resolvePersistedCodexRuntimeIdentity(input.metadata)?.backendMode
-    ?? resolveCodexRuntimeBackendModeFromSettings(input.accountSettings ?? {}, {
-      defaultBackendMode: resolveDefaultAgentRuntimeKind('codex'),
-    });
-  return isCodexVendorResumeBackendEnabled(runtimeKind ? { codexBackendMode: runtimeKind } : {});
+  const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(input.metadata);
+  if (runtimeIdentity) {
+    return isCodexRuntimeIdentityVendorResumeBackendEnabled(runtimeIdentity.backendMode);
+  }
+  const runtimeKind = resolveCodexConfiguredRuntimeKind(input.accountSettings);
+  return runtimeKind === 'acp' || runtimeKind === 'appServer'
+    ? isExplicitCodexVendorResumeBackendEnabled(input.accountSettings ?? {})
+    : false;
 }
 
 function isCodexExperimentalVendorHandoffEnabled(input: Readonly<{
@@ -42,7 +57,8 @@ function isCodexExperimentalVendorHandoffEnabled(input: Readonly<{
   if (runtimeIdentity?.backendMode === 'acp' || runtimeIdentity?.backendMode === 'appServer') {
     return true;
   }
-  return isCodexVendorResumeBackendEnabled(input.accountSettings ?? {});
+  if (runtimeIdentity) return false;
+  return isExplicitCodexVendorResumeBackendEnabled(input.accountSettings ?? {});
 }
 
 export const CODEX_SESSION_CONTROL_ADAPTER = Object.freeze({
@@ -61,9 +77,10 @@ export const CODEX_SESSION_CONTROL_ADAPTER = Object.freeze({
     accountSettings: Record<string, unknown> | null,
     runtimeKind: AgentRuntimeKind,
   ): Record<string, unknown> {
+    const codexBackendMode = normalizeCodexBackendMode(runtimeKind);
     return {
       ...(accountSettings ?? {}),
-      codexBackendMode: runtimeKind,
+      ...(codexBackendMode ? { codexBackendMode } : {}),
     };
   },
   resolveConfiguredRuntimeKind(accountSettings?: Record<string, unknown> | null): AgentRuntimeKind | null {

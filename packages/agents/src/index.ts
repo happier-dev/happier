@@ -1,15 +1,17 @@
 import { CANONICAL_AGENTS_CORE as CANONICAL_AGENTS_CORE_FROM_MANIFEST } from './manifest.js';
 import { CANONICAL_AGENT_MODEL_CONFIG as CANONICAL_AGENT_MODEL_CONFIG_FROM_MODELS } from './models.js';
-import { CANONICAL_PROVIDER_CLI_RUNTIME_SPECS as CANONICAL_PROVIDER_CLI_RUNTIME_SPECS_FROM_RUNTIME } from './providers/providerCliRuntime.js';
+import { CANONICAL_AGENT_CLI_RUNTIME_SPECS as CANONICAL_AGENT_CLI_RUNTIME_SPECS_FROM_RUNTIME } from './cli/runtime.js';
 
 export const HAPPY_AGENTS_PACKAGE = '@happier-dev/agents';
 export const CANONICAL_AGENTS_CORE = CANONICAL_AGENTS_CORE_FROM_MANIFEST;
 export const CANONICAL_AGENT_MODEL_CONFIG = CANONICAL_AGENT_MODEL_CONFIG_FROM_MODELS;
-export const CANONICAL_PROVIDER_CLI_RUNTIME_SPECS = CANONICAL_PROVIDER_CLI_RUNTIME_SPECS_FROM_RUNTIME;
+export const CANONICAL_AGENT_CLI_RUNTIME_SPECS = CANONICAL_AGENT_CLI_RUNTIME_SPECS_FROM_RUNTIME;
 
 export {
+    AGENT_PROVIDER_IDS,
     AGENT_IDS,
     CANONICAL_AGENT_IDS,
+    isAgentProviderId,
     isAgentId,
     PERMISSION_INTENTS,
     PERMISSION_MODES,
@@ -19,11 +21,14 @@ export type {
     AgentCoreRuntimeControlSurface,
     AgentHandoffConfig,
     AgentId,
+    AgentProviderId,
     CanonicalAgentId,
     AgentLocalControlConfig,
     AgentLocalControlAttachStrategy,
     AgentLocalControlTopology,
     AgentResumeConfig,
+    ExperimentalVendorResumePolicy,
+    AgentSessionAuthSwitchTransition,
     AgentSessionCapabilitySupportLevel,
     AgentSessionCapabilities,
     AgentSessionStorage,
@@ -45,6 +50,7 @@ export {
   DEFAULT_AGENT_ID,
   getAgentCore,
   getAgentResumeConfig,
+  isRuntimeCheckedExperimentalVendorResume,
 } from './manifest.js';
 export {
   getAllProviderDefinitions,
@@ -73,6 +79,73 @@ export {
   usesTerminalHostedLocalControl,
   type AgentLocalControlCapability,
 } from './localControl.js';
+export {
+  getAgentRuntimeInputCapability,
+  supportsAgentInFlightSteer,
+  supportsAgentTerminalPromptInjection,
+} from './runtimeInput.js';
+export {
+  isConnectedServiceAccountGroupConfigurationSupported,
+  isConnectedServiceRuntimeFallbackSupported,
+  resolveConnectedServiceRuntimeFallbackCapability,
+  supportsAgentConnectedServiceSessionAuthSwitchTransition,
+} from './connectedServices/runtimeFallbackCapability.js';
+export {
+  resolveRecoverableTurnFailureRetryDecision,
+  resolveRecoverableTurnFailureSecondFailure,
+  type RecoverableTurnFailurePromptMode,
+  type RecoverableTurnFailureRetryDecision,
+  type RecoverableTurnFailureSecondFailureDecision,
+} from './runtime/session/recoverableTurnFailurePolicy.js';
+export type {
+  HostRuntimeControlAppServerDelegateInputV1,
+  HostRuntimeControlAppServerDelegateV1,
+  HostRuntimeControlAppServerRequestV1,
+  HostRuntimeControlConnectedServiceRefreshInputV1,
+  HostRuntimeControlConnectedServicesDelegateV1,
+  HostRuntimeControlContextV1,
+  HostRuntimeControlDiagnosticV1,
+  HostRuntimeControlFailureCodeV1,
+  HostRuntimeControlReachabilityDelegateV1,
+  HostRuntimeControlReachabilityInputV1,
+  HostRuntimeControlRequestOptionsV1,
+  HostRuntimeControlResultV1,
+  HostRuntimeControlServiceV1,
+  HostRuntimeControlSessionDelegateV1,
+} from './runtime/session/control.js';
+export type {
+  TerminalHostKind,
+  TerminalInjectionDuplicateRisk,
+  TerminalInjectionFailurePhase,
+  TerminalInputInjectionResult,
+  TerminalInputInjectionV1,
+  TerminalPromptInput,
+} from './runtime/terminal/inputInjection.js';
+export type {
+  TerminalHostLivenessV1,
+  TerminalInputReadinessStatusV1,
+  TerminalInputReadinessV1,
+} from './runtime/terminal/inputReadiness.js';
+export type {
+  TerminalHostAdapter,
+  TerminalHostAttachMetadata,
+  TerminalHostHandle,
+  TerminalHostPreference,
+  TerminalInputState,
+} from './runtime/terminal/host.js';
+export {
+  TERMINAL_SHIFT_TAB_SEQUENCE,
+  TERMINAL_SPECIAL_KEYS,
+} from './runtime/terminal/control.js';
+export type {
+  TerminalControlCapture,
+  TerminalControlCaptureResult,
+  TerminalControlPort,
+  TerminalControlSendFailureReason,
+  TerminalControlSendResult,
+  TerminalControlUnsupportedReason,
+  TerminalSpecialKey,
+} from './runtime/terminal/control.js';
 export { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
 export { inferAgentIdFromSessionMetadata, resolveAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
 export {
@@ -82,6 +155,7 @@ export {
   type AgentModelConfig,
   type AgentModelDescriptor,
   type AgentModelNonAcpApplyScope,
+  type AgentModelOption,
 } from './models.js';
 export {
   AGENT_LOCAL_CLI_CONFIG,
@@ -132,9 +206,11 @@ export {
 export * as legacyCustomAcpCompat from './compat/customAcp.js';
 
 export {
+  KIMI_PROVIDER_FIELDS,
   normalizeCodexBackendMode,
+  normalizeKimiAcpPythonSelector,
   type CodexBackendMode,
-  type OpenCodeBackendMode,
+  type KimiAcpPythonSelector,
   type ProviderSettingsDescriptor,
   getAllProviderSettingsDefinitions,
   getProviderSettingsDefinition,
@@ -176,11 +252,6 @@ export {
 } from './permissions/index.js';
 
 export {
-    CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
-    isClaudeLocalPermissionBridgeAgentStateRequest,
-} from './providers/claude/permissionRequestSource.js';
-
-export {
   computeMonotonicUpdatedAt,
   createFingerprintPublicationState,
   createSessionStateFacetFromHandlers,
@@ -195,7 +266,7 @@ export {
   PERMISSION_MODE_KEY,
   PERMISSION_MODE_UPDATED_AT_KEY,
   readRuntimeDescriptorSessionState,
-  readVendorSessionIdSessionState,
+  readProviderSessionIdSessionState,
   readAcpConfigOptionIntentFromMetadata,
   readAcpSessionModeIntentFromMetadata,
   readModelIntentFromMetadata,
@@ -204,12 +275,12 @@ export {
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
   SESSION_MODE_OVERRIDE_KEY,
   isSessionStateDirectionSupported,
-  resolveFingerprintPublication,
-  resolveTimestampedFieldUpdate,
-  rollbackFingerprintPublication,
-  sanitizeSessionStateErrorCode,
-  SESSION_STATE_FIELD_REGISTRY,
-  resolveMetadataStringOverrideV1,
+    resolveFingerprintPublication,
+    resolveTimestampedFieldUpdate,
+    rollbackFingerprintPublication,
+    sanitizeSessionStateErrorCode,
+    SESSION_STATE_FIELD_REGISTRY,
+    resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
   type FingerprintPublicationDecision,
   type FingerprintPublicationState,
@@ -236,7 +307,7 @@ export {
   type TimestampedFieldStaleBehavior,
   type TimestampedFieldUpdateResult,
   type TimestampedFieldValue,
-  type VendorSessionIdMetadataKey,
+  type ProviderSessionIdMetadataKey,
 } from './session/state/index.js';
 export {
   UNSUPPORTED_AGENT_SESSION_CAPABILITIES,
@@ -250,7 +321,7 @@ export {
 export {
   buildCodexSpawnRuntimeAffinityCompatFields,
   resolvePersistedCodexRuntimeIdentity,
-  resolvePersistedCodexVendorSessionId,
+  resolvePersistedCodexProviderSessionId,
   type CodexSpawnRuntimeAffinityCompatFields,
   type PersistedCodexRuntimeIdentity,
 } from './providers/codex/runtimeIdentity.js';
@@ -262,9 +333,6 @@ export {
 export {
   buildCodexAgentRuntimeDescriptor,
 } from './providers/codex/buildAgentRuntimeDescriptor.js';
-export {
-  buildOpenCodeAgentRuntimeDescriptor,
-} from './providers/opencode/buildAgentRuntimeDescriptor.js';
 export {
   readNormalizedRuntimeDescriptor,
 } from './runtime/identity/runtimeDescriptor.js';
@@ -279,26 +347,26 @@ export {
   type TranscriptSourceReadAfter,
   type TranscriptSourceWindowState,
 } from './runtime/facets/transcriptSource.js';
+export type {
+  RuntimeOutboundTranscriptDispatchFacetV1,
+  RuntimeOutboundTranscriptDispatchInputV1,
+  RuntimeOutboundTranscriptDispatchPlanV1,
+  RuntimeOutboundTranscriptPostSendEffectV1,
+  RuntimeOutboundTranscriptToolNormalizationV1,
+  RuntimeOutboundTranscriptToolProtocolV1,
+  RuntimeOutboundTranscriptToolTraceEventV1,
+  RuntimeOutboundTranscriptUsageObservationV1,
+} from './runtime/facets/transcriptDispatch.js';
 export {
   RUNTIME_DESCRIPTOR_PROVIDER_IDS,
   getRuntimeDescriptorReader,
   isSupportedRuntimeDescriptorProviderId,
 } from './runtime/identity/runtimeDescriptorReaderRegistry.js';
 export {
+  readSessionMetadataConnectedServiceBindings,
   readSessionMetadataRuntimeDescriptor,
+  type SessionMetadataConnectedServiceBinding,
 } from './providers/readSessionMetadataRuntimeDescriptor.js';
-export {
-  readOpenCodeSessionAffinityFromMetadata,
-  readOpenCodeSessionRuntimeHandleFromMetadata,
-  type OpenCodeSessionAffinity,
-  type OpenCodeSessionRuntimeHandle,
-} from './providers/opencode/sessionRuntimeHandle.js';
-export {
-  buildOpenCodeRuntimeDescriptorProviderExtra,
-  readOpenCodeRuntimeDescriptorProviderExtra,
-  type OpenCodeRuntimeDescriptorProviderExtra,
-  type OpenCodeRuntimeDescriptorProviderExtraRuntimeHandle,
-} from './providers/opencode/runtimeDescriptorExtra.js';
 export {
   applyAgentRuntimeKindOverrideToAccountSettings,
   normalizeAgentRuntimeKindOverride,
@@ -308,8 +376,13 @@ export {
   resolveAgentRuntimeControlSurfaceForSession,
 } from './session/controls/runtimeControlSurface.js';
 export {
+  RUNTIME_CHECKPOINT_TOOL_PROTOCOLS_V1,
+  resolveRuntimeCheckpointToolProtocol,
+  type RuntimeCheckpointToolProtocolV1,
+} from './session/controls/checkpoints.js';
+export {
+  resolveProviderSessionBackendMode,
   resolveCodexSessionBackendMode,
-  resolveOpenCodeSessionBackendMode,
 } from './session/controls/providerBackendModes.js';
 export {
   LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
@@ -347,28 +420,25 @@ export {
 } from './sessions/replay/happierReplayPrompt.js';
 export { normalizeVoiceAgentTurnTranscriptText } from './voice/normalizeVoiceAgentTurnTranscriptText.js';
 
-// Provider CLI runtime surface (used by bundled products like apps/cli via @happier-dev/cli-common).
+// Agent CLI runtime surface (used by bundled products like apps/cli via @happier-dev/cli-common).
 export {
-  PROVIDER_CLI_RUNTIME_SPECS,
-  getProviderCliSetupRecommendedIds,
-  getProviderCliSetupSupportedIds,
-  getProviderCliRuntimeSpec,
-  type ProviderCliInstallCommand,
-  type ProviderCliInstallPlatform,
-  type ProviderCliManagedInstallSpec,
-  type ProviderCliManualInstallKind,
-  type ProviderCliManualInstallRecipes,
-  type ProviderCliRuntimeSpec,
-  type ProviderCliSourcePreference,
-} from './providers/providerCliRuntime.js';
+  AGENT_CLI_RUNTIME_SPECS,
+  getAgentCliBinaryNames,
+  getAgentCliSetupRecommendedIds,
+  getAgentCliSetupSupportedIds,
+  getAgentCliRuntimeSpec,
+  type AgentCliInstallCommand,
+  type AgentCliInstallPlatform,
+  type AgentCliManagedInstallSpec,
+  type AgentCliManualInstallKind,
+  type AgentCliManualInstallRecipes,
+  type AgentCliRuntimeSpec,
+  type AgentCliSourcePreference,
+} from './cli/runtime.js';
 
 // Namespaced provider-specific helpers/knobs.
 export * as providers from './providers/index.js';
 
-export {
-  type ProviderCliInstallCommand as ProviderCliRuntimeInstallCommand,
-  type ProviderCliInstallPlatform as ProviderCliRuntimeInstallPlatform,
-} from './providers/providerCliRuntime.js';
 export * from './providers/providerCliInstallGuidance.js';
 
 export * from './providerSettings/index.js';
@@ -387,10 +457,193 @@ export type {
   RuntimeTranscriptSourceFacet,
 } from './runtime/engine/contracts.js';
 export type {
+  AttachAvailabilityDepthV1,
+  AttachAvailabilityRequestV1,
+  AttachFailureCodeV1,
+  AttachRequestV1,
+  AttachResultV1,
   AttachSurfaceV1,
+  BackendSessionLaunchHintsV1,
+  BackendSurfaceBaseFailureCodeV1,
+  BackendSurfaceDiagnosticV1,
+  BackendSurfaceOperationReceiptV1,
+  BackendSurfaceResultV1,
+  CheckpointAvailabilityOperationV1,
+  CheckpointAvailabilityRequestV1,
+  CheckpointDescriptorV1,
+  CheckpointProviderTargetRefV1,
+  CheckpointRestoreAnchorEvidenceV1,
+  CheckpointRestoreAnchorV1,
+  CheckpointRestoreScopeV1,
+  CheckpointSurfaceV1,
+  CheckpointTimingV1,
+  CreateCheckpointRequestV1,
+  ExternalSessionActivityRequestV1,
+  ExternalSessionActivityResultV1,
+  ExternalSessionAvailabilityOperationV1,
+  ExternalSessionAvailabilityRequestV1,
+  ExternalSessionCandidatePageV1,
+  ExternalSessionFailureCodeV1,
+  ExternalSessionFileFollowHandleV1,
+  ExternalSessionFileFollowInputV1,
+  ExternalSessionFileFollowLineV1,
+  ExternalSessionFileFollowPolicyInputV1,
+  ExternalSessionFileFollowRuntimeServiceV1,
+  ExternalSessionFileFollowStartAtV1,
+  ExternalSessionFileFollowStrategyV1,
+  ExternalSessionFollowLeaseRequestV1,
+  ExternalSessionFollowLeaseV1,
+  ExternalSessionFollowTranscriptPathResolutionV1,
+  ExternalSessionCandidateHostListRequestV1,
+  ExternalSessionCandidateHostRuntimeServiceV1,
+  ExternalSessionListCandidatesRequestV1,
+  ExternalSessionProviderStoreKeyV1,
+  ExternalSessionReadAfterRequestV1,
+  ExternalSessionResolvedIdentityV1,
+  ExternalSessionResolveFollowTranscriptPathRequestV1,
+  ExternalSessionResolveLinkedIdentityRequestV1,
+  ExternalSessionResolveLinkIdentityRequestV1,
+  ExternalSessionResolveSourceRequestV1,
+  ExternalSessionResolveSourceResultV1,
+  ExternalSessionRuntimeContextV1,
   ExternalSessionSurfaceV1,
-  SessionHandoffSurfaceV1,
+  ExternalSessionTakeoverLaunchRequestV1,
+  ExternalSessionTakeoverLaunchResultV1,
+  ExternalSessionTranscriptPageRequestV1,
+  ExternalSessionTranscriptPageV1,
+  ExternalSessionTranscriptStoreFollowRequestV1,
+  ExternalSessionTranscriptStorePageRequestV1,
+  ExternalSessionTranscriptStoreReadAfterRequestV1,
+  ExternalSessionTranscriptStoreRuntimeServiceV1,
+  AcpForkSessionRequestV1,
+  AcpForkSessionResultV1,
+  AcpLoadSessionRequestV1,
+  AcpLoadSessionResultV1,
+  AcpSessionOperationFailureCodeV1,
+  AcpSessionOperationResultValueV1,
+  AcpSessionOperationsV1,
+  ForkAvailabilityOperationV1,
+  ForkAvailabilityRequestV1,
+  ForkPointV1,
+  ForkRequestV1,
+  ForkResultV1,
+  ForkSurfaceV1,
+  HandoffAvailabilityRequestV1,
+  HandoffExportRequestV1,
+  HandoffExportResultV1,
+  HandoffFailureCodeV1,
+  HandoffImportRequestV1,
+  HandoffImportResultV1,
+  HandoffSurfaceV1,
+  ListCheckpointsRequestV1,
+  ReplayForkChildLaunchRequestV1,
+  ResolveCheckpointRestoreTargetRequestV1,
+  RestoreCheckpointByAnchorRequestV1,
+  RestoreCheckpointByTargetRequestV1,
+  RestoreCheckpointFailureCodeV1,
+  RestoreCheckpointRequestV1,
+  RestoreCheckpointResultV1,
+  SessionStateUpdateV1,
+  TerminalRuntimeDirectTranscriptBindingV1,
+  TerminalRuntimeDirectTranscriptMirrorHandleV1,
+  TerminalRuntimeAvailabilityOperationV1,
+  TerminalRuntimeAvailabilityRequestV1,
+  TerminalRuntimeControlReturnReasonV1,
+  TerminalRuntimeControlProjectionV1,
+  TerminalRuntimeHostOrchestrationV1,
+  TerminalRuntimeIdentityRequestV1,
+  TerminalRuntimeIdentityResultV1,
+  TerminalRuntimeInputTriggerHandlerV1,
+  TerminalRuntimeInputTriggerServiceV1,
+  TerminalRuntimeInputTriggerV1,
+  TerminalRuntimeLaunchRequestV1,
+  TerminalRuntimeAgentCliExecutableResolutionRequestV1,
+  TerminalRuntimeAgentCliExecutableResolutionV1,
+  TerminalRuntimeProcessExecutableGrantKindV1,
+  TerminalRuntimeProcessExecutableHostGrantV1,
+  TerminalRuntimeProcessExecutableV1,
+  TerminalRuntimeProcessHandleV1,
+  TerminalRuntimeProcessLaunchRequestV1,
+  TerminalRuntimeProcessServiceV1,
+  TerminalRuntimeProcessStdioV1,
+  TerminalRuntimeProcessTerminationV1,
+  TerminalRuntimeProjectionHostServiceV1,
+  TerminalRuntimeProviderSessionProjectionV1,
+  TerminalRuntimeRunResultV1,
   TerminalRuntimeSurfaceV1,
+  TerminalRuntimeSubagentProjectionV1,
+  TerminalRuntimeSwitchHandlerServiceV1,
+  TerminalRuntimeSwitchHandlerV1,
+  TerminalRuntimeSwitchRequestV1,
+  TerminalRuntimeSwitchTargetV1,
+  TerminalRuntimeTranscriptBindingHostServiceV1,
+  TerminalRuntimeTranscriptBindingRequestV1,
+  TerminalRuntimeTranscriptBindingV1,
+} from './runtime/surfaces/index.js';
+export type {
+  ExternalSessionAttachParamsV1,
+  ExternalSessionAttachResultV1,
+  ExternalSessionCandidateV1,
+  ExternalSessionListCandidatesParamsV1,
+  ExternalSessionListCandidatesResultV1,
+  ExternalSessionSourceV1,
+  ExternalSessionTakeoverInputV1,
+  ExternalSessionTakeoverResultV1,
+  ExternalSessionTranscriptItemV1,
+  ExternalSessionTranscriptPageParamsV1,
+  ExternalSessionTranscriptPageResultV1,
+  ExternalSessionTranscriptReadAfterParamsV1,
+  ExternalSessionTranscriptReadAfterResultV1,
+  ExternalSessionTranscriptUpdateV1,
+  PluginExternalSessionsServiceV1,
+  PluginSubagentsServiceV1,
+  SessionAgentStateWriteRequestV1,
+  SessionAuthServiceV1,
+  SessionMcpElicitDecisionV1,
+  SessionMcpElicitRequestV1,
+  SessionMcpElicitResultV1,
+  SessionMcpServiceV1,
+  SessionMetadataWriteRequestV1,
+  SessionPermissionDecisionRequestV1,
+  SessionPermissionDecisionResultV1,
+  SessionPermissionDecisionV1,
+  SessionPermissionModeV1,
+  SessionPermissionUpdateV1,
+  SessionPermissionsServiceV1,
+  SessionRuntimeAuthRefreshRequestV1,
+  SessionRuntimeAuthRefreshResultV1,
+  SessionRuntimeAuthServicesV1,
+  SessionScopedAgentMessageOptionsV1,
+  SessionScopedSendAgentMessageRequestV1,
+  SessionScopedSendRequestV1,
+  SessionScopedSendResultV1,
+  SessionScopedSendSessionEventRequestV1,
+  SessionScopedSendUserTextRequestV1,
+  SessionScopedServicesV1,
+  SessionScopedSubscribeRequestV1,
+  SessionScopedSubscriptionEventV1,
+  SessionStateFieldWriteRequestV1,
+  SubscriptionV1,
+  SubagentCompleteParamsV1,
+  SubagentGetParamsV1,
+  SubagentLifecycleDetailV1,
+  SubagentListParamsV1,
+  SubagentRefInputV1,
+  SubagentRefV1,
+  SubagentStatusUpdateParamsV1,
+  SubagentStatusV1,
+  SubagentWatchEventV1,
+  SubagentWatchParamsV1,
+} from './runtime/session/scopedServices.js';
+export {
+  isRuntimeConfigUpdateOutcomeApplied,
+  type RuntimeConfigUpdateOutcomeV1,
+} from './runtime/session/runtimeConfigUpdateOutcome.js';
+export {
+  parseCheckpointAvailabilityRequestV1,
+  parseCreateCheckpointRequestV1,
+  parseResolveCheckpointRestoreTargetRequestV1,
+  parseRestoreCheckpointRequestV1,
 } from './runtime/surfaces/index.js';
 export type { RuntimeDescriptor } from './runtime/identity/runtimeDescriptor.js';
 export {
@@ -423,13 +676,9 @@ export {
   resolveCodexRuntimeBackendMode,
   resolveCodexSpawnExtrasForRuntime,
   resolveCodexSpawnExtrasFromSettings,
-  resolveOpenCodeSessionRuntimePreferences,
 } from './runtime/preferences/index.js';
 export {
   resolveProviderOutgoingMessageMetaExtras,
 } from './runtime/adjunctAdapters/messageMetaRegistry.js';
-export {
-  buildClaudeRemoteOutgoingMessageMetaExtras,
-} from './providers/claude/messageMeta.js';
 
 export * from './voice/index.js';

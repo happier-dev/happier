@@ -16,7 +16,7 @@ describe('resolveCodexRuntimeBackendMode', () => {
   });
 
   it('uses the provided fallback backend mode when no canonical mode is set', () => {
-    expect(resolveCodexRuntimeBackendMode({ defaultBackendMode: 'mcp' })).toBe('mcp');
+    expect(resolveCodexRuntimeBackendMode({ defaultBackendMode: 'mcp' })).toBe('appServer');
     expect(resolveCodexRuntimeBackendMode({ defaultBackendMode: 'acp' })).toBe('acp');
   });
 });
@@ -30,7 +30,7 @@ describe('resolveCodexSpawnExtrasFromSettings', () => {
 
   it('does not emit the legacy ACP flag for canonical non-ACP backend modes', () => {
     expect(resolveCodexSpawnExtrasFromSettings({ codexBackendMode: 'mcp' })).toEqual({
-      codexBackendMode: 'mcp',
+      codexBackendMode: 'appServer',
     });
     expect(resolveCodexSpawnExtrasFromSettings({ codexBackendMode: 'appServer' })).toEqual({
       codexBackendMode: 'appServer',
@@ -69,7 +69,7 @@ describe('isCodexVendorResumeBackendEnabled', () => {
   it('checks vendor resume support from the canonical backend mode path', () => {
     expect(isCodexVendorResumeBackendEnabled({ codexBackendMode: 'appServer' })).toBe(true);
     expect(isCodexVendorResumeBackendEnabled({ codexBackendMode: 'acp' })).toBe(true);
-    expect(isCodexVendorResumeBackendEnabled({ codexBackendMode: 'mcp' })).toBe(false);
+    expect(isCodexVendorResumeBackendEnabled({ codexBackendMode: 'mcp' })).toBe(true);
   });
 
   it('keeps the legacy acp compatibility fallback at settings ingress only', () => {

@@ -1,9 +1,5 @@
 import type { AgentId, CanonicalAgentId } from './types.js';
-import {
-  formatClaudeEffortLevelLabel,
-  resolveClaudeDefaultEffortLevelForModelId,
-  resolveClaudeEffortLevelsForModelId,
-} from './providers/claude/effort.js';
+import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
 
 export type AgentModelNonAcpApplyScope = 'spawn_only' | 'next_prompt';
 export type AgentModelOptionValueId = string;
@@ -23,6 +19,15 @@ export type AgentModelDescriptor = Readonly<{
   id: string;
   name: string;
   description?: string;
+  contextWindowTokens?: number;
+  /**
+   * Optional extended-context model-id VARIANT for this model (e.g. Claude `<id>[1m]`).
+   *
+   * Present only when the larger context window is genuinely opt-in for the model; the UI
+   * publishes the variant id through the normal model-override pipeline. Always-on
+   * extended-context models declare no variant (there is nothing to toggle).
+   */
+  extendedContextModelId?: string;
   modelOptions?: readonly AgentModelOption[];
 }>;
 
@@ -67,57 +72,6 @@ export type AgentModelConfig = Readonly<{
   allowedModes: readonly string[];
   staticModels?: readonly AgentModelDescriptor[];
 }>;
-
-function withClaudeEffortModelOptions(model: AgentModelDescriptor): AgentModelDescriptor {
-  const levels = resolveClaudeEffortLevelsForModelId(model.id);
-  const currentValue = resolveClaudeDefaultEffortLevelForModelId(model.id);
-  if (levels.length === 0 || !currentValue) return model;
-
-  const options = levels.map((level) => ({ value: level, name: formatClaudeEffortLevelLabel(level) }));
-  return {
-    ...model,
-    modelOptions: [{
-      id: 'reasoning_effort',
-      name: 'Thinking',
-      type: 'select',
-      currentValue,
-      options,
-    }],
-  };
-}
-
-const CLAUDE_STATIC_MODELS = Object.freeze(([
-  {
-    id: 'claude-opus-4-7',
-    name: 'Opus 4.7',
-    description: 'Newest highest-capability Claude model for the hardest coding and reasoning tasks.',
-  },
-  {
-    id: 'claude-opus-4-6',
-    name: 'Opus 4.6',
-    description: 'Highest-capability Claude model for the hardest coding and reasoning tasks.',
-  },
-  {
-    id: 'claude-sonnet-4-6',
-    name: 'Sonnet 4.6',
-    description: 'Balanced Claude model for everyday coding, editing, and analysis.',
-  },
-  {
-    id: 'claude-haiku-4-5',
-    name: 'Haiku 4.5',
-    description: 'Fastest Claude option for lighter tasks and lower-latency replies.',
-  },
-  {
-    id: 'claude-opus-4-5',
-    name: 'Opus 4.5',
-    description: 'Prior Opus generation alias for compatibility with existing Claude setups.',
-  },
-  {
-    id: 'claude-sonnet-4-5',
-    name: 'Sonnet 4.5',
-    description: 'Prior Sonnet generation alias for compatibility with existing Claude setups.',
-  },
-] satisfies readonly AgentModelDescriptor[]).map(withClaudeEffortModelOptions));
 
 const GEMINI_STATIC_MODELS = Object.freeze([
   {
@@ -195,18 +149,7 @@ const CODEX_STATIC_MODELS = Object.freeze([
   },
 ] satisfies readonly AgentModelDescriptor[]);
 
-export const CANONICAL_AGENT_MODEL_CONFIG = Object.freeze({
-  claude: {
-    supportsSelection: true,
-    supportsFreeform: true,
-    nonAcpApplyScope: 'next_prompt',
-    dynamicProbe: 'static-only',
-    defaultMode: 'default',
-    allowedModes: [
-      ...CLAUDE_STATIC_MODELS.map((model) => model.id),
-    ],
-    staticModels: CLAUDE_STATIC_MODELS,
-  },
+const AUTHORED_AGENT_MODEL_CONFIG = Object.freeze({
   codex: {
     supportsSelection: true,
     nonAcpApplyScope: 'spawn_only',
@@ -216,14 +159,6 @@ export const CANONICAL_AGENT_MODEL_CONFIG = Object.freeze({
       ...CODEX_STATIC_MODELS.map((model) => model.id),
     ],
     staticModels: CODEX_STATIC_MODELS,
-  },
-  opencode: {
-    supportsSelection: true,
-    supportsFreeform: true,
-    nonAcpApplyScope: 'next_prompt',
-    acpModelConfigOptionId: 'model',
-    defaultMode: 'default',
-    allowedModes: ['default'],
   },
   gemini: {
     supportsSelection: true,
@@ -256,7 +191,7 @@ export const CANONICAL_AGENT_MODEL_CONFIG = Object.freeze({
     supportsSelection: true,
     nonAcpApplyScope: 'next_prompt',
     acpModelConfigOptionId: 'model',
-    dynamicProbe: 'static-only',
+    dynamicProbe: 'auto',
     defaultMode: 'default',
     allowedModes: ['default'],
   },
@@ -277,6 +212,21 @@ export const CANONICAL_AGENT_MODEL_CONFIG = Object.freeze({
     dynamicProbe: 'static-only',
     defaultMode: 'default',
     allowedModes: ['default'],
+  },
+  cursor: {
+    supportsSelection: true,
+    supportsFreeform: true,
+    nonAcpApplyScope: 'next_prompt',
+    acpApplyBehavior: 'set_model',
+    acpModelConfigOptionId: 'model',
+    dynamicProbe: 'auto',
+    defaultMode: 'composer-2.5-fast',
+    allowedModes: ['composer-2.5-fast'],
+    staticModels: [{
+      id: 'composer-2.5-fast',
+      name: 'Composer 2.5 Fast',
+      description: 'Cursor Composer 2.5 fast model, discovered dynamically when the Cursor CLI is available.',
+    }],
   },
   ohMyPi: {
     supportsSelection: true,
@@ -302,7 +252,14 @@ export const CANONICAL_AGENT_MODEL_CONFIG = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-} satisfies Record<CanonicalAgentId, AgentModelConfig>);
+} satisfies Partial<Record<CanonicalAgentId, AgentModelConfig>>);
+
+export const CANONICAL_AGENT_MODEL_CONFIG: Readonly<Record<CanonicalAgentId, AgentModelConfig>> =
+  mergeAuthoredWithGeneratedAgentFacts<AgentModelConfig>({
+    authored: AUTHORED_AGENT_MODEL_CONFIG,
+    label: 'model config',
+    readGenerated: (definition) => definition.modelConfig,
+  });
 
 export const AGENT_MODEL_CONFIG: Readonly<Record<CanonicalAgentId, AgentModelConfig>> = CANONICAL_AGENT_MODEL_CONFIG;
 

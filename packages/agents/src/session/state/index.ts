@@ -45,14 +45,26 @@ export {
   type FingerprintPublicationState,
 } from './policies/fingerprintPublication.js';
 export {
+  clearSessionStateFieldFromMetadata,
+  createSessionStateFieldMetadataUpdater,
+  hasSessionStateFieldMetadataBinding,
+  writeSessionStateFieldToMetadata,
+  publishSessionStateFieldMutationToMetadata,
+  publishSessionStateFieldToMetadata,
+} from './bindings/publishField.js';
+export {
   readRuntimeDescriptorSessionState,
   writeRuntimeDescriptorSessionState,
 } from './bindings/runtimeDescriptor.js';
 export {
-  readVendorSessionIdSessionState,
-  writeVendorSessionIdSessionState,
-  type VendorSessionIdMetadataKey,
-} from './bindings/vendorSessionId.js';
+  readSessionUsageLimitRecoverySessionState,
+  writeSessionUsageLimitRecoverySessionState,
+} from './bindings/usageLimitRecovery.js';
+export {
+  readProviderSessionIdSessionState,
+  writeProviderSessionIdSessionState,
+  type ProviderSessionIdMetadataKey,
+} from './bindings/providerSessionId.js';
 export {
   resolveTimestampedFieldUpdate,
   type TimestampedFieldStaleBehavior,

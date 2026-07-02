@@ -19,24 +19,25 @@ export {
   normalizeCodexBackendMode,
 } from './definitions/codex.js';
 
-export type { OpenCodeBackendMode } from './definitions/opencode.js';
-export {
-  OPENCODE_PROVIDER_SETTINGS_DEFINITION,
-  OPENCODE_PROVIDER_FIELDS,
-  OPENCODE_PROVIDER_SETTINGS_DEFAULTS,
-  buildOpenCodeProviderSettingsShape,
-  normalizeOpenCodeBackendMode,
-  normalizeOpenCodeServerBaseUrl,
-  normalizeOpenCodeServerBaseUrlExplicit,
-  readOpenCodeExplicitServerBaseUrl,
-} from './definitions/opencode.js';
-
 export {
   CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION,
   CLAUDE_REMOTE_PROVIDER_FIELDS,
   CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
+  CLAUDE_UNIFIED_TERMINAL_HOSTS,
   MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS,
   buildClaudeRemoteProviderSettingsShape,
   isValidClaudeRemoteAdvancedOptionsJson,
+  normalizeClaudeUnifiedTerminalHost,
   normalizeClaudeRemoteAdvancedOptionsJson,
 } from './definitions/claudeRemote.js';
+export type { ClaudeUnifiedTerminalHost } from './definitions/claudeRemote.js';
+
+export type { KimiAcpPythonSelector } from './definitions/kimi.js';
+export {
+  KIMI_PROVIDER_SETTINGS_DEFINITION,
+  KIMI_PROVIDER_FIELDS,
+  KIMI_PROVIDER_SETTINGS_DEFAULTS,
+  buildKimiProviderSettingsShape,
+  normalizeKimiAcpPythonSelector,
+  resolveKimiSpawnExtrasFromSettings,
+} from './definitions/kimi.js';

@@ -1,5 +1,5 @@
 import type { AgentId } from './types.js';
-import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
+import { getAgentCliRuntimeSpec } from './cli/runtime.js';
 
 export type BuiltInAcpTransportProfile = 'generic' | 'kiro';
 export type BuiltInAcpYesNoAuto = 'yes' | 'no' | 'auto';
@@ -18,7 +18,7 @@ export type BuiltInAcpConfig = Readonly<{
 }>;
 
 function providerLauncherCommand(agentId: AgentId): string {
-  return getProviderCliRuntimeSpec(agentId).binaryName;
+  return getAgentCliRuntimeSpec(agentId).binaryName;
 }
 
 export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpConfig>>> = Object.freeze({

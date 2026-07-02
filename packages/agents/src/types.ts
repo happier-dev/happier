@@ -1,28 +1,28 @@
 export type { ConnectedServiceId } from '@happier-dev/protocol';
-import { SESSION_PERMISSION_MODES, type ConnectedServiceId } from '@happier-dev/protocol';
+import {
+    SESSION_PERMISSION_MODES,
+    type ConnectedServiceId,
+    type ConnectedServicesProviderConfigSharingModeV1,
+    type ConnectedServicesProviderStateSharingModeV1,
+} from '@happier-dev/protocol';
+import {
+    AGENT_PROVIDER_IDS,
+    isAgentProviderId,
+    type AgentProviderId,
+} from './generated/agentProviderIds.js';
 import type { AnyAgentRuntimeKindsManifest } from './runtimeKinds.js';
 
-export const CANONICAL_AGENT_IDS = [
-    'claude',
-    'codex',
-    'opencode',
-    'gemini',
-    'auggie',
-    'qwen',
-    'kimi',
-    'kilo',
-    'kiro',
-    'ohMyPi',
-    'pi',
-    'copilot',
-] as const;
-export type CanonicalAgentId = (typeof CANONICAL_AGENT_IDS)[number];
-export type AgentId = CanonicalAgentId;
-export const AGENT_IDS: readonly AgentId[] = [...CANONICAL_AGENT_IDS];
+export {
+    AGENT_PROVIDER_IDS,
+    isAgentProviderId,
+    type AgentProviderId,
+};
+export const CANONICAL_AGENT_IDS = AGENT_PROVIDER_IDS;
+export type CanonicalAgentId = AgentProviderId;
+export type AgentId = AgentProviderId;
+export const AGENT_IDS: readonly AgentId[] = AGENT_PROVIDER_IDS;
 
-export function isAgentId(value: unknown): value is AgentId {
-    return typeof value === 'string' && CANONICAL_AGENT_IDS.includes(value as AgentId);
-}
+export const isAgentId = isAgentProviderId;
 
 export const PERMISSION_MODES = SESSION_PERMISSION_MODES;
 
@@ -56,6 +56,11 @@ export type AgentSessionStorage = Readonly<{
     persisted: boolean;
 }>;
 export type AgentSessionCapabilitySupportLevel = 'supported' | 'unsupported' | 'experimental';
+export type AgentSessionAuthSwitchTransition =
+    | 'native_to_connected'
+    | 'connected_to_native'
+    | 'connected_to_connected'
+    | 'same_connected_group';
 export type AgentSessionCapabilities = Readonly<{
     sessionListing: AgentSessionCapabilitySupportLevel;
     sessionFork: Readonly<{
@@ -64,6 +69,9 @@ export type AgentSessionCapabilities = Readonly<{
     }>;
     sessionRollback: Readonly<{
         conversation: AgentSessionCapabilitySupportLevel;
+    }>;
+    usageLimitRecovery?: Readonly<{
+        checkNow: AgentSessionCapabilitySupportLevel;
     }>;
 }>;
 
@@ -77,6 +85,7 @@ export type VendorResumeIdField =
     | 'kimiSessionId'
     | 'kiloSessionId'
     | 'kiroSessionId'
+    | 'cursorSessionId'
     | 'ohMyPiSessionId'
     | 'piSessionId'
     | 'copilotSessionId';
@@ -85,10 +94,30 @@ export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';
 
 export type ConnectedServiceKind = 'oauth' | 'token';
+export type ConnectedServicesProviderStateSharingUnavailableReason =
+    | 'not_implemented'
+    | 'dynamic_diagnostics_required';
+
+export type ConnectedServicesProviderStateSharingCapability = Readonly<{
+    config: Readonly<{
+        supported: boolean;
+        modes: ReadonlyArray<ConnectedServicesProviderConfigSharingModeV1>;
+        unavailableReason?: ConnectedServicesProviderStateSharingUnavailableReason;
+    }>;
+    state: Readonly<{
+        supported: boolean;
+        modes: ReadonlyArray<ConnectedServicesProviderStateSharingModeV1>;
+        sharedStatePrivacyRiskAcknowledgementRequired?: boolean;
+        unavailableReason?: ConnectedServicesProviderStateSharingUnavailableReason;
+    }>;
+}>;
+
+export type ExperimentalVendorResumePolicy = 'disabled_by_default' | 'runtime_checked';
 
 export type AgentResumeConfig = Readonly<{
     vendorResume: VendorResumeSupportLevel;
     vendorResumeIdField?: VendorResumeIdField | null;
+    experimentalResumePolicy?: ExperimentalVendorResumePolicy;
 }>;
 
 export type AgentHandoffConfig = Readonly<{
@@ -100,6 +129,12 @@ export type AgentLocalControlConfig = Readonly<{
     supported: boolean;
     topology?: AgentLocalControlTopology;
     attachStrategy?: AgentLocalControlAttachStrategy;
+    remoteWritable?: boolean;
+}>;
+
+export type AgentRuntimeInputConfig = Readonly<{
+    inFlightSteerSupported: boolean;
+    terminalPromptInjectionSupported: boolean;
 }>;
 
 export type AgentToolsConfig = Readonly<{
@@ -113,6 +148,7 @@ export type AgentCoreRuntimeControlSurface = Readonly<{
     sessionCapabilities: AgentSessionCapabilities;
     handoff: AgentHandoffConfig;
     localControl?: AgentLocalControlConfig | null;
+    runtimeInput?: AgentRuntimeInputConfig | null;
     tools: AgentToolsConfig;
 }>;
 
@@ -153,9 +189,18 @@ export type AgentCore = Readonly<{
      * Optional Happier Connected Services compatibility for this agent.
      *
      * This is used by UI + daemon to offer "connect once, reuse everywhere" auth routing.
-     */
+    */
     connectedServices?: Readonly<{
       supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
+      providerStateSharing?: ConnectedServicesProviderStateSharingCapability;
+      sessionAuthSwitch?: Readonly<{
+        continuityMode: 'hot_apply' | 'restart_same_home' | 'restart_shared_state_required';
+        supportedTransitions?: ReadonlyArray<AgentSessionAuthSwitchTransition>;
+        providerStateSharingRequired?: Readonly<{
+          serviceIds?: ReadonlyArray<ConnectedServiceId>;
+          supportedTransitions: ReadonlyArray<AgentSessionAuthSwitchTransition>;
+        }>;
+      }>;
       /**
        * Optional credential-kind compatibility per connected service id.
        *

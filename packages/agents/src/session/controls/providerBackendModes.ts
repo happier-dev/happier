@@ -1,33 +1,31 @@
 import { getProviderSessionControlAdapter } from '../../runtime/controlSurface/sessionControlAdapterRegistry.js';
+import type { CodexBackendMode } from '../../providerSettings/definitions/codex.js';
+import type { AgentId } from '../../types.js';
+import type { AgentRuntimeKind } from '../../runtimeKinds.js';
 
 import { resolveAgentConfiguredRuntimeKind } from './runtimeKindOverride.js';
+
+export function resolveProviderSessionBackendMode(params: Readonly<{
+  agentId: AgentId;
+  metadata: unknown;
+  accountSettings?: Record<string, unknown> | null;
+}>): AgentRuntimeKind | null {
+  const adapter = getProviderSessionControlAdapter(params.agentId);
+  return adapter?.resolvePersistedSessionRuntimeKind?.(params.metadata)
+    ?? (adapter ? resolveAgentConfiguredRuntimeKind({
+      agentId: params.agentId,
+      accountSettings: params.accountSettings,
+    }) : null);
+}
 
 export function resolveCodexSessionBackendMode(params: Readonly<{
   metadata: unknown;
   accountSettings?: Record<string, unknown> | null;
-}>): 'mcp' | 'acp' | 'appServer' | null {
-  const adapter = getProviderSessionControlAdapter('codex');
-  const persistedKind = adapter?.resolvePersistedSessionRuntimeKind?.(params.metadata) ?? null;
-  if (persistedKind === 'mcp' || persistedKind === 'acp' || persistedKind === 'appServer') {
-    return persistedKind;
-  }
-
-  const configuredKind = resolveAgentConfiguredRuntimeKind({ agentId: 'codex', accountSettings: params.accountSettings });
-  return configuredKind === 'mcp' || configuredKind === 'acp' || configuredKind === 'appServer'
-    ? configuredKind
-    : null;
-}
-
-export function resolveOpenCodeSessionBackendMode(params: Readonly<{
-  metadata: unknown;
-  accountSettings?: Record<string, unknown> | null;
-}>): 'server' | 'acp' | null {
-  const adapter = getProviderSessionControlAdapter('opencode');
-  const persistedKind = adapter?.resolvePersistedSessionRuntimeKind?.(params.metadata) ?? null;
-  if (persistedKind === 'server' || persistedKind === 'acp') {
-    return persistedKind;
-  }
-
-  const configuredKind = resolveAgentConfiguredRuntimeKind({ agentId: 'opencode', accountSettings: params.accountSettings });
-  return configuredKind === 'server' || configuredKind === 'acp' ? configuredKind : null;
+}>): CodexBackendMode | null {
+  const backendMode = resolveProviderSessionBackendMode({
+    agentId: 'codex',
+    metadata: params.metadata,
+    accountSettings: params.accountSettings,
+  });
+  return backendMode === 'acp' || backendMode === 'appServer' ? backendMode : null;
 }

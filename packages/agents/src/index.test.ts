@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,20 +13,18 @@ import {
   AGENT_LOCAL_CLI_CONFIG,
   AGENT_SESSION_MODE_DESCRIPTORS,
   AGENT_SESSION_MODES,
-  PROVIDER_CLI_RUNTIME_SPECS,
-  CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+  AGENT_CLI_RUNTIME_SPECS,
   CANONICAL_AGENT_MODEL_CONFIG,
   CANONICAL_AGENT_AUTH_PROBE_CONFIG,
   CANONICAL_AGENT_LOCAL_CLI_CONFIG,
   CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS,
   CANONICAL_AGENT_SESSION_MODES,
   CANONICAL_AGENTS_CORE,
-  CANONICAL_PROVIDER_CLI_RUNTIME_SPECS,
+  CANONICAL_AGENT_CLI_RUNTIME_SPECS,
   type AgentCoreRuntimeControlSurface,
   type EngineAdapter,
-  isClaudeLocalPermissionBridgeAgentStateRequest,
-  getProviderCliSetupRecommendedIds,
-  getProviderCliSetupSupportedIds,
+  getAgentCliSetupRecommendedIds,
+  getAgentCliSetupSupportedIds,
   getAllProviderDefinitions,
   getAllProviderDefinitionContracts,
   getAllBackendDefinitions,
@@ -45,26 +43,24 @@ import {
   type RuntimeCapabilities,
   type RuntimeControlSurface,
   type RuntimeFacets,
+  type RuntimeOutboundTranscriptDispatchFacetV1,
   type RuntimeTranscriptSourceFacet,
   type SessionStateFacet,
   type AgentId,
+  type AgentProviderId,
   type AgentAuthProbeConfig,
   type AgentLocalCliConfig,
   type CanonicalAgentId,
-  type ProviderCliRuntimeSpec,
+  type AgentCliRuntimeSpec,
   legacyCustomAcpCompat,
 } from './index.js';
 import type { EngineSpec, RuntimeDiscovery, RuntimeKindSpec } from './index.js';
 import type { AgentRuntimeKindOverrides } from './runtimeKinds.js';
 import type { AgentCore } from './types.js';
 import {
-  CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE as CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE_FROM_CLAUDE_INDEX,
-  isClaudeLocalPermissionBridgeAgentStateRequest as isClaudeLocalPermissionBridgeAgentStateRequestFromClaudeIndex,
-} from './providers/claude/index.js';
-import {
-  getProviderCliSetupRecommendedIds as getProviderCliSetupRecommendedIdsFromProviderRuntime,
-  getProviderCliSetupSupportedIds as getProviderCliSetupSupportedIdsFromProviderRuntime,
-} from './providers/providerCliRuntime.js';
+  getAgentCliSetupRecommendedIds as getAgentCliSetupRecommendedIdsFromProviderRuntime,
+  getAgentCliSetupSupportedIds as getAgentCliSetupSupportedIdsFromProviderRuntime,
+} from './cli/runtime.js';
 
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(packageDir, '..', '..');
@@ -117,10 +113,14 @@ describe('agents package exports', () => {
       'applyModelIntentSessionMetadata',
       'applyPermissionModeIntentSessionMetadata',
       'applyRuntimeDescriptorSessionMetadata',
-      'applyVendorSessionIdSessionMetadata',
+      'applyProviderSessionIdSessionMetadata',
       'buildRuntimeDescriptorSessionMetadata',
-      'buildVendorSessionIdSessionMetadata',
+      'buildProviderSessionIdSessionMetadata',
       'clearSessionStateFieldFromMetadata',
+      'hasSessionStateFieldMetadataBinding',
+      'writeSessionStateFieldToMetadata',
+      'publishSessionStateFieldMutationToMetadata',
+      'publishSessionStateFieldToMetadata',
     ] as const;
 
     for (const exportName of rootOnlyMetadataWriterNames) {
@@ -163,37 +163,79 @@ describe('agents package exports', () => {
     expect('CODEX_SESSION_CONTROL_ADAPTER_RUNTIME_HELPERS' in agents).toBe(false);
   });
 
+  it('does not expose OpenCode runtime descriptor construction from the package root', () => {
+    expect('buildOpenCodeAgentRuntimeDescriptor' in agents).toBe(false);
+    expect('buildOpenCodeRuntimeDescriptorProviderExtra' in agents).toBe(false);
+    expect('readOpenCodeRuntimeDescriptorProviderExtra' in agents).toBe(false);
+  });
+
+  it('does not expose OpenCode plugin-owned provider settings from the package root or settings facade', () => {
+    const openCodeProviderSettingsExports = [
+      'OPENCODE_PROVIDER_SETTINGS_DEFINITION',
+      'OPENCODE_PROVIDER_FIELDS',
+      'OPENCODE_PROVIDER_SETTINGS_DEFAULTS',
+      'buildOpenCodeProviderSettingsShape',
+      'normalizeOpenCodeBackendMode',
+      'normalizeOpenCodeServerBaseUrl',
+      'normalizeOpenCodeServerBaseUrlExplicit',
+      'readOpenCodeExplicitServerBaseUrl',
+    ] as const;
+
+    for (const exportName of openCodeProviderSettingsExports) {
+      expect(exportName in agents).toBe(false);
+      expect(exportName in providerSettings).toBe(false);
+    }
+  });
+
+  it('does not expose OpenCode plugin-owned runtime preference helpers from the package root', () => {
+    expect('resolveOpenCodeSessionRuntimePreferences' in agents).toBe(false);
+  });
+
+  it('does not expose Kimi plugin-owned runtime preference helpers from the package root', () => {
+    expect('resolveKimiSessionRuntimePreferences' in agents).toBe(false);
+  });
+
+  it('does not expose Pi plugin-owned thinking helpers through the provider namespace', () => {
+    expect('providers' in agents).toBe(true);
+    expect('pi' in agents.providers).toBe(false);
+  });
+
+  it('re-exports Kimi provider setting fields from the package root', () => {
+    expect(agents.KIMI_PROVIDER_FIELDS.kimiAcpPythonSelector.default).toBe('auto');
+  });
+
   it('does not expose runtime helpers through the provider-settings facade', () => {
     expect('resolveCodexSpawnExtrasForRuntime' in providerSettings).toBe(false);
     expect('resolveCodexSpawnExtrasFromSettings' in providerSettings).toBe(false);
     expect('resolveCodexRuntimeBackendMode' in providerSettings).toBe(false);
     expect('buildClaudeRemoteOutgoingMessageMetaExtras' in providerSettings).toBe(false);
     expect('resolveProviderOutgoingMessageMetaExtras' in providerSettings).toBe(false);
+    expect('buildClaudeRemoteOutgoingMessageMetaExtras' in agents).toBe(false);
   });
 
-  it('re-exports the Claude local permission bridge helper from the package root', () => {
-    expect(CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE).toBe('claude_local_permission_bridge');
-    expect(isClaudeLocalPermissionBridgeAgentStateRequest({ source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE })).toBe(true);
-    expect(isClaudeLocalPermissionBridgeAgentStateRequest({ source: 'other' })).toBe(false);
+  it('does not expose Claude plugin-owned permission bridge helpers from the package root', () => {
+    expect('CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE' in agents).toBe(false);
+    expect('isClaudeLocalPermissionBridgeAgentStateRequest' in agents).toBe(false);
   });
 
-  it('re-exports the Claude local permission bridge helper from the Claude provider entrypoint', () => {
-    expect(CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE_FROM_CLAUDE_INDEX).toBe('claude_local_permission_bridge');
-    expect(isClaudeLocalPermissionBridgeAgentStateRequestFromClaudeIndex({
-      source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE_FROM_CLAUDE_INDEX,
-    })).toBe(true);
-    expect(isClaudeLocalPermissionBridgeAgentStateRequestFromClaudeIndex({ source: 'other' })).toBe(false);
+  it('does not keep a Claude provider source owner under the agents package', () => {
+    expect(existsSync(join(packageDir, 'src/providers/claude'))).toBe(false);
   });
 
   it('re-exports the provider setup helper lists from the package root', () => {
-    expect(getProviderCliSetupSupportedIds()).toEqual(getProviderCliSetupSupportedIdsFromProviderRuntime());
-    expect(getProviderCliSetupRecommendedIds()).toEqual(getProviderCliSetupRecommendedIdsFromProviderRuntime());
+    expect(getAgentCliSetupSupportedIds()).toEqual(getAgentCliSetupSupportedIdsFromProviderRuntime());
+    expect(getAgentCliSetupRecommendedIds()).toEqual(getAgentCliSetupRecommendedIdsFromProviderRuntime());
   });
 
   it('re-exports canonical aggregates while keeping customAcp compat root exports narrowly scoped', () => {
+    expectTypeOf<AgentProviderId>().toEqualTypeOf<CanonicalAgentId>();
     expectTypeOf<AgentId>().toEqualTypeOf<CanonicalAgentId>();
     expectTypeOf<(typeof agents.AGENT_IDS)[number]>().toEqualTypeOf<CanonicalAgentId>();
+    expectTypeOf<(typeof agents.AGENT_PROVIDER_IDS)[number]>().toEqualTypeOf<AgentProviderId>();
+    expect(agents.AGENT_PROVIDER_IDS).toEqual(agents.CANONICAL_AGENT_IDS);
     expect(agents.AGENT_IDS).toEqual(agents.CANONICAL_AGENT_IDS);
+    expect(agents.isAgentProviderId('claude')).toBe(true);
+    expect(agents.isAgentProviderId('customAcp')).toBe(false);
     expect(agents.AGENT_IDS).not.toContain('customAcp');
     expect(AGENTS_CORE).not.toHaveProperty('customAcp');
     expect(AGENT_MODEL_CONFIG).not.toHaveProperty('customAcp');
@@ -201,22 +243,22 @@ describe('agents package exports', () => {
     expect(AGENT_LOCAL_CLI_CONFIG).not.toHaveProperty('customAcp');
     expect(AGENT_SESSION_MODE_DESCRIPTORS).not.toHaveProperty('customAcp');
     expect(AGENT_SESSION_MODES).not.toHaveProperty('customAcp');
-    expect(PROVIDER_CLI_RUNTIME_SPECS).not.toHaveProperty('customAcp');
+    expect(AGENT_CLI_RUNTIME_SPECS).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENTS_CORE).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_MODEL_CONFIG).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_AUTH_PROBE_CONFIG).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_LOCAL_CLI_CONFIG).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_SESSION_MODES).not.toHaveProperty('customAcp');
-    expect(CANONICAL_PROVIDER_CLI_RUNTIME_SPECS).not.toHaveProperty('customAcp');
+    expect(CANONICAL_AGENT_CLI_RUNTIME_SPECS).not.toHaveProperty('customAcp');
     expect('isAgentLookupId' in agents).toBe(false);
     expect('LEGACY_COMPAT_AGENT_IDS' in agents).toBe(false);
     expect('LEGACY_CUSTOM_ACP_AGENT_ID' in agents).toBe(false);
     expect('LEGACY_CUSTOM_ACP_AGENT_CORE' in agents).toBe(false);
     expect('LEGACY_CUSTOM_ACP_AGENT_MODEL_CONFIG' in agents).toBe(false);
     expect('LEGACY_CUSTOM_ACP_COMPAT_CONFIG' in agents).toBe(false);
-    expect('LEGACY_CUSTOM_ACP_PROVIDER_CLI_RUNTIME_SPEC' in agents).toBe(false);
-    expect('getProviderCliRuntimeSpecForLookupId' in agents).toBe(false);
+    expect('LEGACY_CUSTOM_ACP_AGENT_CLI_RUNTIME_SPEC' in agents).toBe(false);
+    expect('getAgentCliRuntimeSpecForLookupId' in agents).toBe(false);
     expect('isLegacyCustomAcpAgentId' in agents).toBe(false);
     expect(legacyCustomAcpCompat.LEGACY_COMPAT_AGENT_IDS).toEqual(['customAcp']);
     expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentCore().id).toBe('customAcp');
@@ -224,7 +266,24 @@ describe('agents package exports', () => {
     expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentAuthProbeConfig().agentId).toBe('customAcp');
     expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentLocalCliConfig().agentId).toBe('customAcp');
     expect(legacyCustomAcpCompat.getLegacyCustomAcpSessionModeDescriptor().runtimeSwitch).toBe('acp-setSessionMode');
-    expect(legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec().id).toBe('customAcp');
+    expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec().id).toBe('customAcp');
+  });
+
+  it('declares Cursor as an experimental local ACP session backend', () => {
+    const cursorCore = (AGENTS_CORE as Readonly<Record<string, AgentCore>>).cursor;
+
+    expect(cursorCore).toEqual(expect.objectContaining({
+      id: 'cursor',
+      cliSubcommand: 'cursor',
+      detectKey: 'cursor-agent',
+      resume: {
+        vendorResume: 'experimental',
+        vendorResumeIdField: 'cursorSessionId',
+        experimentalResumePolicy: 'runtime_checked',
+      },
+      sessionStorage: { direct: true, persisted: true },
+      tools: { delivery: 'shell_bridge', support: 'experimental' },
+    }));
   });
 
   it('re-exports the canonical provider and backend definition registry helpers from the package root', () => {
@@ -247,8 +306,8 @@ describe('agents package exports', () => {
     type InvalidPublicLegacyCompatId = import('./index.js').LegacyCompatAgentId;
     // @ts-expect-error customAcp compat core must not satisfy the canonical AgentCore contract.
     const invalidCompatCore: AgentCore = legacyCustomAcpCompat.getLegacyCustomAcpAgentCore();
-    // @ts-expect-error customAcp compat runtime specs must not satisfy the canonical ProviderCliRuntimeSpec contract.
-    const invalidCompatRuntimeSpec: ProviderCliRuntimeSpec = legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
+    // @ts-expect-error customAcp compat runtime specs must not satisfy the canonical AgentCliRuntimeSpec contract.
+    const invalidCompatRuntimeSpec: AgentCliRuntimeSpec = legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
     // @ts-expect-error customAcp compat auth metadata must not satisfy the canonical AgentAuthProbeConfig contract.
     const invalidCompatAuthProbeConfig: AgentAuthProbeConfig = legacyCustomAcpCompat.getLegacyCustomAcpAgentAuthProbeConfig();
     // @ts-expect-error customAcp compat local CLI metadata must not satisfy the canonical AgentLocalCliConfig contract.
@@ -272,20 +331,20 @@ describe('agents package exports', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'thread_1',
+          providerSessionId: 'thread_1',
         },
       },
     })).toEqual({
       providerId: 'codex',
       runtimeKind: 'appServer',
-      vendorSessionId: 'thread_1',
+      providerSessionId: 'thread_1',
       runtimeHandle: {
         backendMode: 'appServer',
-        vendorSessionId: 'thread_1',
+        providerSessionId: 'thread_1',
       },
       rawProvider: {
         backendMode: 'appServer',
-        vendorSessionId: 'thread_1',
+        providerSessionId: 'thread_1',
       },
     });
   });
@@ -318,6 +377,7 @@ describe('agents package exports', () => {
     expectTypeOf<RuntimeFacets>().toEqualTypeOf<Readonly<{
       transcriptSource?: RuntimeTranscriptSourceFacet;
       sessionState?: SessionStateFacet;
+      transcriptDispatch?: RuntimeOutboundTranscriptDispatchFacetV1;
     }>>();
     expectTypeOf<RuntimeCapabilities>().toEqualTypeOf<Readonly<{
       localControl?: AgentCoreRuntimeControlSurface['localControl'] | null;
@@ -379,8 +439,6 @@ describe('agents package exports', () => {
       sourcePreference: { default: 'system-first' },
       defaultRuntimeKind: { default: 'appServer' },
     });
-    expect(getProviderMessageMetaEnricher('claude')).toEqual({
-      buildOutgoingMessageMetaExtras: expect.any(Function),
-    });
+    expect(getProviderMessageMetaEnricher('claude')).toEqual({});
   });
 });

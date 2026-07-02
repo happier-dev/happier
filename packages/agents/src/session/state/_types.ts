@@ -2,6 +2,7 @@ import type {
   SessionMetadata,
   SessionStateCapabilitiesV1,
   SessionStateFieldClass,
+  SessionStateFieldDeliveryClassV1,
   SessionStateFieldId,
   SessionStateFieldValue,
 } from '@happier-dev/protocol';
@@ -66,7 +67,11 @@ export type SessionStateStoredValue<F extends SessionStateFieldId> = Readonly<{
 export type SessionStateFieldWriteValue<F extends SessionStateFieldId> =
   F extends 'identity.runtimeDescriptor'
     ? SessionStateFieldValue<F> | null
-    : F extends 'identity.vendorSessionId'
+    : F extends 'runtime.workState'
+      ? SessionStateFieldValue<F> | null
+    : F extends 'runtime.usageLimitRecovery'
+      ? SessionStateFieldValue<F> | null
+    : F extends 'identity.providerSessionId'
       ? SessionStateFieldValue<F> | Readonly<{
         value: SessionStateFieldValue<F>;
         metadataKey: string;
@@ -102,6 +107,7 @@ export type SessionStateFieldDescriptor<F extends SessionStateFieldId = SessionS
   id: F;
   class: SessionStateFieldClass;
   conflictPolicy: SessionStateConflictPolicy;
+  deliveryClass: SessionStateFieldDeliveryClassV1;
 }>;
 
 export type SessionStateTelemetryEvent = Readonly<{

@@ -10,7 +10,6 @@ describe('resolveCodexSessionRuntimePreferences', () => {
       },
       processEnv: {
         HAPPIER_CODEX_BACKEND_MODE: 'mcp',
-        HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
       },
     })).toEqual({
       codexBackendMode: 'appServer',
@@ -22,7 +21,6 @@ describe('resolveCodexSessionRuntimePreferences', () => {
       settings: {},
       processEnv: {
         HAPPIER_CODEX_BACKEND_MODE: 'mcp',
-        HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
       },
     })).toEqual({
       codexBackendMode: 'appServer',
@@ -40,7 +38,7 @@ describe('resolveCodexSpawnExtrasForRuntime', () => {
     ).toEqual({ codexBackendMode: 'acp' });
   });
 
-  it('does not let the legacy ACP env override strip persisted canonical settings', () => {
+  it('does not let retired ACP env residue strip persisted canonical settings', () => {
     expect(
       codexPreferences.resolveCodexSpawnExtrasForRuntime({
         settings: { codexBackendMode: 'acp' },
@@ -55,7 +53,7 @@ describe('resolveCodexSpawnExtrasForRuntime', () => {
         settings: { codexBackendMode: 'mcp' },
         processEnv: {},
       }),
-    ).toEqual({ codexBackendMode: 'mcp' });
+    ).toEqual({ codexBackendMode: 'appServer' });
   });
 
   it('falls back to explicit runtime env overrides only when canonical settings are absent', () => {
@@ -67,12 +65,12 @@ describe('resolveCodexSpawnExtrasForRuntime', () => {
     ).toEqual({ codexBackendMode: 'acp' });
   });
 
-  it('normalizes the legacy ACP env override into the canonical runtime backend mode field', () => {
+  it('ignores the retired ACP env override when no canonical backend mode is present', () => {
     expect(
       codexPreferences.resolveCodexSpawnExtrasForRuntime({
         settings: {},
         processEnv: { HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' },
       }),
-    ).toEqual({ codexBackendMode: 'acp' });
+    ).toEqual({});
   });
 });

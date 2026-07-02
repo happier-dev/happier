@@ -1,6 +1,6 @@
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
-import type { AgentId, CanonicalAgentId } from './types.js';
-import { AGENT_IDS, CANONICAL_AGENT_IDS } from './types.js';
+import type { AgentId } from './types.js';
+import { AGENT_IDS, isAgentProviderId } from './types.js';
 import { isLegacyConfiguredBackendSentinelId } from './compat/legacyConfiguredBackend.js';
 import { DEFAULT_AGENT_ID, getAgentResumeConfig } from './manifest.js';
 import { resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
@@ -25,7 +25,7 @@ function normalizeResolvedAgentId(value: unknown): AgentId | null {
     return null;
   }
 
-  return CANONICAL_AGENT_IDS.includes(value as CanonicalAgentId) ? (value as CanonicalAgentId) : null;
+  return isAgentProviderId(value) ? value : null;
 }
 
 function readDirectSessionProviderId(metadata: Record<string, unknown>): AgentId | null {

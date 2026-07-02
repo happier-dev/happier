@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { CANONICAL_AGENT_IDS } from '../types.js';
+import { AGENT_PROVIDER_IDS } from '../types.js';
 import { CANONICAL_AGENT_MODEL_CONFIG } from '../models.js';
 import { CANONICAL_AGENT_LOCAL_CLI_CONFIG } from '../localCli.js';
 import { CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS, CANONICAL_AGENT_SESSION_MODES } from '../sessionModes.js';
@@ -16,7 +16,7 @@ import {
 describe('providerDefinitions', () => {
   it('assembles one provider definition for every canonical provider id', () => {
     expect(getAllProviderDefinitions().map((definition) => definition.id).sort()).toEqual(
-      [...CANONICAL_AGENT_IDS].sort(),
+      [...AGENT_PROVIDER_IDS].sort(),
     );
   });
 
@@ -28,13 +28,13 @@ describe('providerDefinitions', () => {
     expect(claude?.sessionModesKind).toBe(CANONICAL_AGENT_SESSION_MODES.claude);
     expect(claude?.modelConfig).toBe(CANONICAL_AGENT_MODEL_CONFIG.claude);
     expect(claude?.localCli).toBe(CANONICAL_AGENT_LOCAL_CLI_CONFIG.claude);
-    expect(claude?.providerCliRuntime.id).toBe('claude');
+    expect(claude?.agentCliRuntime.id).toBe('claude');
     expect(claude?.providerSettings).toBe(getProviderSettingsDefinition('claude'));
   });
 
   it('derives normalized provider definition contracts from canonical agent metadata', () => {
     expect(getAllProviderDefinitionContracts().map((definition) => definition.id).sort()).toEqual(
-      [...CANONICAL_AGENT_IDS].sort(),
+      [...AGENT_PROVIDER_IDS].sort(),
     );
 
     const customAcp = getProviderDefinitionContract('customAcp');

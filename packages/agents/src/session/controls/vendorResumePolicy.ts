@@ -1,6 +1,6 @@
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import type { AgentId } from '../../types.js';
-import { getAgentResumeConfig } from '../../manifest.js';
+import { getAgentResumeConfig, isRuntimeCheckedExperimentalVendorResume } from '../../manifest.js';
 import { getProviderSessionControlAdapter } from '../../runtime/controlSurface/sessionControlAdapterRegistry.js';
 
 export type VendorResumeEligibilityReasonCode =
@@ -60,6 +60,14 @@ export function evaluateVendorResumeEligibility(input: Readonly<{
   }
 
   if (resumeConfig.vendorResume === 'experimental') {
+    if (isRuntimeCheckedExperimentalVendorResume(input.agentId)) {
+      const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(input.agentId, input.metadata);
+      if (!vendorResumeId) {
+        return { eligible: false, reasonCode: 'vendor_resume_id_missing' };
+      }
+      return { eligible: true, vendorResumeId };
+    }
+
     const enabled = getProviderSessionControlAdapter(input.agentId)?.isExperimentalVendorResumeEnabled?.({
       metadata: input.metadata,
       accountSettings,

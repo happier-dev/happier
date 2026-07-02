@@ -2,7 +2,7 @@ import type { AgentAuthProbeConfig, AgentAuthProbeBackgroundChecks, AgentAuthPro
 import type { BuiltInAcpConfig, BuiltInAcpYesNoAuto } from '../acp.js';
 import type { AgentLocalCliConfig, AgentCliLaunchCommand, AgentCliSupportKind } from '../localCli.js';
 import type { AgentModelConfig } from '../models.js';
-import type { ProviderCliRuntimeSpec } from '../providers/providerCliRuntime.js';
+import type { AgentCliRuntimeSpec } from '../cli/runtime.js';
 import type { AgentSessionModeDescriptor } from '../sessionModes.js';
 import type { AgentCore, AgentId } from '../types.js';
 import { isAgentId } from '../types.js';
@@ -22,8 +22,8 @@ export function isAgentLookupId(value: unknown): value is AgentLookupId {
   return isAgentId(value) || isLegacyCustomAcpAgentId(value);
 }
 
-export type LegacyCompatProviderCliRuntimeSpec = Readonly<
-  Omit<ProviderCliRuntimeSpec, 'id'> & {
+export type LegacyCompatAgentCliRuntimeSpec = Readonly<
+  Omit<AgentCliRuntimeSpec, 'id'> & {
     id: LegacyCompatAgentId;
   }
 >;
@@ -90,7 +90,7 @@ export function readLegacyCustomAcpCompatBackendIdFromMetadata(metadata: unknown
   return readLegacyConfiguredAcpBackendIdFromFlavor((metadata as { flavor?: unknown }).flavor);
 }
 
-const LEGACY_CUSTOM_ACP_PROVIDER_CLI_RUNTIME_SPEC = Object.freeze({
+const LEGACY_CUSTOM_ACP_AGENT_CLI_RUNTIME_SPEC = Object.freeze({
   id: LEGACY_CUSTOM_ACP_AGENT_ID,
   title: 'Custom ACP',
   binaryName: 'custom-acp',
@@ -101,7 +101,7 @@ const LEGACY_CUSTOM_ACP_PROVIDER_CLI_RUNTIME_SPEC = Object.freeze({
   manualInstallRecipes: null,
   acceptsJavaScriptFileOverride: false,
   docsUrl: null,
-} satisfies LegacyCompatProviderCliRuntimeSpec);
+} satisfies LegacyCompatAgentCliRuntimeSpec);
 
 const LEGACY_CUSTOM_ACP_AGENT_MODEL_CONFIG = Object.freeze({
   supportsSelection: true,
@@ -114,8 +114,8 @@ const LEGACY_CUSTOM_ACP_AGENT_MODEL_CONFIG = Object.freeze({
   allowedModes: ['default'],
 } satisfies AgentModelConfig);
 
-export function getLegacyCustomAcpProviderCliRuntimeSpec(): LegacyCompatProviderCliRuntimeSpec {
-  return LEGACY_CUSTOM_ACP_PROVIDER_CLI_RUNTIME_SPEC;
+export function getLegacyCustomAcpAgentCliRuntimeSpec(): LegacyCompatAgentCliRuntimeSpec {
+  return LEGACY_CUSTOM_ACP_AGENT_CLI_RUNTIME_SPEC;
 }
 
 export function getLegacyCustomAcpAgentModelConfig(): AgentModelConfig {
@@ -156,7 +156,7 @@ function createLegacyCustomAcpAgentLocalCliConfig(params: Readonly<{
 
 export function getLegacyCustomAcpAgentLocalCliConfig(): LegacyCompatAgentLocalCliConfig {
   return createLegacyCustomAcpAgentLocalCliConfig({
-    detectKey: getLegacyCustomAcpProviderCliRuntimeSpec().binaryName,
+    detectKey: getLegacyCustomAcpAgentCliRuntimeSpec().binaryName,
   });
 }
 
@@ -184,7 +184,7 @@ function createLegacyCustomAcpAgentAuthProbeConfig(params: Readonly<{
 
 export function getLegacyCustomAcpAgentAuthProbeConfig(): LegacyCompatAgentAuthProbeConfig {
   return createLegacyCustomAcpAgentAuthProbeConfig({
-    binaryName: getLegacyCustomAcpProviderCliRuntimeSpec().binaryName,
+    binaryName: getLegacyCustomAcpAgentCliRuntimeSpec().binaryName,
   });
 }
 

@@ -2,7 +2,7 @@ import type { AgentCore, AgentId } from '../types.js';
 import type { AgentSessionModeDescriptor, AgentSessionModesKind } from '../sessionModes.js';
 import type { AgentModelConfig } from '../models.js';
 import type { AgentLocalCliConfig } from '../localCli.js';
-import type { ProviderCliRuntimeSpec } from '../providers/providerCliRuntime.js';
+import type { AgentCliRuntimeSpec } from '../cli/runtime.js';
 import type { AnyAgentRuntimeKindsManifest } from '../runtimeKinds.js';
 import type { ProviderSettingsDefinition } from '../providerSettings/index.js';
 import type { EngineSpec } from '../runtime/engine/contracts.js';
@@ -14,7 +14,7 @@ export type ProviderCatalogDefinition = Readonly<{
   sessionModesKind: AgentSessionModesKind;
   modelConfig: AgentModelConfig;
   localCli: AgentLocalCliConfig;
-  providerCliRuntime: ProviderCliRuntimeSpec;
+  agentCliRuntime: AgentCliRuntimeSpec;
   providerSettings: ProviderSettingsDefinition | null;
 }>;
 

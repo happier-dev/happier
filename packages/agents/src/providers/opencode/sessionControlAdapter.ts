@@ -1,34 +1,46 @@
-import type { AgentRuntimeKind } from '../../runtimeKinds.js';
-import { normalizeOpenCodeBackendMode } from '../../providerSettings/definitions/opencode.js';
-import { asRecord } from '../../runtime/identity/runtimeDescriptorShared.js';
-import { readOpenCodeSessionMetadataRuntimeDescriptor } from './readSessionMetadataRuntimeDescriptor.js';
-import { readOpenCodeSessionAffinityFromMetadata } from './sessionRuntimeHandle.js';
+import {
+  normalizeOpenCodeBackendMode,
+  readOpenCodeSessionAffinityFromMetadata,
+  readOpenCodeSessionMetadataRuntimeDescriptor,
+  type OpenCodeBackendMode,
+} from './readSessionMetadataRuntimeDescriptor.js';
+
+type OpenCodeSessionControlAdapter = Readonly<{
+  normalizeRuntimeKindOverride: (value: unknown) => OpenCodeBackendMode | null;
+  applyRuntimeKindOverrideToAccountSettings: (
+    accountSettings: Record<string, unknown> | null,
+    runtimeKind: unknown,
+  ) => Record<string, unknown>;
+  resolveConfiguredRuntimeKind: (accountSettings?: Record<string, unknown> | null) => OpenCodeBackendMode | null;
+  resolvePersistedSessionRuntimeKind: (metadata: unknown) => OpenCodeBackendMode | null;
+  resolveVendorResumeId: (metadata: unknown) => string | null;
+}>;
+
+function normalizeOpenCodeRuntimeKindOverride(value: unknown): OpenCodeBackendMode | null {
+  const trimmed = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (trimmed !== 'server' && trimmed !== 'acp') return null;
+  return normalizeOpenCodeBackendMode(trimmed);
+}
 
 export const OPENCODE_SESSION_CONTROL_ADAPTER = Object.freeze({
-  normalizeRuntimeKindOverride(value: unknown): AgentRuntimeKind | null {
-    const trimmed = typeof value === 'string' ? value.trim() : '';
-    if (!trimmed) return null;
-    return trimmed === 'server' || trimmed === 'acp'
-      ? normalizeOpenCodeBackendMode(trimmed)
-      : null;
-  },
+  normalizeRuntimeKindOverride: normalizeOpenCodeRuntimeKindOverride,
   applyRuntimeKindOverrideToAccountSettings(
     accountSettings: Record<string, unknown> | null,
-    runtimeKind: AgentRuntimeKind,
+    runtimeKind: unknown,
   ): Record<string, unknown> {
+    const opencodeBackendMode = normalizeOpenCodeRuntimeKindOverride(runtimeKind) ?? 'server';
     return {
       ...(accountSettings ?? {}),
-      opencodeBackendMode: runtimeKind,
+      opencodeBackendMode,
     };
   },
-  resolveConfiguredRuntimeKind(accountSettings?: Record<string, unknown> | null): AgentRuntimeKind | null {
+  resolveConfiguredRuntimeKind(accountSettings?: Record<string, unknown> | null): OpenCodeBackendMode | null {
     return normalizeOpenCodeBackendMode(accountSettings?.opencodeBackendMode);
   },
-  resolvePersistedSessionRuntimeKind(metadata: unknown): AgentRuntimeKind | null {
+  resolvePersistedSessionRuntimeKind(metadata: unknown): OpenCodeBackendMode | null {
     return readOpenCodeSessionAffinityFromMetadata(metadata).backendMode;
   },
   resolveVendorResumeId(metadata: unknown): string | null {
-    const metadataRecord = asRecord(metadata);
-    return metadataRecord ? readOpenCodeSessionMetadataRuntimeDescriptor(metadataRecord)?.vendorSessionId ?? null : null;
+    return readOpenCodeSessionMetadataRuntimeDescriptor(metadata)?.providerSessionId ?? null;
   },
-});
+} satisfies OpenCodeSessionControlAdapter);

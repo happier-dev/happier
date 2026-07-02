@@ -63,14 +63,14 @@ describe('inferAgentIdFromSessionMetadata', () => {
       agentRuntimeDescriptorV1: {
         v: 1,
         providerId: 'opencode',
-        provider: { backendMode: 'server', vendorSessionId: 'oc_1' },
+        provider: { backendMode: 'server', providerSessionId: 'oc_1' },
       },
     })).toBe('opencode');
     expect(inferAgentIdFromSessionMetadata({
       agentRuntimeDescriptorV1: {
         v: 1,
         providerId: 'ohMyPi',
-        provider: { resumeStrategy: 'sessionFileBySessionId', vendorSessionId: 'omp_1' },
+        provider: { resumeStrategy: 'sessionFileBySessionId', providerSessionId: 'omp_1' },
       },
     })).toBe('ohMyPi');
   });
@@ -103,7 +103,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
       agentRuntimeDescriptorV1: {
         v: 1,
         providerId: 'codex',
-        provider: { backendMode: 'appServer', vendorSessionId: 'codex_1' },
+        provider: { backendMode: 'appServer', providerSessionId: 'codex_1' },
       },
     })).toBe('codex');
   });

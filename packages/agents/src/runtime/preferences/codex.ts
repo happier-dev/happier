@@ -2,7 +2,7 @@ import { normalizeCodexBackendMode, type CodexBackendMode as CanonicalCodexBacke
 
 import {
   resolvePersistedCodexRuntimeIdentity,
-  resolvePersistedCodexVendorSessionId,
+  resolvePersistedCodexProviderSessionId,
 } from '../../providers/codex/runtimeIdentity.js';
 
 export type CodexBackendMode = CanonicalCodexBackendMode;
@@ -53,17 +53,6 @@ export function resolveCodexSessionRuntimePreferences(params: Readonly<{
   return codexBackendMode ? { codexBackendMode } : {};
 }
 
-function readLegacyCodexAcpEnvOverride(processEnv: NodeJS.ProcessEnv): CodexBackendMode | null {
-  const raw = processEnv.HAPPIER_EXPERIMENTAL_CODEX_ACP;
-  if (typeof raw !== 'string') return null;
-  const normalized = raw.trim().toLowerCase();
-  if (!normalized) return null;
-  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
-    return null;
-  }
-  return 'acp';
-}
-
 function readExplicitCodexBackendModeFromEnv(processEnv: NodeJS.ProcessEnv): CodexBackendMode | null {
   return normalizeCodexBackendMode(processEnv.HAPPIER_CODEX_BACKEND_MODE);
 }
@@ -82,11 +71,6 @@ export function resolveCodexSpawnExtrasForRuntime(params: Readonly<{
   const explicitCodexBackendMode = readExplicitCodexBackendModeFromEnv(params.processEnv);
   if (explicitCodexBackendMode) {
     return { codexBackendMode: explicitCodexBackendMode };
-  }
-
-  const legacyCodexAcpMode = readLegacyCodexAcpEnvOverride(params.processEnv);
-  if (legacyCodexAcpMode) {
-    return { codexBackendMode: legacyCodexAcpMode };
   }
 
   return {};

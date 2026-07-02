@@ -11,6 +11,14 @@ export type ClaudeSettingSourceV2 = (typeof CLAUDE_SETTING_SOURCES_V2)[number];
 const CLAUDE_REMOTE_DEBUG_CATEGORIES = ['api', 'mcp', 'hooks', 'file', '1p'] as const;
 export type ClaudeRemoteDebugCategory = (typeof CLAUDE_REMOTE_DEBUG_CATEGORIES)[number];
 
+export const CLAUDE_UNIFIED_TERMINAL_HOSTS = ['auto', 'tmux', 'zellij'] as const;
+export type ClaudeUnifiedTerminalHost = (typeof CLAUDE_UNIFIED_TERMINAL_HOSTS)[number];
+
+export function normalizeClaudeUnifiedTerminalHost(raw: unknown): ClaudeUnifiedTerminalHost | null {
+  if (typeof raw !== 'string') return null;
+  return (CLAUDE_UNIFIED_TERMINAL_HOSTS as readonly string[]).includes(raw) ? (raw as ClaudeUnifiedTerminalHost) : null;
+}
+
 function normalizeClaudeSettingSourcesV2(raw: unknown): ClaudeSettingSourceV2[] | null {
   if (!Array.isArray(raw)) return null;
   const input = raw as unknown[];
@@ -79,6 +87,20 @@ export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
     description: 'Use Claude Agent SDK in remote mode',
     storageScope: 'account',
     analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeUnifiedTerminalEnabled: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Enable Claude unified terminal runtime',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeUnifiedTerminalHost: {
+    schema: z.enum(CLAUDE_UNIFIED_TERMINAL_HOSTS),
+    default: 'auto' as ClaudeUnifiedTerminalHost,
+    description: 'Claude unified terminal host adapter preference',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
   },
   claudeRemoteSettingSources: {
     schema: z.enum(['project', 'user_project', 'none']),

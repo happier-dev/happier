@@ -35,5 +35,13 @@ describe('provider settings registry', () => {
     const codexDefinition = getProviderSettingsDefinition('codex');
     expect(codexDefinition).not.toBeNull();
     expect(codexDefinition?.fields.codexBackendMode?.default).toBe('appServer');
+
+    const kimiDefinition = getProviderSettingsDefinition('kimi');
+    expect(kimiDefinition).not.toBeNull();
+    expect(kimiDefinition?.fields.kimiAcpPythonSelector?.default).toBe('auto');
+  });
+
+  it('does not own OpenCode provider settings in the shared agents registry', () => {
+    expect(getProviderSettingsDefinition('opencode')).toBeNull();
   });
 });

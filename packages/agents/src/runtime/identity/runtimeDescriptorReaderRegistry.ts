@@ -1,33 +1,32 @@
-import { readCodexSessionMetadataRuntimeDescriptor } from '../../providers/codex/readSessionMetadataRuntimeDescriptor.js';
-import { readOpenCodeSessionMetadataRuntimeDescriptor } from '../../providers/opencode/readSessionMetadataRuntimeDescriptor.js';
-import { readPiSessionMetadataRuntimeDescriptor } from '../../providers/pi/readSessionMetadataRuntimeDescriptor.js';
+import {
+  GENERATED_RUNTIME_DESCRIPTOR_READER_PROVIDER_IDS,
+  GENERATED_RUNTIME_DESCRIPTOR_READERS,
+  type GeneratedRuntimeDescriptorReaderProviderId,
+} from '../../generated/runtimeDescriptorReaders.js';
 import type {
-  SharedRuntimeDescriptorByProviderId,
+  RuntimeDescriptorReaderMap,
   SupportedRuntimeDescriptorProviderId,
 } from './runtimeDescriptorTypes.js';
 
-export const RUNTIME_DESCRIPTOR_PROVIDER_IDS = [
-  'codex',
-  'opencode',
-  'pi',
-] as const satisfies readonly SupportedRuntimeDescriptorProviderId[];
+export const RUNTIME_DESCRIPTOR_PROVIDER_IDS =
+  GENERATED_RUNTIME_DESCRIPTOR_READER_PROVIDER_IDS satisfies readonly SupportedRuntimeDescriptorProviderId[];
 
-type RuntimeDescriptorReaderMap = {
-  [K in SupportedRuntimeDescriptorProviderId]: (
-    metadataRecord: Record<string, unknown>,
-  ) => SharedRuntimeDescriptorByProviderId[K] | null;
-};
+const RUNTIME_DESCRIPTOR_READERS =
+  GENERATED_RUNTIME_DESCRIPTOR_READERS satisfies Readonly<
+    Pick<RuntimeDescriptorReaderMap, GeneratedRuntimeDescriptorReaderProviderId>
+  >;
 
-const RUNTIME_DESCRIPTOR_READERS = {
-  codex: readCodexSessionMetadataRuntimeDescriptor,
-  opencode: readOpenCodeSessionMetadataRuntimeDescriptor,
-  pi: readPiSessionMetadataRuntimeDescriptor,
-} satisfies RuntimeDescriptorReaderMap;
-
-export function getRuntimeDescriptorReader<K extends SupportedRuntimeDescriptorProviderId>(
+export function getRuntimeDescriptorReader<K extends GeneratedRuntimeDescriptorReaderProviderId>(
   providerId: K,
-): RuntimeDescriptorReaderMap[K] {
-  return RUNTIME_DESCRIPTOR_READERS[providerId];
+): RuntimeDescriptorReaderMap[K];
+export function getRuntimeDescriptorReader(
+  providerId: string,
+): RuntimeDescriptorReaderMap[SupportedRuntimeDescriptorProviderId] | null;
+export function getRuntimeDescriptorReader(
+  providerId: string,
+): RuntimeDescriptorReaderMap[SupportedRuntimeDescriptorProviderId] | null {
+  if (!isSupportedRuntimeDescriptorProviderId(providerId)) return null;
+  return RUNTIME_DESCRIPTOR_READERS[providerId as GeneratedRuntimeDescriptorReaderProviderId];
 }
 
 export function isSupportedRuntimeDescriptorProviderId(providerId: string): providerId is SupportedRuntimeDescriptorProviderId {

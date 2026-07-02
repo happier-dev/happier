@@ -1,4 +1,9 @@
-import type { RuntimeDescriptorV1, SessionMetadata } from '@happier-dev/protocol';
+import type {
+  RuntimeDescriptorV1,
+  SessionMetadata,
+  SessionStateFieldId,
+  SessionStateFieldValue,
+} from '@happier-dev/protocol';
 
 import type { SessionStateFieldWriteValue } from './_types.js';
 import {
@@ -9,8 +14,42 @@ import {
 } from './bindings/intent.js';
 import { writeRuntimeDescriptorSessionState } from './bindings/runtimeDescriptor.js';
 import { summaryTextBinding } from './bindings/summaryText.js';
-import { writeVendorSessionIdSessionState, type VendorSessionIdMetadataKey } from './bindings/vendorSessionId.js';
-import { clearSessionStateFieldFromMetadata } from './bindings/publishField.js';
+import { writeProviderSessionIdSessionState, type ProviderSessionIdMetadataKey } from './bindings/providerSessionId.js';
+import {
+  clearSessionStateFieldFromMetadata,
+  hasSessionStateFieldMetadataBinding,
+  publishSessionStateFieldMutationToMetadata,
+  publishSessionStateFieldToMetadata,
+  writeSessionStateFieldToMetadata,
+} from './bindings/publishField.js';
+
+export {
+  clearSessionStateFieldFromMetadata,
+  hasSessionStateFieldMetadataBinding,
+  publishSessionStateFieldMutationToMetadata,
+  publishSessionStateFieldToMetadata,
+  writeSessionStateFieldToMetadata,
+};
+
+export type SessionStateMetadataUpdateV1<F extends SessionStateFieldId = SessionStateFieldId> = Readonly<{
+  fieldId: F;
+  value: SessionStateFieldValue<F>;
+}>;
+
+export function applySessionStateUpdatesToMetadata<TMetadata extends SessionMetadata>(
+  metadata: TMetadata,
+  updates: readonly SessionStateMetadataUpdateV1[],
+): TMetadata {
+  let next: SessionMetadata = metadata;
+  for (const update of updates) {
+    next = writeSessionStateFieldToMetadata(
+      next,
+      update.fieldId,
+      update.value as never,
+    );
+  }
+  return next as TMetadata;
+}
 
 export function applyRuntimeDescriptorSessionMetadata<TMetadata extends SessionMetadata>(
   metadata: TMetadata,
@@ -25,23 +64,23 @@ export function buildRuntimeDescriptorSessionMetadata(
   return applyRuntimeDescriptorSessionMetadata({}, descriptor);
 }
 
-export function applyVendorSessionIdSessionMetadata<TMetadata extends Record<string, unknown>>(
+export function applyProviderSessionIdSessionMetadata<TMetadata extends Record<string, unknown>>(
   metadata: TMetadata,
   update: Readonly<{
-    metadataKey: VendorSessionIdMetadataKey;
+    metadataKey: ProviderSessionIdMetadataKey;
     value: string | null | undefined;
   }>,
 ): TMetadata {
-  return writeVendorSessionIdSessionState(metadata, update);
+  return writeProviderSessionIdSessionState(metadata, update);
 }
 
-export function buildVendorSessionIdSessionMetadata(
+export function buildProviderSessionIdSessionMetadata(
   update: Readonly<{
-    metadataKey: VendorSessionIdMetadataKey;
+    metadataKey: ProviderSessionIdMetadataKey;
     value: string | null | undefined;
   }>,
 ): SessionMetadata {
-  return applyVendorSessionIdSessionMetadata({}, update);
+  return applyProviderSessionIdSessionMetadata({}, update);
 }
 
 export function applyDisplayTitleSessionMetadata<TMetadata extends SessionMetadata>(

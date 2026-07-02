@@ -1,0 +1,36 @@
+import {
+  AGENT_PROVIDER_IDS,
+  type AgentProviderId,
+} from '../generated/agentProviderIds.js';
+import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../generated/bundledAgentDefinitions.js';
+
+type BundledAgentDefinition = (typeof BUNDLED_AGENT_DEFINITIONS_BY_ID)[keyof typeof BUNDLED_AGENT_DEFINITIONS_BY_ID];
+
+const GENERATED_AGENT_DEFINITIONS_BY_ID = BUNDLED_AGENT_DEFINITIONS_BY_ID as Readonly<
+  Partial<Record<AgentProviderId, BundledAgentDefinition>>
+>;
+
+export function mergeAuthoredWithGeneratedAgentFacts<T>(params: Readonly<{
+  authored: Readonly<Partial<Record<AgentProviderId, T>>>;
+  label: string;
+  readGenerated: (definition: BundledAgentDefinition) => T | null | undefined;
+}>): Readonly<Record<AgentProviderId, T>> {
+  const entries: Array<[AgentProviderId, T]> = [];
+
+  for (const agentId of AGENT_PROVIDER_IDS) {
+    const authored = params.authored[agentId];
+    if (authored !== undefined) {
+      entries.push([agentId, authored]);
+      continue;
+    }
+
+    const generated = GENERATED_AGENT_DEFINITIONS_BY_ID[agentId];
+    const generatedFact = generated ? params.readGenerated(generated) : null;
+    if (generatedFact === null || generatedFact === undefined) {
+      throw new Error(`Missing ${params.label} for agent '${agentId}'`);
+    }
+    entries.push([agentId, generatedFact]);
+  }
+
+  return Object.freeze(Object.fromEntries(entries) as Record<AgentProviderId, T>);
+}

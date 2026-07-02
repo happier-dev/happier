@@ -5,10 +5,11 @@ import { normalizeCodexHome } from './runtimeDescriptorShared.js';
 
 export type BuildCodexAgentRuntimeDescriptorParams = Readonly<{
   backendMode: CodexBackendMode;
-  vendorSessionId?: string | null;
+  providerSessionId?: string | null;
   home?: 'user' | 'connectedService' | null;
   connectedServiceId?: string | null;
   connectedServiceProfileId?: string | null;
+  connectedServiceGroupId?: string | null;
   homePath?: string | null;
 }>;
 
@@ -17,10 +18,11 @@ export type CodexAgentRuntimeDescriptorV1 = Readonly<{
   providerId: 'codex';
   provider: {
     backendMode: CodexBackendMode;
-    vendorSessionId?: string;
+    providerSessionId?: string;
     home?: 'user' | 'connectedService';
     connectedServiceId?: string;
     connectedServiceProfileId?: string;
+    connectedServiceGroupId?: string;
     homePath?: string;
     providerExtra: {
       owner: 'codex';
@@ -28,10 +30,11 @@ export type CodexAgentRuntimeDescriptorV1 = Readonly<{
       v: 1;
       runtimeHandle?: {
         backendMode?: CodexBackendMode;
-        vendorSessionId?: string;
+        providerSessionId?: string;
         home?: 'user' | 'connectedService';
         connectedServiceId?: string;
         connectedServiceProfileId?: string;
+        connectedServiceGroupId?: string;
         homePath?: string;
       };
     };
@@ -41,11 +44,14 @@ export type CodexAgentRuntimeDescriptorV1 = Readonly<{
 export function buildCodexAgentRuntimeDescriptor(
   params: BuildCodexAgentRuntimeDescriptorParams,
 ): CodexAgentRuntimeDescriptorV1 {
-  const vendorSessionId = normalizeTrimmedString(params.vendorSessionId);
+  const providerSessionId = normalizeTrimmedString(params.providerSessionId);
   const home = normalizeCodexHome(params.home);
   const connectedServiceId = home === 'connectedService' ? normalizeTrimmedString(params.connectedServiceId) : null;
   const connectedServiceProfileId = home === 'connectedService'
     ? normalizeTrimmedString(params.connectedServiceProfileId)
+    : null;
+  const connectedServiceGroupId = home === 'connectedService'
+    ? normalizeTrimmedString(params.connectedServiceGroupId)
     : null;
   const homePath = normalizeTrimmedString(params.homePath);
 
@@ -54,20 +60,22 @@ export function buildCodexAgentRuntimeDescriptor(
     providerId: 'codex',
     provider: {
       backendMode: params.backendMode,
-      ...(vendorSessionId ? { vendorSessionId } : {}),
+      ...(providerSessionId ? { providerSessionId } : {}),
       ...(home ? { home } : {}),
       ...(connectedServiceId ? { connectedServiceId } : {}),
       ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
+      ...(connectedServiceGroupId ? { connectedServiceGroupId } : {}),
       ...(homePath ? { homePath } : {}),
       providerExtra: {
         owner: 'codex',
         schemaId: 'codex.agentRuntimeDescriptorExtra',
         ...buildCodexRuntimeDescriptorProviderExtra({
           backendMode: params.backendMode,
-          vendorSessionId,
+          providerSessionId,
           home,
           connectedServiceId,
           connectedServiceProfileId,
+          connectedServiceGroupId,
           homePath,
         }),
       },

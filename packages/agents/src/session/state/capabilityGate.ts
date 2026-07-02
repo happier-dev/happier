@@ -11,12 +11,14 @@ type SessionStateProviderDirection = Extract<SessionStateDirection, 'happierToPr
 
 const FIELD_CAPABILITY_PATH = {
   'identity.runtimeDescriptor': ['identity', 'runtimeDescriptor'],
-  'identity.vendorSessionId': ['identity', 'vendorSessionId'],
+  'identity.providerSessionId': ['identity', 'providerSessionId'],
   'intent.model': ['intent', 'model'],
   'intent.permissionMode': ['intent', 'permissionMode'],
   'intent.acpSessionMode': ['intent', 'acpSessionMode'],
   'intent.acpConfigOption': ['intent', 'acpConfigOption'],
   'display.title': ['display', 'title'],
+  'runtime.workState': ['runtime', 'workState'],
+  'runtime.usageLimitRecovery': ['runtime', 'usageLimitRecovery'],
   'view.readState': ['view', 'readState'],
   'view.attention': ['view', 'attention'],
 } as const satisfies Record<SessionStateFieldId, readonly [SessionStateFieldFamily, string]>;

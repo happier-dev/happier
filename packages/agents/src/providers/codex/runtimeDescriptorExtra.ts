@@ -12,16 +12,22 @@ function normalizeTrimmedString(value: unknown): string | null {
   return trimmed || null;
 }
 
+function readProviderSessionIdCompat(record: Readonly<Record<string, unknown>>): string | null {
+  return normalizeTrimmedString(record.providerSessionId)
+    ?? normalizeTrimmedString(record.vendorSessionId); // legacy vendorSessionId read-compat
+}
+
 function normalizeCodexHome(value: unknown): 'user' | 'connectedService' | null {
   return value === 'user' || value === 'connectedService' ? value : null;
 }
 
 export type CodexRuntimeDescriptorProviderExtraRuntimeAffinity = Readonly<{
   backendMode: CodexBackendMode | null;
-  vendorSessionId: string | null;
+  providerSessionId: string | null;
   home: 'user' | 'connectedService' | null;
   connectedServiceId: string | null;
   connectedServiceProfileId: string | null;
+  connectedServiceGroupId: string | null;
   homePath: string | null;
 }>;
 
@@ -29,10 +35,11 @@ export type CodexRuntimeDescriptorProviderExtra = Readonly<{
   v: 1;
   runtimeHandle?: Readonly<{
     backendMode?: CodexBackendMode;
-    vendorSessionId?: string;
+    providerSessionId?: string;
     home?: 'user' | 'connectedService';
     connectedServiceId?: string;
     connectedServiceProfileId?: string;
+    connectedServiceGroupId?: string;
     homePath?: string;
   }>;
 }>;
@@ -40,19 +47,23 @@ export type CodexRuntimeDescriptorProviderExtra = Readonly<{
 export function buildCodexRuntimeDescriptorProviderExtra(
   params: Readonly<{
     backendMode?: CodexBackendMode | null;
-    vendorSessionId?: string | null;
+    providerSessionId?: string | null;
     home?: 'user' | 'connectedService' | null;
     connectedServiceId?: string | null;
     connectedServiceProfileId?: string | null;
+    connectedServiceGroupId?: string | null;
     homePath?: string | null;
   }>,
 ): CodexRuntimeDescriptorProviderExtra {
   const backendMode = normalizeCodexBackendMode(params.backendMode);
-  const vendorSessionId = normalizeTrimmedString(params.vendorSessionId);
+  const providerSessionId = normalizeTrimmedString(params.providerSessionId);
   const home = normalizeCodexHome(params.home);
   const connectedServiceId = home === 'connectedService' ? normalizeTrimmedString(params.connectedServiceId) : null;
   const connectedServiceProfileId = home === 'connectedService'
     ? normalizeTrimmedString(params.connectedServiceProfileId)
+    : null;
+  const connectedServiceGroupId = home === 'connectedService'
+    ? normalizeTrimmedString(params.connectedServiceGroupId)
     : null;
   const homePath = normalizeTrimmedString(params.homePath);
 
@@ -60,10 +71,11 @@ export function buildCodexRuntimeDescriptorProviderExtra(
     v: 1,
     runtimeHandle: {
       ...(backendMode ? { backendMode } : {}),
-      ...(vendorSessionId ? { vendorSessionId } : {}),
+      ...(providerSessionId ? { providerSessionId } : {}),
       ...(home ? { home } : {}),
       ...(connectedServiceId ? { connectedServiceId } : {}),
       ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
+      ...(connectedServiceGroupId ? { connectedServiceGroupId } : {}),
       ...(homePath ? { homePath } : {}),
     },
   };
@@ -78,19 +90,23 @@ export function readCodexRuntimeDescriptorProviderExtra(
   const home = normalizeCodexHome(runtimeHandle.home);
   const normalizedRuntimeAffinity = {
     backendMode: normalizeCodexBackendMode(runtimeHandle.backendMode),
-    vendorSessionId: normalizeTrimmedString(runtimeHandle.vendorSessionId),
+    providerSessionId: readProviderSessionIdCompat(runtimeHandle),
     home,
     connectedServiceId: home === 'connectedService' ? normalizeTrimmedString(runtimeHandle.connectedServiceId) : null,
     connectedServiceProfileId: home === 'connectedService'
       ? normalizeTrimmedString(runtimeHandle.connectedServiceProfileId)
+      : null,
+    connectedServiceGroupId: home === 'connectedService'
+      ? normalizeTrimmedString(runtimeHandle.connectedServiceGroupId)
       : null,
     homePath: normalizeTrimmedString(runtimeHandle.homePath),
   } satisfies CodexRuntimeDescriptorProviderExtraRuntimeAffinity;
 
   if (
     !normalizedRuntimeAffinity.backendMode
-    && !normalizedRuntimeAffinity.vendorSessionId
+    && !normalizedRuntimeAffinity.providerSessionId
     && !normalizedRuntimeAffinity.home
+    && !normalizedRuntimeAffinity.connectedServiceGroupId
     && !normalizedRuntimeAffinity.homePath
   ) {
     return null;

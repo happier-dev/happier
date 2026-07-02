@@ -18,7 +18,7 @@ describe('evaluateExistingSessionAutomationEligibility', () => {
     });
   });
 
-  it('rejects providers that do not support resuming existing sessions', () => {
+  it('accepts Pi sessions with a persisted resume id', () => {
     expect(
       evaluateExistingSessionAutomationEligibility({
         metadata: {
@@ -27,8 +27,9 @@ describe('evaluateExistingSessionAutomationEligibility', () => {
         },
       }),
     ).toEqual({
-      eligible: false,
-      reasonCode: 'agent_unsupported',
+      eligible: true,
+      agentId: 'pi',
+      strategy: 'vendor_resume',
     });
   });
 
@@ -66,7 +67,7 @@ describe('evaluateExistingSessionAutomationEligibility', () => {
           agentRuntimeDescriptorV1: {
             v: 1,
             providerId: 'opencode',
-            provider: { backendMode: 'server', vendorSessionId: 'opencode-session-1' },
+            provider: { backendMode: 'server', providerSessionId: 'opencode-session-1' },
           },
         },
       }),

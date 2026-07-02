@@ -7,46 +7,67 @@ export const SESSION_STATE_FIELD_REGISTRY = {
     id: 'identity.runtimeDescriptor',
     class: 'identity',
     conflictPolicy: 'fingerprintPublication',
+    deliveryClass: 'durable_best_effort',
   },
-  'identity.vendorSessionId': {
-    id: 'identity.vendorSessionId',
+  'identity.providerSessionId': {
+    id: 'identity.providerSessionId',
     class: 'identity',
     conflictPolicy: 'bindingOwned',
+    deliveryClass: 'durable_best_effort',
   },
   'intent.model': {
     id: 'intent.model',
     class: 'intent',
     conflictPolicy: 'timestampedFieldUpdate',
+    deliveryClass: 'durable_best_effort',
   },
   'intent.permissionMode': {
     id: 'intent.permissionMode',
     class: 'intent',
     conflictPolicy: 'timestampedFieldUpdate',
+    deliveryClass: 'durable_best_effort',
   },
   'intent.acpSessionMode': {
     id: 'intent.acpSessionMode',
     class: 'intent',
     conflictPolicy: 'timestampedFieldUpdate',
+    deliveryClass: 'durable_best_effort',
   },
   'intent.acpConfigOption': {
     id: 'intent.acpConfigOption',
     class: 'intent',
     conflictPolicy: 'timestampedFieldUpdate',
+    deliveryClass: 'durable_best_effort',
   },
   'display.title': {
     id: 'display.title',
     class: 'display',
     conflictPolicy: 'timestampedFieldUpdate',
+    deliveryClass: 'durable_best_effort',
+  },
+  'runtime.workState': {
+    id: 'runtime.workState',
+    class: 'runtime',
+    conflictPolicy: 'bindingOwned',
+    deliveryClass: 'durable_required',
+  },
+  'runtime.usageLimitRecovery': {
+    id: 'runtime.usageLimitRecovery',
+    class: 'runtime',
+    conflictPolicy: 'bindingOwned',
+    deliveryClass: 'durable_required',
   },
   'view.readState': {
     id: 'view.readState',
     class: 'view',
     conflictPolicy: 'timestampedFieldUpdate',
+    deliveryClass: 'ephemeral_drop_ok',
   },
   'view.attention': {
     id: 'view.attention',
     class: 'view',
     conflictPolicy: 'timestampedFieldUpdate',
+    deliveryClass: 'ephemeral_drop_ok',
   },
 } satisfies { readonly [F in SessionStateFieldId]: SessionStateFieldDescriptor<F> };
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   resolveCodexSessionBackendMode,
-  resolveOpenCodeSessionBackendMode,
+  resolveProviderSessionBackendMode,
 } from './providerBackendModes.js';
 
 describe('providerBackendModes', () => {
@@ -13,8 +13,9 @@ describe('providerBackendModes', () => {
     })).toBe('appServer');
   });
 
-  it('resolves OpenCode backend mode from account settings', () => {
-    expect(resolveOpenCodeSessionBackendMode({
+  it('resolves provider backend mode from generated session-control adapters', () => {
+    expect(resolveProviderSessionBackendMode({
+      agentId: 'opencode',
       metadata: null,
       accountSettings: { opencodeBackendMode: 'server' },
     })).toBe('server');

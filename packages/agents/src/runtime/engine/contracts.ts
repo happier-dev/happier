@@ -11,6 +11,7 @@ import type {
   TranscriptSourcePage,
   TranscriptSourceReadAfter,
 } from '../facets/transcriptSource.js';
+import type { RuntimeOutboundTranscriptDispatchFacetV1 } from '../facets/transcriptDispatch.js';
 import type { AgentRuntimeKindOverrides, AnyAgentRuntimeKindsManifest } from '../../runtimeKinds.js';
 import type { SessionStateFacet } from '../../session/state/index.js';
 
@@ -50,6 +51,7 @@ export type RuntimeFacets = Readonly<{
    * implemented runtime facets until a real shared owner lands.
    */
   transcriptSource?: RuntimeTranscriptSourceFacet;
+  transcriptDispatch?: RuntimeOutboundTranscriptDispatchFacetV1;
   sessionState?: SessionStateFacet;
 }>;
 

@@ -106,6 +106,26 @@ describe('intent session-state bindings', () => {
     });
   });
 
+  it('reads ACP session mode clear tombstones from the newest alias', () => {
+    expect(readAcpSessionModeIntentFromMetadata({
+      sessionModeOverrideV1: { v: 1, updatedAt: 20, modeId: null },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
+    })).toEqual({
+      v: 1,
+      modeId: null,
+      updatedAt: 20,
+    });
+
+    expect(readAcpSessionModeIntentFromMetadata({
+      sessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 20, modeId: null },
+    })).toEqual({
+      v: 1,
+      modeId: null,
+      updatedAt: 20,
+    });
+  });
+
   it('dual-writes ACP config option aliases and preserves sibling per-entry timestamps', () => {
     const base = {
       sessionConfigOptionOverridesV1: {

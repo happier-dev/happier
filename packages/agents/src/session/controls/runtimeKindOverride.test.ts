@@ -15,7 +15,7 @@ describe('runtimeKindOverride', () => {
       // exists and defaults to appServer.
       accountSettings: { experimentalCodexAcp: true },
     })).toBe('appServer');
-    expect(resolveAgentConfiguredRuntimeKind({ agentId: 'codex', accountSettings: { codexBackendMode: 'mcp' } })).toBe('mcp');
+    expect(resolveAgentConfiguredRuntimeKind({ agentId: 'codex', accountSettings: { codexBackendMode: 'mcp' } })).toBe('appServer');
     expect(resolveAgentConfiguredRuntimeKind({ agentId: 'opencode', accountSettings: { opencodeBackendMode: 'acp' } })).toBe('acp');
     expect(resolveAgentConfiguredRuntimeKind({ agentId: 'claude', accountSettings: { anything: 'x' } })).toBeNull();
   });

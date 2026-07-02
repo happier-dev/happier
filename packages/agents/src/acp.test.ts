@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import * as acpModule from './acp.js';
 import { BUILT_IN_ACP_CONFIG, getBuiltInAcpConfig, hasBuiltInAcpConfig } from './acp.js';
-import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
+import { getAgentCliRuntimeSpec } from './cli/runtime.js';
 
 describe('built-in ACP config', () => {
   it('keeps the built-in ACP allowlist explicit and drift-free', () => {
@@ -20,7 +20,7 @@ describe('built-in ACP config', () => {
     expect(getBuiltInAcpConfig('kiro')).toMatchObject({
       agentId: 'kiro',
       launcher: {
-        command: getProviderCliRuntimeSpec('kiro').binaryName,
+        command: getAgentCliRuntimeSpec('kiro').binaryName,
         args: ['acp'],
       },
       transportProfile: 'kiro',
@@ -36,7 +36,7 @@ describe('built-in ACP config', () => {
     expect(getBuiltInAcpConfig('ohMyPi')).toMatchObject({
       agentId: 'ohMyPi',
       launcher: {
-        command: getProviderCliRuntimeSpec('ohMyPi').binaryName,
+        command: getAgentCliRuntimeSpec('ohMyPi').binaryName,
         args: ['--mode', 'acp'],
       },
       transportProfile: 'generic',
