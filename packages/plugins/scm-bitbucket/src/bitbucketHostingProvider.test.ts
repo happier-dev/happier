@@ -42,7 +42,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       },
       runtime: {
         apiVersion: 1,
-        capabilities: ['scmHostingProviders', 'connectedAccountDescriptors', 'hooks'],
+        capabilities: ['scmHostingProviders', 'connectedAccountDescriptors'],
       },
       contributes: {
         scmHostingProviders: [
@@ -94,16 +94,9 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
             }),
           }),
         ],
-        hooks: [
-          expect.objectContaining({
-            id: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
-            category: 'integration',
-            scope: 'plugin',
-            executionKind: 'integrate',
-          }),
-        ],
       },
     });
+    expect(mod.PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
   });
 
   it('detects only Bitbucket Cloud remotes with owner and repository path segments', async () => {
@@ -206,13 +199,16 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     });
 
     expect(registrations).toHaveLength(1);
-    expect(hooks).toEqual([
-      expect.objectContaining({
-        hookId: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
-        handler: expect.any(Function),
-      }),
-    ]);
+    expect(hooks).toEqual([]);
     expect(registrations[0]?.id).toBe('scm.bitbucket');
+    expect(registrations[0]).toMatchObject({
+      auth: {
+        basicAuthMaterializer: {
+          serviceId: 'bitbucket',
+          materialize: expect.any(Function),
+        },
+      },
+    });
     expect(registrations[0]?.adapter).toMatchObject({
       detectRemote: expect.any(Function),
       buildCompareUrl: expect.any(Function),

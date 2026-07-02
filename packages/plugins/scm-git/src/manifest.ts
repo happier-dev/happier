@@ -1,4 +1,4 @@
-import type { PluginManifestV2, ScmBackendContribution } from '@happier-dev/protocol';
+import { definePluginManifest, type PluginManifestV2, type ScmBackendContribution } from '@happier-dev/plugin-sdk';
 
 import { GIT_SCM_BACKEND_CAPABILITIES } from './capabilities.js';
 
@@ -23,7 +23,7 @@ export const GIT_SCM_BACKEND_CONTRIBUTION = Object.freeze({
   },
 } satisfies ScmBackendContribution);
 
-export const PLUGIN_MANIFEST: PluginManifestV2 = {
+export const PLUGIN_MANIFEST = definePluginManifest({
   schemaVersion: 2,
   id: 'happier.scm.backend.git',
   version: '0.0.0',
@@ -81,4 +81,4 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
     }],
     scmBackends: [GIT_SCM_BACKEND_CONTRIBUTION],
   },
-};
+} satisfies PluginManifestV2);

@@ -1,9 +1,9 @@
 import {
   BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR,
-  type PluginManifestV2,
 } from '@happier-dev/protocol';
+import { definePluginManifest, type PluginManifestV2 } from '@happier-dev/plugin-sdk';
 
-export const PLUGIN_MANIFEST: PluginManifestV2 = {
+export const PLUGIN_MANIFEST = definePluginManifest({
   schemaVersion: 2,
   id: 'happier.scm.hosting.bitbucket',
   version: '0.0.0',
@@ -17,14 +17,9 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
     resolvedVersion: '0.0.0',
   },
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['scmHostingProviders', 'connectedAccountDescriptors', 'hooks'] },
+  runtime: { apiVersion: 1, capabilities: ['scmHostingProviders', 'connectedAccountDescriptors'] },
   targets: {},
-  capabilities: {
-    permissions: [{
-      capability: 'hooks.register',
-      reason: 'Register Bitbucket connected-account materialization hook',
-    }],
-  },
+  capabilities: {},
   contributes: {
     scmHostingProviders: [
       {
@@ -69,16 +64,5 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
       },
     ],
     connectedAccountDescriptors: [BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR],
-    hooks: [{
-      id: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
-      hookApiVersion: 1,
-      category: 'integration',
-      scope: 'plugin',
-      executionKind: 'integrate',
-      handler: {
-        target: 'plugin',
-        exportName: 'materializeBitbucketScmHostingBasicAuth',
-      },
-    }],
   },
-};
+} satisfies PluginManifestV2);

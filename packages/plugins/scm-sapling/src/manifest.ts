@@ -1,4 +1,4 @@
-import type { PluginManifestV2, ScmBackendContribution } from '@happier-dev/protocol';
+import { definePluginManifest, type PluginManifestV2, type ScmBackendContribution } from '@happier-dev/plugin-sdk';
 
 import { SAPLING_INSTALLABLE_DEP_ID, SAPLING_INSTALLABLE_DESCRIPTOR } from './installables/saplingInstallable.js';
 import { SAPLING_SCM_BACKEND_CAPABILITIES } from './backend/capabilities.js';
@@ -25,7 +25,7 @@ export const SAPLING_SCM_BACKEND_CONTRIBUTION = {
     },
 } satisfies ScmBackendContribution;
 
-export const PLUGIN_MANIFEST: PluginManifestV2 = {
+export const PLUGIN_MANIFEST = definePluginManifest({
     schemaVersion: 2,
     id: 'happier.scm.backend.sapling',
     version: '0.0.0',
@@ -48,4 +48,4 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
         installables: [SAPLING_INSTALLABLE_DESCRIPTOR],
         scmBackends: [SAPLING_SCM_BACKEND_CONTRIBUTION],
     },
-};
+} satisfies PluginManifestV2);

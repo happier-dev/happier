@@ -1,6 +1,6 @@
-import type { PluginManifestV2 } from '@happier-dev/protocol';
+import { definePluginManifest, type PluginManifestV2 } from '@happier-dev/plugin-sdk';
 
-export const PLUGIN_MANIFEST: PluginManifestV2 = {
+export const PLUGIN_MANIFEST = definePluginManifest({
   schemaVersion: 2,
   id: 'happier.scm.hosting.gitlab',
   version: '0.0.0',
@@ -47,4 +47,4 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
       },
     ],
   },
-};
+} satisfies PluginManifestV2);

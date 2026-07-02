@@ -35,7 +35,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       },
       runtime: {
         apiVersion: 1,
-        capabilities: ['scmHostingProviders', 'connectedAccountDescriptors', 'hooks'],
+        capabilities: ['scmHostingProviders', 'connectedAccountDescriptors'],
       },
       contributes: {
         scmHostingProviders: [
@@ -71,14 +71,6 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
             }),
           },
         ],
-        hooks: [
-          expect.objectContaining({
-            id: 'connectedServices.materialization.githubScmHostingToken',
-            category: 'integration',
-            scope: 'plugin',
-            executionKind: 'integrate',
-          }),
-        ],
         connectedAccountDescriptors: [
           expect.objectContaining({
             id: 'github',
@@ -90,6 +82,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
         ],
       },
     });
+    expect(mod.PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
   });
 
   it('registers the manifest-declared GitHub adapter during activation', async () => {
@@ -113,6 +106,12 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     expect(registered).toEqual([
       expect.objectContaining({
         id: 'scm.github',
+        auth: {
+          tokenMaterializer: expect.objectContaining({
+            serviceId: 'github',
+            materialize: expect.any(Function),
+          }),
+        },
         adapter: expect.objectContaining({
           detectRemote: expect.any(Function),
           buildCompareUrl: expect.any(Function),
@@ -128,12 +127,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
         }),
       }),
     ]);
-    expect(hooks).toEqual([
-      expect.objectContaining({
-        hookId: 'connectedServices.materialization.githubScmHostingToken',
-        handler: expect.any(Function),
-      }),
-    ]);
+    expect(hooks).toEqual([]);
   });
 
   it('registered repository hooks consume operation-scoped runtime services', async () => {

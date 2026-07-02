@@ -1,8 +1,8 @@
-import type { PluginManifestV2 } from '@happier-dev/protocol';
+import { definePluginManifest, type PluginManifestV2 } from '@happier-dev/plugin-sdk';
 
 // Thin composition file that declares this plugin’s canonical manifest.
 // Keep this mostly declarative; executable behavior lives in domain folders.
-export const PLUGIN_MANIFEST: PluginManifestV2 = {
+export const PLUGIN_MANIFEST = definePluginManifest({
   schemaVersion: 2,
   id: '__pluginId__',
   version: '0.0.0',
@@ -13,4 +13,4 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
   targets: {},
   capabilities: { permissions: [] },
   contributes: {},
-};
+} satisfies PluginManifestV2);

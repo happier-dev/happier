@@ -2,7 +2,7 @@ import type { PluginApiV1 } from '@happier-dev/plugin-sdk';
 
 import { GITHUB_SCM_HOSTING_PROVIDER_ID } from './adapter.js';
 import {
-  GITHUB_SCM_HOSTING_TOKEN_MATERIALIZATION_HOOK_KEY,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE_ID,
   materializeGithubScmHostingToken,
 } from './auth/tokenMaterializer.js';
 import { githubPullRequestAdapter } from './pullRequests/authChain.js';
@@ -11,18 +11,15 @@ import { githubRepositoryProvisioningAdapter } from './repositoryProvisioning/cr
 export function activate(api: PluginApiV1): void {
   api.registerScmHostingProvider({
     id: GITHUB_SCM_HOSTING_PROVIDER_ID,
+    auth: {
+      tokenMaterializer: {
+        serviceId: GITHUB_CONNECTED_ACCOUNT_SERVICE_ID,
+        materialize: materializeGithubScmHostingToken,
+      },
+    },
     adapter: Object.freeze({
       ...githubPullRequestAdapter,
       ...githubRepositoryProvisioningAdapter,
     }),
-  });
-  api.registerHook({
-    hookId: GITHUB_SCM_HOSTING_TOKEN_MATERIALIZATION_HOOK_KEY,
-    category: 'integration',
-    scope: 'plugin',
-    executionKind: 'integrate',
-    handler: (request) => materializeGithubScmHostingToken(
-      request as Parameters<typeof materializeGithubScmHostingToken>[0],
-    ),
   });
 }

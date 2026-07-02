@@ -1,5 +1,5 @@
 {
-  "name": "@happier-dev/plugins-_template",
+  "name": "@happier-dev/plugins-review-deepsec",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,14 +17,15 @@
   ],
   "scripts": {
     "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   }
 }

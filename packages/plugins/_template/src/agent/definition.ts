@@ -37,7 +37,7 @@ export const AGENT_DEFINITION = Object.freeze({
     supportKind: 'unsupported',
     loginLaunch: null,
   },
-  providerCliRuntime: {
+  agentCliRuntime: {
     id: '__pluginId__',
     title: '__pluginId__ CLI',
     binaryName: '__pluginId__',

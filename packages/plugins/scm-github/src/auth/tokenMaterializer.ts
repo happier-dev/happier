@@ -31,8 +31,6 @@ export type GithubScmHostingTokenMaterializationResult =
     }>;
 
 export const GITHUB_CONNECTED_ACCOUNT_SERVICE_ID = 'github' as const;
-export const GITHUB_SCM_HOSTING_TOKEN_MATERIALIZATION_HOOK_KEY =
-  'connectedServices.materialization.githubScmHostingToken';
 
 const GITHUB_SCM_HOSTING_PROVIDER_ID = 'scm.github';
 const GITHUB_DOT_COM_HOST = 'github.com';

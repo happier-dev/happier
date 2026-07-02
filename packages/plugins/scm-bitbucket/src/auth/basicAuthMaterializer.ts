@@ -32,8 +32,6 @@ export type BitbucketScmHostingBasicAuthMaterializationResult =
     }>;
 
 export const BITBUCKET_CONNECTED_ACCOUNT_SERVICE_ID = 'bitbucket' as const;
-export const BITBUCKET_SCM_HOSTING_BASIC_AUTH_MATERIALIZATION_HOOK_KEY =
-  'connectedServices.materialization.bitbucketScmHostingBasicAuth';
 
 const BITBUCKET_SCM_HOSTING_PROVIDER_ID = 'scm.bitbucket';
 const BITBUCKET_CLOUD_HOST = 'bitbucket.org';

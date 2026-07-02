@@ -1,11 +1,12 @@
-import { getConnectedAccountDescriptor, type PluginManifestV2 } from '@happier-dev/protocol';
+import { getConnectedAccountDescriptor } from '@happier-dev/protocol';
+import { definePluginManifest, type PluginManifestV2 } from '@happier-dev/plugin-sdk';
 
 const githubConnectedAccountDescriptor = getConnectedAccountDescriptor('github');
 if (!githubConnectedAccountDescriptor) {
   throw new Error('Missing GitHub connected-account descriptor');
 }
 
-export const PLUGIN_MANIFEST: PluginManifestV2 = {
+export const PLUGIN_MANIFEST = definePluginManifest({
   schemaVersion: 2,
   id: 'happier.scm.hosting.github',
   version: '0.0.0',
@@ -19,14 +20,9 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
     resolvedVersion: '0.0.0',
   },
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['scmHostingProviders', 'connectedAccountDescriptors', 'hooks'] },
+  runtime: { apiVersion: 1, capabilities: ['scmHostingProviders', 'connectedAccountDescriptors'] },
   targets: {},
-  capabilities: {
-    permissions: [{
-      capability: 'hooks.register',
-      reason: 'Register GitHub connected-account materialization hook',
-    }],
-  },
+  capabilities: {},
   contributes: {
     scmHostingProviders: [
       {
@@ -61,17 +57,6 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
         },
       },
     ],
-    hooks: [{
-      id: 'connectedServices.materialization.githubScmHostingToken',
-      hookApiVersion: 1,
-      category: 'integration',
-      scope: 'plugin',
-      executionKind: 'integrate',
-      handler: {
-        target: 'plugin',
-        exportName: 'materializeGithubScmHostingToken',
-      },
-    }],
     connectedAccountDescriptors: [githubConnectedAccountDescriptor],
   },
-};
+} satisfies PluginManifestV2);
