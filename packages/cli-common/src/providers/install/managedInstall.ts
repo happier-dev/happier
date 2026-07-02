@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { delimiter, dirname, join } from 'node:path';
 import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 
-import type { ProviderCliManagedInstallSpec } from '@happier-dev/agents';
+import type { AgentCliManagedInstallSpec } from '@happier-dev/agents';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime';
 
 import { createManagedToolScratchDir } from '../createManagedToolScratchDir.js';
@@ -102,7 +102,7 @@ async function writeManagedPackageLauncher(params: Readonly<{
 
 export async function installManagedPackageProviderCli(params: Readonly<{
   runtimeSpec: ProviderCliRuntimeDescriptor;
-  managedInstall: Extract<ProviderCliManagedInstallSpec, { kind: 'managed_package' }>;
+  managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'managed_package' }>;
   env: NodeJS.ProcessEnv;
   logPath: string;
   deps: ManagedInstallDeps;
@@ -192,7 +192,7 @@ export async function installManagedPackageProviderCli(params: Readonly<{
 
 async function resolveManagedBinaryAsset(params: Readonly<{
   providerId: string;
-  managedInstall: Extract<ProviderCliManagedInstallSpec, { kind: 'github_release_binary' }>;
+  managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>;
   deps: ManagedInstallDeps;
   env: NodeJS.ProcessEnv;
 }>): Promise<Readonly<{ name: string; url: string; digest: string | null }>> {
@@ -213,7 +213,7 @@ async function resolveManagedBinaryAsset(params: Readonly<{
 
 export async function installManagedBinaryProviderCli(params: Readonly<{
   runtimeSpec: ProviderCliRuntimeDescriptor;
-  managedInstall: Extract<ProviderCliManagedInstallSpec, { kind: 'github_release_binary' }>;
+  managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>;
   env: NodeJS.ProcessEnv;
   logPath: string;
   deps: ManagedInstallDeps;

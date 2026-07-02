@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { lstat, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,18 +13,22 @@ if (!originalPlatformDescriptor) {
 
 const platformDescriptor: PropertyDescriptor = originalPlatformDescriptor;
 
-const { renameMock, renameDelegate, renameFailureTargets } = vi.hoisted(() => ({
+const { renameMock, renameDelegate, renameFailureTargets, rmMock, rmDelegate } = vi.hoisted(() => ({
     renameMock: vi.fn(),
     renameDelegate: { current: null as null | typeof import('node:fs/promises').rename },
     renameFailureTargets: new Set<string>(),
+    rmMock: vi.fn(),
+    rmDelegate: { current: null as null | typeof import('node:fs/promises').rm },
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs/promises')>();
     renameDelegate.current = actual.rename;
+    rmDelegate.current = actual.rm;
     return {
         ...actual,
         rename: renameMock,
+        rm: rmMock,
     };
 });
 
@@ -41,6 +45,7 @@ describe('replaceRuntimePayloadTree Windows rename fallback', () => {
     afterEach(() => {
         renameFailureTargets.clear();
         renameMock.mockReset();
+        rmMock.mockReset();
         vi.resetModules();
     });
 
@@ -50,8 +55,8 @@ describe('replaceRuntimePayloadTree Windows rename fallback', () => {
             const sourcePath = join(workspace, 'source');
             const destinationPath = join(workspace, 'dest');
 
-            if (!renameDelegate.current) {
-                throw new Error('expected node:fs/promises.rename delegate to be initialized');
+            if (!renameDelegate.current || !rmDelegate.current) {
+                throw new Error('expected node:fs/promises delegates to be initialized');
             }
 
             renameMock.mockImplementation(async (from, to) => {
@@ -63,6 +68,7 @@ describe('replaceRuntimePayloadTree Windows rename fallback', () => {
                 }
                 return renameDelegate.current!(from, to);
             });
+            rmMock.mockImplementation((target, options) => rmDelegate.current!(target, options));
             renameFailureTargets.add(destinationPath);
 
             await mkdir(join(sourcePath, 'package-dist'), { recursive: true });
@@ -85,6 +91,90 @@ describe('replaceRuntimePayloadTree Windows rename fallback', () => {
         });
     });
 
+    it('consumes the staged payload on Windows when consumeSourcePath is requested', async () => {
+        await withPlatform('win32', async () => {
+            const workspace = await mkdtemp(join(tmpdir(), 'happier-copy-runtime-payload-tree-win32-consume-'));
+            const sourcePath = join(workspace, 'source');
+            const destinationPath = join(workspace, 'dest');
+
+            if (!renameDelegate.current || !rmDelegate.current) {
+                throw new Error('expected node:fs/promises delegates to be initialized');
+            }
+
+            renameMock.mockImplementation((from, to) => renameDelegate.current!(from, to));
+            rmMock.mockImplementation((target, options) => rmDelegate.current!(target, options));
+
+            await mkdir(join(sourcePath, 'package-dist'), { recursive: true });
+            await writeFile(join(sourcePath, 'happier.exe'), 'runtime-binary', 'utf8');
+            await writeFile(join(sourcePath, 'package-dist', 'index.mjs'), 'export default "ok";\n', 'utf8');
+
+            try {
+                const { replaceRuntimePayloadTree } = await import('./copyRuntimePayloadTree');
+                await replaceRuntimePayloadTree({
+                    sourcePath,
+                    destinationPath,
+                    consumeSourcePath: true,
+                });
+
+                expect(await readFile(join(destinationPath, 'happier.exe'), 'utf8')).toBe('runtime-binary');
+                expect(await readFile(join(destinationPath, 'package-dist', 'index.mjs'), 'utf8')).toContain('ok');
+                expect(existsSync(sourcePath)).toBe(false);
+            } finally {
+                await rm(workspace, { recursive: true, force: true });
+            }
+        });
+    });
+
+    it('treats locked backup cleanup as non-fatal after successful payload promotion', async () => {
+        await withPlatform('win32', async () => {
+            const workspace = await mkdtemp(join(tmpdir(), 'happier-copy-runtime-payload-tree-win32-'));
+            const sourcePath = join(workspace, 'source');
+            const destinationPath = join(workspace, 'installed-runtime');
+            const backupPathMarker = `.${basename(destinationPath)}.bak-`;
+            let backupRmAttempts = 0;
+
+            if (!renameDelegate.current || !rmDelegate.current) {
+                throw new Error('expected node:fs/promises delegates to be initialized');
+            }
+
+            renameMock.mockImplementation((from, to) => renameDelegate.current!(from, to));
+            rmMock.mockImplementation(async (target, options) => {
+                const targetPath = String(target);
+                if (targetPath.includes(backupPathMarker)) {
+                    backupRmAttempts += 1;
+                    if (backupRmAttempts >= 2) {
+                        const error = new Error(`EACCES: permission denied, rm '${targetPath}'`) as NodeJS.ErrnoException;
+                        error.code = 'EACCES';
+                        throw error;
+                    }
+                }
+                return rmDelegate.current!(target, options);
+            });
+
+            await mkdir(join(sourcePath, 'package-dist'), { recursive: true });
+            await writeFile(join(sourcePath, 'happier.exe'), 'runtime-binary', 'utf8');
+            await writeFile(join(sourcePath, 'package-dist', 'index.mjs'), 'export default "ok";\n', 'utf8');
+            await mkdir(destinationPath, { recursive: true });
+            await writeFile(join(destinationPath, 'happier.exe'), 'old-runtime-binary', 'utf8');
+
+            try {
+                const { replaceRuntimePayloadTree } = await import('./copyRuntimePayloadTree');
+                await expect(
+                    replaceRuntimePayloadTree({
+                        sourcePath,
+                        destinationPath,
+                    }),
+                ).resolves.toBeUndefined();
+
+                expect(await readFile(join(destinationPath, 'happier.exe'), 'utf8')).toBe('runtime-binary');
+                expect(await readFile(join(destinationPath, 'package-dist', 'index.mjs'), 'utf8')).toContain('ok');
+                expect(existsSync(sourcePath)).toBe(true);
+            } finally {
+                await rm(workspace, { recursive: true, force: true });
+            }
+        });
+    });
+
     it('preserves symlinked payload entries on the Windows copy fallback path', async () => {
         await withPlatform('win32', async () => {
             const workspace = await mkdtemp(join(tmpdir(), 'happier-copy-runtime-payload-tree-win32-symlink-'));
@@ -97,6 +187,7 @@ describe('replaceRuntimePayloadTree Windows rename fallback', () => {
             }
 
             renameMock.mockImplementation(async (from, to) => renameDelegate.current!(from, to));
+            rmMock.mockImplementation((target, options) => rmDelegate.current!(target, options));
 
             await mkdir(join(sourcePath, 'generated'), { recursive: true });
             await writeFile(externalTargetPath, 'export const outside = true;\n', 'utf8');

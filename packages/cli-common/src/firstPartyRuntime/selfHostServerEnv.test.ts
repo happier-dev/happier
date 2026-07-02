@@ -158,7 +158,7 @@ describe('renderSelfHostServerEnvText', () => {
 describe('renderPrismaCompatibleSqliteDatabaseUrl', () => {
     const render = renderPrismaCompatibleSqliteDatabaseUrl as RenderSqliteUrl;
 
-    it('adds canonical socket_timeout and omits connection_limit by default', () => {
+    it('adds canonical socket_timeout without forcing a sqlite connection limit by default', () => {
         expect(render({ dbPath: '/tmp/happier-data/happier-server-light.sqlite', platform: 'linux' })).toBe(
             'file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30',
         );
@@ -187,7 +187,7 @@ describe('renderPrismaCompatibleSqliteDatabaseUrl', () => {
         })).toBe('file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=1');
     });
 
-    it('omits socket_timeout when busyTimeoutMs is explicitly zero', () => {
+    it('omits socket_timeout and connection_limit when both are unconfigured', () => {
         expect(render({
             dbPath: '/tmp/happier-data/happier-server-light.sqlite',
             platform: 'linux',

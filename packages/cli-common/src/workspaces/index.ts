@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 const EXTENSIONS_PACKAGE_PREFIX = '@happier-dev/extensions-';
 const PLUGINS_PACKAGE_PREFIX = '@happier-dev/plugins-';
+const INTERNAL_PACKAGE_PREFIX = '@happier-dev/';
 
 export function findRepoRoot(startDir: string): string {
   let dir = startDir;
@@ -116,7 +117,24 @@ export function readBundledDependencyNames(rawPackageJson: any): string[] {
 }
 
 export function readBundledWorkspacePackageNames(rawPackageJson: any): string[] {
-  return readBundledDependencyNames(rawPackageJson).filter((packageName) => packageName.startsWith('@happier-dev/'));
+  return readBundledDependencyNames(rawPackageJson).filter(isInternalWorkspacePackageName);
+}
+
+function isInternalWorkspacePackageName(packageName: string): boolean {
+  return packageName.startsWith(INTERNAL_PACKAGE_PREFIX);
+}
+
+function collectInternalRuntimeWorkspaceDepNames(packageJson: any): string[] {
+  const result = new Set<string>();
+  for (const deps of [packageJson?.dependencies, packageJson?.optionalDependencies]) {
+    if (!deps || typeof deps !== 'object') continue;
+    for (const name of Object.keys(deps)) {
+      if (isInternalWorkspacePackageName(name)) {
+        result.add(name);
+      }
+    }
+  }
+  return [...result].sort((left, right) => left.localeCompare(right));
 }
 
 export function rmDirSafeSync(
@@ -375,25 +393,84 @@ export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
 
   const hostPackageJson = readJson(hostPackageJsonPath);
   const bundledWorkspaceNames = readBundledWorkspacePackageNames(hostPackageJson);
+  const bundledWorkspaceNameSet = new Set(bundledWorkspaceNames);
+  const bundledWorkspaceClosureNames = resolveInternalWorkspacePackageNameClosure({
+    repoRoot: params.repoRoot,
+    packageNames: bundledWorkspaceNames,
+  });
+  const missingClosureNames = bundledWorkspaceClosureNames.filter((packageName) => !bundledWorkspaceNameSet.has(packageName));
+  if (missingClosureNames.length > 0) {
+    throw new Error(
+      [
+        `Missing bundled internal workspace dependencies in ${hostPackageJsonPath}:`,
+        ...missingClosureNames.map((packageName) => `- ${packageName}`),
+      ].join('\n'),
+    );
+  }
 
-  return bundledWorkspaceNames.map((packageName) => {
-    const workspaceName = packageName.split('/').at(-1);
-    if (!workspaceName) {
-      throw new Error(`Unable to resolve workspace name from bundled dependency: ${packageName}`);
-    }
-
-    const srcDir = packageName.startsWith(EXTENSIONS_PACKAGE_PREFIX)
-      ? resolve(params.repoRoot, 'packages', 'extensions', packageName.slice(EXTENSIONS_PACKAGE_PREFIX.length))
-      : packageName.startsWith(PLUGINS_PACKAGE_PREFIX)
-        ? resolve(params.repoRoot, 'packages', 'plugins', packageName.slice(PLUGINS_PACKAGE_PREFIX.length))
-        : resolve(params.repoRoot, 'packages', workspaceName);
-
+  return bundledWorkspaceClosureNames.map((packageName) => {
     return {
       packageName,
-      srcDir,
+      srcDir: resolveWorkspaceSourceDir({ repoRoot: params.repoRoot, packageName }),
       destDir: resolve(params.hostPackageDir, 'node_modules', ...packageName.split('/')),
     };
   });
+}
+
+export function resolveWorkspaceSourceDir(params: Readonly<{
+  repoRoot: string;
+  packageName: string;
+}>): string {
+  const packageName = String(params.packageName ?? '').trim();
+  const workspaceName = packageName.split('/').at(-1);
+  if (!workspaceName) {
+    throw new Error(`Unable to resolve workspace name from bundled dependency: ${packageName}`);
+  }
+
+  if (packageName.startsWith(EXTENSIONS_PACKAGE_PREFIX)) {
+    return resolve(params.repoRoot, 'packages', 'extensions', packageName.slice(EXTENSIONS_PACKAGE_PREFIX.length));
+  }
+  if (packageName.startsWith(PLUGINS_PACKAGE_PREFIX)) {
+    return resolve(params.repoRoot, 'packages', 'plugins', packageName.slice(PLUGINS_PACKAGE_PREFIX.length));
+  }
+  return resolve(params.repoRoot, 'packages', workspaceName);
+}
+
+export function resolveInternalWorkspacePackageNameClosure(params: Readonly<{
+  repoRoot: string;
+  packageNames: ReadonlyArray<string>;
+}>): string[] {
+  const visited = new Set<string>();
+
+  const visit = (packageName: string): void => {
+    const normalizedName = String(packageName ?? '').trim();
+    if (!isInternalWorkspacePackageName(normalizedName) || visited.has(normalizedName)) {
+      return;
+    }
+    visited.add(normalizedName);
+
+    const sourcePackageJsonPath = resolve(
+      resolveWorkspaceSourceDir({
+        repoRoot: params.repoRoot,
+        packageName: normalizedName,
+      }),
+      'package.json',
+    );
+    if (!existsSync(sourcePackageJsonPath)) {
+      return;
+    }
+
+    const sourcePackageJson = readJson(sourcePackageJsonPath);
+    for (const dependencyName of collectInternalRuntimeWorkspaceDepNames(sourcePackageJson)) {
+      visit(dependencyName);
+    }
+  };
+
+  for (const packageName of params.packageNames) {
+    visit(packageName);
+  }
+
+  return [...visited].sort((left, right) => left.localeCompare(right));
 }
 
 function resolveBundledWorkspaceRepoRoot(params: Readonly<{
@@ -491,7 +568,7 @@ function hasBundledWorkspacePackageManifestParity(
   hostPackageDir: string,
   packageName: string,
 ): boolean {
-  const workspacePackageJsonPath = resolve(rootDir, 'packages', packageName.split('/').at(-1) ?? '', 'package.json');
+  const workspacePackageJsonPath = resolve(resolveWorkspaceSourceDir({ repoRoot: rootDir, packageName }), 'package.json');
   const bundledPackageJsonPath = resolve(hostPackageDir, 'node_modules', ...packageName.split('/'), 'package.json');
   if (!existsSync(bundledPackageJsonPath)) return false;
   if (!existsSync(workspacePackageJsonPath)) return true;
@@ -549,7 +626,7 @@ function hasBundledWorkspaceRuntimeDependencyTreeHealthy(
 function hasBundledWorkspacePackageHealthy(rootDir: string, hostPackageDir: string, packageName: string): boolean {
   const packageDir = resolve(hostPackageDir, 'node_modules', ...packageName.split('/'));
   const bundledPackageJsonPath = resolve(packageDir, 'package.json');
-  const workspacePackageJsonPath = resolve(rootDir, 'packages', packageName.split('/').at(-1) ?? '', 'package.json');
+  const workspacePackageJsonPath = resolve(resolveWorkspaceSourceDir({ repoRoot: rootDir, packageName }), 'package.json');
 
   if (!hasBundledWorkspacePackageManifestParity(rootDir, hostPackageDir, packageName)) {
     return false;

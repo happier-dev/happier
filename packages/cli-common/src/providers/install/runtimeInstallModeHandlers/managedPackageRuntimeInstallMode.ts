@@ -1,4 +1,4 @@
-import type { ProviderCliManagedInstallSpec } from '@happier-dev/agents';
+import type { AgentCliManagedInstallSpec } from '@happier-dev/agents';
 
 import { installManagedPackageProviderCli } from '../managedInstall.js';
 import { buildRuntimeInstallModeOkResult } from '../runtimeInstallModeResult.js';
@@ -11,7 +11,7 @@ export const managedPackageRuntimeInstallModeHandler: RuntimeInstallModeHandlerE
         const { runtimeSpec, plan, env, lifecycleContext, deps } = params;
         await installManagedPackageProviderCli({
             runtimeSpec,
-            managedInstall: plan.managedInstall as Extract<ProviderCliManagedInstallSpec, { kind: 'managed_package' }>,
+            managedInstall: plan.managedInstall as Extract<AgentCliManagedInstallSpec, { kind: 'managed_package' }>,
             env,
             logPath: lifecycleContext.logPath,
             deps,

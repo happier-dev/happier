@@ -12,6 +12,7 @@ export type RelayAccessCommandRequest = Readonly<{
     args: ReadonlyArray<string>;
     env?: NodeJS.ProcessEnv;
     timeoutMs?: number;
+    signal?: AbortSignal;
 }>;
 
 export type RelayAccessCommandResult = Readonly<{
@@ -34,6 +35,31 @@ export type RelayAccessExecutionContext = Readonly<{
     upstreamUrl: string | null;
     runCommand?: RelayAccessCommandRunner;
     resolveCommandOnPath?: ResolveRelayAccessCommandOnPath;
+}>;
+
+export type RelayAccessDeadlineV1 = Readonly<{
+    startedAt: number;
+    deadlineAt: number;
+    now: () => number;
+    signal?: AbortSignal;
+}>;
+
+export type RelayAccessDiagnosticCodeV1 =
+    | 'provider_not_installed'
+    | 'provider_not_authenticated'
+    | 'provider_disabled'
+    | 'provider_command_timeout'
+    | 'provider_command_failed'
+    | 'provider_unreachable'
+    | 'invalid_provider_output'
+    | 'unknown';
+
+export type RelayAccessDiagnosticV1 = Readonly<{
+    code: RelayAccessDiagnosticCodeV1;
+    providerId: RelayAccessProviderId;
+    phase: string;
+    message: string;
+    developerMessage?: string;
 }>;
 
 export type RelayAccessProviderPrerequisite =
@@ -77,6 +103,12 @@ export type RelayAccessStatus =
         details?: unknown;
     }>;
 
+export type RelayAccessProviderStatusOptions = Readonly<{
+    timeoutMs?: number;
+    deadline?: RelayAccessDeadlineV1;
+    signal?: AbortSignal;
+}>;
+
 export type RelayAccessConfig =
     | Readonly<{ providerId: 'localOnly' }>
     | Readonly<{ providerId: 'lan'; url: string }>
@@ -86,7 +118,7 @@ export type RelayAccessConfig =
 
 export type RelayAccessProvider = Readonly<{
     descriptor: RelayAccessProviderDescriptor;
-    status: (params: Readonly<{ config: RelayAccessConfig | null; ctx: RelayAccessExecutionContext }>) => Promise<RelayAccessStatus> | RelayAccessStatus;
-    configure?: (params: Readonly<{ config: RelayAccessConfig; ctx: RelayAccessExecutionContext }>) => Promise<RelayAccessStatus> | RelayAccessStatus;
-    disable?: (params: Readonly<{ config: RelayAccessConfig; ctx: RelayAccessExecutionContext }>) => Promise<void> | void;
+    status: (params: Readonly<{ config: RelayAccessConfig | null; ctx: RelayAccessExecutionContext } & RelayAccessProviderStatusOptions>) => Promise<RelayAccessStatus> | RelayAccessStatus;
+    configure?: (params: Readonly<{ config: RelayAccessConfig; ctx: RelayAccessExecutionContext } & RelayAccessProviderStatusOptions>) => Promise<RelayAccessStatus> | RelayAccessStatus;
+    disable?: (params: Readonly<{ config: RelayAccessConfig; ctx: RelayAccessExecutionContext } & RelayAccessProviderStatusOptions>) => Promise<void> | void;
 }>;

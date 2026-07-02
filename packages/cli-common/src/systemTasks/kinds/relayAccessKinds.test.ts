@@ -41,10 +41,19 @@ describe('relay access shared system task kinds', () => {
   });
 
   it('status kind normalizes provider output and redacts sensitive details', async () => {
+    const abortController = new AbortController();
     const createExecutionContext = vi.fn((params: { upstreamUrl: string | null; target: unknown }) => ({
       env: process.env,
       upstreamUrl: params.upstreamUrl,
     }));
+    const status = vi.fn(async () => ({
+      state: 'enabled',
+      shareUrl: 'https://relay.example.test',
+      details: {
+        token: 'super-secret',
+        ok: true,
+      },
+    } as const));
     const provider: RelayAccessProvider = {
       descriptor: {
         id: 'cloudflareNamed',
@@ -52,14 +61,7 @@ describe('relay access shared system task kinds', () => {
         exposure: 'public',
         prerequisites: [],
       },
-      status: async () => ({
-        state: 'enabled',
-        shareUrl: 'https://relay.example.test',
-        details: {
-          token: 'super-secret',
-          ok: true,
-        },
-      }),
+      status,
     };
 
     const readConfig = vi.fn(async () => ({
@@ -79,6 +81,7 @@ describe('relay access shared system task kinds', () => {
       params: {
         target: { kind: 'local' },
       },
+      signal: abortController.signal,
       emit: (event) => {
         events.push(event);
       },
@@ -100,6 +103,10 @@ describe('relay access shared system task kinds', () => {
       },
     ]);
 
+    expect(status).toHaveBeenCalledWith(expect.objectContaining({
+      signal: abortController.signal,
+    }));
+
     expect(result).toEqual({
       configured: true,
       providerId: 'cloudflareNamed',
@@ -114,6 +121,7 @@ describe('relay access shared system task kinds', () => {
   });
 
   it('configure kind persists the parsed config and returns a redacted status snapshot', async () => {
+    const abortController = new AbortController();
     const createExecutionContext = vi.fn((params: { upstreamUrl: string | null; target: unknown }) => ({
       env: process.env,
       upstreamUrl: params.upstreamUrl,
@@ -152,6 +160,7 @@ describe('relay access shared system task kinds', () => {
         providerId: 'cloudflareNamed',
         config: { hostname: 'relay.example.test', token: 'super-secret' },
       },
+      signal: abortController.signal,
       emit: () => {},
       prompt: async () => {
         throw new Error('relay access configure should not prompt');
@@ -171,6 +180,7 @@ describe('relay access shared system task kinds', () => {
       ctx: expect.objectContaining({
         upstreamUrl: 'http://127.0.0.1:3005',
       }),
+      signal: abortController.signal,
     }));
 
     expect(result).toEqual({
@@ -250,6 +260,7 @@ describe('relay access shared system task kinds', () => {
   });
 
   it('disable kind clears persisted config and returns a disabled snapshot', async () => {
+    const abortController = new AbortController();
     const createExecutionContext = vi.fn((params: { upstreamUrl: string | null; target: unknown }) => ({
       env: process.env,
       upstreamUrl: params.upstreamUrl,
@@ -278,6 +289,7 @@ describe('relay access shared system task kinds', () => {
       params: {
         target: { kind: 'local' },
       },
+      signal: abortController.signal,
       emit: () => {},
       prompt: async () => {
         throw new Error('relay access disable should not prompt');
@@ -289,6 +301,9 @@ describe('relay access shared system task kinds', () => {
       config: null,
     });
     expect(disable).toHaveBeenCalledTimes(1);
+    expect(disable).toHaveBeenCalledWith(expect.objectContaining({
+      signal: abortController.signal,
+    }));
     expect(result).toEqual({
       configured: false,
       providerId: null,

@@ -1,4 +1,4 @@
-import type { ProviderCliManagedInstallSpec } from '@happier-dev/agents';
+import type { AgentCliManagedInstallSpec } from '@happier-dev/agents';
 
 import { installManagedBinaryProviderCli } from '../managedInstall.js';
 import { buildRuntimeInstallModeOkResult } from '../runtimeInstallModeResult.js';
@@ -11,7 +11,7 @@ export const githubReleaseBinaryRuntimeInstallModeHandler: RuntimeInstallModeHan
         const { runtimeSpec, plan, env, lifecycleContext, deps } = params;
         await installManagedBinaryProviderCli({
             runtimeSpec,
-            managedInstall: plan.managedInstall as Extract<ProviderCliManagedInstallSpec, { kind: 'github_release_binary' }>,
+            managedInstall: plan.managedInstall as Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>,
             env,
             logPath: lifecycleContext.logPath,
             deps,

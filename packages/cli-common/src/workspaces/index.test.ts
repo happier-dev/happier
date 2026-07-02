@@ -127,6 +127,144 @@ describe('bundleWorkspacePackage', () => {
 });
 
 describe('resolveWorkspaceBundlesFromPackageJson', () => {
+  it('derives the full internal runtime workspace dependency closure from package manifests', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-resolve-closure-'));
+    try {
+      writeFileSync(resolve(rootDir, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2), 'utf8');
+      writeFileSync(resolve(rootDir, 'yarn.lock'), '', 'utf8');
+
+      const hostPackageDir = resolve(rootDir, 'apps', 'stack');
+      mkdirSync(hostPackageDir, { recursive: true });
+      writeFileSync(
+        resolve(hostPackageDir, 'package.json'),
+        JSON.stringify(
+          {
+            name: '@happier-dev/stack',
+            version: '0.0.0',
+            bundledDependencies: ['@happier-dev/cli-common', '@happier-dev/agents', '@happier-dev/protocol'],
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const cliCommonDir = resolve(rootDir, 'packages', 'cli-common');
+      mkdirSync(cliCommonDir, { recursive: true });
+      writeFileSync(
+        resolve(cliCommonDir, 'package.json'),
+        JSON.stringify(
+          {
+            name: '@happier-dev/cli-common',
+            version: '0.0.0',
+            dependencies: {
+              '@happier-dev/agents': '0.0.0',
+            },
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const agentsDir = resolve(rootDir, 'packages', 'agents');
+      mkdirSync(agentsDir, { recursive: true });
+      writeFileSync(
+        resolve(agentsDir, 'package.json'),
+        JSON.stringify(
+          {
+            name: '@happier-dev/agents',
+            version: '0.0.0',
+            dependencies: {
+              '@happier-dev/protocol': '0.0.0',
+            },
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const protocolDir = resolve(rootDir, 'packages', 'protocol');
+      mkdirSync(protocolDir, { recursive: true });
+      writeFileSync(
+        resolve(protocolDir, 'package.json'),
+        JSON.stringify({ name: '@happier-dev/protocol', version: '0.0.0' }, null, 2),
+        'utf8',
+      );
+
+      const bundles = resolveWorkspaceBundlesFromPackageJson({
+        repoRoot: rootDir,
+        hostPackageDir,
+      });
+
+      expect(bundles.map((bundle) => bundle.packageName)).toEqual([
+        '@happier-dev/agents',
+        '@happier-dev/cli-common',
+        '@happier-dev/protocol',
+      ]);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails when a transitive internal runtime workspace is absent from bundledDependencies', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-resolve-missing-closure-'));
+    try {
+      writeFileSync(resolve(rootDir, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2), 'utf8');
+      writeFileSync(resolve(rootDir, 'yarn.lock'), '', 'utf8');
+
+      const hostPackageDir = resolve(rootDir, 'apps', 'stack');
+      mkdirSync(hostPackageDir, { recursive: true });
+      writeFileSync(
+        resolve(hostPackageDir, 'package.json'),
+        JSON.stringify(
+          {
+            name: '@happier-dev/stack',
+            version: '0.0.0',
+            bundledDependencies: ['@happier-dev/cli-common'],
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const cliCommonDir = resolve(rootDir, 'packages', 'cli-common');
+      mkdirSync(cliCommonDir, { recursive: true });
+      writeFileSync(
+        resolve(cliCommonDir, 'package.json'),
+        JSON.stringify(
+          {
+            name: '@happier-dev/cli-common',
+            version: '0.0.0',
+            dependencies: {
+              '@happier-dev/agents': '0.0.0',
+            },
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const agentsDir = resolve(rootDir, 'packages', 'agents');
+      mkdirSync(agentsDir, { recursive: true });
+      writeFileSync(
+        resolve(agentsDir, 'package.json'),
+        JSON.stringify({ name: '@happier-dev/agents', version: '0.0.0' }, null, 2),
+        'utf8',
+      );
+
+      expect(() => resolveWorkspaceBundlesFromPackageJson({
+        repoRoot: rootDir,
+        hostPackageDir,
+      })).toThrow(/Missing bundled internal workspace dependencies/);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it('resolves plugin workspaces from packages/plugins/<pluginId>', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-resolve-plugins-'));
     try {

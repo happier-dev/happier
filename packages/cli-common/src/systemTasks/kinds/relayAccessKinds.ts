@@ -85,7 +85,11 @@ export function createRelayAccessStatusTaskKind(deps: RelayAccessStatusKindDeps)
       });
 
       const provider = deps.getProvider(config.providerId);
-      const status = await provider.status({ config, ctx: deps.createExecutionContext({ target: parsed.target, upstreamUrl: null }) });
+      const status = await provider.status({
+        config,
+        ctx: deps.createExecutionContext({ target: parsed.target, upstreamUrl: null }),
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
+      });
       return {
         configured: true,
         providerId: config.providerId,
@@ -119,7 +123,11 @@ export function createRelayAccessConfigureTaskKind(deps: RelayAccessConfigureKin
           stepId: 'relay.access.configure.apply',
           message: 'Applying relay access configuration',
         });
-        const configureResult = await provider.configure({ config: parsed.config, ctx: executionContext });
+        const configureResult = await provider.configure({
+          config: parsed.config,
+          ctx: executionContext,
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        });
         if (configureResult.state === 'needs_auth' || configureResult.state === 'error') {
           return {
             configured: true,
@@ -138,6 +146,7 @@ export function createRelayAccessConfigureTaskKind(deps: RelayAccessConfigureKin
       const status = await provider.status({
         config: parsed.config,
         ctx: executionContext,
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
       });
       return {
         configured: true,
@@ -166,6 +175,7 @@ export function createRelayAccessDisableTaskKind(deps: RelayAccessDisableKindDep
           await provider.disable({
             config,
             ctx: deps.createExecutionContext({ target: parsed.target, upstreamUrl: null }),
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
         }
       }

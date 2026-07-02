@@ -88,6 +88,7 @@ export async function buildServerBinaryArtifactPayload({
   await ensureFileExists(entrypoint);
   const sidecarEntries = await resolveServerBinarySidecarEntries({
     repoRoot,
+    target,
     buildDbProviders,
     env,
     runCommand,

@@ -1,9 +1,9 @@
 import type {
   AgentId,
-  ProviderCliManagedInstallSpec,
-  ProviderCliRuntimeInstallPlatform as ProviderCliInstallPlatform,
+  AgentCliManagedInstallSpec,
+  AgentCliInstallPlatform as ProviderCliInstallPlatform,
 } from '@happier-dev/agents';
-import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
 
 import type { ManagedInstallDeps } from './install/managedInstall.js';
 import { runRuntimeInstallCoordinator } from './install/runtimeInstallCoordinator.js';
@@ -29,7 +29,7 @@ export type ProviderCliInstallPlan = Readonly<{
   commands: ReadonlyArray<ProviderCliInstallCommand>;
   requiresAdmin: boolean;
   installMode: ProviderCliInstallMode;
-  managedInstall: ProviderCliManagedInstallSpec | null;
+  managedInstall: AgentCliManagedInstallSpec | null;
 }>;
 
 export type ProviderCliInstallPlanResult =
@@ -127,7 +127,7 @@ export function planProviderCliInstallForRuntime(params: Readonly<{
 
 export function planProviderCliInstall(params: Readonly<{ providerId: AgentId; platform: ProviderCliInstallPlatform }>): ProviderCliInstallPlanResult {
   return planProviderCliInstallForRuntime({
-    runtimeSpec: getProviderCliRuntimeSpec(params.providerId),
+    runtimeSpec: getAgentCliRuntimeSpec(params.providerId),
     platform: params.platform,
   });
 }
@@ -174,7 +174,7 @@ export async function installProviderCli(params: Readonly<{
   deps?: InstallProviderCliDeps;
 }>): Promise<InstallProviderCliResult> {
   return installProviderCliForRuntime({
-    runtimeSpec: getProviderCliRuntimeSpec(params.providerId),
+    runtimeSpec: getAgentCliRuntimeSpec(params.providerId),
     platform: params.platform,
     env: params.env,
     logDir: params.logDir,

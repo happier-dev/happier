@@ -955,6 +955,107 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
   }
 });
 
+test('buildServerBinaryArtifactPayload stages sharp runtime sidecars for the server binary target', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-sharp-'));
+  try {
+    const repoRoot = join(tempRoot, 'repo');
+    const payloadDir = join(tempRoot, 'payload');
+    const serverSourcesDir = join(repoRoot, 'apps', 'server', 'sources');
+    const uiDistDir = join(repoRoot, 'apps', 'ui', 'dist');
+    const sqliteClientDir = join(repoRoot, 'apps', 'server', 'generated', 'sqlite-client');
+    const sqliteMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
+    const postgresClientDir = join(repoRoot, 'node_modules', '.prisma', 'client');
+    const prismaClientPackageDir = join(repoRoot, 'node_modules', '@prisma', 'client');
+    const sharpDir = join(repoRoot, 'node_modules', 'sharp');
+    const sharpLinuxX64Dir = join(repoRoot, 'node_modules', '@img', 'sharp-linux-x64');
+    const sharpLibvipsLinuxX64Dir = join(repoRoot, 'node_modules', '@img', 'sharp-libvips-linux-x64');
+    const sharpDarwinArm64Dir = join(repoRoot, 'node_modules', '@img', 'sharp-darwin-arm64');
+
+    mkdirSync(serverSourcesDir, { recursive: true });
+    mkdirSync(uiDistDir, { recursive: true });
+    mkdirSync(sqliteClientDir, { recursive: true });
+    mkdirSync(sqliteMigrationsDir, { recursive: true });
+    mkdirSync(postgresClientDir, { recursive: true });
+    mkdirSync(prismaClientPackageDir, { recursive: true });
+    mkdirSync(sharpDir, { recursive: true });
+    mkdirSync(sharpLinuxX64Dir, { recursive: true });
+    mkdirSync(sharpLibvipsLinuxX64Dir, { recursive: true });
+    mkdirSync(sharpDarwinArm64Dir, { recursive: true });
+
+    writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+    writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
+    writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
+    writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
+    writeServerPrismaEngineFixtures({ sqliteClientDir, postgresClientDir });
+    writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
+    writeFileSync(
+      join(sharpDir, 'package.json'),
+      JSON.stringify({
+        name: 'sharp',
+        version: '0.0.0',
+        dependencies: {
+          '@img/sharp-linux-x64': '0.0.0',
+        },
+        optionalDependencies: {
+          '@img/sharp-libvips-linux-x64': '0.0.0',
+          '@img/sharp-darwin-arm64': '0.0.0',
+        },
+      }),
+      'utf8',
+    );
+    writeFileSync(join(sharpDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(
+      join(sharpLinuxX64Dir, 'package.json'),
+      JSON.stringify({ name: '@img/sharp-linux-x64', os: ['linux'], cpu: ['x64'] }),
+      'utf8',
+    );
+    writeFileSync(join(sharpLinuxX64Dir, 'binding.node'), 'linux sharp binding\n', 'utf8');
+    writeFileSync(
+      join(sharpLibvipsLinuxX64Dir, 'package.json'),
+      JSON.stringify({ name: '@img/sharp-libvips-linux-x64', os: ['linux'], cpu: ['x64'] }),
+      'utf8',
+    );
+    writeFileSync(join(sharpLibvipsLinuxX64Dir, 'libvips.so'), 'linux libvips\n', 'utf8');
+    writeFileSync(
+      join(sharpDarwinArm64Dir, 'package.json'),
+      JSON.stringify({ name: '@img/sharp-darwin-arm64', os: ['darwin'], cpu: ['arm64'] }),
+      'utf8',
+    );
+    writeFileSync(join(sharpDarwinArm64Dir, 'binding.node'), 'darwin sharp binding\n', 'utf8');
+
+    const artifacts = await import('../dist/componentArtifacts/index.js');
+    await artifacts.buildServerBinaryArtifactPayload({
+      repoRoot,
+      payloadDir,
+      entrypoint: join(serverSourcesDir, 'main.light.ts'),
+      buildDbProviders: 'sqlite',
+      target: artifacts.resolveCurrentBinaryTarget({
+        availableTargets: artifacts.SERVER_BINARY_TARGETS,
+        platform: 'linux',
+        arch: 'x64',
+      }),
+      commandProbe: () => true,
+      runCommand: () => {},
+      compileBinary: async ({ outfile }) => {
+        writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
+      },
+    });
+
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', 'sharp', 'index.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(
+      readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-linux-x64', 'binding.node'), 'utf8'),
+      'linux sharp binding\n',
+    );
+    assert.equal(
+      readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-libvips-linux-x64', 'libvips.so'), 'utf8'),
+      'linux libvips\n',
+    );
+    assert.equal(existsSync(join(payloadDir, 'node_modules', '@img', 'sharp-darwin-arm64')), false);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('buildServerBinaryArtifactPayload delegates provider freshness to generate:providers before staging server sidecars', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-provider-freshness-'));
   try {

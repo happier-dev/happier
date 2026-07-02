@@ -47,10 +47,13 @@ describe('readBackendCliSourcePreference', () => {
 });
 
 describe('resolveProviderCliCommand', () => {
+  const originalCwd = process.cwd();
+
   afterEach(() => {
     if (originalPlatformDescriptor) {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
     }
+    process.chdir(originalCwd);
   });
 
   it('expands ~ and resolves provider override shims on Windows', () => {
@@ -105,6 +108,27 @@ describe('resolveProviderCliCommand', () => {
       isBunRuntime: false,
       currentExecPath: process.execPath,
     })).toBe(true);
+  });
+
+  it('rejects POSIX relative provider CLI override paths before launch resolution', () => {
+    if (process.platform === 'win32') return;
+
+    const root = join(tmpdir(), `happier-cli-common-provider-relative-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const binDir = join(root, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const cursorPath = join(binDir, 'cursor');
+    writeFileSync(cursorPath, '#!/bin/sh\nexit 0\n', 'utf8');
+    chmodSync(cursorPath, 0o755);
+    process.chdir(root);
+
+    expect(resolveProviderCliCommand('cursor', {
+      processEnv: {
+        PATH: '',
+        HAPPIER_CURSOR_PATH: 'bin/cursor',
+      },
+      isBunRuntime: false,
+      currentExecPath: process.execPath,
+    })).toBeNull();
   });
 
   it('accepts oh-my-pi Bun entrypoint overrides that point at the package TypeScript source', () => {
@@ -195,7 +219,7 @@ describe('resolveProviderCliCommand', () => {
   });
 
   it('does not throw for compatibility-only customAcp resolution when no backend target preference exists', () => {
-    expect(resolveProviderCliCommandForRuntime(legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec(), {
+    expect(resolveProviderCliCommandForRuntime(legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec(), {
       processEnv: {
         PATH: '',
       },

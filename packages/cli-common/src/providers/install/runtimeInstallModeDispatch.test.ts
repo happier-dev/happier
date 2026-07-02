@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
 
 import { runRuntimeInstallModeDispatch } from './runtimeInstallModeDispatch.js';
 import type { ProviderCliInstallPlan } from '../install.js';
 import type { RuntimeInstallLifecycleContext } from './runtimeInstallLifecycleContext.js';
 
-const runtimeSpec = getProviderCliRuntimeSpec('codex');
+const runtimeSpec = getAgentCliRuntimeSpec('codex');
 
 const plan: ProviderCliInstallPlan = {
     providerId: runtimeSpec.id,

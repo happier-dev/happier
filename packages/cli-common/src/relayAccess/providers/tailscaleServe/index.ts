@@ -1,4 +1,11 @@
+import {
+    createRelayAccessDiagnostic,
+} from '../../diagnostics.js';
 import type { RelayAccessProvider } from '../../types.js';
+import {
+    resolveTailscaleRelayAccessCommandParams,
+    resolveTailscaleRelayAccessDeadline,
+} from '../tailscale/commandParams.js';
 
 import {
     extractTailscaleServeHttpsUrl,
@@ -15,7 +22,7 @@ const descriptor = relayAccessProviderDescriptorsById.tailscaleServe;
 
 export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
     descriptor,
-    configure: async ({ config, ctx }) => {
+    configure: async ({ config, ctx, timeoutMs, deadline, signal }) => {
         if (config.providerId !== 'tailscaleServe') {
             return { state: 'unknown' };
         }
@@ -31,8 +38,12 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
         }
 
         try {
+            const commandDeadline = resolveTailscaleRelayAccessDeadline({ timeoutMs, deadline, signal });
             const res = await runTailscaleServeEnable(
-                { env: ctx.env, upstreamUrl },
+                {
+                    ...resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal }),
+                    upstreamUrl,
+                },
                 {
                     ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
                     ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
@@ -58,36 +69,39 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
         } catch (error) {
             return {
                 state: 'error',
-                details: {
-                    reason: 'tailscale_serve_enable_failed',
-                    message: error instanceof Error ? error.message : String(error),
-                },
+                details: createRelayAccessDiagnostic({
+                    providerId: 'tailscaleServe',
+                    phase: 'tailscale.serve.enable',
+                    error,
+                }),
             };
         }
 
         return { state: 'unknown' };
     },
-    disable: async ({ config, ctx }) => {
+    disable: async ({ config, ctx, timeoutMs, deadline, signal }) => {
         if (config.providerId !== 'tailscaleServe') {
             return;
         }
+        const commandDeadline = resolveTailscaleRelayAccessDeadline({ timeoutMs, deadline, signal });
         await runTailscaleServeDisable(
-            { env: ctx.env },
+            resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal }),
             {
                 ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
                 ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
             },
         ).catch(() => undefined);
     },
-    status: async ({ config, ctx }) => {
+    status: async ({ config, ctx, timeoutMs, deadline, signal }) => {
         if (config?.providerId !== 'tailscaleServe') {
             return { state: 'unknown' };
         }
 
+        const commandDeadline = resolveTailscaleRelayAccessDeadline({ timeoutMs, deadline, signal });
         let snapshot: Awaited<ReturnType<typeof runTailscaleStatusJson>>;
         try {
             snapshot = await runTailscaleStatusJson(
-                { env: ctx.env },
+                resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal }),
                 {
                     ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
                     ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
@@ -96,10 +110,11 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
         } catch (error) {
             return {
                 state: 'error',
-                details: {
-                    reason: 'tailscale_status_failed',
-                    message: error instanceof Error ? error.message : String(error),
-                },
+                details: createRelayAccessDiagnostic({
+                    providerId: 'tailscaleServe',
+                    phase: 'tailscale.status',
+                    error,
+                }),
             };
         }
 
@@ -116,7 +131,7 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
         let serveStatus: string;
         try {
             serveStatus = await runTailscaleServeStatus(
-                { env: ctx.env },
+                resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal }),
                 {
                     ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
                     ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
@@ -125,10 +140,11 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
         } catch (error) {
             return {
                 state: 'error',
-                details: {
-                    reason: 'tailscale_serve_status_failed',
-                    message: error instanceof Error ? error.message : String(error),
-                },
+                details: createRelayAccessDiagnostic({
+                    providerId: 'tailscaleServe',
+                    phase: 'tailscale.serve.status',
+                    error,
+                }),
             };
         }
 

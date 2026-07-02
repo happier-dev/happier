@@ -9,7 +9,7 @@ import { pruneRetainedVersions } from './pruneRetainedVersions.js';
 import { shouldPersistDefaultManagedReleaseChannel, writeDefaultManagedReleaseChannel } from './defaultReleaseChannelState.js';
 import { syncInstalledFirstPartyShims } from './syncInstalledFirstPartyShims.js';
 import { joinPathForPathShape } from '../path/pathShape.js';
-import { resolveFirstPartyInstallLayout, type FirstPartyInstallLayout } from './installLayout.js';
+import { resolveFirstPartyInstallLayout, resolveFirstPartyVersionInstallPath, type FirstPartyInstallLayout } from './installLayout.js';
 
 function readErrorCode(error: unknown): string | null {
   if (typeof error !== 'object' || error === null || !('code' in error)) {
@@ -92,6 +92,75 @@ async function quarantineWindowsInstallRoot(layout: FirstPartyInstallLayout): Pr
   throw new Error(`Unable to quarantine corrupted install root '${layout.installRoot}' after multiple attempts.`);
 }
 
+function resolvePathRelativeToInstallRoot(params: Readonly<{
+  absolutePath: string;
+  installRoot: string;
+}>): string | null {
+  const normalizedInstallRoot = normalizePathText(params.installRoot).replace(/\/+$/, '');
+  const normalizedAbsolutePath = normalizePathText(params.absolutePath);
+  const prefix = `${normalizedInstallRoot}/`;
+  if (!normalizedAbsolutePath.startsWith(prefix)) {
+    return null;
+  }
+  const absolutePathWithoutDrive = params.absolutePath.replace(/^[a-zA-Z]:[\\/]/, '');
+  const installRootWithoutDrive = params.installRoot.replace(/^[a-zA-Z]:[\\/]/, '');
+  const normalizedInstallRootWithoutDrive = normalizePathText(installRootWithoutDrive).replace(/\/+$/, '');
+  const normalizedAbsolutePathWithoutDrive = normalizePathText(absolutePathWithoutDrive);
+  const prefixWithoutDrive = `${normalizedInstallRootWithoutDrive}/`;
+  if (!normalizedAbsolutePathWithoutDrive.startsWith(prefixWithoutDrive)) {
+    return null;
+  }
+  return absolutePathWithoutDrive.slice(installRootWithoutDrive.length).replace(/^[/\\]+/, '');
+}
+
+async function resolveWindowsRetryPayloadRoot(params: Readonly<{
+  componentId: FirstPartyComponentId;
+  versionId: string;
+  payloadRoot: string;
+  channel?: PublicReleaseRingId;
+  releaseRing?: PublicReleaseRingId;
+  processEnv?: NodeJS.ProcessEnv;
+  layout: FirstPartyInstallLayout;
+  quarantinedInstallRoot: string | null;
+}>): Promise<string> {
+  if (!params.quarantinedInstallRoot) {
+    return params.payloadRoot;
+  }
+  const sourcePayloadExists = await lstat(params.payloadRoot)
+    .then((entry) => entry.isDirectory())
+    .catch(() => false);
+  if (sourcePayloadExists) {
+    return params.payloadRoot;
+  }
+
+  const expectedVersionPath = resolveFirstPartyVersionInstallPath({
+    componentId: params.componentId,
+    versionId: params.versionId,
+    channel: params.channel,
+    releaseRing: params.releaseRing,
+    processEnv: params.processEnv,
+  });
+  const relativeVersionPath = resolvePathRelativeToInstallRoot({
+    absolutePath: expectedVersionPath,
+    installRoot: params.layout.installRoot,
+  });
+  if (!relativeVersionPath) {
+    return params.payloadRoot;
+  }
+
+  const relocatedVersionPath = joinPathForPathShape(
+    params.quarantinedInstallRoot,
+    relativeVersionPath,
+  );
+  const relocatedPayloadExists = await lstat(relocatedVersionPath)
+    .then((entry) => entry.isDirectory())
+    .catch(() => false);
+  if (relocatedPayloadExists) {
+    return relocatedVersionPath;
+  }
+  return params.payloadRoot;
+}
+
 export async function installVersionedPayload(params: Readonly<{
   componentId: FirstPartyComponentId;
   versionId: string;
@@ -114,8 +183,16 @@ export async function installVersionedPayload(params: Readonly<{
       throw error;
     }
 
-    await quarantineWindowsInstallRoot(layout);
-    return await installVersionedPayloadOnce(params);
+    const quarantinedInstallRoot = await quarantineWindowsInstallRoot(layout);
+    const retryPayloadRoot = await resolveWindowsRetryPayloadRoot({
+      ...params,
+      layout,
+      quarantinedInstallRoot,
+    });
+    return await installVersionedPayloadOnce({
+      ...params,
+      payloadRoot: retryPayloadRoot,
+    });
   }
 }
 

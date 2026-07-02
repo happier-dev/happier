@@ -1,6 +1,8 @@
 import { copyFile, lstat, mkdir, readlink, readdir, stat, symlink } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 
+import { toRuntimeFsPath } from './runtimeFsPath.js';
+
 type SymlinkType = 'dir' | 'file' | 'junction' | undefined;
 
 async function resolveSymlinkType(sourcePath: string, linkTarget: string): Promise<SymlinkType> {
@@ -8,7 +10,7 @@ async function resolveSymlinkType(sourcePath: string, linkTarget: string): Promi
         return undefined;
     }
 
-    const targetInfo = await stat(resolve(dirname(sourcePath), linkTarget)).catch(() => null);
+    const targetInfo = await stat(toRuntimeFsPath(resolve(dirname(sourcePath), linkTarget))).catch(() => null);
     return targetInfo?.isDirectory() ? 'junction' : 'file';
 }
 
@@ -23,21 +25,21 @@ async function copyDirectoryEntry(params: Readonly<{
         return;
     }
 
-    const info = await lstat(params.sourcePath).catch(() => null);
+    const info = await lstat(toRuntimeFsPath(params.sourcePath)).catch(() => null);
     if (!info) {
         return;
     }
 
     if (info.isSymbolicLink()) {
-        const linkTarget = await readlink(params.sourcePath);
-        await mkdir(dirname(params.destinationPath), { recursive: true });
-        await symlink(linkTarget, params.destinationPath, await resolveSymlinkType(params.sourcePath, linkTarget));
+        const linkTarget = await readlink(toRuntimeFsPath(params.sourcePath));
+        await mkdir(toRuntimeFsPath(dirname(params.destinationPath)), { recursive: true });
+        await symlink(linkTarget, toRuntimeFsPath(params.destinationPath), await resolveSymlinkType(params.sourcePath, linkTarget));
         return;
     }
 
     if (info.isDirectory()) {
-        await mkdir(params.destinationPath, { recursive: true });
-        const entries = await readdir(params.sourcePath, { withFileTypes: true });
+        await mkdir(toRuntimeFsPath(params.destinationPath), { recursive: true });
+        const entries = await readdir(toRuntimeFsPath(params.sourcePath), { withFileTypes: true });
         for (const entry of entries) {
             if (!entry.name || entry.name === '.' || entry.name === '..') {
                 continue;
@@ -56,8 +58,8 @@ async function copyDirectoryEntry(params: Readonly<{
         return;
     }
 
-    await mkdir(dirname(params.destinationPath), { recursive: true });
-    await copyFile(params.sourcePath, params.destinationPath);
+    await mkdir(toRuntimeFsPath(dirname(params.destinationPath)), { recursive: true });
+    await copyFile(toRuntimeFsPath(params.sourcePath), toRuntimeFsPath(params.destinationPath));
 }
 
 export async function copyDirectoryTreePreservingSymlinks(params: Readonly<{
