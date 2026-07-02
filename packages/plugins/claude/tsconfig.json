@@ -14,6 +14,10 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"],
+  "include": [
+    "src/*.ts",
+    "src/agent/**/*.ts",
+    "src/ui/**/*.ts"
+  ],
   "exclude": ["node_modules", "dist", "src/**/*.spec.ts", "src/**/*.test.ts"]
 }

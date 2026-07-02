@@ -9,6 +9,86 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./agent/contributions/runtime": {
+      "types": "./dist/agent/contributions/runtime.d.ts",
+      "default": "./dist/agent/contributions/runtime.js"
+    },
+    "./agent/auth/state": {
+      "types": "./dist/agent/auth/state.d.ts",
+      "default": "./dist/agent/auth/state.js"
+    },
+    "./agent/auth/services/materialize": {
+      "types": "./dist/agent/auth/services/materialize.d.ts",
+      "default": "./dist/agent/auth/services/materialize.js"
+    },
+    "./agent/auth/services/resumeReachability": {
+      "types": "./dist/agent/auth/services/resumeReachability.d.ts",
+      "default": "./dist/agent/auth/services/resumeReachability.js"
+    },
+    "./agent/auth/services/selection": {
+      "types": "./dist/agent/auth/services/selection.d.ts",
+      "default": "./dist/agent/auth/services/selection.js"
+    },
+    "./agent/auth/services/stateSharing": {
+      "types": "./dist/agent/auth/services/stateSharing.d.ts",
+      "default": "./dist/agent/auth/services/stateSharing.js"
+    },
+    "./agent/auth/services/switchContinuity": {
+      "types": "./dist/agent/auth/services/switchContinuity.d.ts",
+      "default": "./dist/agent/auth/services/switchContinuity.js"
+    },
+    "./agent/auth/services/usageLimit": {
+      "types": "./dist/agent/auth/services/usageLimit.d.ts",
+      "default": "./dist/agent/auth/services/usageLimit.js"
+    },
+    "./agent/cli/auth": {
+      "types": "./dist/agent/cli/auth.d.ts",
+      "default": "./dist/agent/cli/auth.js"
+    },
+    "./agent/identity/affinity": {
+      "types": "./dist/agent/identity/affinity.d.ts",
+      "default": "./dist/agent/identity/affinity.js"
+    },
+    "./agent/identity/runtimeDescriptor": {
+      "types": "./dist/agent/identity/runtimeDescriptor.d.ts",
+      "default": "./dist/agent/identity/runtimeDescriptor.js"
+    },
+    "./agent/identity/session": {
+      "types": "./dist/agent/identity/session.d.ts",
+      "default": "./dist/agent/identity/session.js"
+    },
+    "./agent/surfaces/sessions/controls/adapter": {
+      "types": "./dist/agent/surfaces/sessions/controls/adapter.d.ts",
+      "default": "./dist/agent/surfaces/sessions/controls/adapter.js"
+    },
+    "./agent/preferences/session": {
+      "types": "./dist/agent/preferences/session.d.ts",
+      "default": "./dist/agent/preferences/session.js"
+    },
+    "./agent/preflight/models": {
+      "types": "./dist/agent/preflight/models.d.ts",
+      "default": "./dist/agent/preflight/models.js"
+    },
+    "./agent/surfaces/sessions/fork/descriptor": {
+      "types": "./dist/agent/surfaces/sessions/fork/descriptor.d.ts",
+      "default": "./dist/agent/surfaces/sessions/fork/descriptor.js"
+    },
+    "./agent/surfaces/sessions/handoff/exportRecords": {
+      "types": "./dist/agent/surfaces/sessions/handoff/exportRecords.d.ts",
+      "default": "./dist/agent/surfaces/sessions/handoff/exportRecords.js"
+    },
+    "./agent/surfaces/sessions/handoff/descriptor": {
+      "types": "./dist/agent/surfaces/sessions/handoff/descriptor.d.ts",
+      "default": "./dist/agent/surfaces/sessions/handoff/descriptor.js"
+    },
+    "./protocol/runtimeDescriptorV1": {
+      "types": "./dist/protocol/runtimeDescriptorV1.d.ts",
+      "default": "./dist/protocol/runtimeDescriptorV1.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "default": "./dist/ui/index.js"
     }
   },
   "files": [
@@ -23,7 +103,8 @@
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0"
+    "@happier-dev/protocol": "0.0.0",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

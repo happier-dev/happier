@@ -1,1 +1,10 @@
-Skeleton plugin package for `auggie` reserved per amendment-x Wave C 2026-04-27. Substantive content lands during Stage E.2 extraction (see `.project/plans/runtime-unification/stages/stage-E/E.2.md`). Currently no-op scaffolding.
+First-party Auggie plugin package for Stage E.2 focused extraction.
+
+This package owns Auggie plugin leaf data and Tier-2 ACP callbacks:
+
+- plugin manifest and backend activation,
+- `agentCliRuntime` definition data,
+- Auggie ACP argv, permission, transport, and allow-indexing leaves,
+- plugin-authored UI descriptors consumed by generated host/UI projections.
+
+Shared ACP execution, MCP lifecycle, generated bundled projection, and host bridge behavior remain in their accepted substrate owners.

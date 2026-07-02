@@ -1,0 +1,1 @@
+export const CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID = 'claude';

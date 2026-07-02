@@ -11,14 +11,11 @@ function capabilitiesForBackend(id: string) {
 }
 
 describe('OpenCode plugin session media capabilities', () => {
-  it('declares ACP/MCP media output through generic ACP content only', () => {
+  it('does not declare persisted session-media output without an A.13j mapping leaf', () => {
     const capabilities = capabilitiesForBackend('opencode');
 
     expect(capabilities.session.media.emitsSessionMedia).toMatchObject({
-      supported: true,
-      mediaKinds: ['image'],
-      sources: ['acp-content', 'mcp-content'],
-      storage: 'session-media-file',
+      supported: false,
     });
     expect(capabilities.session.media.nativeImageGeneration.supported).toBe(false);
   });

@@ -5,12 +5,6 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
   "files": [
     "dist",
     "package.json"
@@ -20,13 +14,34 @@
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
-  "happier": {
-    "pluginScaffold": {
-      "shipping": "reservation_only",
-      "plannedStage": "E.8"
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "default": "./dist/ui/index.js"
+    },
+    "./agent/auth/resolution": {
+      "types": "./dist/agent/auth/resolution.d.ts",
+      "default": "./dist/agent/auth/resolution.js"
+    },
+    "./agent/diff/toolResult": {
+      "types": "./dist/agent/diff/toolResult.d.ts",
+      "default": "./dist/agent/diff/toolResult.js"
+    },
+    "./agent/acp/toolNames": {
+      "types": "./dist/agent/acp/toolNames.d.ts",
+      "default": "./dist/agent/acp/toolNames.js"
+    },
+    "./agent/promptAssets": {
+      "types": "./dist/agent/promptAssets/index.d.ts",
+      "default": "./dist/agent/promptAssets/index.js"
     }
   },
   "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {

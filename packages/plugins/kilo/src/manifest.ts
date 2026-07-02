@@ -1,17 +1,55 @@
-import type { PluginManifestV2 } from '@happier-dev/protocol';
+import {
+  definePluginManifest,
+  type PluginBackendContributionV2,
+  type PluginManifestV2,
+} from '@happier-dev/plugin-sdk';
 
-// Skeleton manifest reserved for Stage E.5 extraction.
-// Substantive capabilities + contributions land during E.5 (Kilo — Tier 2 activate-hook).
-// L-2 violations in current source (`src/agent/acp.ts` plus `src/permissions/**`) will be fixed during extraction.
-export const PLUGIN_MANIFEST: PluginManifestV2 = {
+import { KILO_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+
+type KiloPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
+  contributes: Readonly<{
+    backends: ReadonlyArray<PluginBackendContributionV2>;
+  }>;
+}>;
+
+export const PLUGIN_MANIFEST = definePluginManifest({
   schemaVersion: 2,
   id: 'happier.agent.kilo',
   version: '0.0.0',
   displayName: 'kilo',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: [] },
+  runtime: { apiVersion: 1, capabilities: ['backends'] },
   targets: {},
   capabilities: { permissions: [] },
-  contributes: {},
-};
+  contributes: {
+    backends: [
+      {
+        kindVersion: 1,
+        id: 'kilo',
+        agentId: 'kilo',
+        engine: {
+          kind: 'acp',
+          transport: KILO_ACP_BACKEND_SPEC.transport,
+          ux: KILO_ACP_BACKEND_SPEC.ux,
+          capabilities: KILO_ACP_BACKEND_SPEC.capabilities,
+          sessionIdHeaderName: KILO_ACP_BACKEND_SPEC.sessionIdHeaderName,
+          toolNameInference: KILO_ACP_BACKEND_SPEC.toolNameInference,
+          stderrRules: KILO_ACP_BACKEND_SPEC.stderrRules,
+          permissionOptionSelection: KILO_ACP_BACKEND_SPEC.permissionOptionSelection,
+          mcp: KILO_ACP_BACKEND_SPEC.mcp,
+        },
+        capabilities: {
+          executionRun: { supported: true },
+          session: {
+            media: {
+              acceptsImageInput: { supported: false },
+              emitsSessionMedia: { supported: false },
+              nativeImageGeneration: { supported: false },
+            },
+          },
+        },
+      },
+    ],
+  },
+} satisfies KiloPluginManifestV2);

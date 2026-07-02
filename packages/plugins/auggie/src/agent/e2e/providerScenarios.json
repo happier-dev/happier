@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": ["acp_probe_capabilities"],
+    "extended": [
+      "acp_probe_models",
+      "acp_set_model_dynamic",
+      "abort_turn_then_continue",
+      "read_known_file",
+      "search_known_token",
+      "glob_list_files",
+      "search_ls_equivalence",
+      "read_missing_file_in_workspace",
+      "edit_result_includes_diff",
+      "multi_file_edit_in_workspace",
+      "multi_file_edit_in_workspace_includes_diff",
+      "permission_mode_default_outside_workspace",
+      "permission_mode_safe_yolo_outside_workspace",
+      "permission_mode_read_only_outside_workspace",
+      "permission_mode_yolo_outside_workspace"
+    ]
+  }
+}

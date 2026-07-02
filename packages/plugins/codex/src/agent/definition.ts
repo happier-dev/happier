@@ -39,7 +39,7 @@ export const AGENT_DEFINITION = Object.freeze({
     supportKind: 'unsupported',
     loginLaunch: null,
   },
-  providerCliRuntime: {
+  agentCliRuntime: {
     id: CODEX_AGENT_ID,
     title: 'codex CLI',
     binaryName: 'codex',
@@ -50,4 +50,53 @@ export const AGENT_DEFINITION = Object.freeze({
     acceptsJavaScriptFileOverride: false,
   },
   providerSettings: null,
+  runtimeContributions: {
+    providerCatalogEntry: {
+      importName: 'CODEX_PROVIDER_RUNTIME_CONTRIBUTION',
+      source: './agent/contributions/runtime',
+    },
+    sessionControlAdapter: {
+      kind: 'providerSessionControlAdapter',
+      providerId: 'codex',
+      source: './agent/surfaces/sessions/controls/adapter',
+      exportName: 'CODEX_SESSION_CONTROL_ADAPTER',
+    },
+    runtimeDescriptorReader: {
+      kind: 'providerRuntimeDescriptorReader',
+      providerId: 'codex',
+      source: './agent/identity/runtimeDescriptor',
+      exportName: 'readCodexSessionMetadataRuntimeDescriptor',
+    },
+    protocolRuntimeDescriptor: {
+      kind: 'providerRuntimeDescriptorV1',
+      providerId: 'codex',
+      source: './protocol/runtimeDescriptorV1',
+      buildFunction: 'buildCodexAgentRuntimeDescriptorV1',
+      canonicalReader: 'readCanonicalCodexAgentRuntimeDescriptorV1',
+    },
+    protocolBuiltInBackendProfiles: {
+      kind: 'providerBuiltInBackendProfilesV1',
+      providerId: 'codex',
+      source: './protocol/profiles',
+      exportName: 'CODEX_BUILT_IN_BACKEND_PROFILES',
+    },
+    protocolExternalSessionSource: {
+      kind: 'providerExternalSessionSourceV1',
+      providerId: 'codex',
+      source: './protocol/externalSession',
+      exportName: 'CODEX_EXTERNAL_SESSION_SOURCE',
+    },
+    externalSessionHostAdapters: {
+      kind: 'providerExternalSessionHostAdaptersV1',
+      providerId: 'codex',
+      candidateHostAdapter: {
+        source: '@/backends/codex/appServer/session/externalCandidates',
+        exportName: 'createCodexExternalSessionCandidateHostAdapter',
+      },
+      transcriptStoreAdapter: {
+        source: '@/backends/codex/rollout/sessionStore/externalTranscriptAdapter',
+        exportName: 'createCodexExternalSessionTranscriptStoreAdapter',
+      },
+    },
+  },
 });

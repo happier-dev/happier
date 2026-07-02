@@ -1,1 +1,1 @@
-Skeleton plugin package for `copilot` reserved per amendment-x Wave C 2026-04-27. Substantive content lands during Stage E.7 extraction (see `.project/plans/runtime-unification/stages/stage-E/E.7.md`). Currently no-op scaffolding.
+First-party GitHub Copilot plugin package for the runtime-unification Stage E extraction.

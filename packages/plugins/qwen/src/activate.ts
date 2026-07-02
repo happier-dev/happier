@@ -1,5 +1,18 @@
-// Stage E.3 extraction lands the actual ACP backend registration here.
-// Currently a no-op scaffolding — see .project/plans/runtime-unification/stages/stage-E/E.3.md.
-export function activate(): void {
-  // intentionally empty
+import type {
+  PluginContextV1,
+  PluginDisposable,
+  RegisterBackendEngineV1,
+} from '@happier-dev/plugin-sdk';
+
+import { QWEN_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+
+type PluginApiForQwenV1 = Readonly<{
+  registerBackendEngine: (registration: RegisterBackendEngineV1) => PluginDisposable | unknown;
+}>;
+
+export function activate(api: PluginApiForQwenV1): void {
+  api.registerBackendEngine({
+    backendId: 'qwen',
+    create: (ctx: PluginContextV1) => ctx.acp.defineAcpBackend(QWEN_ACP_BACKEND_SPEC),
+  });
 }

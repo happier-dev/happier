@@ -1,0 +1,73 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+    createCodexAppServerTurnFailure,
+    formatCodexAppServerErrorForUi,
+    isCodexAppServerContextWindowExhaustedError,
+    isCodexAppServerTemporaryRecoverableTurnFailureError,
+} from './failure.js';
+
+describe('createCodexAppServerTurnFailure', () => {
+    it('carries structured runtime-auth classification for Codex usage-limit errors', () => {
+        const failure = createCodexAppServerTurnFailure({
+            value: {
+                error: {
+                    message: 'Usage limit reached',
+                    codexErrorInfo: 'UsageLimitExceeded',
+                    resets_at: '2026-05-17T15:30:00.000Z',
+                    retry_after_ms: 90_000,
+                    plan_type: 'plus',
+                    rate_limits: { primary: { used_percent: 100 } },
+                },
+            },
+            authContext: { profileId: 'leeroy', groupId: 'happier' },
+        });
+
+        expect((failure as Error & { runtimeAuthClassification?: unknown }).runtimeAuthClassification).toMatchObject({
+            kind: 'usage_limit',
+            serviceId: 'openai-codex',
+            profileId: 'leeroy',
+            groupId: 'happier',
+            resetsAtMs: Date.parse('2026-05-17T15:30:00.000Z'),
+            retryAfterMs: 90_000,
+            planType: 'plus',
+            rateLimits: { primary: { used_percent: 100 } },
+            source: 'structured_provider_error',
+        });
+    });
+
+    it('marks context-window failures from structured Codex app-server payloads', () => {
+        const failure = createCodexAppServerTurnFailure({
+            value: {
+                turn: {
+                    error: {
+                        message: 'Codex ran out of room in the context window.',
+                        codex_error_info: 'context_window_exceeded',
+                    },
+                },
+            },
+        });
+
+        expect(isCodexAppServerContextWindowExhaustedError(failure)).toBe(true);
+    });
+
+    it('marks selected-model capacity failures as temporary recoverable failures', () => {
+        const failure = createCodexAppServerTurnFailure({
+            value: {
+                turn: {
+                    error: {
+                        message: 'Selected model is at capacity. Please try a different model.',
+                        codex_error_info: 'other',
+                    },
+                },
+            },
+        });
+
+        expect(isCodexAppServerTemporaryRecoverableTurnFailureError(failure)).toBe(true);
+    });
+
+    it('formats non-empty messages for UI without double-prefixing error text', () => {
+        expect(formatCodexAppServerErrorForUi(new Error('provider failed'))).toBe('Error: provider failed');
+        expect(formatCodexAppServerErrorForUi(new Error('Error: provider failed'))).toBe('Error: provider failed');
+    });
+});

@@ -9,6 +9,426 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./agent/contributions/runtime": {
+      "types": "./dist/agent/contributions/runtime.d.ts",
+      "default": "./dist/agent/contributions/runtime.js"
+    },
+    "./agent/identity/runtimeDescriptor": {
+      "types": "./dist/agent/identity/runtimeDescriptor.d.ts",
+      "default": "./dist/agent/identity/runtimeDescriptor.js"
+    },
+    "./agent/surfaces/sessions/controls/adapter": {
+      "types": "./dist/agent/surfaces/sessions/controls/adapter.d.ts",
+      "default": "./dist/agent/surfaces/sessions/controls/adapter.js"
+    },
+    "./protocol/runtimeDescriptorV1": {
+      "types": "./dist/protocol/runtimeDescriptorV1.d.ts",
+      "default": "./dist/protocol/runtimeDescriptorV1.js"
+    },
+    "./agent/runtime/appServer/turnInput": {
+      "types": "./dist/agent/runtime/appServer/turnInput.d.ts",
+      "default": "./dist/agent/runtime/appServer/turnInput.js"
+    },
+    "./agent/runtime/appServer/catalog": {
+      "types": "./dist/agent/runtime/appServer/catalog/index.d.ts",
+      "default": "./dist/agent/runtime/appServer/catalog/index.js"
+    },
+    "./agent/runtime/appServer/client/timeout": {
+      "types": "./dist/agent/runtime/appServer/client/timeout.d.ts",
+      "default": "./dist/agent/runtime/appServer/client/timeout.js"
+    },
+    "./agent/runtime/appServer/client": {
+      "types": "./dist/agent/runtime/appServer/client.d.ts",
+      "default": "./dist/agent/runtime/appServer/client.js"
+    },
+    "./agent/runtime/appServer/compatibility": {
+      "types": "./dist/agent/runtime/appServer/compatibility.d.ts",
+      "default": "./dist/agent/runtime/appServer/compatibility.js"
+    },
+    "./agent/runtime/appServer/config/overrides": {
+      "types": "./dist/agent/runtime/appServer/config/overrides.d.ts",
+      "default": "./dist/agent/runtime/appServer/config/overrides.js"
+    },
+    "./agent/runtime/appServer/state/controls": {
+      "types": "./dist/agent/runtime/appServer/state/controls.d.ts",
+      "default": "./dist/agent/runtime/appServer/state/controls.js"
+    },
+    "./agent/runtime/appServer/projection/assistantReasoning": {
+      "types": "./dist/agent/runtime/appServer/projection/assistantReasoning.d.ts",
+      "default": "./dist/agent/runtime/appServer/projection/assistantReasoning.js"
+    },
+    "./agent/runtime/appServer/work/state": {
+      "types": "./dist/agent/runtime/appServer/work/state.d.ts",
+      "default": "./dist/agent/runtime/appServer/work/state.js"
+    },
+    "./agent/runtime/appServer/work/goalControl": {
+      "types": "./dist/agent/runtime/appServer/work/goalControl.d.ts",
+      "default": "./dist/agent/runtime/appServer/work/goalControl.js"
+    },
+    "./agent/runtime/appServer/turns/rollbackPlan": {
+      "types": "./dist/agent/runtime/appServer/turns/rollbackPlan.d.ts",
+      "default": "./dist/agent/runtime/appServer/turns/rollbackPlan.js"
+    },
+    "./agent/runtime/appServer/turns/rollbackTracker": {
+      "types": "./dist/agent/runtime/appServer/turns/rollbackTracker.d.ts",
+      "default": "./dist/agent/runtime/appServer/turns/rollbackTracker.js"
+    },
+    "./agent/runtime/appServer/turns/failure": {
+      "types": "./dist/agent/runtime/appServer/turns/failure.d.ts",
+      "default": "./dist/agent/runtime/appServer/turns/failure.js"
+    },
+    "./agent/runtime/appServer/recovery/suppressionWait": {
+      "types": "./dist/agent/runtime/appServer/recovery/suppressionWait.d.ts",
+      "default": "./dist/agent/runtime/appServer/recovery/suppressionWait.js"
+    },
+    "./agent/runtime/appServer/recovery/switchProgress": {
+      "types": "./dist/agent/runtime/appServer/recovery/switchProgress.d.ts",
+      "default": "./dist/agent/runtime/appServer/recovery/switchProgress.js"
+    },
+    "./agent/runtime/appServer/media/generatedMedia": {
+      "types": "./dist/agent/runtime/appServer/media/generatedMedia.d.ts",
+      "default": "./dist/agent/runtime/appServer/media/generatedMedia.js"
+    },
+    "./agent/runtime/appServer/wire/fields": {
+      "types": "./dist/agent/runtime/appServer/wire/fields.d.ts",
+      "default": "./dist/agent/runtime/appServer/wire/fields.js"
+    },
+    "./agent/runtime/terminal/support": {
+      "types": "./dist/agent/runtime/terminal/support.d.ts",
+      "default": "./dist/agent/runtime/terminal/support.js"
+    },
+    "./agent/runtime/terminal/startupMode": {
+      "types": "./dist/agent/runtime/terminal/startupMode.d.ts",
+      "default": "./dist/agent/runtime/terminal/startupMode.js"
+    },
+    "./agent/runtime/terminal/display": {
+      "types": "./dist/agent/runtime/terminal/display.d.ts",
+      "default": "./dist/agent/runtime/terminal/display.js"
+    },
+    "./agent/runtime/terminal/transcriptBinding": {
+      "types": "./dist/agent/runtime/terminal/transcriptBinding.d.ts",
+      "default": "./dist/agent/runtime/terminal/transcriptBinding.js"
+    },
+    "./agent/runtime/terminal/projection": {
+      "types": "./dist/agent/runtime/terminal/projection.d.ts",
+      "default": "./dist/agent/runtime/terminal/projection.js"
+    },
+    "./agent/runtime/terminal/invocation": {
+      "types": "./dist/agent/runtime/terminal/invocation.d.ts",
+      "default": "./dist/agent/runtime/terminal/invocation.js"
+    },
+    "./agent/runtime/core/abortSignalRace": {
+      "types": "./dist/agent/runtime/core/abortSignalRace.d.ts",
+      "default": "./dist/agent/runtime/core/abortSignalRace.js"
+    },
+    "./agent/runtime/core/abortHandler": {
+      "types": "./dist/agent/runtime/core/abortHandler.d.ts",
+      "default": "./dist/agent/runtime/core/abortHandler.js"
+    },
+    "./agent/runtime/core/localModePass": {
+      "types": "./dist/agent/runtime/core/localModePass.d.ts",
+      "default": "./dist/agent/runtime/core/localModePass.js"
+    },
+    "./agent/runtime/core/projectedToolEvent": {
+      "types": "./dist/agent/runtime/core/projectedToolEvent.d.ts",
+      "default": "./dist/agent/runtime/core/projectedToolEvent.js"
+    },
+    "./agent/runtime/core/terminationHandler": {
+      "types": "./dist/agent/runtime/core/terminationHandler.d.ts",
+      "default": "./dist/agent/runtime/core/terminationHandler.js"
+    },
+    "./agent/runtime/core/requestUserInputBridge": {
+      "types": "./dist/agent/runtime/core/requestUserInputBridge.d.ts",
+      "default": "./dist/agent/runtime/core/requestUserInputBridge.js"
+    },
+    "./agent/runtime/core/requestUserInputQuestions": {
+      "types": "./dist/agent/runtime/core/requestUserInputQuestions.d.ts",
+      "default": "./dist/agent/runtime/core/requestUserInputQuestions.js"
+    },
+    "./agent/lifecycle/backendMode": {
+      "types": "./dist/agent/lifecycle/backendMode.d.ts",
+      "default": "./dist/agent/lifecycle/backendMode.js"
+    },
+    "./agent/lifecycle/spawnResume": {
+      "types": "./dist/agent/lifecycle/spawnResume.d.ts",
+      "default": "./dist/agent/lifecycle/spawnResume.js"
+    },
+    "./agent/lifecycle/acpSpawnPrerequisites": {
+      "types": "./dist/agent/lifecycle/acpSpawnPrerequisites.d.ts",
+      "default": "./dist/agent/lifecycle/acpSpawnPrerequisites.js"
+    },
+    "./agent/lifecycle/preflight/sessionControls": {
+      "types": "./dist/agent/lifecycle/preflight/sessionControls.d.ts",
+      "default": "./dist/agent/lifecycle/preflight/sessionControls.js"
+    },
+    "./agent/cli/capability": {
+      "types": "./dist/agent/cli/capability.d.ts",
+      "default": "./dist/agent/cli/capability.js"
+    },
+    "./agent/cli/command": {
+      "types": "./dist/agent/cli/command.d.ts",
+      "default": "./dist/agent/cli/command.js"
+    },
+    "./agent/cli/auth/environment": {
+      "types": "./dist/agent/cli/auth/environment.d.ts",
+      "default": "./dist/agent/cli/auth/environment.js"
+    },
+    "./agent/cli/auth/spec": {
+      "types": "./dist/agent/cli/auth/spec.d.ts",
+      "default": "./dist/agent/cli/auth/spec.js"
+    },
+    "./agent/cli/checklists": {
+      "types": "./dist/agent/cli/checklists.d.ts",
+      "default": "./dist/agent/cli/checklists.js"
+    },
+    "./agent/cli/detect": {
+      "types": "./dist/agent/cli/detect.d.ts",
+      "default": "./dist/agent/cli/detect.js"
+    },
+    "./agent/executionRuns/environment": {
+      "types": "./dist/agent/executionRuns/environment.d.ts",
+      "default": "./dist/agent/executionRuns/environment.js"
+    },
+    "./agent/executionRuns/availability": {
+      "types": "./dist/agent/executionRuns/availability.d.ts",
+      "default": "./dist/agent/executionRuns/availability.js"
+    },
+    "./agent/executionRuns/transport": {
+      "types": "./dist/agent/executionRuns/transport.d.ts",
+      "default": "./dist/agent/executionRuns/transport.js"
+    },
+    "./agent/mcp/detectCodexMcpServers": {
+      "types": "./dist/agent/mcp/detectCodexMcpServers.d.ts",
+      "default": "./dist/agent/mcp/detectCodexMcpServers.js"
+    },
+    "./agent/acp/availability": {
+      "types": "./dist/agent/acp/availability.d.ts",
+      "default": "./dist/agent/acp/availability.js"
+    },
+    "./agent/acp/backend": {
+      "types": "./dist/agent/acp/backend.d.ts",
+      "default": "./dist/agent/acp/backend.js"
+    },
+    "./agent/acp/command": {
+      "types": "./dist/agent/acp/command.d.ts",
+      "default": "./dist/agent/acp/command.js"
+    },
+    "./agent/acp/env": {
+      "types": "./dist/agent/acp/env.d.ts",
+      "default": "./dist/agent/acp/env.js"
+    },
+    "./agent/acp/permissionMode": {
+      "types": "./dist/agent/acp/permissionMode.d.ts",
+      "default": "./dist/agent/acp/permissionMode.js"
+    },
+    "./agent/acp/sessionLoad": {
+      "types": "./dist/agent/acp/sessionLoad.d.ts",
+      "default": "./dist/agent/acp/sessionLoad.js"
+    },
+    "./agent/acp/transport": {
+      "types": "./dist/agent/acp/transport.d.ts",
+      "default": "./dist/agent/acp/transport.js"
+    },
+    "./agent/state/displayTitle": {
+      "types": "./dist/agent/state/displayTitle.d.ts",
+      "default": "./dist/agent/state/displayTitle.js"
+    },
+    "./agent/rollout/semanticTracker": {
+      "types": "./dist/agent/rollout/semanticTracker.d.ts",
+      "default": "./dist/agent/rollout/semanticTracker.js"
+    },
+    "./agent/rollout/projection/actions": {
+      "types": "./dist/agent/rollout/projection/actions.d.ts",
+      "default": "./dist/agent/rollout/projection/actions.js"
+    },
+    "./agent/rollout/projection/messages": {
+      "types": "./dist/agent/rollout/projection/messages.d.ts",
+      "default": "./dist/agent/rollout/projection/messages.js"
+    },
+    "./agent/rollout/projection/toolInvocation": {
+      "types": "./dist/agent/rollout/projection/toolInvocation.d.ts",
+      "default": "./dist/agent/rollout/projection/toolInvocation.js"
+    },
+    "./agent/rollout/projection/transcript": {
+      "types": "./dist/agent/rollout/projection/transcript.d.ts",
+      "default": "./dist/agent/rollout/projection/transcript.js"
+    },
+    "./agent/rollout/discovery/homeEntries": {
+      "types": "./dist/agent/rollout/discovery/homeEntries.d.ts",
+      "default": "./dist/agent/rollout/discovery/homeEntries.js"
+    },
+    "./agent/rollout/discovery/sessionsForHome": {
+      "types": "./dist/agent/rollout/discovery/sessionsForHome.d.ts",
+      "default": "./dist/agent/rollout/discovery/sessionsForHome.js"
+    },
+    "./agent/rollout/discovery/sessionsForHomes": {
+      "types": "./dist/agent/rollout/discovery/sessionsForHomes.d.ts",
+      "default": "./dist/agent/rollout/discovery/sessionsForHomes.js"
+    },
+    "./agent/rollout/discovery/indexData": {
+      "types": "./dist/agent/rollout/discovery/indexData.d.ts",
+      "default": "./dist/agent/rollout/discovery/indexData.js"
+    },
+    "./agent/rollout/discovery/sessionFileSearch": {
+      "types": "./dist/agent/rollout/discovery/sessionFileSearch.d.ts",
+      "default": "./dist/agent/rollout/discovery/sessionFileSearch.js"
+    },
+    "./agent/rollout/discovery/candidates": {
+      "types": "./dist/agent/rollout/discovery/candidates.d.ts",
+      "default": "./dist/agent/rollout/discovery/candidates.js"
+    },
+    "./agent/rollout/session/cachePolicy": {
+      "types": "./dist/agent/rollout/session/cachePolicy.d.ts",
+      "default": "./dist/agent/rollout/session/cachePolicy.js"
+    },
+    "./agent/usage/tokenCountMessage": {
+      "types": "./dist/agent/usage/tokenCountMessage.d.ts",
+      "default": "./dist/agent/usage/tokenCountMessage.js"
+    },
+    "./agent/usage/pricing": {
+      "types": "./dist/agent/usage/pricing.d.ts",
+      "default": "./dist/agent/usage/pricing.js"
+    },
+    "./agent/surfaces/sessions/external/identity": {
+      "types": "./dist/agent/surfaces/sessions/external/identity.d.ts",
+      "default": "./dist/agent/surfaces/sessions/external/identity.js"
+    },
+    "./agent/surfaces/sessions/external/candidates": {
+      "types": "./dist/agent/surfaces/sessions/external/candidates.d.ts",
+      "default": "./dist/agent/surfaces/sessions/external/candidates.js"
+    },
+    "./agent/surfaces/sessions/external/providerOps": {
+      "types": "./dist/agent/surfaces/sessions/external/providerOps.d.ts",
+      "default": "./dist/agent/surfaces/sessions/external/providerOps.js"
+    },
+    "./agent/surfaces/sessions/external/sourceValidation": {
+      "types": "./dist/agent/surfaces/sessions/external/sourceValidation.d.ts",
+      "default": "./dist/agent/surfaces/sessions/external/sourceValidation.js"
+    },
+    "./agent/surfaces/sessions/external/transcript": {
+      "types": "./dist/agent/surfaces/sessions/external/transcript.d.ts",
+      "default": "./dist/agent/surfaces/sessions/external/transcript.js"
+    },
+    "./agent/surfaces/sessions/external/workingDirectory": {
+      "types": "./dist/agent/surfaces/sessions/external/workingDirectory.d.ts",
+      "default": "./dist/agent/surfaces/sessions/external/workingDirectory.js"
+    },
+    "./agent/surfaces/sessions/handoff/bundle": {
+      "types": "./dist/agent/surfaces/sessions/handoff/bundle.d.ts",
+      "default": "./dist/agent/surfaces/sessions/handoff/bundle.js"
+    },
+    "./agent/surfaces/sessions/handoff/export": {
+      "types": "./dist/agent/surfaces/sessions/handoff/export.d.ts",
+      "default": "./dist/agent/surfaces/sessions/handoff/export.js"
+    },
+    "./agent/surfaces/sessions/handoff/import": {
+      "types": "./dist/agent/surfaces/sessions/handoff/import.d.ts",
+      "default": "./dist/agent/surfaces/sessions/handoff/import.js"
+    },
+    "./agent/surfaces/sessions/handoff/providerOps": {
+      "types": "./dist/agent/surfaces/sessions/handoff/providerOps.d.ts",
+      "default": "./dist/agent/surfaces/sessions/handoff/providerOps.js"
+    },
+    "./agent/surfaces/sessions/resume/support": {
+      "types": "./dist/agent/surfaces/sessions/resume/support.d.ts",
+      "default": "./dist/agent/surfaces/sessions/resume/support.js"
+    },
+    "./agent/auth/services/quota/rateLimitSnapshot": {
+      "types": "./dist/agent/auth/services/quota/rateLimitSnapshot.d.ts",
+      "default": "./dist/agent/auth/services/quota/rateLimitSnapshot.js"
+    },
+    "./agent/auth/services/quota/runtimeRateLimits": {
+      "types": "./dist/agent/auth/services/quota/runtimeRateLimits.d.ts",
+      "default": "./dist/agent/auth/services/quota/runtimeRateLimits.js"
+    },
+    "./agent/auth/services/quota/probe": {
+      "types": "./dist/agent/auth/services/quota/probe.d.ts",
+      "default": "./dist/agent/auth/services/quota/probe.js"
+    },
+    "./agent/auth/services/quota/openaiFetcher": {
+      "types": "./dist/agent/auth/services/quota/openaiFetcher.d.ts",
+      "default": "./dist/agent/auth/services/quota/openaiFetcher.js"
+    },
+    "./agent/auth/services/materializeAuth": {
+      "types": "./dist/agent/auth/services/materializeAuth.d.ts",
+      "default": "./dist/agent/auth/services/materializeAuth.js"
+    },
+    "./agent/auth/services/runtime/auth/application": {
+      "types": "./dist/agent/auth/services/runtime/auth/application.d.ts",
+      "default": "./dist/agent/auth/services/runtime/auth/application.js"
+    },
+    "./agent/auth/services/runtime/auth/failure": {
+      "types": "./dist/agent/auth/services/runtime/auth/failure.d.ts",
+      "default": "./dist/agent/auth/services/runtime/auth/failure.js"
+    },
+    "./agent/auth/services/runtime/auth/accountId": {
+      "types": "./dist/agent/auth/services/runtime/auth/accountId.d.ts",
+      "default": "./dist/agent/auth/services/runtime/auth/accountId.js"
+    },
+    "./agent/auth/services/openai/cloud/authenticator": {
+      "types": "./dist/agent/auth/services/openai/cloud/authenticator.d.ts",
+      "default": "./dist/agent/auth/services/openai/cloud/authenticator.js"
+    },
+    "./agent/auth/services/openai/cloud/device": {
+      "types": "./dist/agent/auth/services/openai/cloud/device.d.ts",
+      "default": "./dist/agent/auth/services/openai/cloud/device.js"
+    },
+    "./agent/auth/services/openai/cloud/exchange": {
+      "types": "./dist/agent/auth/services/openai/cloud/exchange.d.ts",
+      "default": "./dist/agent/auth/services/openai/cloud/exchange.js"
+    },
+    "./agent/auth/services/openai/cloud/authFile": {
+      "types": "./dist/agent/auth/services/openai/cloud/authFile.d.ts",
+      "default": "./dist/agent/auth/services/openai/cloud/authFile.js"
+    },
+    "./agent/auth/services/openai/cloud/refreshBridge": {
+      "types": "./dist/agent/auth/services/openai/cloud/refreshBridge.d.ts",
+      "default": "./dist/agent/auth/services/openai/cloud/refreshBridge.js"
+    },
+    "./agent/auth/services/openai/cloud/tokenRefresh": {
+      "types": "./dist/agent/auth/services/openai/cloud/tokenRefresh.d.ts",
+      "default": "./dist/agent/auth/services/openai/cloud/tokenRefresh.js"
+    },
+    "./agent/auth/services/openai/cloud/types": {
+      "types": "./dist/agent/auth/services/openai/cloud/types.d.ts",
+      "default": "./dist/agent/auth/services/openai/cloud/types.js"
+    },
+    "./agent/auth/services/openai/cloud/connect": {
+      "types": "./dist/agent/auth/services/openai/cloud/connect.d.ts",
+      "default": "./dist/agent/auth/services/openai/cloud/connect.js"
+    },
+    "./agent/auth/services/home/sync/sessionFiles": {
+      "types": "./dist/agent/auth/services/home/sync/sessionFiles.d.ts",
+      "default": "./dist/agent/auth/services/home/sync/sessionFiles.js"
+    },
+    "./agent/auth/services/home/sync/configEntries": {
+      "types": "./dist/agent/auth/services/home/sync/configEntries.d.ts",
+      "default": "./dist/agent/auth/services/home/sync/configEntries.js"
+    },
+    "./agent/auth/services/home/sync/stateEntries": {
+      "types": "./dist/agent/auth/services/home/sync/stateEntries.d.ts",
+      "default": "./dist/agent/auth/services/home/sync/stateEntries.js"
+    },
+    "./agent/auth/services/home/sync/settings": {
+      "types": "./dist/agent/auth/services/home/sync/settings.d.ts",
+      "default": "./dist/agent/auth/services/home/sync/settings.js"
+    },
+    "./agent/auth/services/state/sharing/descriptor": {
+      "types": "./dist/agent/auth/services/state/sharing/descriptor.d.ts",
+      "default": "./dist/agent/auth/services/state/sharing/descriptor.js"
+    },
+    "./agent/auth/services/state/sharing/files": {
+      "types": "./dist/agent/auth/services/state/sharing/files.d.ts",
+      "default": "./dist/agent/auth/services/state/sharing/files.js"
+    },
+    "./agent/auth/services/state/sharing/switchContinuity": {
+      "types": "./dist/agent/auth/services/state/sharing/switchContinuity.d.ts",
+      "default": "./dist/agent/auth/services/state/sharing/switchContinuity.js"
+    },
+    "./agent/auth/services/usage/limit/recovery/intent": {
+      "types": "./dist/agent/auth/services/usage/limit/recovery/intent.d.ts",
+      "default": "./dist/agent/auth/services/usage/limit/recovery/intent.js"
     }
   },
   "files": [
@@ -23,7 +443,8 @@
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0"
+    "@happier-dev/protocol": "0.0.0",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

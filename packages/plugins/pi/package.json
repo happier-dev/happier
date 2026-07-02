@@ -9,6 +9,51 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./agent/contributions/runtime": {
+      "types": "./dist/agent/contributions/runtime.d.ts",
+      "default": "./dist/agent/contributions/runtime.js"
+    },
+    "./protocol/runtimeDescriptorV1": {
+      "types": "./dist/protocol/runtimeDescriptorV1.d.ts",
+      "default": "./dist/protocol/runtimeDescriptorV1.js"
+    },
+    "./protocol/thinking": {
+      "types": "./dist/protocol/thinking.d.ts",
+      "default": "./dist/protocol/thinking.js"
+    },
+    "./agent/preflight/models": {
+      "types": "./dist/agent/preflight/models.d.ts",
+      "default": "./dist/agent/preflight/models.js"
+    },
+    "./agent/sessionFiles": {
+      "types": "./dist/agent/sessionFiles.d.ts",
+      "default": "./dist/agent/sessionFiles.js"
+    },
+    "./agent/sessionMetadata": {
+      "types": "./dist/agent/sessionMetadata.d.ts",
+      "default": "./dist/agent/sessionMetadata.js"
+    },
+    "./agent/runtime/compaction": {
+      "types": "./dist/agent/runtime/compaction/index.d.ts",
+      "default": "./dist/agent/runtime/compaction/index.js"
+    },
+    "./agent/runtime/rpc/events": {
+      "types": "./dist/agent/runtime/rpc/events.d.ts",
+      "default": "./dist/agent/runtime/rpc/events.js"
+    },
+    "./agent/runtime/rpc/args": {
+      "types": "./dist/agent/runtime/rpc/args.d.ts",
+      "default": "./dist/agent/runtime/rpc/args.js"
+    },
+    "./agent/runtime/rpc/permissions": {
+      "types": "./dist/agent/runtime/rpc/permissions.d.ts",
+      "default": "./dist/agent/runtime/rpc/permissions.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "react-native": "./dist/ui/index.js",
+      "default": "./dist/ui/index.js"
     }
   },
   "files": [
@@ -20,13 +65,8 @@
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
-  "happier": {
-    "pluginScaffold": {
-      "shipping": "reservation_only",
-      "plannedStage": "E.10"
-    }
-  },
   "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {

@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": ["acp_probe_capabilities"],
+    "extended": [
+      "acp_probe_models",
+      "abort_turn_then_continue",
+      "read_known_file",
+      "search_known_token",
+      "permission_mode_default_outside_workspace",
+      "permission_mode_safe_yolo_outside_workspace",
+      "permission_mode_read_only_outside_workspace",
+      "permission_mode_yolo_outside_workspace"
+    ]
+  }
+}

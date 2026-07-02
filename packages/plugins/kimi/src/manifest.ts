@@ -1,17 +1,54 @@
-import type { PluginManifestV2 } from '@happier-dev/protocol';
+import {
+  definePluginManifest,
+  type PluginBackendContributionV2,
+  type PluginManifestV2,
+} from '@happier-dev/plugin-sdk';
 
-// Skeleton manifest reserved for Stage E.4 extraction.
-// Substantive capabilities + contributions land during E.4 (Kimi — Tier 2 activate-hook).
-// L-2 violation in current source (`src/permissions/` flat) will be fixed during extraction.
-export const PLUGIN_MANIFEST: PluginManifestV2 = {
+import { KIMI_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+
+type KimiPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
+  contributes: Readonly<{
+    backends: ReadonlyArray<PluginBackendContributionV2>;
+  }>;
+}>;
+
+export const PLUGIN_MANIFEST = definePluginManifest({
   schemaVersion: 2,
   id: 'happier.agent.kimi',
   version: '0.0.0',
   displayName: 'kimi',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: [] },
+  runtime: { apiVersion: 1, capabilities: ['backends'] },
   targets: {},
   capabilities: { permissions: [] },
-  contributes: {},
-};
+  contributes: {
+    backends: [
+      {
+        kindVersion: 1,
+        id: 'kimi',
+        agentId: 'kimi',
+        engine: {
+          kind: 'acp',
+          transport: KIMI_ACP_BACKEND_SPEC.transport,
+          ux: KIMI_ACP_BACKEND_SPEC.ux,
+          capabilities: KIMI_ACP_BACKEND_SPEC.capabilities,
+          sessionIdHeaderName: KIMI_ACP_BACKEND_SPEC.sessionIdHeaderName,
+          toolNameInference: KIMI_ACP_BACKEND_SPEC.toolNameInference,
+          stderrRules: KIMI_ACP_BACKEND_SPEC.stderrRules,
+          mcp: KIMI_ACP_BACKEND_SPEC.mcp,
+        },
+        capabilities: {
+          executionRun: { supported: true },
+          session: {
+            media: {
+              acceptsImageInput: { supported: false },
+              emitsSessionMedia: { supported: false },
+              nativeImageGeneration: { supported: false },
+            },
+          },
+        },
+      },
+    ],
+  },
+} satisfies KimiPluginManifestV2);

@@ -1,5 +1,17 @@
-// Stage E.10 extraction lands the actual ACP backend + provider registration here.
-// Currently a no-op scaffolding — see .project/plans/runtime-unification/stages/stage-E/E.10.md.
-export function activate(): void {
-  // intentionally empty
+import type {
+  PluginDisposable,
+} from '@happier-dev/plugin-sdk';
+import type { BundledRegisterBackendEngineV1 } from '@happier-dev/plugin-sdk/internal/runtime/session';
+
+import { createPiBackendEngine } from './agent/runtime/engine.js';
+
+type PluginApiForPiV1 = Readonly<{
+  registerBackendEngine: (registration: BundledRegisterBackendEngineV1) => PluginDisposable | unknown;
+}>;
+
+export function activate(api: PluginApiForPiV1): void {
+  api.registerBackendEngine({
+    backendId: 'pi',
+    create: createPiBackendEngine,
+  });
 }

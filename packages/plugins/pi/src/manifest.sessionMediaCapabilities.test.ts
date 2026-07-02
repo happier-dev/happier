@@ -11,15 +11,16 @@ function capabilitiesForBackend(id: string) {
 }
 
 describe('Pi plugin session media capabilities', () => {
-  it('declares only source-real tool-output media without overclaiming native generation', () => {
+  it('declares execution-run support now that the plugin owns a strict-LF runtime backend', () => {
+    const backend = PLUGIN_MANIFEST.contributes?.backends?.find((entry) => entry.id === 'pi');
+
+    expect(backend?.capabilities?.executionRun).toEqual({ supported: true });
+  });
+
+  it('does not claim emitted session media until plugin-owned source-real mapping lands', () => {
     const capabilities = capabilitiesForBackend('pi');
 
-    expect(capabilities.session.media.emitsSessionMedia).toMatchObject({
-      supported: true,
-      mediaKinds: ['image'],
-      sources: ['tool-output'],
-      storage: 'session-media-file',
-    });
+    expect(capabilities.session.media.emitsSessionMedia.supported).toBe(false);
     expect(capabilities.session.media.nativeImageGeneration.supported).toBe(false);
   });
 });

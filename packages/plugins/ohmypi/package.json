@@ -9,6 +9,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./agent/surfaces/sessions/external/provider": {
+      "types": "./dist/agent/surfaces/sessions/external/provider.d.ts",
+      "default": "./dist/agent/surfaces/sessions/external/provider.js"
+    },
+    "./agent/terminalRuntime/breadcrumb": {
+      "types": "./dist/agent/terminalRuntime/breadcrumb.d.ts",
+      "default": "./dist/agent/terminalRuntime/breadcrumb.js"
+    },
+    "./agent/transcripts/snapshot": {
+      "types": "./dist/agent/transcripts/snapshot.d.ts",
+      "default": "./dist/agent/transcripts/snapshot.js"
     }
   },
   "files": [
@@ -20,13 +32,9 @@
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
-  "happier": {
-    "pluginScaffold": {
-      "shipping": "reservation_only",
-      "plannedStage": "E.9"
-    }
-  },
   "dependencies": {
+    "@happier-dev/agents": "0.0.0",
+    "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {

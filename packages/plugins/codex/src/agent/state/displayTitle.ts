@@ -1,0 +1,9 @@
+import type { SessionStateProviderFieldHandler } from '@happier-dev/agents';
+
+export function createCodexRolloutDisplayTitleHandler(params: Readonly<{
+    readTitle: () => Promise<string | null> | string | null;
+}>): SessionStateProviderFieldHandler<'display.title'> {
+    return {
+        readField: async () => await params.readTitle(),
+    };
+}

@@ -1,5 +1,18 @@
-// Stage E.7 extraction lands the actual ACP backend + activate-hook ops here.
-// Currently a no-op scaffolding — see .project/plans/runtime-unification/stages/stage-E/E.7.md.
-export function activate(): void {
-  // intentionally empty
+import type {
+  PluginContextV1,
+  PluginDisposable,
+  RegisterBackendEngineV1,
+} from '@happier-dev/plugin-sdk';
+
+import { COPILOT_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+
+type CopilotPluginApiV1 = Readonly<{
+  registerBackendEngine: (registration: RegisterBackendEngineV1) => PluginDisposable | unknown;
+}>;
+
+export function activate(api: CopilotPluginApiV1): void {
+  api.registerBackendEngine({
+    backendId: 'copilot',
+    create: (ctx: PluginContextV1) => ctx.acp.defineAcpBackend(COPILOT_ACP_BACKEND_SPEC),
+  });
 }

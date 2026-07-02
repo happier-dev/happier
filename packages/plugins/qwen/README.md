@@ -1,1 +1,6 @@
-Skeleton plugin package for `qwen` reserved per amendment-x Wave C 2026-04-27. Substantive content lands during Stage E.3 extraction (see `.project/plans/runtime-unification/stages/stage-E/E.3.md`). Currently no-op scaffolding.
+Qwen plugin package for the Stage E.3 thin ACP extraction pilot.
+
+This package owns the Qwen agent definition and ACP backend activation through
+`ctx.acp.defineAcpBackend(...)`. The former host-local Qwen backend and UI
+provider owners have been folded into plugin metadata plus generated CLI/UI
+projections.

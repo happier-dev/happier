@@ -1,0 +1,111 @@
+import { describe, expect, it } from 'vitest';
+
+import { projectOhMyPiSessionSnapshotToDirectMessages } from './snapshot.js';
+
+describe('projectOhMyPiSessionSnapshotToDirectMessages', () => {
+  it('projects the persisted visible root-to-leaf path and ignores off-path branches', () => {
+    const projected = projectOhMyPiSessionSnapshotToDirectMessages({
+      sessionFilePath: '/tmp/omp-session.jsonl',
+      sessionId: 'sess-1',
+      lines: [
+        {
+          type: 'session',
+          id: 'sess-1',
+          timestamp: '2026-04-10T10:00:00.000Z',
+          cwd: '/repo',
+          title: 'OMP session',
+        },
+        {
+          type: 'message',
+          id: 'user-1',
+          parentId: null,
+          timestamp: '2026-04-10T10:00:01.000Z',
+          message: { role: 'user', content: 'hello world' },
+        },
+        {
+          type: 'message',
+          id: 'assistant-1',
+          parentId: 'user-1',
+          timestamp: '2026-04-10T10:00:02.000Z',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'hi there' },
+              { type: 'thinking', thinking: 'reasoning' },
+            ],
+          },
+        },
+        {
+          type: 'message',
+          id: 'branch-user',
+          parentId: 'assistant-1',
+          timestamp: '2026-04-10T10:00:03.000Z',
+          message: { role: 'user', content: 'branch prompt' },
+        },
+        {
+          type: 'branch_summary',
+          id: 'summary-1',
+          parentId: 'assistant-1',
+          timestamp: '2026-04-10T10:00:04.000Z',
+          summary: 'branch summary',
+        },
+        {
+          type: 'message',
+          id: 'leaf-user',
+          parentId: 'assistant-1',
+          timestamp: '2026-04-10T10:00:05.000Z',
+          message: { role: 'user', content: 'mainline prompt' },
+        },
+        {
+          type: 'compaction',
+          id: 'compact-1',
+          parentId: 'leaf-user',
+          timestamp: '2026-04-10T10:00:06.000Z',
+          summary: 'compacted summary',
+        },
+        {
+          type: 'message',
+          id: 'assistant-2',
+          parentId: 'compact-1',
+          timestamp: '2026-04-10T10:00:07.000Z',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tool-1', name: 'read_file', input: { path: 'README.md' } },
+              { type: 'tool_result', tool_use_id: 'tool-1', content: 'done' },
+              { type: 'text', text: 'final answer' },
+            ],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        },
+      ],
+    });
+
+    expect(projected.items.map((item) => item.id)).toEqual([
+      'omp:/tmp/omp-session.jsonl:user-1',
+      'omp:/tmp/omp-session.jsonl:assistant-1:text:0',
+      'omp:/tmp/omp-session.jsonl:assistant-1:thinking:1',
+      'omp:/tmp/omp-session.jsonl:leaf-user',
+      'omp:/tmp/omp-session.jsonl:compact-1:compaction',
+      'omp:/tmp/omp-session.jsonl:assistant-2:tool_use:0',
+      'omp:/tmp/omp-session.jsonl:assistant-2:tool_result:1',
+      'omp:/tmp/omp-session.jsonl:assistant-2:text:2',
+    ]);
+    expect(projected.items.map((item) => item.raw.role)).toEqual([
+      'user',
+      'agent',
+      'agent',
+      'user',
+      'agent',
+      'agent',
+      'agent',
+      'agent',
+    ]);
+    expect(JSON.stringify(projected.items)).toContain('final answer');
+    expect(JSON.stringify(projected.items)).not.toContain('branch prompt');
+    expect(JSON.stringify(projected.items)).not.toContain('branch summary');
+    expect(projected.title).toBe('OMP session');
+    expect(projected.workingDirectory).toBe('/repo');
+    expect(projected.lastActivityAtMs).toBe(Date.parse('2026-04-10T10:00:07.000Z'));
+  });
+});

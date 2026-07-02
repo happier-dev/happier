@@ -9,6 +9,67 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "default": "./dist/agent/index.js"
+    },
+    "./agent/contributions/runtime": {
+      "types": "./dist/agent/contributions/runtime.d.ts",
+      "default": "./dist/agent/contributions/runtime.js"
+    },
+    "./agent/hooks/settings": {
+      "types": "./dist/agent/hooks/settings.d.ts",
+      "default": "./dist/agent/hooks/settings.js"
+    },
+    "./agent/hooks/protocol": {
+      "types": "./dist/agent/hooks/protocol.d.ts",
+      "default": "./dist/agent/hooks/protocol.js"
+    },
+    "./agent/subagents/teams": {
+      "types": "./dist/agent/subagents/teams/index.d.ts",
+      "default": "./dist/agent/subagents/teams/index.js"
+    },
+    "./agent/auth/services/quota/subscriptionFetcher": {
+      "types": "./dist/agent/auth/services/quota/subscriptionFetcher.d.ts",
+      "default": "./dist/agent/auth/services/quota/subscriptionFetcher.js"
+    },
+    "./agent/auth/services/runtime": {
+      "types": "./dist/agent/auth/services/runtime/index.d.ts",
+      "default": "./dist/agent/auth/services/runtime/index.js"
+    },
+    "./agent/runtime/remote/sdk": {
+      "types": "./dist/agent/runtime/remote/sdk/index.d.ts",
+      "default": "./dist/agent/runtime/remote/sdk/index.js"
+    },
+    "./agent/runtime/permissionMode": {
+      "types": "./dist/agent/runtime/permissionMode.d.ts",
+      "default": "./dist/agent/runtime/permissionMode.js"
+    },
+    "./agent/runtime/reasoningEffort": {
+      "types": "./dist/agent/runtime/reasoningEffort.d.ts",
+      "default": "./dist/agent/runtime/reasoningEffort.js"
+    },
+    "./agent/promptAssets": {
+      "types": "./dist/agent/promptAssets/index.d.ts",
+      "default": "./dist/agent/promptAssets/index.js"
+    },
+    "./agent/transcripts": {
+      "types": "./dist/agent/transcripts/index.d.ts",
+      "default": "./dist/agent/transcripts/index.js"
+    },
+    "./agent/surfaces/sessions/handoff/providerOps": {
+      "types": "./dist/agent/surfaces/sessions/handoff/providerOps.d.ts",
+      "default": "./dist/agent/surfaces/sessions/handoff/providerOps.js"
+    },
+    "./agent/surfaces/sessions/external/providerOps": {
+      "types": "./dist/agent/surfaces/sessions/external/providerOps.d.ts",
+      "default": "./dist/agent/surfaces/sessions/external/providerOps.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "react-native": "./dist/ui/index.js",
+      "default": "./dist/ui/index.js"
     }
   },
   "files": [
@@ -22,10 +83,13 @@
   },
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
+    "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@types/react-test-renderer": "^19.1.0",
+    "react-test-renderer": "19.2.0"
   }
 }

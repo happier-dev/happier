@@ -1,3 +1,10 @@
-Skeleton plugin package for `kimi` reserved per amendment-x Wave C 2026-04-27. Substantive content lands during Stage E.4 extraction (see `.project/plans/runtime-unification/stages/stage-E/E.4.md`). Currently no-op scaffolding.
+First-party Kimi plugin package for Stage E.4 focused extraction.
 
-Note: source has an L-2 layout violation (`src/permissions/` flat under backend root); the canonical extracted layout will live under `src/agent/permissions/` per L-2.
+This package owns Kimi plugin leaf data and Tier-2 ACP callbacks:
+
+- plugin manifest and backend activation,
+- `agentCliRuntime` definition data,
+- Kimi ACP argv, environment, transport, and readonly agent-file content leaves,
+- plugin-authored UI descriptors consumed by generated host/UI projections.
+
+Shared ACP execution, MCP lifecycle, generated bundled projection, and generic temp-file hardening remain in their accepted substrate owners.

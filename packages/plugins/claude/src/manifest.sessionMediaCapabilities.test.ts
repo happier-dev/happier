@@ -11,6 +11,35 @@ function capabilitiesForBackend(id: string) {
 }
 
 describe('Claude plugin session media capabilities', () => {
+  it('declares Claude as an agent contribution with final agent CLI runtime vocabulary', () => {
+    const agent = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'claude');
+
+    expect(agent).toEqual(expect.objectContaining({
+      id: 'claude',
+      ownedBackendIds: ['claude'],
+      agentCliRuntime: expect.objectContaining({
+        id: 'claude',
+        binaryName: 'claude',
+      }),
+    }));
+    const legacyRuntimeKey = 'provider' + 'CliRuntime';
+    expect(agent && legacyRuntimeKey in agent).toBe(false);
+  });
+
+  it('declares execution-run support explicitly in the backend manifest', () => {
+    const backend = PLUGIN_MANIFEST.contributes?.backends?.find((entry) => entry.id === 'claude');
+
+    expect(backend?.capabilities?.executionRun).toEqual({ supported: true });
+  });
+
+  it('declares terminal-host runtime control through manifest capabilities', () => {
+    expect(PLUGIN_MANIFEST.runtime.capabilities).toContain('terminalHost');
+    expect(PLUGIN_MANIFEST.capabilities.permissions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ capability: 'terminal.host.control' }),
+      expect.objectContaining({ capability: 'events.session.subscribe' }),
+    ]));
+  });
+
   it('declares only tool-output SDK image blocks without claiming native image generation', () => {
     const capabilities = capabilitiesForBackend('claude');
 

@@ -1,0 +1,316 @@
+import type { Dirent } from 'node:fs';
+import { lstat, readdir, realpath, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
+
+export type CodexExternalSessionHomeEntry = Readonly<{
+  codexHome: string;
+  source: ExternalSessionsSource;
+}>;
+
+function isSafeConnectedServiceId(raw: unknown): raw is string {
+  if (typeof raw !== 'string') return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(raw.trim());
+}
+
+function isSafeConnectedServiceProfileId(raw: unknown): raw is string {
+  if (typeof raw !== 'string') return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(raw.trim());
+}
+
+function isSafeConnectedServiceGroupId(raw: unknown): raw is string {
+  if (typeof raw !== 'string') return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(raw.trim());
+}
+
+function normalizeConnectedServiceId(raw: unknown): string | null {
+  if (!isSafeConnectedServiceId(raw)) return null;
+  return raw.trim();
+}
+
+function normalizeConnectedServiceProfileId(raw: unknown): string | null {
+  if (!isSafeConnectedServiceProfileId(raw)) return null;
+  return raw.trim();
+}
+
+function normalizeConnectedServiceGroupId(raw: unknown): string | null {
+  if (!isSafeConnectedServiceGroupId(raw)) return null;
+  return raw.trim();
+}
+
+function normalizeHomePath(raw: string): string {
+  return resolve(raw.trim());
+}
+
+function readEnvString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveHomeDirFromEnvironment(env: Readonly<Record<string, string | undefined>>): string {
+  return readEnvString(env.HOME) ?? readEnvString(env.USERPROFILE) ?? homedir();
+}
+
+function expandHomeDirPath(value: string, env: Readonly<Record<string, string | undefined>>): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (trimmed === '~') return resolveHomeDirFromEnvironment(env);
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return resolve(resolveHomeDirFromEnvironment(env), trimmed.slice(2));
+  }
+  return resolve(trimmed);
+}
+
+export function resolveConfiguredCodexHomePath(env: Readonly<Record<string, string | undefined>>): string {
+  const override = readEnvString(env.CODEX_HOME);
+  return override ? expandHomeDirPath(override, env) : resolve(resolveHomeDirFromEnvironment(env), '.codex');
+}
+
+export function resolveDefaultCodexHomePath(codexHome?: string | null): string {
+  return typeof codexHome === 'string' && codexHome.trim().length > 0
+    ? normalizeHomePath(codexHome)
+    : normalizeHomePath(join(homedir(), '.codex'));
+}
+
+function buildConnectedServiceCodexHome(activeServerDir: string, connectedServiceId: string, connectedServiceProfileId: string): string {
+  return join(activeServerDir, 'daemon', 'connected-services', 'homes', connectedServiceId, connectedServiceProfileId, 'codex', 'codex-home');
+}
+
+function buildConnectedServiceGroupCodexHome(activeServerDir: string, connectedServiceId: string, connectedServiceGroupId: string): string {
+  return join(activeServerDir, 'daemon', 'connected-services', 'homes', connectedServiceId, '__groups', connectedServiceGroupId, 'codex', 'codex-home');
+}
+
+async function resolveVerifiedCodexHomePath(expectedPath: string, exactHomePath: string | null): Promise<string | null> {
+  const targetPath = exactHomePath ?? expectedPath;
+  try {
+    const linkStats = await lstat(targetPath);
+    if (linkStats.isSymbolicLink()) {
+      return null;
+    }
+    const real = await realpath(targetPath);
+    const expectedReal = await realpath(expectedPath).catch(() => null);
+    if (!expectedReal || real !== expectedReal) {
+      return null;
+    }
+    const stats = await stat(real);
+    return stats.isDirectory() ? real : null;
+  } catch {
+    return null;
+  }
+}
+
+export function inferCodexExternalSessionsSourceFromHome(params: Readonly<{
+  codexHome?: string | null;
+  activeServerDir?: string | null;
+}>): ExternalSessionsSource {
+  const codexHome = resolveDefaultCodexHomePath(params.codexHome);
+  const activeServerDir = typeof params.activeServerDir === 'string' && params.activeServerDir.trim().length > 0
+    ? resolve(params.activeServerDir.trim())
+    : null;
+
+  if (activeServerDir) {
+    const homesRoot = join(activeServerDir, 'daemon', 'connected-services', 'homes');
+    const relativeParts = codexHome.startsWith(`${homesRoot}/`) || codexHome.startsWith(`${homesRoot}\\`)
+      ? codexHome.slice(homesRoot.length + 1).split(/[/\\]+/)
+      : null;
+    if (relativeParts && relativeParts.length === 4 && relativeParts[2] === 'codex' && relativeParts[3] === 'codex-home') {
+      const [rawConnectedServiceId, rawConnectedServiceProfileId] = relativeParts;
+      const connectedServiceId = normalizeConnectedServiceId(rawConnectedServiceId);
+      const connectedServiceProfileId = normalizeConnectedServiceProfileId(rawConnectedServiceProfileId);
+      if (connectedServiceId && connectedServiceProfileId) {
+        return {
+          kind: 'codexHome',
+          home: 'connectedService',
+          connectedServiceId,
+          connectedServiceProfileId,
+          homePath: codexHome,
+        };
+      }
+    }
+    if (
+      relativeParts
+      && relativeParts.length === 5
+      && relativeParts[1] === '__groups'
+      && relativeParts[3] === 'codex'
+      && relativeParts[4] === 'codex-home'
+    ) {
+      const [rawConnectedServiceId, , rawConnectedServiceGroupId] = relativeParts;
+      const connectedServiceId = normalizeConnectedServiceId(rawConnectedServiceId);
+      const connectedServiceGroupId = normalizeConnectedServiceGroupId(rawConnectedServiceGroupId);
+      if (connectedServiceId && connectedServiceGroupId) {
+        return {
+          kind: 'codexHome',
+          home: 'connectedService',
+          connectedServiceId,
+          connectedServiceGroupId,
+          homePath: codexHome,
+        };
+      }
+    }
+  }
+
+  return {
+    kind: 'codexHome',
+    home: 'user',
+    homePath: codexHome,
+  };
+}
+
+export async function homeEntries(params: Readonly<{
+  source: ExternalSessionsSource;
+  activeServerDir: string;
+  env: NodeJS.ProcessEnv;
+}>): Promise<CodexExternalSessionHomeEntry[]> {
+  if (params.source.kind !== 'codexHome') return [];
+
+  if (params.source.home === 'user') {
+    const codexHome = typeof params.source.homePath === 'string' && params.source.homePath.trim().length > 0
+      ? normalizeHomePath(params.source.homePath)
+      : typeof params.env.CODEX_HOME === 'string' && params.env.CODEX_HOME.trim().length > 0
+        ? normalizeHomePath(params.env.CODEX_HOME)
+        : normalizeHomePath(join(homedir(), '.codex'));
+    return [{ codexHome, source: { kind: 'codexHome', home: 'user', homePath: codexHome } }];
+  }
+
+  const connectedServiceId = normalizeConnectedServiceId(params.source.connectedServiceId);
+  if (!connectedServiceId) return [];
+
+  const connectedServiceProfileId = normalizeConnectedServiceProfileId(params.source.connectedServiceProfileId);
+  const connectedServiceGroupId = normalizeConnectedServiceGroupId(params.source.connectedServiceGroupId);
+  const exactHomePath = typeof params.source.homePath === 'string' && params.source.homePath.trim().length > 0
+    ? normalizeHomePath(params.source.homePath)
+    : null;
+
+  if (connectedServiceProfileId) {
+    const codexHome = buildConnectedServiceCodexHome(params.activeServerDir, connectedServiceId, connectedServiceProfileId);
+    const verifiedHome = await resolveVerifiedCodexHomePath(codexHome, exactHomePath);
+    if (!verifiedHome) {
+      return [];
+    }
+    return [{
+      codexHome: verifiedHome,
+      source: {
+        kind: 'codexHome',
+        home: 'connectedService',
+        connectedServiceId,
+        connectedServiceProfileId,
+        homePath: verifiedHome,
+      },
+    }];
+  }
+
+  if (connectedServiceGroupId) {
+    const codexHome = buildConnectedServiceGroupCodexHome(params.activeServerDir, connectedServiceId, connectedServiceGroupId);
+    const verifiedHome = await resolveVerifiedCodexHomePath(codexHome, exactHomePath);
+    if (!verifiedHome) {
+      return [];
+    }
+    return [{
+      codexHome: verifiedHome,
+      source: {
+        kind: 'codexHome',
+        home: 'connectedService',
+        connectedServiceId,
+        connectedServiceGroupId,
+        homePath: verifiedHome,
+      },
+    }];
+  }
+
+  if (exactHomePath) {
+    const inferred = inferCodexExternalSessionsSourceFromHome({ codexHome: exactHomePath, activeServerDir: params.activeServerDir });
+    if (inferred.kind !== 'codexHome' || inferred.home !== 'connectedService') {
+      return [];
+    }
+    const inferredProfileId = normalizeConnectedServiceProfileId(inferred.connectedServiceProfileId);
+    const inferredGroupId = normalizeConnectedServiceGroupId(inferred.connectedServiceGroupId);
+    if (inferred.connectedServiceId !== connectedServiceId || (!inferredProfileId && !inferredGroupId)) {
+      return [];
+    }
+    const expectedPath = inferredGroupId
+      ? buildConnectedServiceGroupCodexHome(params.activeServerDir, connectedServiceId, inferredGroupId)
+      : buildConnectedServiceCodexHome(params.activeServerDir, connectedServiceId, inferredProfileId as string);
+    const verifiedHome = await resolveVerifiedCodexHomePath(expectedPath, exactHomePath);
+    if (!verifiedHome) {
+      return [];
+    }
+    return [{
+      codexHome: verifiedHome,
+      source: {
+        kind: 'codexHome',
+        home: 'connectedService',
+        connectedServiceId,
+        ...(inferredGroupId ? { connectedServiceGroupId: inferredGroupId } : { connectedServiceProfileId: inferredProfileId as string }),
+        homePath: verifiedHome,
+      },
+    }];
+  }
+
+  const entries: CodexExternalSessionHomeEntry[] = [];
+  const base = join(params.activeServerDir, 'daemon', 'connected-services', 'homes', connectedServiceId);
+  let profiles: Dirent[];
+  try {
+    profiles = await readdir(base, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  for (const entry of profiles) {
+    if (entry.name === '__groups') continue;
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const profileId = normalizeConnectedServiceProfileId(entry.name);
+    if (!profileId) continue;
+    const codexHome = buildConnectedServiceCodexHome(params.activeServerDir, connectedServiceId, profileId);
+    try {
+      const s = await stat(codexHome);
+      if (s.isDirectory()) {
+        entries.push({
+          codexHome,
+          source: {
+            kind: 'codexHome',
+            home: 'connectedService',
+            connectedServiceId,
+            connectedServiceProfileId: profileId,
+            homePath: codexHome,
+          },
+        });
+      }
+    } catch {
+      // ignore missing
+    }
+  }
+
+  const groupsBase = join(base, '__groups');
+  let groups: Dirent[];
+  try {
+    groups = await readdir(groupsBase, { withFileTypes: true });
+  } catch {
+    return entries;
+  }
+  for (const entry of groups) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const groupId = normalizeConnectedServiceGroupId(entry.name);
+    if (!groupId) continue;
+    const codexHome = buildConnectedServiceGroupCodexHome(params.activeServerDir, connectedServiceId, groupId);
+    try {
+      const s = await stat(codexHome);
+      if (s.isDirectory()) {
+        entries.push({
+          codexHome,
+          source: {
+            kind: 'codexHome',
+            home: 'connectedService',
+            connectedServiceId,
+            connectedServiceGroupId: groupId,
+            homePath: codexHome,
+          },
+        });
+      }
+    } catch {
+      // ignore missing
+    }
+  }
+
+  return entries;
+}
