@@ -70,3 +70,19 @@ Artifacts are written under:
 - `F9.agentInputChipsAndPopovers.yaml`
   - **not** part of default smoke right now
   - require a connected-machine/native session harness that is not fully wired yet
+- `transcriptScroll.smoke.yaml`
+  - connected-machine transcript viewport smoke
+  - creates a tall transcript, reopens it, scrolls up/down, and asserts transcript rows plus composer remain reachable
+  - run from repo root with:
+
+```bash
+yarn -s test:e2e:mobile:ios:connected-machine:transcript
+yarn -s test:e2e:mobile:android:connected-machine:transcript
+```
+
+Equivalent direct commands from `packages/tests`:
+
+```bash
+HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE=cli-terminal-daemon node scripts/run-maestro-with-heartbeat.mjs --platform ios --flows suites/mobile-e2e/flows/transcriptScroll.smoke.yaml --appId dev.happier.app.dev.internal
+HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE=cli-terminal-daemon node scripts/run-maestro-with-heartbeat.mjs --platform android --flows suites/mobile-e2e/flows/transcriptScroll.smoke.yaml --appId dev.happier.app.internaldev
+```

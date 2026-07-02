@@ -32,6 +32,7 @@ async function dispatchWebhookActivity(params: {
         topic: 'permission_request' | 'user_action_request';
         sessionId: string;
         sessionTitle?: string | null;
+        agentDisplayName?: string | null;
         requestId: string;
         toolName: string;
         toolInput?: unknown;
@@ -225,6 +226,7 @@ describe('core e2e: webhook activity notifications', () => {
         sessionTitle: 'Fix prod issue',
         requestId: 'request-9',
         toolName: 'Bash',
+        agentDisplayName: 'Claude',
         toolInput: {
           command: 'git status --short && echo secret-token',
         },
@@ -244,8 +246,8 @@ describe('core e2e: webhook activity notifications', () => {
       requestId: 'request-9',
     });
     expect(payload.content).toEqual({
-      title: 'Permission Request',
-      body: 'Approval needed for: Bash\nCommand: git',
+      title: 'Fix prod issue',
+      body: 'Claude asks permission to use Bash\nCommand: git',
     });
     expect(payload.request).toEqual({
       requestId: 'request-9',

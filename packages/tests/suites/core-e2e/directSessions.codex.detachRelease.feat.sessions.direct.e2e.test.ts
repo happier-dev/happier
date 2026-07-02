@@ -173,14 +173,14 @@ describe('core e2e: direct Codex session detach watcher release', () => {
                 sessionId,
                 machineKeys: [machineKey],
             });
-            const directSession = isRecord(metadataAfterDetach.directSessionV1) ? metadataAfterDetach.directSessionV1 : null;
-            expect(directSession).toEqual(expect.objectContaining({
+            const externalSession = isRecord(metadataAfterDetach.externalSessionV1) ? metadataAfterDetach.externalSessionV1 : null;
+            expect(externalSession).toEqual(expect.objectContaining({
                 v: 1,
                 providerId: 'codex',
                 remoteSessionId,
             }));
-            expect(directSession).not.toHaveProperty('lastKnownActivityAtMs');
-            expect(metadataAfterDetach).not.toHaveProperty('directSessionAttentionV1');
+            expect(externalSession).not.toHaveProperty('lastKnownActivityAtMs');
+            expect(metadataAfterDetach).not.toHaveProperty('externalSessionAttentionV1');
         } finally {
             ui.close();
         }

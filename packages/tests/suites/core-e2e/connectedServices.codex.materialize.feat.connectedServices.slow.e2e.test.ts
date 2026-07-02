@@ -205,11 +205,14 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
 
     const materialized = JSON.parse(await readFile(authPath, 'utf8')) as any;
     expect(materialized).toMatchObject({
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
       access_token: 'e2e-access',
       refresh_token: 'e2e-refresh',
       id_token: 'e2e-id',
       account_id: 'acct-1',
     });
+    expect(typeof materialized.last_refresh).toBe('string');
 
     await daemonControlPostJson({
       port: daemonPort,

@@ -1,0 +1,170 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+# Transcript scroll smoke (connected-machine lane).
+#
+# Seeds a session with a transcript taller than one viewport, reopens it from
+# the session list (entry-restore path), scrolls up several times asserting
+# transcript content stays rendered (no crash / blank list), then scrolls back
+# down and asserts the composer is still reachable.
+#
+# Requires the connected-machine harness (same as connectedMachine.smoke.yaml):
+#   HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE=cli-terminal-daemon \
+#     node scripts/run-maestro-with-heartbeat.mjs --platform ios \
+#     --flows suites/mobile-e2e/flows/transcriptScroll.smoke.yaml \
+#     --appId dev.happier.app.dev.internal
+- launchApp:
+    clearState: false
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: _shared/gotoNewSessionComposer.yaml
+
+# Seed a transcript taller than one viewport: a single long user message with
+# sentinels at both ends.
+- tapOn:
+    id: new-session-composer-input
+- inputText: |
+    TRANSCRIPT_SCROLL_TOP_SENTINEL
+
+    Transcript scroll smoke filler paragraph 01 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 02 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 03 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 04 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 05 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 06 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 07 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 08 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 09 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 10 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 11 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 12 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 13 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 14 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 15 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 16 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 17 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 18 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 19 - padding content so the transcript grows taller than a single viewport.
+
+    Transcript scroll smoke filler paragraph 20 - padding content so the transcript grows taller than a single viewport.
+
+    TRANSCRIPT_SCROLL_BOTTOM_SENTINEL
+
+- tapOn:
+    id: new-session-composer-send
+
+# The transcript opens pinned to the bottom of the seeded message.
+- extendedWaitUntil:
+    visible: "TRANSCRIPT_SCROLL_BOTTOM_SENTINEL"
+    timeout: 240000
+
+- assertVisible:
+    id: transcript-chat-list
+
+# Reopen the session from the session list (entry-restore path).
+- runFlow:
+    when:
+      visible:
+        id: session-header-back
+    commands:
+      - tapOn:
+          id: session-header-back
+      - extendedWaitUntil:
+          visible: "(Sessions|Start a session from your computer)"
+          timeout: 240000
+
+- extendedWaitUntil:
+    visible:
+      id: "session-list-item-.*"
+    timeout: 240000
+
+- tapOn:
+    id: "session-list-item-.*"
+    index: 0
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+- extendedWaitUntil:
+    visible:
+      id: transcript-chat-list
+    timeout: 240000
+
+- waitForAnimationToEnd:
+    timeout: 15000
+
+- extendedWaitUntil:
+    visible: "TRANSCRIPT_SCROLL_BOTTOM_SENTINEL"
+    timeout: 240000
+
+- assertVisible:
+    id: "transcript-item-.*"
+
+# Scroll up several times; transcript rows must stay rendered after each swipe.
+- swipe:
+    direction: DOWN
+    element:
+      id: transcript-chat-list
+- assertVisible:
+    id: "transcript-item-.*"
+
+- swipe:
+    direction: DOWN
+    element:
+      id: transcript-chat-list
+- assertVisible:
+    id: "transcript-item-.*"
+
+- swipe:
+    direction: DOWN
+    element:
+      id: transcript-chat-list
+- assertVisible:
+    id: "transcript-item-.*"
+
+# The top of the seeded message is reachable (scrolling actually travelled).
+- assertVisible: "TRANSCRIPT_SCROLL_TOP_SENTINEL"
+
+# Scroll back down to the bottom of the transcript.
+- swipe:
+    direction: UP
+    element:
+      id: transcript-chat-list
+- swipe:
+    direction: UP
+    element:
+      id: transcript-chat-list
+- swipe:
+    direction: UP
+    element:
+      id: transcript-chat-list
+
+- waitForAnimationToEnd:
+    timeout: 15000
+
+- extendedWaitUntil:
+    visible: "TRANSCRIPT_SCROLL_BOTTOM_SENTINEL"
+    timeout: 240000
+
+# The session composer is still reachable after the scroll round-trip.
+- assertVisible:
+    id: session-composer-input

@@ -14,6 +14,7 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { repoRootDir } from '../../src/testkit/paths';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
+const initialUiNavigationTimeoutMs = 240_000;
 
 test.describe('ui e2e: permission prompts (composer card)', () => {
   test.describe.configure({ mode: 'serial' });
@@ -83,7 +84,7 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
     let cliLogin: StartedCliTerminalConnect | null = null;
     let thrown: unknown = null;
     try {
-      await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+      await gotoDomContentLoadedWithRetries(page, uiBaseUrl, initialUiNavigationTimeoutMs);
       await createAccountAndReachConnectMachineState({ page });
 
       cliLogin = await startCliAuthLoginForTerminalConnect({
@@ -149,7 +150,8 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}`, 120_000);
       await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
       await page.getByTestId('session-composer-input').fill(`trigger permission prompt ${run.runId}`);
-      await page.getByTestId('session-composer-input').press('Enter');
+      await expect(page.getByTestId('session-composer-send')).toBeEnabled({ timeout: 60_000 });
+      await page.getByTestId('session-composer-send').click();
       await expect(page.getByTestId('permission-prompt-card')).toHaveCount(1, { timeout: 180_000 });
 
       await page.getByTestId('permission-prompt-view-tool').click();

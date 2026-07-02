@@ -4,7 +4,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createRunDirs } from '../../src/testkit/runDir';
-import { createSession } from '../../src/testkit/sessions';
+import { createSession, fetchMessagesPage } from '../../src/testkit/sessions';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -29,7 +29,7 @@ describe('core e2e: session message role query', () => {
     expect(features.status).toBe(200);
     expect(features.data?.capabilities?.session?.messages?.role).toBe(true);
 
-    const postMessage = async (localId: string, messageRole: 'user' | 'agent', value: string) => {
+    const postMessage = async (localId: string, messageRole: 'user' | 'agent' | 'event', value: string) => {
       return await fetchJson<any>(`${server!.baseUrl}/v2/sessions/${sessionId}/messages`, {
         method: 'POST',
         headers: {
@@ -52,6 +52,10 @@ describe('core e2e: session message role query', () => {
     const agentWrite = await postMessage('role-agent-1', 'agent', 'agent-cipher');
     expect(agentWrite.status).toBe(200);
     expect(agentWrite.data?.didWrite).toBe(true);
+
+    const eventWrite = await postMessage('role-event-1', 'event', 'event-cipher');
+    expect(eventWrite.status).toBe(200);
+    expect(eventWrite.data?.didWrite).toBe(true);
 
     const userMessages = await fetchJson<any>(
       `${server.baseUrl}/v1/sessions/${sessionId}/messages?scope=main&role=user&limit=25`,
@@ -76,5 +80,16 @@ describe('core e2e: session message role query', () => {
     expect(agentMessages.data?.messages).toHaveLength(1);
     expect(agentMessages.data?.messages?.[0]?.localId).toBe('role-agent-1');
     expect(agentMessages.data?.messages?.[0]?.messageRole).toBe('agent');
+
+    const semanticMessages = await fetchMessagesPage({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      sessionId,
+      afterSeq: 0,
+      limit: 25,
+      roles: ['user', 'agent'],
+    });
+    expect(semanticMessages.messages.map((message) => message.localId)).toEqual(['role-user-1', 'role-agent-1']);
+    expect(semanticMessages.messages.map((message) => message.messageRole)).toEqual(['user', 'agent']);
   }, 180_000);
 });

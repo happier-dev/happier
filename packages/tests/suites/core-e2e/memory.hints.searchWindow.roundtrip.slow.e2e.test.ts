@@ -16,64 +16,15 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
-import { waitFor } from '../../src/testkit/timing';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { decryptLegacyBase64, encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { createSession } from '../../src/testkit/sessions';
+import {
+  callEncryptedMachineRpc,
+  MemoryEnsureUpToDateAckSchema,
+  postEncryptedSessionMessage,
+} from '../../src/testkit/memoryRpc';
 
 const run = createRunDirs({ runLabel: 'core' });
-
-type RpcAck = { ok?: boolean; result?: string; error?: string; errorCode?: string };
-
-async function callMachineRpc<TReq, TRes>(params: {
-  ui: ReturnType<typeof createUserScopedSocketCollector>;
-  machineId: string;
-  method: string;
-  req: TReq;
-  secret: Uint8Array;
-  schema: { safeParse: (input: unknown) => { success: true; data: TRes } | { success: false } };
-  timeoutMs?: number;
-}): Promise<TRes> {
-  let out: TRes | null = null;
-  const encryptedParams = encryptLegacyBase64(params.req, params.secret);
-
-  await waitFor(
-    async () => {
-      const res = await params.ui.rpcCall<RpcAck>(`${params.machineId}:${params.method}`, encryptedParams);
-      if (!res || res.ok !== true || typeof res.result !== 'string') return false;
-      const decrypted = decryptLegacyBase64(res.result, params.secret);
-      const parsed = params.schema.safeParse(decrypted);
-      if (!parsed.success) return false;
-      out = parsed.data;
-      return true;
-    },
-    { timeoutMs: params.timeoutMs ?? 45_000 },
-  );
-
-  if (!out) throw new Error(`Machine RPC did not return a valid response: ${params.method}`);
-  return out;
-}
-
-async function postEncryptedSessionMessage(params: {
-  baseUrl: string;
-  token: string;
-  sessionId: string;
-  secret: Uint8Array;
-  payload: unknown;
-}): Promise<void> {
-  const ciphertext = encryptLegacyBase64(params.payload, params.secret);
-  const res = await fetch(`${params.baseUrl}/v2/sessions/${params.sessionId}/messages`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ ciphertext }),
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to post session message (status=${res.status})`);
-  }
-}
 
 describe('core e2e: memory hints search + window roundtrip', () => {
   let server: StartedServer | null = null;
@@ -111,6 +62,7 @@ describe('core e2e: memory hints search + window roundtrip', () => {
         HAPPIER_HOME_DIR: daemonHomeDir,
         HAPPIER_SERVER_URL: server.baseUrl,
         HAPPIER_WEBAPP_URL: server.baseUrl,
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLogPath,
         HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'memory-hints-json',
@@ -161,7 +113,7 @@ describe('core e2e: memory hints search + window roundtrip', () => {
     const ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
     ui.connect();
 
-    const settings = await callMachineRpc({
+    const settings = await callEncryptedMachineRpc({
       ui,
       machineId: seeded.machineId,
       method: RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET,
@@ -178,17 +130,17 @@ describe('core e2e: memory hints search + window roundtrip', () => {
     });
     expect(settings.enabled).toBe(true);
 
-    await callMachineRpc({
+    await callEncryptedMachineRpc({
       ui,
       machineId: seeded.machineId,
       method: RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE,
       req: { sessionId },
       secret,
-      schema: { safeParse: (value: any) => (value && value.ok === true ? { success: true, data: value } : { success: false }) } as any,
+      schema: MemoryEnsureUpToDateAckSchema,
       timeoutMs: 90_000,
     });
 
-    const searchRes = await callMachineRpc({
+    const searchRes = await callEncryptedMachineRpc({
       ui,
       machineId: seeded.machineId,
       method: RPC_METHODS.DAEMON_MEMORY_SEARCH,
@@ -203,7 +155,7 @@ describe('core e2e: memory hints search + window roundtrip', () => {
     const hit = searchRes.hits[0];
     expect(hit?.sessionId).toBe(sessionId);
 
-    const windowRes = await callMachineRpc({
+    const windowRes = await callEncryptedMachineRpc({
       ui,
       machineId: seeded.machineId,
       method: RPC_METHODS.DAEMON_MEMORY_GET_WINDOW,
