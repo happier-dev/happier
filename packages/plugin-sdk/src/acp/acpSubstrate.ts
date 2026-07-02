@@ -1,6 +1,5 @@
-import type { RuntimeCore } from '@happier-dev/agents';
-
 import type { BackendEngineV1 } from '../engine';
+import type { RuntimeCoreV1 } from '../runtime/session';
 import type { AcpBackendSpecV1 } from './types';
 
 declare const acpBackendMarkerSymbol: unique symbol;
@@ -13,7 +12,7 @@ export type AcpMarkedBackendEngineV1 = BackendEngineV1 & Readonly<{
     [ACP_BACKEND_MARKER]: AcpBackendSpecV1;
 }>;
 
-const unsupportedRuntimeCore: RuntimeCore<unknown, unknown, unknown, unknown> = Object.freeze({
+const unsupportedRuntimeCore: RuntimeCoreV1 = Object.freeze({
     async createSessionRuntime(): Promise<never> {
         throw new Error('ACP backend engines must be normalized by the host ACP runtime definition substrate before use.');
     },

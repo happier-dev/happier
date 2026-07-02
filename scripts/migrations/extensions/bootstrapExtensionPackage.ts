@@ -232,7 +232,7 @@ function ensureScaffoldSourceFiles(extensionRoot: string, extensionId: string): 
       "  modelConfig: { supportsSelection: false, nonAcpApplyScope: 'spawn_only', defaultMode: 'default', allowedModes: ['default'] },",
       "  authProbeConfig: { agentId: " + JSON.stringify(extensionId) + ", binaryNames: [" + JSON.stringify(extensionId) + "], statusCommand: null, parser: 'unknown', backgroundChecks: 'safe' },",
       "  localCli: { agentId: " + JSON.stringify(extensionId) + ", detectKey: " + JSON.stringify(extensionId) + ", machineLoginKey: " + JSON.stringify(extensionId) + ", supportKind: 'unsupported', loginLaunch: null },",
-      `  providerCliRuntime: { id: ${JSON.stringify(extensionId)}, title: ${JSON.stringify(`${extensionId} CLI`)}, binaryName: ${JSON.stringify(extensionId)}, sourcePreferenceDefault: 'system-first', managedInstall: null, manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false },`,
+      `  agentCliRuntime: { id: ${JSON.stringify(extensionId)}, title: ${JSON.stringify(`${extensionId} CLI`)}, binaryName: ${JSON.stringify(extensionId)}, sourcePreferenceDefault: 'system-first', managedInstall: null, manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false },`,
       '  providerSettings: null,',
       '});',
       '',

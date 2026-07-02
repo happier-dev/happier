@@ -1,5 +1,4 @@
 import type {
-  PluginApiExecutionRunProfileRegistrationV1,
   PluginApiMcpDiscoveryProviderRegistrationV1,
   PluginApiMcpServerRegistrationV1,
   PluginApiNotificationCategoryRegistrationV1,
@@ -40,10 +39,10 @@ type _PluginApiMustExposeNotificationRegistration = AssertTrue<
   }> ? true : false
 >;
 
-type _PluginApiMustExposeExecutionRunProfileRegistration = AssertTrue<
-  PluginApiV1 extends Readonly<{
-    registerExecutionRunProfile: PluginApiRegisterMethodV1<PluginApiExecutionRunProfileRegistrationV1>;
-  }> ? true : false
+type DescriptorOnlyRegistrationKeys = 'registerResource' | 'registerUiDescriptor' | 'registerExecutionRunProfile';
+
+type _PluginApiMustNotExposeDescriptorOnlyRegistration = AssertTrue<
+  Extract<keyof PluginApiV1, DescriptorOnlyRegistrationKeys> extends never ? true : false
 >;
 
 type _PluginApiMustExposeScmBackendRegistration = AssertTrue<

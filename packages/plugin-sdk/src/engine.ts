@@ -1,11 +1,13 @@
 import type { PluginContextV1 } from './context';
+import type { RuntimeCoreV1 } from './runtime/session';
 import type {
     AttachSurfaceV1,
+    CheckpointSurfaceV1,
     ExternalSessionSurfaceV1,
+    ForkSurfaceV1,
+    HandoffSurfaceV1,
     ProviderMessageMetaEnricher,
-    RuntimeCore,
     RuntimeFacets,
-    SessionHandoffSurfaceV1,
     TerminalRuntimeSurfaceV1,
 } from '@happier-dev/agents';
 
@@ -16,16 +18,19 @@ import type {
 // - make executable backend wiring explicit (no `apps/cli` imports from plugins)
 // - provide a single engine object that can carry optional runtime-family surfaces
 export type BackendEngineV1 = Readonly<{
-    runtimeCore?: RuntimeCore<unknown, unknown, unknown, unknown>;
+    runtimeCore?: RuntimeCoreV1;
     facets?: RuntimeFacets;
     messageMeta?: ProviderMessageMetaEnricher;
 
-    // A.6 declares these as typed substrate only. The current host runtime fails closed
-    // if a plugin returns them until the owning runtime-surface packets wire execution.
+    // Executable backend surface bindings. Manifest `surfaceHandlers[]` remains the
+    // static support/projection source of truth; the host publishes these bindings
+    // only for declared operations.
     terminalRuntimeSurface?: TerminalRuntimeSurfaceV1;
     externalSessionSurface?: ExternalSessionSurfaceV1;
     attachSurface?: AttachSurfaceV1;
-    sessionHandoffSurface?: SessionHandoffSurfaceV1;
+    handoffSurface?: HandoffSurfaceV1;
+    forkSurface?: ForkSurfaceV1;
+    checkpointSurface?: CheckpointSurfaceV1;
 }>;
 
 export type RegisterBackendEngineV1 = Readonly<{

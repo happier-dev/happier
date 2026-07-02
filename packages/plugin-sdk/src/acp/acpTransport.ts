@@ -1,6 +1,6 @@
 import type { AcpTimeoutsV1 } from './types';
 
-export type ExecLaunchInputV1 =
+export type AcpTransportLaunchInputV1 =
     | Readonly<{
         kind: 'agent-cli';
         agentId: string;
@@ -10,6 +10,15 @@ export type ExecLaunchInputV1 =
     | Readonly<{
         kind: 'executable';
         command: string;
+        args?: readonly string[];
+        env?: Readonly<Record<string, string>>;
+    }>
+    | Readonly<{
+        kind: 'system-tool';
+        toolId: string;
+        purpose: string;
+        preferredPath?: string | null;
+        preferredCommand?: string | null;
         args?: readonly string[];
         env?: Readonly<Record<string, string>>;
     }>;
@@ -39,7 +48,7 @@ export type AcpCustomTransportHandlerSpecV1 = Readonly<{
 export type AcpTransportSpecV1 =
     | Readonly<{
         kind: 'stdio';
-        launch: ExecLaunchInputV1;
+        launch: AcpTransportLaunchInputV1;
         customHandler?: AcpCustomTransportHandlerSpecV1;
         timeouts?: AcpTimeoutsV1;
     }>

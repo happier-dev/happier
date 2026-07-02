@@ -1,3 +1,9 @@
+import type {
+    PluginRequestInterceptorTargetV1,
+    RequestInterceptorRequestPatchV1,
+    RequestPolicyResultV1,
+} from '@happier-dev/protocol';
+
 export type FetchRuntimeHeadersV1 = Readonly<Record<string, string>>;
 
 export type FetchRuntimeRequestV1 = Readonly<{
@@ -25,15 +31,37 @@ export type FetchRuntimeServiceV1 = (
     request: FetchRuntimeRequestV1,
 ) => Promise<FetchRuntimeResponseV1>;
 
-export type PluginFetchNextV1 = FetchRuntimeServiceV1;
+export type RequestPolicyCallerV1 =
+    Readonly<{
+        scope: 'plugin-fetch';
+        pluginId?: string;
+    }>;
 
-export type PluginFetchRequestInterceptorV1 = (
-    request: FetchRuntimeRequestV1,
-    next: PluginFetchNextV1,
-) => Promise<FetchRuntimeResponseV1>;
+export type RequestPolicyOperationContextV1 = Readonly<{
+    id: string;
+    attempt: number;
+}>;
+
+export type RequestPolicyHandlerInputV1 = Readonly<{
+    interceptorId: string;
+    pluginId: string;
+    target: PluginRequestInterceptorTargetV1;
+    originalRequest: FetchRuntimeRequestV1;
+    effectiveRequest: FetchRuntimeRequestV1;
+    caller: RequestPolicyCallerV1;
+    operation: RequestPolicyOperationContextV1;
+}>;
+
+export type PluginFetchRequestPolicyHandlerV1 = (
+    input: RequestPolicyHandlerInputV1,
+) => Promise<RequestPolicyResultV1> | RequestPolicyResultV1;
 
 export type PluginApiRequestInterceptorRegistrationV1 = Readonly<{
     id: string;
-    priority?: number;
-    intercept: PluginFetchRequestInterceptorV1;
+    handle: PluginFetchRequestPolicyHandlerV1;
 }>;
+
+export type {
+    RequestInterceptorRequestPatchV1,
+    RequestPolicyResultV1,
+};

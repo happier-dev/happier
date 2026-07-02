@@ -14,6 +14,7 @@ import type {
     EnvRuntimeServiceV1,
     ErrorRuntimeServiceV1,
     ExecRuntimeServiceV1,
+    ExecClientHandleV1,
     FsRuntimeServiceV1,
     ManagedServerRuntimeServiceV1,
     McpRuntimeServiceV1,
@@ -30,13 +31,59 @@ import type {
     TimeoutRuntimeServiceV1,
     TranscriptsRuntimeServiceV1,
     RegisterBackendEngineV1,
+    RuntimeCoreV1,
+    SessionRuntimeV1,
     SubagentRefInputV1,
+    CreateExecutionRunBackendParamsV1,
+    CreateSessionRuntimeParamsV1,
+    ExecutionRunBackendV1,
     WorkspaceRefV1,
+    BackendSessionLaunchHintsV1,
+    CheckpointDescriptorV1,
+    ForkResultV1,
+    RestoreCheckpointResultV1,
+    TerminalRuntimeRunResultV1,
 } from './index';
 
 describe('plugin SDK engine contracts', () => {
     it('types backend engine registration through runtimeCore', () => {
-        const runtimeCore = {} as RuntimeCore<unknown, unknown, unknown, unknown>;
+        const sessionRuntime: SessionRuntimeV1 = {
+            send: async (input, options) => ({
+                status: options?.signal?.aborted ? 'rejected' : 'accepted',
+                turnId: options?.turnId,
+                providerTurnId: options?.localInputId ?? input.structuredInput?.skillMentions?.[0]?.id,
+            }),
+            cancel: async (request) => ({
+                status: request.reason === 'runtime_recovery' ? 'not_running' : 'cancelled',
+            }),
+            dispose: async () => undefined,
+        };
+        const executionRunBackend: ExecutionRunBackendV1 = {
+            run: async (_input, options) => ({
+                status: options?.signal?.aborted ? 'cancelled' : 'accepted',
+            }),
+            dispose: async () => undefined,
+        };
+        const runtimeCore: RuntimeCoreV1 = {
+            createSessionRuntime: async (params: CreateSessionRuntimeParamsV1) => {
+                await params.services?.writeMetadata({
+                    kind: 'set',
+                    metadata: { backendId: params.backendId },
+                });
+                return sessionRuntime;
+            },
+            createExecutionRunBackend: (params: CreateExecutionRunBackendParamsV1) => {
+                const backendTarget = params.backendTarget;
+                const startIntent = params.start?.intent;
+                const modelId = params.modelId;
+                const accountSettings = params.accountSettings;
+                expect(backendTarget).toEqual({ kind: 'backend', backendId: 'acme.backend', sourceKind: 'built_in' });
+                expect(startIntent).toBe('review');
+                expect(modelId).toBe('model-1');
+                expect(accountSettings).toEqual({ mode: 'test' });
+                return executionRunBackend;
+            },
+        };
 
         const registration: RegisterBackendEngineV1 = {
             backendId: 'acme.backend',
@@ -47,6 +94,46 @@ describe('plugin SDK engine contracts', () => {
 
         const engine: BackendEngineV1 = registration.create({} as PluginContextV1) as BackendEngineV1;
         expect(engine.runtimeCore).toBe(runtimeCore);
+        expect(engine.runtimeCore?.createExecutionRunBackend({
+            backendId: 'acme.backend',
+            backendTarget: { kind: 'backend', backendId: 'acme.backend', sourceKind: 'built_in' },
+            modelId: 'model-1',
+            permissionMode: 'read_only',
+            accountSettings: { mode: 'test' },
+            start: {
+                intent: 'review',
+                retentionPolicy: 'ephemeral',
+                intentInput: { reviewType: 'summary' },
+            },
+        })).toBe(executionRunBackend);
+    });
+
+    it('rejects raw unknown runtimeCore at the plugin authoring seam', () => {
+        const runtimeCore = {} as RuntimeCore<unknown, unknown, unknown, unknown>;
+
+        const engine: BackendEngineV1 = {
+            // @ts-expect-error A.13q requires the public SDK backend engine to expose RuntimeCoreV1.
+            runtimeCore,
+        };
+
+        expect(engine).toBeDefined();
+    });
+
+    it('does not expose host session runtime plans through the public session runtime result', () => {
+        type PublicSessionRuntimeCreateResult = import('./index').SessionRuntimeCreateResultV1;
+        type PublicHostPlanLeak = Extract<PublicSessionRuntimeCreateResult, { kind: 'hostSessionRuntimePlan' }>;
+        type AssertNever<T extends never> = T;
+        type NoHostPlanLeak = AssertNever<PublicHostPlanLeak>;
+
+        const sessionRuntime: SessionRuntimeV1 = {
+            send: async () => ({ status: 'accepted' }),
+            dispose: async () => undefined,
+        };
+        const publicResult: PublicSessionRuntimeCreateResult = sessionRuntime;
+        const noHostPlanLeak = true satisfies NoHostPlanLeak extends never ? true : false;
+
+        expect(publicResult).toBe(sessionRuntime);
+        expect(noHostPlanLeak).toBe(true);
     });
 
     it('types session state as a runtime facet adjunct', () => {
@@ -60,6 +147,92 @@ describe('plugin SDK engine contracts', () => {
 
         expect(engine.facets?.sessionState).toBe(sessionState);
         expect('sessionState' in engine).toBe(false);
+    });
+
+    it('exposes final backend executable surface fields without stale handoff naming', () => {
+        const terminalResult: TerminalRuntimeRunResultV1 = {
+            type: 'process_exited',
+            exitCode: 0,
+        };
+        const launchHints: BackendSessionLaunchHintsV1 = {
+            directory: '/repo',
+            environmentVariables: { HAPPIER_BACKEND_MODE: 'test' },
+        };
+        const forkResult: ForkResultV1 = {
+            providerSessionId: 'vendor-child-1',
+            launch: launchHints,
+        };
+        const checkpoint: CheckpointDescriptorV1 = {
+            id: 'checkpoint-1',
+            target: { kind: 'provider_checkpoint', checkpointId: 'provider-checkpoint-1' },
+            timing: 'idle',
+            checkpointScopes: ['conversation'],
+            restoreScopes: ['conversation'],
+        };
+        const restoreResult: RestoreCheckpointResultV1 = {
+            ok: true,
+            outcome: 'completed',
+            restoredScopes: ['conversation'],
+        };
+        const engine: BackendEngineV1 = {
+            terminalRuntimeSurface: {
+                launch: async () => terminalResult,
+                resolveTranscriptBinding: async () => null,
+            },
+            externalSessionSurface: {
+                resolveSource: async ({ source }) => ({ ok: true, value: { source } }),
+                listCandidates: async () => ({ ok: true, value: { candidates: [], nextCursor: null } }),
+                pageTranscript: async () => ({
+                    ok: true,
+                    value: { items: [], nextCursor: null, tailCursor: null, hasMore: false },
+                }),
+            },
+            attachSurface: {
+                attach: async () => ({ ok: true, value: { exitCode: 0 } }),
+            },
+            handoffSurface: {
+                exportBundle: async () => ({ ok: true, value: { bundle: {} } }),
+                importBundle: async () => ({
+                    ok: true,
+                    value: {
+                        providerSessionId: 'vendor-import-1',
+                        launch: launchHints,
+                    },
+                }),
+            },
+            forkSurface: {
+                fork: async () => forkResult,
+                resolveReplayChildLaunch: async () => launchHints,
+            },
+            checkpointSurface: {
+                list: async () => [checkpoint],
+                restore: async () => restoreResult,
+            },
+        };
+
+        expect(engine.handoffSurface).toBeDefined();
+        expect(engine.forkSurface).toBeDefined();
+        expect(engine.checkpointSurface).toBeDefined();
+        expect('sessionHandoffSurface' in engine).toBe(false);
+    });
+
+    it('rejects arbitrary raw payloads on final backend executable surfaces', () => {
+        const engine: BackendEngineV1 = {
+            terminalRuntimeSurface: {
+                // @ts-expect-error terminal runtime launch returns TerminalRuntimeRunResultV1, not arbitrary objects.
+                launch: async () => ({ ok: true }),
+            },
+            forkSurface: {
+                // @ts-expect-error fork returns ForkResultV1 with providerSessionId and launch hints.
+                fork: async () => ({ spawn: {}, metadata: {} }),
+            },
+            checkpointSurface: {
+                // @ts-expect-error restore returns RestoreCheckpointResultV1 with outcome/scopes, not a bare success marker.
+                restore: async () => ({ ok: true }),
+            },
+        };
+
+        expect(engine).toBeDefined();
     });
 
     it('rejects stale bindings-only backend engines at the SDK seam', () => {
@@ -259,7 +432,12 @@ describe('plugin SDK engine contracts', () => {
                 dispose: async () => undefined,
             }),
             list: async () => [],
-            resolveForSession: async () => [],
+            resolveForSession: async () => [{
+                id: 'acme.server',
+                name: 'acme-server',
+                transport: { kind: 'hosted' },
+                scope: { sessionId: 'session-1' },
+            }],
         };
         const ctx = { mcp } as PluginContextV1;
 
@@ -364,5 +542,138 @@ describe('plugin SDK engine contracts', () => {
         const api = {} as PluginApiV1;
         expect('projects' in api).toBe(false);
         expect('account' in api).toBe(false);
+    });
+
+    it('exposes provider-account usage recording on runtime context without putting it on activate api', async () => {
+        const accountUsage = {} as PluginContextV1['accountUsage'];
+        const service = accountUsage;
+        const context = {
+            accountUsage: service,
+        } as PluginContextV1;
+
+        expect(context.accountUsage).toBe(service);
+
+        const api = {} as PluginApiV1;
+        expect('accountUsage' in api).toBe(false);
+    });
+
+    it('types spawnClient as protocol-client-spec with implemented stream and byte protocols', async () => {
+        function assertSpawnClientAuthoring(exec: ExecRuntimeServiceV1) {
+            // @ts-expect-error A.13p freezes spawnClient on object-shaped ExecClientSpecV1, not launch-only input.
+            void exec.spawnClient({
+                kind: 'binary',
+                executablePath: '/bin/agent',
+            });
+
+            void exec.spawnClient({
+                launch: {
+                    kind: 'binary',
+                    executablePath: '/bin/agent',
+                },
+                transport: {
+                    kind: 'stdio',
+                    framing: { kind: 'strict-lf-json' },
+                    encoding: 'utf8',
+                },
+                protocol: {
+                    kind: 'json-rpc-2.0',
+                },
+                lifecycle: {
+                    diagnostics: {
+                        rpcLog: {
+                            kind: 'file',
+                            path: '/tmp/happier-rpc.log',
+                            maxBytes: 1024,
+                            rotateCount: 1,
+                        },
+                        sanitizer: {
+                            redactedValues: ['known-secret-value'],
+                            sensitiveKeys: ['vendorSessionId'],
+                            maxStringBytes: 256,
+                            maxArrayItems: 4,
+                            maxObjectKeys: 8,
+                            maxDepth: 3,
+                        },
+                    },
+                },
+            });
+
+            void exec.spawnClient({
+                // @ts-expect-error A.13p current public authoring excludes host-issued resolvedExecutable grants.
+                launch: {
+                    kind: 'resolvedExecutable',
+                    executablePath: '/bin/agent',
+                },
+                transport: {
+                    kind: 'stdio',
+                    framing: { kind: 'strict-lf-json' },
+                    encoding: 'utf8',
+                },
+                protocol: {
+                    kind: 'json-rpc-2.0',
+                },
+            });
+
+            void exec.spawnClient({
+                launch: {
+                    kind: 'binary',
+                    executablePath: '/bin/agent',
+                },
+                transport: {
+                    kind: 'stdio',
+                    // @ts-expect-error A.13p current public framing is strict LF JSON; other frame families require A.13p.1.
+                    framing: { kind: 'content-length' },
+                    encoding: 'utf8',
+                },
+                protocol: {
+                    kind: 'json-rpc-2.0',
+                },
+            });
+
+            void exec.spawnClient({
+                launch: {
+                    kind: 'binary',
+                    executablePath: '/bin/agent',
+                },
+                transport: {
+                    kind: 'stdio',
+                    framing: { kind: 'strict-lf-json' },
+                    encoding: 'utf8',
+                },
+                protocol: {
+                    kind: 'json-stream',
+                },
+            });
+
+            void exec.spawnClient({
+                launch: {
+                    kind: 'binary',
+                    executablePath: '/bin/agent',
+                },
+                transport: {
+                    kind: 'stdio',
+                    framing: { kind: 'framed-bytes' },
+                },
+                protocol: {
+                    kind: 'framed-bytes',
+                },
+            });
+        }
+
+        expect(assertSpawnClientAuthoring).toBeTypeOf('function');
+    });
+
+    it('types exec client JSON-RPC operations through handle.client only', async () => {
+        function assertExecClientHandle(handle: ExecClientHandleV1) {
+            void handle.client.request('fixture/ping', {});
+            void handle.client.notify('fixture/ready', {});
+
+            // @ts-expect-error A.13p does not expose legacy message-envelope request helpers on the public handle.
+            void handle.request({ method: 'fixture/ping' });
+            // @ts-expect-error A.13p does not expose legacy message-envelope notify helpers on the public handle.
+            void handle.notify({ method: 'fixture/ready' });
+        }
+
+        expect(assertExecClientHandle).toBeTypeOf('function');
     });
 });

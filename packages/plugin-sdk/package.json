@@ -14,6 +14,10 @@
       "types": "./dist/acp/index.d.ts",
       "default": "./dist/acp/index.js"
     },
+    "./cloud/auth": {
+      "types": "./dist/cloud/auth.d.ts",
+      "default": "./dist/cloud/auth.js"
+    },
     "./manifest/connectedAccountDescriptors": {
       "types": "./dist/manifest/connectedAccountDescriptors.d.ts",
       "default": "./dist/manifest/connectedAccountDescriptors.js"
@@ -21,6 +25,50 @@
     "./manifest/scmBackends": {
       "types": "./dist/manifest/scmBackends.d.ts",
       "default": "./dist/manifest/scmBackends.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "default": "./dist/events.js"
+    },
+    "./executionRuns/singleShot": {
+      "types": "./dist/executionRuns/singleShot.d.ts",
+      "default": "./dist/executionRuns/singleShot.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "default": "./dist/ui/index.js"
+    },
+    "./ui/artifacts": {
+      "types": "./dist/ui/artifacts.d.ts",
+      "default": "./dist/ui/artifacts.js"
+    },
+    "./ui/artifactIntegrity": {
+      "types": "./dist/ui/artifactIntegrity.d.ts",
+      "default": "./dist/ui/artifactIntegrity.js"
+    },
+    "./ui/hostedWeb": {
+      "types": "./dist/ui/hostedWeb.d.ts",
+      "default": "./dist/ui/hostedWeb.js"
+    },
+    "./ui/reactNativeBundles": {
+      "types": "./dist/ui/reactNativeBundles.d.ts",
+      "default": "./dist/ui/reactNativeBundles.js"
+    },
+    "./internal/runtime/session": {
+      "types": "./dist/internal/runtime/session.d.ts",
+      "default": "./dist/internal/runtime/session.js"
+    },
+    "./internal/runtime/executionRun": {
+      "types": "./dist/internal/runtime/executionRun.d.ts",
+      "default": "./dist/internal/runtime/executionRun.js"
+    },
+    "./runtime/tempTextFile": {
+      "types": "./dist/runtime/tempTextFile.d.ts",
+      "default": "./dist/runtime/tempTextFile.js"
     },
     "./scm/backend": {
       "types": "./dist/scm/backend.d.ts",

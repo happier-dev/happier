@@ -1,18 +1,23 @@
-import type { SubscriptionV1 } from '../context';
-import type { PluginExternalSessionsServiceV1 } from './external';
-import type { PluginSubagentsServiceV1 } from './subagents';
-
-export type SessionScopedSubscriptionEventV1 = Readonly<{
-    kind: string;
-    payload?: unknown;
-}>;
-
-export interface SessionScopedServicesV1 {
-    readonly sessionId?: string;
-    send(request: unknown): Promise<unknown>;
-    subscribe(request: unknown, onEvent: (event: unknown) => void): SubscriptionV1;
-    writeMetadata(request: unknown): Promise<void>;
-    writeAgentState(request: unknown): Promise<void>;
-    readonly subagents: PluginSubagentsServiceV1;
-    readonly external: PluginExternalSessionsServiceV1;
-}
+export type {
+    SessionAgentStateWriteRequestV1,
+    SessionAuthServiceV1,
+    SessionMcpServiceV1,
+    SessionMetadataWriteRequestV1,
+    SessionPermissionDecisionRequestV1,
+    SessionPermissionDecisionResultV1,
+    SessionPermissionDecisionV1,
+    SessionPermissionModeV1,
+    SessionPermissionsServiceV1,
+    SessionScopedAgentMessageOptionsV1,
+    SessionScopedSendAgentMessageRequestV1,
+    SessionScopedSendRequestV1,
+    SessionScopedSendResultV1,
+    SessionScopedSendSessionEventRequestV1,
+    SessionScopedSendUserTextRequestV1,
+    SessionScopedServicesV1,
+    SessionScopedSubscribeRequestV1,
+    SessionScopedSubscriptionEventV1,
+    SessionStateFieldWriteRequestV1,
+    PluginExternalSessionsServiceV1,
+    PluginSubagentsServiceV1,
+} from '@happier-dev/agents';

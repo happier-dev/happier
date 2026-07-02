@@ -261,13 +261,6 @@ describe('defineAcpBackend', () => {
     const service = {
       defineAcpBackend,
       createRuntime: vi.fn(async () => handle),
-      permissionHandlers: {
-        codexLikeOpenCode: vi.fn((params) => ({
-          kind: 'codex-like-opencode',
-          providerId: params.providerId,
-          writeLikeKinds: [...(params.writeLikeKinds ?? [])],
-        })),
-      },
     } satisfies AcpAuthoringServiceV1;
 
     await expect(service.createRuntime(spec, {
@@ -275,14 +268,6 @@ describe('defineAcpBackend', () => {
       cwd: '/workspace',
       permissionMode: 'read-only',
     })).resolves.toBe(handle);
-    expect(service.permissionHandlers?.codexLikeOpenCode({
-      providerId: 'acme',
-      writeLikeKinds: ['external_directory'],
-    })).toEqual({
-      kind: 'codex-like-opencode',
-      providerId: 'acme',
-      writeLikeKinds: ['external_directory'],
-    });
   });
 
   it('registers agent/acp.js definitions as backend engines that use ctx.acp', async () => {

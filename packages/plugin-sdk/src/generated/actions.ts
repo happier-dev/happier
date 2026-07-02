@@ -1,4 +1,5 @@
 import type {
+  ApprovalRequestV1,
   ScmHostingRepositoryDescribePublishTargetsRequest,
   ScmHostingRepositoryDescribePublishTargetsResponse,
   ScmHostingRepositoryPublishRequest,
@@ -26,10 +27,32 @@ import type {
   ScmRepositoryRemoveIndexLockRequest,
   ScmRepositoryRemoveIndexLockResponse,
 } from '@happier-dev/protocol';
+import type { ApprovalQueueListResultV1 } from '@happier-dev/protocol/actions';
 
 export type PluginSdkActionMethodV1<Input = unknown, Output = unknown> = (input: Input) => Promise<Output>;
 
+export type PluginActionApprovalRequestInputV1 = Readonly<{
+  actionId: string;
+  args?: unknown;
+  summary?: string;
+  surface?: string;
+}>;
+
+export type PluginActionApprovalRequestResultV1 = Readonly<{
+  approvalRequestId: string;
+}>;
+
+export type PluginActionApprovalsServiceV1 = Readonly<{
+  request: PluginSdkActionMethodV1<PluginActionApprovalRequestInputV1, PluginActionApprovalRequestResultV1>;
+  get: PluginSdkActionMethodV1<string, ApprovalRequestV1 | null>;
+  list: PluginSdkActionMethodV1<
+    Readonly<{ status?: ApprovalRequestV1['status'] | null; limit?: number | null }> | undefined,
+    ApprovalQueueListResultV1
+  >;
+}>;
+
 export type PluginActionsV1 = Readonly<{
+  approvals: PluginActionApprovalsServiceV1;
   scm: Readonly<{
     pullRequest: Readonly<{
       list: PluginSdkActionMethodV1<ScmPullRequestListRequest, ScmPullRequestListResponse>;

@@ -1,25 +1,59 @@
 import type { AcpBackendSpecV1 } from './acp/types';
 import type { AbortServiceV1 } from './abort';
+import type { AgentsRuntimeServiceV1 } from './agents';
 import type { BackendEngineV1 } from './engine';
 import type { EnvRuntimeServiceV1 } from './env';
 import type { ErrorRuntimeServiceV1 } from './errors';
-import type { ExecRuntimeServiceV1 } from './exec';
+import type {
+    ExecClientHandleV1,
+    ExecJsonRpcClientSpecV1,
+    ExecRuntimeServiceV1,
+    JsonRpcClientV1,
+} from './exec';
 import type { FetchRuntimeServiceV1 } from './fetch';
 import type { FsRuntimeServiceV1 } from './fs';
 import type { PluginActionsServiceV1 } from './generated/actions';
 import type { ManagedServerRuntimeServiceV1 } from './managedServer';
+import type { LocalServicesRuntimeServiceV1 } from './localServices';
 import type { McpRuntimeServiceV1 } from './mcp';
 import type { ProgressRuntimeServiceV1 } from './progress';
+import type { PluginReviewCommentsServiceV1 } from './reviews/comments';
 import type { RetryRuntimeServiceV1 } from './retry';
 import type { PluginSessionsServiceV1 } from './sessions';
+import type { SessionScopedServicesV1 } from './sessions/scoped';
 import type { TimeoutRuntimeServiceV1 } from './timeout';
+import type { TerminalHostRuntimeServiceV1 } from './terminalHost';
+import type { SessionHooksRuntimeServiceV1 } from './sessionHooks';
 import type { TranscriptsRuntimeServiceV1 } from './transcripts';
 import type {
     AccountSettings,
+    ConnectedServiceId,
+    EventSelectorV1,
     PluginSettingsFieldDescriptorV1,
+    ProviderAccountUsageAdoptionV1,
+    ProviderAccountUsageRecordId,
+    ProviderAccountUsageSnapshotV1,
     ProjectKeyV1,
+    RuntimeEventV1,
+    TypedEventV1,
     WorkspaceRefV1,
 } from '@happier-dev/protocol';
+
+export type {
+    AgentCliReadinessDiagnosticV1,
+    AgentCliReadinessEntryV1,
+    AgentCliLaunchableEntryV1,
+    AgentCliReadinessQueryV1,
+    AgentCliReadinessRequirementV1,
+    AgentCliReadinessResultV1,
+    AgentCliReadinessChecksV1,
+    AgentCliReadinessScopeV1,
+    AgentCliReadinessSourceV1,
+    AgentCliReadinessStatusV1,
+    AgentCliUnavailableEntryV1,
+    AgentCliRuntimeServiceV1,
+    AgentsRuntimeServiceV1,
+} from './agents';
 
 export interface LoggerServiceV1 {
     debug(message: string, fields?: Readonly<Record<string, unknown>>): void;
@@ -39,9 +73,9 @@ export interface FeaturesServiceV1 {
 
 export type SessionClientServiceV1 = PluginSessionsServiceV1;
 
-export interface PermissionsServiceV1 {
-    requestDecision(request: unknown): Promise<unknown>;
-    getEffectiveMode(): unknown;
+export interface CapabilityInventoryServiceV1 {
+    has(capability: string): boolean;
+    list(): readonly string[];
 }
 
 export interface TelemetryServiceV1 {
@@ -165,11 +199,16 @@ export interface PluginSecretsServiceV1 {
     list(): Promise<readonly PluginSecretListEntryV1[]>;
 }
 
-export type PluginEventListenerV1 = (event: Readonly<{ name: string; payload: unknown }>) => void | Promise<void>;
+export type PluginEventEmitInputV1<TPayload = unknown> = Readonly<{
+    id: string;
+    payload?: TPayload;
+}>;
+
+export type PluginEventListenerV1<TPayload = unknown> = (event: TypedEventV1<TPayload>) => void | Promise<void>;
 
 export interface PluginEventsServiceV1 {
-    emit(name: string, payload?: unknown): Promise<void>;
-    subscribe(name: string, listener: PluginEventListenerV1): SubscriptionV1;
+    emit<TPayload = unknown>(event: PluginEventEmitInputV1<TPayload>): Promise<void>;
+    subscribe(selector: string | EventSelectorV1, listener: PluginEventListenerV1): SubscriptionV1;
 }
 
 export type PluginAuthIdentityV1 = Readonly<{
@@ -225,6 +264,56 @@ export interface AccountServiceV1 {
     readonly settings: AccountSettingsServiceV1;
 }
 
+export type ProviderAccountUsageRecordSnapshotInputV1 = Readonly<{
+    sessionId?: string | null;
+    snapshot: ProviderAccountUsageSnapshotV1;
+}>;
+
+export type ProviderAccountUsageRecordSnapshotResultV1 =
+    | Readonly<{ status: 'recorded'; recordId: ProviderAccountUsageRecordId; persisted?: boolean }>
+    | Readonly<{ status: 'unavailable'; reason: 'session_scope_unavailable' | 'daemon_unavailable' }>
+    | Readonly<{ status: 'rejected'; reason: 'invalid_snapshot' | 'session_mismatch' | 'daemon_rejected' }>;
+
+export type ProviderAccountUsageAdoptProvisionalRecordInputV1 = Readonly<{
+    sessionId?: string | null;
+    adoption: ProviderAccountUsageAdoptionV1;
+}>;
+
+export type ProviderAccountUsageAdoptProvisionalRecordResultV1 =
+    | Readonly<{ status: 'adopted' | 'already_adopted'; fromRecordId: ProviderAccountUsageRecordId; toRecordId: ProviderAccountUsageRecordId; persisted?: boolean }>
+    | Readonly<{ status: 'unavailable'; reason: 'session_scope_unavailable' | 'daemon_unavailable' }>
+    | Readonly<{ status: 'rejected'; reason: 'invalid_adoption' | 'session_mismatch' | 'daemon_rejected' }>;
+
+export type ProviderAccountUsageAliasContextInputV1 = Readonly<{
+    serviceId: ConnectedServiceId;
+    env?: Readonly<Record<string, string | undefined>>;
+}>;
+
+export type ProviderAccountUsageAliasContextV1 = Readonly<{
+    serviceId: ConnectedServiceId;
+    profileId: string | null;
+    groupId: string | null;
+}>;
+
+export interface ProviderAccountUsageRuntimeServiceV1 {
+    resolveAliasContext(
+        input: ProviderAccountUsageAliasContextInputV1,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<ProviderAccountUsageAliasContextV1 | null>;
+    recordSnapshot(
+        input: ProviderAccountUsageRecordSnapshotInputV1,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<ProviderAccountUsageRecordSnapshotResultV1>;
+    adoptProvisionalRecord(
+        input: ProviderAccountUsageAdoptProvisionalRecordInputV1,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<ProviderAccountUsageAdoptProvisionalRecordResultV1>;
+}
+
+export interface PluginReviewsServiceV1 {
+    readonly comments: PluginReviewCommentsServiceV1;
+}
+
 export type ConnectionPhaseV1 =
     | 'idle'
     | 'connecting'
@@ -256,33 +345,123 @@ export type CreateAcpRuntimeParamsV1 = Readonly<{
     cwd: string;
     permissionMode?: string;
     metadata?: Readonly<Record<string, unknown>>;
+    agentName?: string;
+    client?: ExecClientHandleV1<JsonRpcClientV1>;
+    clientSpec?: ExecJsonRpcClientSpecV1;
+    extensions?: AcpRuntimeExtensionsV1;
+    lifecycle?: AcpRuntimeLifecycleV1;
+}>;
+
+export type AcpRuntimeExtensionHandlerContextV1 = Readonly<{
+    method: string;
+    requestId?: string;
+    sessionId: string;
+    backendId: string;
+    agentName?: string;
+    signal: AbortSignal;
+}>;
+
+export type AcpRuntimeRequestHandlerV1<TParams = unknown, TResult extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>> = (
+    params: TParams,
+    context: AcpRuntimeExtensionHandlerContextV1,
+) => TResult | Promise<TResult>;
+
+export type AcpRuntimeNotificationHandlerV1<TParams = unknown> = (
+    params: TParams,
+    context: AcpRuntimeExtensionHandlerContextV1,
+) => void | Promise<void>;
+
+export type AcpRuntimeExtensionsV1 = Readonly<{
+    requests?: Readonly<Record<string, AcpRuntimeRequestHandlerV1>>;
+    notifications?: Readonly<Record<string, AcpRuntimeNotificationHandlerV1>>;
+}>;
+
+export type AcpRuntimeInitializeV1 = Readonly<{
+    protocolVersion?: number | string;
+    clientCapabilities?: Readonly<Record<string, unknown>>;
+}>;
+
+export type AcpRuntimeAuthenticateV1 = Readonly<{
+    methodId: string;
+    meta?: Readonly<Record<string, unknown>>;
+}>;
+
+export type AcpRuntimeLifecycleV1 = Readonly<{
+    signal?: AbortSignal;
+    initializeMeta?: Readonly<Record<string, unknown>>;
+    initialize?: AcpRuntimeInitializeV1;
+    authenticate?: AcpRuntimeAuthenticateV1;
+}>;
+
+export type AcpComposedRuntimeV1 = Readonly<{
+    backendId: string;
+    sessionId: string;
+    client: JsonRpcClientV1;
+    request<TParams = unknown, TResult = unknown>(method: string, params?: TParams): Promise<TResult>;
+    notify<TParams = unknown>(method: string, params?: TParams): Promise<void>;
+}>;
+
+export type AcpSessionStartParamsV1 = Readonly<{
+    providerSessionId?: string | null;
+}>;
+
+export type AcpSessionRuntimeConfigOptionUpdateV1 = Readonly<{
+    id: string;
+    value: string | number | boolean | null;
+}>;
+
+export type AcpSessionRuntimeConfigUpdateV1 = Readonly<{
+    modeId?: string | null;
+    modelId?: string | null;
+    /**
+     * Canonical single config-option update `{ id, value }` (matches the host runtime turn-config
+     * shape). Singular wins; `configOptions` below is a legacy plural alias kept for back-compat.
+     */
+    configOption?: AcpSessionRuntimeConfigOptionUpdateV1 | null;
+    /**
+     * @deprecated Legacy plural config-option map. Prefer the singular `configOption`. Consumers
+     * must still honor this for plugins that have not migrated.
+     */
+    configOptions?: Readonly<Record<string, unknown>>;
+}>;
+
+export type AcpSessionRuntimeCompletionOptionsV1 = Readonly<{
+    timeoutMs?: number | null;
+}>;
+
+export type AcpSessionRuntimeV1 = Readonly<{
+    beginTurnLifecycle(): void;
+    startOrLoadSession(params?: AcpSessionStartParamsV1): Promise<string>;
+    sendTurnPrompt(prompt: string): Promise<void>;
+    waitForTurnCompletion(opts?: AcpSessionRuntimeCompletionOptionsV1): Promise<void>;
+    subscribeRuntimeEvents(handler: (event: RuntimeEventV1) => void): () => void;
+    cancelTurn(): Promise<void>;
+    updateSessionRuntimeConfig(update: AcpSessionRuntimeConfigUpdateV1): Promise<void>;
 }>;
 
 export type AcpRuntimeHandleV1 = Readonly<{
-    runtime: unknown;
+    runtime: AcpComposedRuntimeV1;
+    sessionRuntime: AcpSessionRuntimeV1;
     dispose(reason?: string): Promise<void>;
-}>;
-
-export type AcpPermissionHandlerHelpersV1 = Readonly<{
-    codexLikeOpenCode(params: Readonly<{
-        providerId: string;
-        writeLikeKinds?: readonly string[];
-    }>): unknown;
 }>;
 
 export interface AcpAuthoringServiceV1 {
     defineAcpBackend(spec: AcpBackendSpecV1): BackendEngineV1;
     createRuntime(spec: AcpBackendSpecV1, params: CreateAcpRuntimeParamsV1): Promise<AcpRuntimeHandleV1>;
-    readonly permissionHandlers?: AcpPermissionHandlerHelpersV1;
 }
 
 export interface PluginContextV1 {
     readonly logger: LoggerServiceV1;
     readonly config: ConfigSnapshotServiceV1;
     readonly features: FeaturesServiceV1;
+    readonly capabilities: CapabilityInventoryServiceV1;
     readonly exec: ExecRuntimeServiceV1;
+    readonly agents: AgentsRuntimeServiceV1;
     readonly managedServer: ManagedServerRuntimeServiceV1;
+    readonly localServices: LocalServicesRuntimeServiceV1;
     readonly mcp: McpRuntimeServiceV1;
+    readonly terminalHost: TerminalHostRuntimeServiceV1;
+    readonly sessionHooks: SessionHooksRuntimeServiceV1;
     readonly errors: ErrorRuntimeServiceV1;
     readonly retry: RetryRuntimeServiceV1;
     readonly env: EnvRuntimeServiceV1;
@@ -298,9 +477,11 @@ export interface PluginContextV1 {
     readonly auth: PluginAuthServiceV1;
     readonly projects: ProjectsServiceV1;
     readonly account: AccountServiceV1;
+    readonly accountUsage: ProviderAccountUsageRuntimeServiceV1;
+    readonly reviews: PluginReviewsServiceV1;
+    readonly session: SessionScopedServicesV1;
     readonly sessions: PluginSessionsServiceV1;
     readonly transcripts: TranscriptsRuntimeServiceV1;
-    readonly permissions: PermissionsServiceV1;
     readonly telemetry: TelemetryServiceV1;
     readonly artifacts: ArtifactSinkServiceV1;
     readonly notifications: NotificationsServiceV1;

@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type {
+    ConnectedServiceCredentialKind,
+    ConnectedServiceCredentialRecordV1,
+    ConnectedServiceId,
     ScmHostingProviderContribution,
     ScmHostingRepositoryPublishTarget,
     ScmHostingRepositorySummary,
@@ -70,6 +73,73 @@ export type ScmHostingProviderRuntimeBasicAuthMaterializationResult =
         kind: 'missing';
         reason: string;
     }>;
+
+export type ScmHostingProviderRuntimeAuthMaterializationMissingReason =
+    | 'unsupported_materialization'
+    | 'unsupported_provider'
+    | 'unsupported_host'
+    | 'credential_unavailable';
+
+export type ScmHostingProviderRuntimeTokenMaterializerRequest = Readonly<{
+    kind: 'scm_hosting_token';
+    providerId: string;
+    host: string;
+    profileId?: string | null;
+    records: readonly ConnectedServiceCredentialRecordV1[];
+}>;
+
+export type ScmHostingProviderRuntimeTokenMaterializerResult =
+    | Readonly<{
+        kind: 'available';
+        token: string;
+        profileId: string;
+        serviceId: ConnectedServiceId;
+        credentialKind: ConnectedServiceCredentialKind;
+        providerAccountId: string | null;
+        providerEmail: string | null;
+    }>
+    | Readonly<{
+        kind: 'missing';
+        reason: ScmHostingProviderRuntimeAuthMaterializationMissingReason;
+    }>;
+
+export type ScmHostingProviderRuntimeTokenMaterializer = Readonly<{
+    serviceId: ConnectedServiceId;
+    materialize(
+        request: ScmHostingProviderRuntimeTokenMaterializerRequest
+    ): Promise<ScmHostingProviderRuntimeTokenMaterializerResult> | ScmHostingProviderRuntimeTokenMaterializerResult;
+}>;
+
+export type ScmHostingProviderRuntimeBasicAuthMaterializerRequest = Readonly<{
+    kind: 'scm_hosting_basic_auth';
+    providerId: string;
+    host: string;
+    profileId?: string | null;
+    records: readonly ConnectedServiceCredentialRecordV1[];
+}>;
+
+export type ScmHostingProviderRuntimeBasicAuthMaterializerResult =
+    | Readonly<{
+        kind: 'available';
+        username: string;
+        password: string;
+        profileId: string;
+        serviceId: ConnectedServiceId;
+        credentialKind: 'bitbucket_basic_auth';
+        providerAccountId: string | null;
+        providerEmail: string | null;
+    }>
+    | Readonly<{
+        kind: 'missing';
+        reason: ScmHostingProviderRuntimeAuthMaterializationMissingReason;
+    }>;
+
+export type ScmHostingProviderRuntimeBasicAuthMaterializer = Readonly<{
+    serviceId: ConnectedServiceId;
+    materialize(
+        request: ScmHostingProviderRuntimeBasicAuthMaterializerRequest
+    ): Promise<ScmHostingProviderRuntimeBasicAuthMaterializerResult> | ScmHostingProviderRuntimeBasicAuthMaterializerResult;
+}>;
 
 export type ScmHostingProviderRuntimeCommandResolution =
     | Readonly<{
@@ -310,4 +380,8 @@ export type ScmHostingProviderRuntimeAdapter = Readonly<Record<string, unknown> 
 export type ScmHostingProviderRuntimeRegistration = Readonly<{
     id: string;
     adapter: ScmHostingProviderRuntimeAdapter;
+    auth?: Readonly<{
+        tokenMaterializer?: ScmHostingProviderRuntimeTokenMaterializer;
+        basicAuthMaterializer?: ScmHostingProviderRuntimeBasicAuthMaterializer;
+    }>;
 }>;

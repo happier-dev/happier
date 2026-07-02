@@ -20,7 +20,7 @@ export type ManagedServerSpecV1 = Readonly<{
     launch: ExecLaunchInputV1;
     healthCheck?: ManagedServerHealthCheckV1;
     startupTimeoutMs?: number;
-    restart?: 'never' | 'on_failure';
+    restart?: 'never';
     signal?: AbortSignal;
 }>;
 

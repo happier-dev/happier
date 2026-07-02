@@ -2,18 +2,16 @@ import type {
     PluginActionContributionV2,
     PluginCommandContributionV2,
     PluginHookContributionV2,
+    PluginHookIdV1,
     PluginNotificationCategoryContributionV2,
     PluginNotificationChannelContributionV2,
-    PluginExecutionRunProfileContributionV2,
-    PluginResourceContributionV2,
     PluginToolContributionV2,
-    PluginUiDescriptorContributionV2,
-    PluginUiFieldV2,
 } from '@happier-dev/protocol';
 
 import type { RegisterBackendEngineV1 } from './engine';
 import type { PluginApiRequestInterceptorRegistrationV1 } from './fetch';
 import type {
+    McpDiscoveryProviderReturnV1,
     McpResolveForSessionInputV1,
     McpServerSpecV1,
 } from './mcp';
@@ -68,10 +66,11 @@ export type PluginLifecycleHandlerRequest = Readonly<{
 export type PluginLifecycleHandler = (request: PluginLifecycleHandlerRequest) => unknown | Promise<unknown>;
 
 export type PluginApiHookRegistrationV1 = Readonly<{
-    hookId: string;
+    hookId: PluginHookIdV1;
     priority?: number;
     category?: PluginHookContributionV2['category'];
     scope?: PluginHookContributionV2['scope'];
+    filters?: PluginHookContributionV2['filters'];
     executionKind?: PluginHookContributionV2['executionKind'];
     handler: PluginHookHandler;
 }>;
@@ -125,31 +124,6 @@ export type PluginApiCommandRegistrationV1 = Readonly<{
     handler: PluginActionHandler;
 }>;
 
-export type PluginApiResourceRegistrationV1 = Readonly<{
-    kindVersion: 1;
-    id: string;
-    type: PluginResourceContributionV2['resourceKind'];
-    title?: string | null;
-    path?: PluginResourceContributionV2['path'] | null;
-    digest?: PluginResourceContributionV2['digest'] | null;
-    contentType?: PluginResourceContributionV2['contentType'] | null;
-}>;
-
-export type PluginApiUiDescriptorFieldV1 = PluginUiFieldV2;
-
-export type PluginApiUiDescriptorRegistrationV1 = Readonly<{
-    kindVersion: 1;
-    id: string;
-    surface: PluginUiDescriptorContributionV2['surface'];
-    title: string;
-    description?: string | null;
-    order?: PluginUiDescriptorContributionV2['order'];
-    tone?: PluginUiDescriptorContributionV2['tone'] | null;
-    featureGate?: PluginUiDescriptorContributionV2['featureGate'];
-    helpUrl?: PluginUiDescriptorContributionV2['helpUrl'];
-    fields: readonly PluginApiUiDescriptorFieldV1[];
-}>;
-
 export type PluginApiLifecycleHandlerRegistrationV1 = Readonly<{
     id?: string;
     event: PluginLifecycleEvent;
@@ -192,13 +166,11 @@ export type PluginApiNotificationChannelRegistrationV1 = Readonly<{
     send: PluginNotificationChannelSenderV1;
 }>;
 
-export type PluginApiExecutionRunProfileRegistrationV1 = PluginExecutionRunProfileContributionV2;
-
 export type PluginApiMcpServerRegistrationV1 = McpServerSpecV1;
 
 export type PluginApiMcpDiscoveryProviderRegistrationV1 = Readonly<{
     id: string;
-    discover(input?: McpResolveForSessionInputV1): Promise<readonly McpServerSpecV1[]> | readonly McpServerSpecV1[];
+    discover(input?: McpResolveForSessionInputV1): Promise<McpDiscoveryProviderReturnV1> | McpDiscoveryProviderReturnV1;
 }>;
 
 export type PluginApiRegisterMethodV1<TRegistration = unknown> = (
@@ -212,11 +184,8 @@ export type PluginApiCoreV1 = Readonly<{
     registerAction: (registration: PluginApiActionRegistrationV1) => PluginDisposable;
     registerTool: (registration: PluginApiToolRegistrationV1) => PluginDisposable;
     registerCommand: (registration: PluginApiCommandRegistrationV1) => PluginDisposable;
-    registerResource: (registration: PluginApiResourceRegistrationV1) => PluginDisposable;
-    registerUiDescriptor: (registration: PluginApiUiDescriptorRegistrationV1) => PluginDisposable;
     registerNotificationCategory: (registration: PluginApiNotificationCategoryRegistrationV1) => PluginDisposable;
     registerNotificationChannel: (registration: PluginApiNotificationChannelRegistrationV1) => PluginDisposable;
-    registerExecutionRunProfile: (registration: PluginApiExecutionRunProfileRegistrationV1) => PluginDisposable;
     registerScmHostingProvider: (registration: ScmHostingProviderRuntimeRegistration) => PluginDisposable;
     registerScmBackend: (registration: ScmBackendRuntimeRegistration) => PluginDisposable;
     registerMcpServer: (registration: PluginApiMcpServerRegistrationV1) => PluginDisposable;
