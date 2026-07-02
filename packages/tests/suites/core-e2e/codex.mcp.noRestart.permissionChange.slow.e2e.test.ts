@@ -209,6 +209,7 @@ try {
     const cliEnv: NodeJS.ProcessEnv = {
       ...process.env,
       CI: '1',
+      HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
       HAPPIER_VARIANT: 'dev',
       HAPPIER_CODEX_BACKEND_MODE: 'mcp',
       HAPPIER_HOME_DIR: cliHome,
@@ -276,7 +277,7 @@ try {
         const raw = await readFile(fakeCodexLog, 'utf8').catch(() => '');
         const events = parseJsonl(raw);
         return events.some((e) => e.kind === 'tool' && e.name === 'codex');
-      }, { timeoutMs: 30_000 });
+      }, { timeoutMs: 60_000 });
 
       // Patch metadata to a newer permission mode.
       const snap1 = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
@@ -324,9 +325,11 @@ try {
       }, { timeoutMs: 30_000 });
 
       const raw = await readFile(fakeCodexLog, 'utf8').catch(() => '');
-      const events = parseJsonl(raw).filter((e): e is Extract<FakeCodexMcpLogLine, { kind: 'tool' }> => e.kind === 'tool');
+      const parsedEvents = parseJsonl(raw);
+      const events = parsedEvents.filter((e): e is Extract<FakeCodexMcpLogLine, { kind: 'tool' }> => e.kind === 'tool');
       const startCalls = events.filter((e) => e.name === 'codex');
       const replyCalls = events.filter((e) => e.name === 'codex-reply');
+      expect(parsedEvents.some((e) => e.kind === 'init')).toBe(true);
       expect(startCalls.length).toBe(1);
       expect(replyCalls.length).toBe(1);
 

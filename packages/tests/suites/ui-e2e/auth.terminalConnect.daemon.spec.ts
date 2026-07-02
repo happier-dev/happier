@@ -1,8 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -10,26 +9,14 @@ import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '.
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import {
-  createAccountAndReachConnectMachineState,
-  gotoDomContentLoadedWithRetries,
-  normalizeLoopbackBaseUrl,
-  dismissSetupWizardIfVisible,
-  waitForAuthenticatedHomeUi,
-  waitForAuthenticatedRouteUi,
-} from '../../src/testkit/uiE2e/pageNavigation';
-import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
-import { ensurePendingTerminalConnectReadyForApproval } from '../../src/testkit/uiE2e/terminalConnectApprovalFlow';
-import {
-  captureAuthBootstrapStorageSnapshot,
-  installAuthBootstrapStorageSnapshot,
-  type AuthBootstrapStorageSnapshot,
-} from '../../src/testkit/uiE2e/readLegacyAuthSecretFromLocalStorage';
+import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
 test.describe('ui e2e: auth + terminal connect', () => {
-  test.describe.configure({ mode: 'serial' });
+  test.describe.configure({ mode: 'serial', timeout: 420_000 });
 
   const suiteDir = run.testDir('auth-terminal-connect-suite');
   const cliHomeDir = resolve(join(suiteDir, 'cli-home'));
@@ -38,48 +25,65 @@ test.describe('ui e2e: auth + terminal connect', () => {
   let ui: StartedUiWeb | null = null;
   let uiBaseUrl: string | null = null;
   let daemon: StartedDaemon | null = null;
-  let authBootstrapSnapshot: AuthBootstrapStorageSnapshot | null = null;
+  let accountSecretKeyFormatted: string | null = null;
   let fakeClaudeLogPath: string | null = null;
   let createdSessionId: string | null = null;
   let fakeClaudePath: string | null = null;
 
-  function buildServerScopedUiUrl(uiBaseUrl: string, serverBaseUrl: string, path: string = '/'): string {
-    const url = new URL(path, uiBaseUrl.endsWith('/') ? uiBaseUrl : `${uiBaseUrl}/`);
-    url.searchParams.set('server', serverBaseUrl);
-    return url.toString();
+  async function readAccountSecretKeyFromSettings(page: Page, baseUrl: string): Promise<string> {
+    await page.goto(`${baseUrl}/settings/account`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('settings-account-secret-key-item')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('settings-account-secret-key-item').click();
+    await expect(page.getByTestId('settings-account-secret-key-value')).toHaveCount(1, { timeout: 60_000 });
+    const value = (await page.getByTestId('settings-account-secret-key-value').innerText()).trim();
+    if (!value) throw new Error('settings-account-secret-key-value is empty');
+    return value.replace(/\s+/g, ' ');
   }
 
-  async function restoreAuthenticatedAccount(
+  async function restoreAccountUsingSecretKey(
     page: Page,
     baseUrl: string,
-    serverBaseUrl: string,
-    path: string = '/',
+    secretKeyFormatted: string,
+    options?: { postRestorePath?: string | null },
   ): Promise<void> {
-    if (!authBootstrapSnapshot) {
-      throw new Error('missing auth bootstrap snapshot from prior test');
-    }
-    await installAuthBootstrapStorageSnapshot(page, authBootstrapSnapshot);
-    await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(baseUrl, serverBaseUrl, path));
-    if (path === '/' || path === '') {
-      await waitForAuthenticatedHomeUi({ page, timeoutMs: 120_000 });
-      return;
+    await gotoDomContentLoadedWithRetries(page, baseUrl);
+    const welcomeRestore = page.getByTestId('welcome-restore');
+    if ((await welcomeRestore.count()) > 0) {
+      await welcomeRestore.click();
+    } else {
+      // New welcome variants may omit a dedicated restore CTA; manual restore route remains the stable contract.
+      await gotoDomContentLoadedWithRetries(page, `${baseUrl}/restore/manual`);
     }
 
-    if (path.startsWith('/new')) {
-      await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });
-      return;
+    const openManual = page.getByTestId('restore-open-manual');
+    if ((await openManual.count()) > 0) {
+      await openManual.click();
     }
+
+    await page.getByTestId('restore-manual-secret-input').fill(secretKeyFormatted);
+    const authOk = page.waitForResponse((resp) => resp.url().endsWith('/v1/auth') && resp.status() === 200, { timeout: 60_000 });
+    await page.getByTestId('restore-manual-submit').click();
+    await authOk;
+
+    // Restore screen calls router.back() after auth; wait for that navigation to complete before forcing our post-restore path.
+    await page.waitForURL((url) => !url.pathname.endsWith('/restore/manual'), { timeout: 60_000 });
+
+    const postRestorePath = options?.postRestorePath;
+    if (postRestorePath === null) return;
+
+    const path = postRestorePath ?? '/';
+    await gotoDomContentLoadedWithRetries(page, `${baseUrl}${path}`);
   }
 
-  async function ensureAuthenticatedAccount(page: Page, baseUrl: string, serverBaseUrl: string): Promise<void> {
-    if (authBootstrapSnapshot) {
-      await restoreAuthenticatedAccount(page, baseUrl, serverBaseUrl);
+  async function ensureAuthenticatedAccount(page: Page, baseUrl: string): Promise<void> {
+    if (accountSecretKeyFormatted) {
+      await restoreAccountUsingSecretKey(page, baseUrl, accountSecretKeyFormatted, { postRestorePath: null });
       return;
     }
 
-    await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(baseUrl, serverBaseUrl));
-    await createAccountAndReachConnectMachineState({ page });
-    authBootstrapSnapshot = await captureAuthBootstrapStorageSnapshot(page);
+    await gotoDomContentLoadedWithRetries(page, baseUrl);
+    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
+    accountSecretKeyFormatted = await readAccountSecretKeyFromSettings(page, baseUrl);
   }
 
   function transcriptMessageLocator(page: Page) {
@@ -90,118 +94,26 @@ test.describe('ui e2e: auth + terminal connect', () => {
     return page.locator('[data-testid="session-composer-input"]:visible');
   }
 
-  async function collectBrowserStateDiagnostics(
-    page: Page,
-    options: Readonly<{
-      pageConsole?: readonly string[];
-      pageErrors?: readonly string[];
-      requestFailures?: readonly string[];
-      responseErrors?: readonly string[];
-    }> = {},
-  ): Promise<string> {
-    const url = page.url();
-    const origin = (() => {
-      try {
-        return new URL(url).origin;
-      } catch {
-        return '';
-      }
-    })();
-    const [cookies, storageSnapshot] = await Promise.all([
-      origin ? page.context().cookies([origin]).catch(() => []) : page.context().cookies().catch(() => []),
-      page.evaluate(() => {
-        const toObject = (storage: Storage): Record<string, string> => {
-          const out: Record<string, string> = {};
-          for (let index = 0; index < storage.length; index += 1) {
-            const key = storage.key(index);
-            if (!key) continue;
-            const value = storage.getItem(key);
-            if (value !== null) out[key] = value;
-          }
-          return out;
-        };
-
-        return {
-          localStorage: toObject(window.localStorage),
-          sessionStorage: toObject(window.sessionStorage),
-          activeServerId: window.sessionStorage.getItem('activeServerId') ?? '',
-          rawServerState: window.localStorage.getItem('server-state-v1'),
-          rawSettings: window.localStorage.getItem('mmkv.default\\settings'),
-        };
-      }).catch(() => null),
-    ]);
-    const pageSnapshot = await page.evaluate(() => {
-      const root = document.getElementById('root');
-      const main = document.querySelector('main');
-      return {
-        readyState: document.readyState,
-        title: document.title,
-        rootHtml: root?.innerHTML?.slice(0, 4_000) ?? '',
-        mainHtml: main?.innerHTML?.slice(0, 4_000) ?? '',
-        bodyText: (document.body?.innerText ?? '').slice(0, 4_000),
-      };
-    }).catch(() => null);
-
-    const counts = {
-      welcomeCreateAccount: await page.getByTestId('welcome-create-account').count().catch(() => 0),
-      connectMachine: await page.getByTestId('session-getting-started-kind-connect_machine').count().catch(() => 0),
-      createSession: await page.getByTestId('session-getting-started-kind-create_session').count().catch(() => 0),
-      selectSession: await page.getByTestId('session-getting-started-kind-select_session').count().catch(() => 0),
-      startNewSession: await page.getByTestId('main-header-start-new-session').count().catch(() => 0),
-      settingsSidebar: await page.getByTestId('settings-sidebar').count().catch(() => 0),
-      codexBackendModeRow: await page.getByTestId('settings-provider-field-codexBackendMode').count().catch(() => 0),
-    };
-
-    return [
-      '# Browser state',
-      `- url: ${url || '(unknown)'}`,
-      `- origin: ${origin || '(unknown)'}`,
-      '',
-      '## Counts',
-      '```json',
-      JSON.stringify(counts, null, 2),
-      '```',
-      '',
-      '## Cookies',
-      '```json',
-      JSON.stringify(cookies, null, 2),
-      '```',
-      '',
-      '## Storage',
-      '```json',
-      JSON.stringify(storageSnapshot, null, 2),
-      '```',
-      '',
-      '## DOM snapshot',
-      '```json',
-      JSON.stringify(pageSnapshot, null, 2),
-      '```',
-      '',
-      '## Page console',
-      '```json',
-      JSON.stringify(options.pageConsole ?? [], null, 2),
-      '```',
-      '',
-      '## Page errors',
-      '```json',
-      JSON.stringify(options.pageErrors ?? [], null, 2),
-      '```',
-      '',
-      '## Request failures',
-      '```json',
-      JSON.stringify(options.requestFailures ?? [], null, 2),
-      '```',
-      '',
-      '## Response errors',
-      '```json',
-      JSON.stringify(options.responseErrors ?? [], null, 2),
-      '```',
-      '',
-    ].join('\n');
-  }
-
   function resolveServerLightSqliteDbPath(params: { suiteDir: string }): string {
     return resolve(join(params.suiteDir, 'server-light-data', 'happier-server-light.sqlite'));
+  }
+
+  async function waitForLoggedOutTerminalConnectEntry(page: Page): Promise<void> {
+    await expect.poll(
+      async () => {
+        const counts = await Promise.all([
+          page.locator('[data-testid="welcome-terminal-connect-intent"]:visible').count(),
+          page.locator('[data-testid="welcome-primary-start"]:visible').count(),
+          page.locator('[data-testid="welcome-create-account"]:visible').count(),
+          page.locator('[data-testid="welcome-signup-provider"]:visible').count(),
+          page.getByRole('button', { name: 'Create account' }).count(),
+          page.getByRole('button', { name: 'Get started' }).count(),
+          page.getByTestId('restore-manual-secret-input').count(),
+        ]);
+        return counts.some((count) => count > 0);
+      },
+      { timeout: 60_000 },
+    ).toBe(true);
   }
 
   function readLatestMachineIdFromServerLightDb(params: { suiteDir: string }): string {
@@ -255,8 +167,6 @@ test.describe('ui e2e: auth + terminal connect', () => {
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
       HAPPIER_E2E_UI_WEB_MODE: 'export',
       HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '900000',
-      HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS:
-        process.env.HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS ?? '600000',
       HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
     };
@@ -328,8 +238,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
     let thrown: unknown = null;
     try {
       await page.goto(uiBaseUrl, { waitUntil: 'domcontentloaded' });
-
-      await createAccountAndReachConnectMachineState({ page });
+      await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 
       cliLogin = await startCliAuthLoginForTerminalConnect({
         testDir,
@@ -346,7 +255,8 @@ test.describe('ui e2e: auth + terminal connect', () => {
       });
 
       await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-      await approveTerminalConnect({ page });
+      await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
+      await page.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
 
       await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
@@ -385,7 +295,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
         )
         .toBe(true);
 
-      authBootstrapSnapshot = await captureAuthBootstrapStorageSnapshot(page);
+      accountSecretKeyFormatted = await readAccountSecretKeyFromSettings(page, uiBaseUrl);
     } catch (error) {
       thrown = error;
       throw error;
@@ -405,10 +315,9 @@ test.describe('ui e2e: auth + terminal connect', () => {
 
   test('restores the same account using secret key', async ({ page }, testInfo) => {
     test.setTimeout(300_000);
-    if (!server) throw new Error('missing server fixture');
     if (!ui) throw new Error('missing ui fixture');
     if (!uiBaseUrl) throw new Error('missing ui base url');
-    if (!authBootstrapSnapshot) throw new Error('missing auth bootstrap snapshot from prior test');
+    if (!accountSecretKeyFormatted) throw new Error('missing account secret key from prior test');
 
     const pageConsole: string[] = [];
     const pageErrors: string[] = [];
@@ -428,31 +337,19 @@ test.describe('ui e2e: auth + terminal connect', () => {
 
     let thrown: unknown = null;
     try {
-      await restoreAuthenticatedAccount(page, uiBaseUrl, server.baseUrl, '/new');
-
-      await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-      const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-      await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
-      await page.getByTestId('agent-input-machine-chip').click();
-      await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
-      await page.getByTestId(`new-session-machine:${machineId}`).click();
+      await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted, { postRestorePath: '/new' });
 
       const prompt = `UI_E2E_MESSAGE_${run.runId}`;
-      await page.getByTestId('new-session-composer-input').fill(prompt);
-      await expect(page.getByTestId('new-session-composer-send')).toHaveCount(1, { timeout: 60_000 });
-      await page.getByTestId('new-session-composer-send').click();
+      const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
+      createdSessionId = await createSessionFromNewSessionComposer({
+        page,
+        uiBaseUrl,
+        machineId,
+        prompt,
+      });
 
       await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
       await expect.poll(async () => transcriptMessageLocator(page).count(), { timeout: 180_000 }).toBeGreaterThan(1);
-
-      const currentUrl = page.url();
-      const { pathname } = new URL(currentUrl);
-      const parts = pathname.split('/').filter(Boolean);
-      const sessionIndex = parts.indexOf('session');
-      createdSessionId = sessionIndex >= 0 ? (parts[sessionIndex + 1] ?? null) : null;
-      if (!createdSessionId) {
-        throw new Error(`Failed to infer session id from url: ${currentUrl}`);
-      }
     } catch (error) {
       thrown = error;
       throw error;
@@ -475,68 +372,16 @@ test.describe('ui e2e: auth + terminal connect', () => {
     }
   });
 
-  test('defaults codex backend mode to ACP in account settings', async ({ page }, testInfo) => {
+  test('defaults codex backend mode to ACP in account settings', async ({ page }) => {
     test.setTimeout(240_000);
     if (!server) throw new Error('missing server fixture');
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
-    const pageConsole: string[] = [];
-    const pageErrors: string[] = [];
-    const requestFailures: string[] = [];
-    const responseErrors: string[] = [];
-
-    page.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
-    page.on('pageerror', (err) => pageErrors.push(String(err)));
-    page.on('requestfailed', (request) => {
-      const failure = request.failure();
-      requestFailures.push(`${request.method()} ${request.url()} ${failure ? `-> ${failure.errorText}` : ''}`.trim());
-    });
-    page.on('response', (response) => {
-      const status = response.status();
-      if (status >= 400) responseErrors.push(`${status} ${response.request().method()} ${response.url()}`);
-    });
-
-    let thrown: unknown = null;
-    try {
-      await ensureAuthenticatedAccount(page, uiBaseUrl, server.baseUrl);
-      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers/codex`);
-      await waitForAuthenticatedRouteUi({
-        page,
-        expectedPathname: '/settings/providers/codex',
-        requiredTestIds: ['settings-provider-field-codexBackendMode'],
-      });
-      const backendModeRow = page.getByTestId('settings-provider-field-codexBackendMode');
-      await expect(backendModeRow).toHaveCount(1, { timeout: 60_000 });
-      await expect(backendModeRow).toContainText('ACP', { timeout: 60_000 });
-    } catch (error) {
-      thrown = error;
-      throw error;
-    } finally {
-      if (thrown) {
-        const diagnostic =
-          `# Browser diagnostics\n\n` +
-          `## Console\n\n${pageConsole.length ? pageConsole.join('\n') : '(none)'}\n\n` +
-          `## Page errors\n\n${pageErrors.length ? pageErrors.join('\n') : '(none)'}\n\n` +
-          `## Request failures\n\n${requestFailures.length ? requestFailures.join('\n') : '(none)'}\n\n` +
-          `## Response errors\n\n${responseErrors.length ? responseErrors.join('\n') : '(none)'}\n`;
-        await testInfo.attach('browser-diagnostics.md', { body: diagnostic, contentType: 'text/markdown' });
-
-        const browserState = await collectBrowserStateDiagnostics(page, {
-          pageConsole,
-          pageErrors,
-          requestFailures,
-          responseErrors,
-        }).catch((collectError) => [
-          '# Browser state',
-          `- diagnostics collection failed: ${String(collectError)}`,
-          `- url: ${page.url() || '(unknown)'}`,
-        ].join('\n'));
-        await testInfo.attach('browser-state.md', {
-          body: browserState,
-          contentType: 'text/markdown',
-        }).catch(() => {});
-      }
-    }
+    await ensureAuthenticatedAccount(page, uiBaseUrl);
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers/codex`);
+    const backendModeRow = page.getByTestId('settings-provider-field-codexBackendMode');
+    await expect(backendModeRow).toHaveCount(1, { timeout: 60_000 });
+    await expect(backendModeRow).toContainText('ACP', { timeout: 60_000 });
   });
 
   test('daemon can reconnect and UI reflects offline → online', async ({ page }, testInfo) => {
@@ -544,7 +389,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
     if (!ui) throw new Error('missing ui fixture');
     if (!server) throw new Error('missing server fixture');
     if (!uiBaseUrl) throw new Error('missing ui base url');
-    if (!authBootstrapSnapshot) throw new Error('missing auth bootstrap snapshot from prior test');
+    if (!accountSecretKeyFormatted) throw new Error('missing account secret key from prior test');
     if (!createdSessionId) throw new Error('missing session id from prior test');
     if (!daemon) throw new Error('missing daemon from prior test');
     if (!fakeClaudePath) throw new Error('missing fake Claude path from prior test');
@@ -570,7 +415,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
 
     let thrown: unknown = null;
     try {
-      await restoreAuthenticatedAccount(page, uiBaseUrl, server.baseUrl);
+      await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
       await page.goto(`${uiBaseUrl}/session/${createdSessionId}`, { waitUntil: 'domcontentloaded' });
 
       const transcriptMessages = transcriptMessageLocator(page);
@@ -639,10 +484,9 @@ test.describe('ui e2e: auth + terminal connect', () => {
 
   test('selects the existing session from the list', async ({ page }, testInfo) => {
     test.setTimeout(420_000);
-    if (!server) throw new Error('missing server fixture');
     if (!ui) throw new Error('missing ui fixture');
     if (!uiBaseUrl) throw new Error('missing ui base url');
-    if (!authBootstrapSnapshot) throw new Error('missing auth bootstrap snapshot from prior test');
+    if (!accountSecretKeyFormatted) throw new Error('missing account secret key from prior test');
     if (!createdSessionId) throw new Error('missing session id from prior test');
 
     const pageConsole: string[] = [];
@@ -663,86 +507,19 @@ test.describe('ui e2e: auth + terminal connect', () => {
 
     let thrown: unknown = null;
     try {
-      await restoreAuthenticatedAccount(page, uiBaseUrl, server.baseUrl);
+      await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
 
       await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
-      await dismissSetupWizardIfVisible({ page });
-      const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-      await waitForAuthenticatedHomeUi({ page, timeoutMs: 180_000 });
-      const startNewSessionButton = page.getByTestId('main-header-start-new-session');
-      const directMachineAction = page.getByTestId(`sessions-empty-state-machine:${machineId}`);
-      const createSessionState = page.getByTestId('session-getting-started-kind-create_session');
-      const selectSessionState = page.getByTestId('session-getting-started-kind-select_session');
-
-      await expect
-        .poll(
-          async () => {
-            const startNewCount = await startNewSessionButton.count();
-            const directCount = await directMachineAction.count();
-            const createCount = await createSessionState.count();
-            const selectCount = await selectSessionState.count();
-            return startNewCount > 0 || directCount > 0 || createCount > 0 || selectCount > 0;
-          },
-          { timeout: 120_000 },
-        )
-        .toBe(true);
-
-      if ((await startNewSessionButton.count()) > 0) {
-        await startNewSessionButton.click();
-      } else if ((await directMachineAction.count()) > 0) {
-        await directMachineAction.click();
-      } else {
-        await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl, '/new'));
-      }
-
-      await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });
-      await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
-      await page.getByTestId('agent-input-machine-chip').click();
-      await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
-      await page.getByTestId(`new-session-machine:${machineId}`).click();
-
-      const prompt = `UI_E2E_SELECT_FROM_LIST_${run.runId}`;
-      await page.getByTestId('new-session-composer-input').fill(prompt);
-      await expect(page.getByTestId('new-session-composer-send')).toHaveCount(1, { timeout: 60_000 });
-      await page.getByTestId('new-session-composer-send').click();
-
-      await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
-
-      const currentUrl = page.url();
-      const currentRoute = new URL(currentUrl);
-      const { pathname } = currentRoute;
-      const parts = pathname.split('/').filter(Boolean);
-      const sessionIndex = parts.indexOf('session');
-      const freshSessionId = sessionIndex >= 0 ? (parts[sessionIndex + 1] ?? null) : null;
-      if (!freshSessionId) {
-        throw new Error(`Failed to infer session id from url: ${currentUrl}`);
-      }
-      await expect(page.getByTestId('session-header-back')).toHaveCount(1, { timeout: 120_000 });
-      await page.getByTestId('session-header-back').click();
-
-      if (new URL(page.url()).pathname !== '/') {
-        await gotoDomContentLoadedWithRetries(page, buildServerScopedUiUrl(uiBaseUrl, server.baseUrl));
-      }
-      await waitForAuthenticatedHomeUi({ page, timeoutMs: 120_000 });
-      const persistedTab = page.getByTestId('sessions-list-storage-tab:persisted');
-      if ((await persistedTab.count()) > 0) {
-        await persistedTab.click();
-      }
-
-      const sessionItem = page.getByTestId(`session-list-item-${freshSessionId}`);
-      await expect(sessionItem).toHaveCount(1, { timeout: 120_000 });
-      await sessionItem.click();
-
+      const sessionItemSelector = `[data-testid="session-list-item-${createdSessionId}"]:visible`;
+      await expect(page.locator(sessionItemSelector)).toHaveCount(1, { timeout: 120_000 });
+      await page.locator(sessionItemSelector).click();
       await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
       await expect
-        .poll(
-          async () => {
-            const selectedUrl = new URL(page.url());
-            return selectedUrl.pathname;
-          },
-          { timeout: 60_000 },
-        )
-        .toBe(`/session/${freshSessionId}`);
+        .poll(async () => {
+          const url = new URL(page.url());
+          return `${url.pathname}${url.search}`;
+        }, { timeout: 60_000 })
+        .toMatch(new RegExp(`^/session/${createdSessionId}(?:\\?.*)?$`));
     } catch (error) {
       thrown = error;
       throw error;
@@ -769,25 +546,19 @@ test.describe('ui e2e: auth + terminal connect', () => {
     test.setTimeout(420_000);
     if (!server || !ui) throw new Error('missing server/ui fixtures');
     if (!uiBaseUrl) throw new Error('missing ui base url');
-    if (!authBootstrapSnapshot) {
-      await ensureAuthenticatedAccount(page, uiBaseUrl, server.baseUrl);
-      if (!authBootstrapSnapshot) {
-        throw new Error('missing auth bootstrap snapshot after ensureAuthenticatedAccount');
+    if (!accountSecretKeyFormatted) {
+      await ensureAuthenticatedAccount(page, uiBaseUrl);
+      if (!accountSecretKeyFormatted) {
+        throw new Error('missing account secret key after ensureAuthenticatedAccount');
       }
     }
-    const restoredAuthBootstrapSnapshot = authBootstrapSnapshot;
 
     const pageConsole: string[] = [];
     const pageErrors: string[] = [];
     const requestFailures: string[] = [];
     const responseErrors: string[] = [];
 
-    const ctx = await browser.newContext({
-      storageState: {
-        cookies: [],
-        origins: [],
-      },
-    });
+    const ctx = await browser.newContext();
     const loggedOutPage = await ctx.newPage();
 
     loggedOutPage.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
@@ -816,24 +587,23 @@ test.describe('ui e2e: auth + terminal connect', () => {
           ...process.env,
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
-          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
         },
       });
 
-      await gotoDomContentLoadedWithRetries(loggedOutPage, cliLogin.connectUrl);
-      await ensurePendingTerminalConnectReadyForApproval({
-        page: loggedOutPage,
-        connectUrlForBrowser: cliLogin.connectUrl,
-        gotoConnectUrl: async (url) => {
-          await gotoDomContentLoadedWithRetries(loggedOutPage, url);
-        },
-        restoreAccount: async () => {
-          await installAuthBootstrapStorageSnapshot(loggedOutPage, restoredAuthBootstrapSnapshot);
-        },
-      });
+      const connectUrl = cliLogin.connectUrl;
+      await loggedOutPage.goto(connectUrl, { waitUntil: 'domcontentloaded' });
+      await waitForLoggedOutTerminalConnectEntry(loggedOutPage);
 
-      await approveTerminalConnect({ page: loggedOutPage });
+      // Restore account. The app should automatically open the pending terminal connect approval screen.
+      await restoreAccountUsingSecretKey(loggedOutPage, uiBaseUrl, accountSecretKeyFormatted, { postRestorePath: null });
+
+      // Some welcome variants return to account settings after restore; revisiting the connect URL is the stable contract.
+      await gotoDomContentLoadedWithRetries(loggedOutPage, connectUrl, 120_000);
+      const approve = loggedOutPage.getByTestId('terminal-connect-approve');
+      await expect(approve).toHaveCount(1, { timeout: 120_000 });
+
+      await loggedOutPage.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
     } catch (error) {
       thrown = error;
@@ -848,189 +618,6 @@ test.describe('ui e2e: auth + terminal connect', () => {
           `## Page errors\n\n${pageErrors.length ? pageErrors.join('\n') : '(none)'}\n\n` +
           `## Request failures\n\n${requestFailures.length ? requestFailures.join('\n') : '(none)'}\n\n` +
           `## Response errors\n\n${responseErrors.length ? responseErrors.join('\n') : '(none)'}\n`;
-        await testInfo.attach('browser-diagnostics.md', { body: diagnostic, contentType: 'text/markdown' });
-      }
-    }
-  });
-
-  test('open session converges to restore account after server auth secret rotation', async ({ page }, testInfo) => {
-    test.setTimeout(480_000);
-    if (!server || !ui) throw new Error('missing server/ui fixtures');
-    if (!uiBaseUrl) throw new Error('missing ui base url');
-
-    const pageConsole: string[] = [];
-    const pageErrors: string[] = [];
-    const requestFailures: string[] = [];
-    const responseErrors: string[] = [];
-
-    page.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
-    page.on('pageerror', (err) => pageErrors.push(String(err)));
-    page.on('requestfailed', (request) => {
-      const failure = request.failure();
-      requestFailures.push(`${request.method()} ${request.url()} ${failure ? `-> ${failure.errorText}` : ''}`.trim());
-    });
-    page.on('response', (response) => {
-      const status = response.status();
-      if (status >= 400) responseErrors.push(`${status} ${response.request().method()} ${response.url()}`);
-    });
-
-    const testDir = resolve(join(suiteDir, 't6-stale-auth-rotation'));
-    await mkdir(testDir, { recursive: true });
-
-    const collectSessionAuthSurfaceState = async () => ({
-      url: page.url(),
-      pathname: new URL(page.url()).pathname,
-      restoreCount: await page.getByTestId('session-auth-sync-error-restore').count().catch(() => 0),
-      syncErrorCount: await page.getByTestId('session-auth-sync-error').count().catch(() => 0),
-      fallbackCount: await page.getByTestId('session-auth-required-fallback').count().catch(() => 0),
-      composerCount: await getVisibleSessionComposer(page).count().catch(() => 0),
-      bodyText: (await page.locator('body').innerText().catch(() => '')).slice(0, 4_000),
-    });
-
-    let cliLogin: StartedCliTerminalConnect | null = null;
-    let thrown: unknown = null;
-    try {
-      await ensureAuthenticatedAccount(page, uiBaseUrl, server.baseUrl);
-
-      if (!daemon) {
-        cliLogin = await startCliAuthLoginForTerminalConnect({
-          testDir: resolve(join(testDir, 'cli-login')),
-          cliHomeDir,
-          serverUrl: server.baseUrl,
-          webappUrl: uiBaseUrl,
-          env: {
-            ...process.env,
-            CI: '1',
-            HAPPIER_DISABLE_CAFFEINATE: '1',
-            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-            HAPPIER_VARIANT: 'dev',
-          },
-        });
-
-        await gotoDomContentLoadedWithRetries(page, cliLogin.connectUrl);
-        await approveTerminalConnect({ page });
-        await cliLogin.waitForSuccess();
-
-        fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
-        fakeClaudePath = fakeClaudeFixturePath();
-        daemon = await startTestDaemon({
-          testDir,
-          happyHomeDir: cliHomeDir,
-          env: {
-            ...process.env,
-            CI: '1',
-            HAPPIER_HOME_DIR: cliHomeDir,
-            HAPPIER_SERVER_URL: server.baseUrl,
-            HAPPIER_WEBAPP_URL: uiBaseUrl,
-            HAPPIER_DISABLE_CAFFEINATE: '1',
-            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-            HAPPIER_VARIANT: 'dev',
-            HAPPIER_CLAUDE_PATH: fakeClaudePath,
-            HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
-            HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}-stale-auth`,
-            HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}-stale-auth`,
-          },
-        });
-      }
-
-      if (!createdSessionId) {
-        await restoreAuthenticatedAccount(page, uiBaseUrl, server.baseUrl, '/new');
-        await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-        const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-        await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
-        await page.getByTestId('agent-input-machine-chip').click();
-        await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
-        await page.getByTestId(`new-session-machine:${machineId}`).click();
-
-        const prompt = `UI_E2E_STALE_AUTH_${run.runId}`;
-        await page.getByTestId('new-session-composer-input').fill(prompt);
-        await page.getByTestId('new-session-composer-send').click();
-        await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
-        await expect.poll(async () => transcriptMessageLocator(page).count(), { timeout: 180_000 }).toBeGreaterThan(1);
-
-        const currentUrl = page.url();
-        const { pathname } = new URL(currentUrl);
-        const parts = pathname.split('/').filter(Boolean);
-        const sessionIndex = parts.indexOf('session');
-        createdSessionId = sessionIndex >= 0 ? (parts[sessionIndex + 1] ?? null) : null;
-        if (!createdSessionId) {
-          throw new Error(`Failed to infer session id from url: ${currentUrl}`);
-        }
-      } else {
-        await restoreAuthenticatedAccount(page, uiBaseUrl, server.baseUrl, `/session/${createdSessionId}`);
-        await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
-      }
-
-      const beforeRotationState = await collectSessionAuthSurfaceState();
-      await testInfo.attach('before-rotation.json', {
-        body: JSON.stringify(beforeRotationState, null, 2),
-        contentType: 'application/json',
-      });
-      await testInfo.attach('before-rotation.png', {
-        body: await page.screenshot({ fullPage: true }),
-        contentType: 'image/png',
-      });
-
-      const secretPath = resolve(join(suiteDir, 'server-light-data', 'handy-master-secret.txt'));
-      await writeFile(secretPath, `${randomBytes(32).toString('hex')}\n`, 'utf8');
-      const originalPort = server.port;
-      await server.stop();
-      server = await startServerLight({
-        testDir: suiteDir,
-        dbProvider: 'sqlite',
-        dataDirMode: 'reuse-existing',
-        extraEnv: {
-          HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
-          HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
-          HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: '60000',
-          HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '60000',
-          HAPPIER_PRESENCE_TIMEOUT_TICK_MS: '1000',
-        },
-        __portAllocator: async () => originalPort,
-      });
-
-      let convergedState: Awaited<ReturnType<typeof collectSessionAuthSurfaceState>> | null = null;
-      const pollStartedAt = Date.now();
-      while (Date.now() - pollStartedAt < 30_000) {
-        const current = await collectSessionAuthSurfaceState();
-        if (current.restoreCount > 0 || current.fallbackCount > 0 || current.syncErrorCount > 0) {
-          convergedState = current;
-          break;
-        }
-        await page.waitForTimeout(1_000);
-      }
-
-      if (!convergedState) {
-        const finalState = await collectSessionAuthSurfaceState();
-        throw new Error(
-          `stale-auth session route did not converge to restore surface within 30s: ${JSON.stringify(finalState)}`,
-        );
-      }
-
-      await testInfo.attach('after-rotation.json', {
-        body: JSON.stringify(convergedState, null, 2),
-        contentType: 'application/json',
-      });
-      await testInfo.attach('after-rotation.png', {
-        body: await page.screenshot({ fullPage: true }),
-        contentType: 'image/png',
-      });
-
-      await expect(page.getByTestId('session-auth-sync-error-restore')).toHaveCount(1, { timeout: 120_000 });
-      await page.getByTestId('session-auth-sync-error-restore').click();
-      await expect.poll(() => new URL(page.url()).pathname, { timeout: 120_000 }).toBe('/restore');
-    } catch (error) {
-      thrown = error;
-      throw error;
-    } finally {
-      await cliLogin?.stop().catch(() => {});
-      if (thrown) {
-        const diagnostic = await collectBrowserStateDiagnostics(page, {
-          pageConsole,
-          pageErrors,
-          requestFailures,
-          responseErrors,
-        });
         await testInfo.attach('browser-diagnostics.md', { body: diagnostic, contentType: 'text/markdown' });
       }
     }

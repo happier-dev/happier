@@ -37,24 +37,56 @@ async function waitForCount(
   return (await locator.count()) === expectedCount;
 }
 
+function machineOptionLocator(page: Page) {
+  return page.locator('[data-testid^="new-session-machine:"], [data-testid^="new-session-machine-option:"]');
+}
+
 type MachineClickResult = 'clicked' | 'absent' | 'present_not_actionable';
 
 async function clickFirstMachineMatch(page: Page, machineId: string): Promise<MachineClickResult> {
-  const exact = page.getByTestId(`new-session-machine:${machineId}`);
+  const exact = page.locator(
+    `[data-testid="new-session-machine:${machineId}"], [data-testid="new-session-machine-option:${machineId}"]`,
+  );
   if ((await exact.count()) === 0) {
     return 'absent';
   }
 
   const clickTarget =
-    typeof (exact as { first?: () => { click: (options?: { timeout?: number }) => Promise<void> } }).first === 'function'
-      ? (exact as { first: () => { click: (options?: { timeout?: number }) => Promise<void> } }).first()
-      : (exact as { click: (options?: { timeout?: number }) => Promise<void> });
+    typeof (exact as { first?: () => { click: (options?: { timeout?: number, force?: boolean }) => Promise<void> } }).first === 'function'
+      ? (exact as { first: () => { click: (options?: { timeout?: number, force?: boolean }) => Promise<void> } }).first()
+      : (exact as { click: (options?: { timeout?: number, force?: boolean }) => Promise<void> });
 
   try {
     await clickTarget.click({ timeout: 5_000 });
     return 'clicked';
   } catch {
-    return 'present_not_actionable';
+    try {
+      await clickTarget.click({ timeout: 5_000, force: true });
+      return 'clicked';
+    } catch {
+      return 'present_not_actionable';
+    }
+  }
+}
+
+async function selectCurrentPathCheckoutIfPresent(page: Page): Promise<void> {
+  let checkoutChip: ReturnType<Page['getByTestId']>;
+  try {
+    checkoutChip = page.getByTestId('new-session-checkout-chip');
+  } catch {
+    return;
+  }
+
+  if ((await checkoutChip.count()) === 0) return;
+  try {
+    await checkoutChip.click({ timeout: 5_000 });
+  } catch {
+    return;
+  }
+
+  const currentPathOption = page.getByTestId('selection-list:worktree-root:option:current_path');
+  if (await waitForCount(page, currentPathOption, 1, 5_000)) {
+    await currentPathOption.click({ timeout: 5_000 });
   }
 }
 
@@ -69,13 +101,18 @@ export async function openNewSessionMachineSelection(
   const popoverWaitMs = params.popoverWaitMs ?? 3_000;
   const routeFallbackWaitMs = params.routeFallbackWaitMs ?? 60_000;
   const machineChip = params.page.getByTestId('agent-input-machine-chip');
-  const machineOptions = params.page.locator('[data-testid^="new-session-machine:"]').first();
+  const machineOptions = machineOptionLocator(params.page).first();
   const machineChipCount = await machineChip.count();
 
   if (machineChipCount > 0) {
-    await machineChip.click();
-    if (await waitForCount(params.page, machineOptions, 1, popoverWaitMs)) {
-      return 'picker_open';
+    try {
+      await machineChip.click({ timeout: 5_000 });
+      if (await waitForCount(params.page, machineOptions, 1, popoverWaitMs)) {
+        return 'picker_open';
+      }
+    } catch {
+      // The route picker is the canonical fallback when the inline composer chip
+      // is temporarily covered by an animation or overlay.
     }
   }
 
@@ -113,7 +150,13 @@ export async function openNewSessionPathSelection(
 ): Promise<void> {
   const popoverWaitMs = params.popoverWaitMs ?? 3_000;
   const routeFallbackWaitMs = params.routeFallbackWaitMs ?? 60_000;
-  const pathInput = params.page.getByTestId('path-selector-input');
+  // Phase 11 SelectionList migration: the path picker is backed by the
+  // SelectionList primitive; the input mounts under
+  // `path-selection-list:header:input`. The legacy `path-selector-input`
+  // testID was deleted with `PathSelector.tsx` so we no longer accept it.
+  const pathInput = params.page.locator(
+      '[data-testid="path-selection-list:header:input"]',
+  );
 
   await params.page.getByTestId('agent-input-path-chip').click();
   if (await waitForCount(params.page, pathInput, 1, popoverWaitMs)) {
@@ -151,7 +194,11 @@ export async function createSessionFromNewSessionComposer(
       if (clickResult === 'present_not_actionable') {
         throw new Error(`Machine selector was present but not actionable for machine ${machineId} within 120000ms.`);
       }
-      await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 1 });
+      await expect(
+        page.locator(
+          `[data-testid="new-session-machine:${machineId}"], [data-testid="new-session-machine-option:${machineId}"]`,
+        ),
+      ).toHaveCount(1, { timeout: 1 });
     }
 
     await page.waitForTimeout(250);
@@ -159,6 +206,7 @@ export async function createSessionFromNewSessionComposer(
 
   await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
+  await selectCurrentPathCheckoutIfPresent(page);
 
   await page.getByTestId('new-session-composer-input').fill(prompt);
   await expect(page.getByTestId('new-session-composer-send')).toHaveCount(1, { timeout: 60_000 });

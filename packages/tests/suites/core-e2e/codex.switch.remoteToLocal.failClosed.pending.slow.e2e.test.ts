@@ -16,7 +16,7 @@ import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
-import { yarnCommand } from '../../src/testkit/process/commands';
+import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
@@ -163,7 +163,9 @@ async function runRemoteToLocalFailClosedPendingScenario(): Promise<void> {
     const cliEnv: NodeJS.ProcessEnv = {
       ...process.env,
       CI: '1',
+      HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
       HAPPIER_VARIANT: 'dev',
+      HAPPIER_CODEX_BACKEND_MODE: 'acp',
       HAPPIER_HOME_DIR: cliHome,
       HAPPIER_SERVER_URL: serverBaseUrl,
       HAPPIER_WEBAPP_URL: serverBaseUrl,
@@ -175,13 +177,15 @@ async function runRemoteToLocalFailClosedPendingScenario(): Promise<void> {
 
     await ensureCliDistBuilt({ testDir, env: cliEnv }, { skipSourceFreshnessCheck: true });
 
+    const cliLaunchSpec = await resolveCliTestLaunchSpec(
+      { testDir, env: cliEnv },
+      { snapshotDir: resolve(join(testDir, 'cli-dist')) },
+    );
+
     proc = spawnLoggedProcess({
-      command: yarnCommand(),
+      command: cliLaunchSpec.command,
       args: [
-        '-s',
-        'workspace',
-        '@happier-dev/cli',
-        'dev',
+        ...cliLaunchSpec.args,
         'codex',
         '--existing-session',
         sessionId,
@@ -191,7 +195,10 @@ async function runRemoteToLocalFailClosedPendingScenario(): Promise<void> {
         'remote',
       ],
       cwd: repoRootDir(),
-      env: cliEnv,
+      env: {
+        ...cliEnv,
+        ...(cliLaunchSpec.env ?? {}),
+      },
       stdoutPath: resolve(join(testDir, 'cli.stdout.log')),
       stderrPath: resolve(join(testDir, 'cli.stderr.log')),
     });

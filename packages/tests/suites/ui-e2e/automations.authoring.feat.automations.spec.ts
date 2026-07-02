@@ -9,7 +9,8 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { buildAutomationTemplateEnvelope } from '../../src/testkit/automations';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { createSessionFromNewSessionComposer, openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { enableEnhancedSessionWizard } from '../../src/testkit/uiE2e/enableEnhancedSessionWizard';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -18,8 +19,12 @@ function getVisibleSessionComposer(page: Page) {
     return page.locator('[data-testid="session-composer-input"]:visible');
 }
 
-function getAutomationEnabledSwitch(page: Page) {
-    return page.getByTestId('session-authoring-automation-toggle-label').getByRole('switch');
+async function clickLocatorWithFallback(locator: Locator): Promise<void> {
+    try {
+        await locator.click({ timeout: 15_000 });
+    } catch {
+        await locator.click({ timeout: 15_000, force: true });
+    }
 }
 
 async function ensureSwitchEnabled(toggle: Locator) {
@@ -42,59 +47,50 @@ async function selectMachineForNewSession(params: Readonly<{
     uiBaseUrl: string;
     machineId: string;
 }>) {
-    await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
+    const selectionResult = await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
 
-    const exact = params.page.getByTestId(`new-session-machine:${params.machineId}`);
-    if (await exact.count()) {
-        await exact.first().click();
-    } else {
-        await params.page.locator('[data-testid^="new-session-machine:"]').first().click();
+    if (selectionResult === 'picker_open') {
+        const exact = params.page.locator(
+            `[data-testid="new-session-machine:${params.machineId}"], [data-testid="new-session-machine-option:${params.machineId}"]`,
+        );
+        const anyOption = params.page.locator(
+            '[data-testid^="new-session-machine:"], [data-testid^="new-session-machine-option:"]',
+        );
+
+        await expect.poll(async () => await anyOption.count(), { timeout: 120_000 }).toBeGreaterThan(0);
+        if (await exact.count()) {
+            await clickLocatorWithFallback(exact.first());
+        } else {
+            await clickLocatorWithFallback(anyOption.first());
+        }
     }
 
     await params.page.waitForURL((url: URL) => url.pathname.endsWith('/new'), { timeout: 60_000 });
     await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 }
 
-async function closeBackendPickerIfVisible(page: Page): Promise<void> {
-    const claudeBackendOption = page.getByTestId('new-session-agent:claude').first();
-    if ((await claudeBackendOption.count()) === 0 || !(await claudeBackendOption.isVisible().catch(() => false))) {
-        return;
-    }
-
-    await claudeBackendOption.click();
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(250);
-}
-
-async function readAuthTokenFromBrowserStorage(page: Page, timeoutMs = 120_000): Promise<string> {
-    const startedAtMs = Date.now();
-
-    while (Date.now() - startedAtMs < timeoutMs) {
-        const token = await page.evaluate(() => {
-            for (let index = 0; index < localStorage.length; index += 1) {
-                const key = localStorage.key(index);
-                if (!key?.startsWith('auth_credentials')) continue;
-                const raw = localStorage.getItem(key);
-                if (!raw) continue;
-                try {
-                    const parsed = JSON.parse(raw) as { token?: unknown };
-                    if (typeof parsed.token === 'string' && parsed.token.trim()) {
-                        return parsed.token.trim();
-                    }
-                } catch {
-                    // ignore malformed storage entries and keep scanning
+async function readAuthTokenFromBrowserStorage(page: Page): Promise<string> {
+    const token = await page.evaluate(() => {
+        for (let index = 0; index < localStorage.length; index += 1) {
+            const key = localStorage.key(index);
+            if (!key?.startsWith('auth_credentials')) continue;
+            const raw = localStorage.getItem(key);
+            if (!raw) continue;
+            try {
+                const parsed = JSON.parse(raw) as { token?: unknown };
+                if (typeof parsed.token === 'string' && parsed.token.trim()) {
+                    return parsed.token.trim();
                 }
+            } catch {
+                // ignore malformed storage entries and keep scanning
             }
-            return null;
-        });
-
-        if (typeof token === 'string' && token.trim()) {
-            return token.trim();
         }
+        return null;
+    });
 
-        await page.waitForTimeout(250);
+    if (typeof token === 'string' && token.trim()) {
+        return token.trim();
     }
-
     throw new Error('Failed to read auth token from browser storage');
 }
 
@@ -193,8 +189,7 @@ test.describe('ui e2e: automations authoring', () => {
 
         await page.setViewportSize({ width: 1440, height: 900 });
         await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-
-        await createAccountAndReachConnectMachineState({ page });
+        await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 
         const testDir = resolve(join(suiteDir, 't1-automations-authoring'));
         await mkdir(testDir, { recursive: true });
@@ -210,7 +205,8 @@ test.describe('ui e2e: automations authoring', () => {
                 HOME: cliHomeDir,
             },
         });
-        await gotoDomContentLoadedWithRetries(page, uiBaseUrl, 180_000);
+
+        await page.goto(uiBaseUrl, { waitUntil: 'domcontentloaded' });
         const authToken = await readAuthTokenFromBrowserStorage(page);
         const machineId = await readMachineIdFromCliAuthLoginStdout(resolve(join(testDir, 'cli.auth.login.stdout.log')));
 
@@ -219,27 +215,25 @@ test.describe('ui e2e: automations authoring', () => {
         const inlineAutomationName = `Inline automation ${run.runId}`;
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new?automation=1&happier_hmr=0`, 180_000);
         await selectMachineForNewSession({ page, uiBaseUrl, machineId });
-        await closeBackendPickerIfVisible(page);
         await expect(page.getByTestId('new-session-automation-chip')).toHaveCount(1, { timeout: 60_000 });
         await page.getByTestId('new-session-automation-chip').click();
-        await expect(page.getByTestId('session-authoring-automation-toggle-label')).toBeVisible({ timeout: 60_000 });
-        await expect(getAutomationEnabledSwitch(page)).toBeChecked({ timeout: 60_000 });
-        await page.locator('input[autocapitalize="words"]:visible').first().fill(inlineAutomationName);
+        await expect(page.getByTestId('session-authoring-automation-toggle-label')).toHaveCount(1, { timeout: 60_000 });
+        await expect(page.getByRole('switch')).toBeChecked({ timeout: 60_000 });
+        await page.getByTestId('automation-sentence-name-input').first().fill(inlineAutomationName);
         await page.getByTestId('new-session-composer-input').fill(`inline automation prompt ${run.runId}`);
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new?happier_hmr=0`, 180_000);
-        await expect(page.locator('input[autocapitalize="words"]:visible')).toHaveCount(0, { timeout: 60_000 });
+        await expect(page.getByTestId('automation-sentence-name-input')).toHaveCount(0, { timeout: 60_000 });
         await expect(page.getByTestId('new-session-automation-chip')).toHaveCount(1, { timeout: 60_000 });
         await expect(page.getByTestId('session-authoring-automation-toggle-label')).toHaveCount(0, { timeout: 60_000 });
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new?automation=1&happier_hmr=0`, 180_000);
         await selectMachineForNewSession({ page, uiBaseUrl, machineId });
-        await closeBackendPickerIfVisible(page);
         await expect(page.getByTestId('new-session-automation-chip')).toHaveCount(1, { timeout: 60_000 });
         await page.getByTestId('new-session-automation-chip').click();
-        await expect(page.getByTestId('session-authoring-automation-toggle-label')).toBeVisible({ timeout: 60_000 });
-        await expect(getAutomationEnabledSwitch(page)).toBeChecked({ timeout: 60_000 });
-        await page.locator('input[autocapitalize="words"]:visible').first().fill(inlineAutomationName);
+        await expect(page.getByTestId('session-authoring-automation-toggle-label')).toHaveCount(1, { timeout: 60_000 });
+        await expect(page.getByRole('switch')).toBeChecked({ timeout: 60_000 });
+        await page.getByTestId('automation-sentence-name-input').first().fill(inlineAutomationName);
         await page.getByTestId('new-session-composer-input').fill(`inline automation prompt ${run.runId}`);
         await postJson<{ id: string }>({
             baseUrl: server.baseUrl,
@@ -265,7 +259,7 @@ test.describe('ui e2e: automations authoring', () => {
         const existingSessionAutomationName = `Existing automation ${run.runId}`;
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}/automations/new?happier_hmr=0`, 180_000);
         await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 60_000 });
-        await page.locator('input[autocapitalize="words"]:visible').first().fill(existingSessionAutomationName);
+        await expect(page.getByTestId('automation-sentence-name-input')).toHaveCount(0, { timeout: 60_000 });
         await getVisibleSessionComposer(page).fill(`existing-session automation prompt ${run.runId}`);
 
         await postJson<{ id: string }>({

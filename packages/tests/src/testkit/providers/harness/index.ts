@@ -22,6 +22,7 @@ import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../pendingQueueV2'
 import { seedCliAuthForServer } from '../../cliAuth';
 
 import { runWithFlakeRetry } from './flakeRetry';
+import { providerTraceProtocolMatches } from './providerTraceProtocolMatcher';
 import { resolveProviderCliSpawnSpec } from './resolveProviderCliSpawnSpec';
 
 import type {
@@ -830,7 +831,11 @@ async function runOneScenario(params: {
               const relevant = currentEvents.filter(
                 (event) =>
                   event?.v === 1 &&
-                  event.protocol === provider.protocol &&
+                  providerTraceProtocolMatches({
+                    providerId: provider.id,
+                    providerProtocol: provider.protocol,
+                    eventProtocol: event.protocol,
+                  }) &&
                   (typeof event.provider === 'string' ? event.provider === provider.traceProvider : false),
               );
               await autoResolveFromTrace(relevant, 5_000);
@@ -1011,7 +1016,11 @@ async function runOneScenario(params: {
           const relevant = filterImportedTraceEvents(traceEvents).filter(
             (e) =>
               e?.v === 1 &&
-              e.protocol === provider.protocol &&
+              providerTraceProtocolMatches({
+                providerId: provider.id,
+                providerProtocol: provider.protocol,
+                eventProtocol: e.protocol,
+              }) &&
               (typeof e.provider === 'string' ? e.provider === provider.traceProvider : false),
           );
           if (traceRaw.length !== lastTraceRawLength || relevant.length !== lastRelevantTraceCount) {
@@ -1336,7 +1345,11 @@ async function runOneScenario(params: {
       const relevant = filterImportedTraceEvents(traceEvents).filter(
         (e) =>
           e?.v === 1 &&
-          e.protocol === provider.protocol &&
+          providerTraceProtocolMatches({
+            providerId: provider.id,
+            providerProtocol: provider.protocol,
+            eventProtocol: e.protocol,
+          }) &&
         (typeof e.provider === 'string' ? e.provider === provider.traceProvider : false),
     );
     const cap = checkMaxTraceEvents(relevant as any, scenario.maxTraceEvents);

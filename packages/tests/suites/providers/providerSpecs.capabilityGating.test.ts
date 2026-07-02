@@ -105,5 +105,6 @@ describe('providers: scenario capability gating', () => {
     });
     expect(codex!.scenarioRegistry.tiers.smoke).toContain('acp_probe_capabilities');
     expect(allScenarioIds.some((scenarioId) => /app(?:-|_)?server/i.test(scenarioId))).toBe(false);
+    expect(codex!.cli?.env?.HAPPIER_CODEX_BACKEND_MODE).toBe('acp');
   });
 });

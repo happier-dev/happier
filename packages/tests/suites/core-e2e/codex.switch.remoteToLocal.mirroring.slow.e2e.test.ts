@@ -15,7 +15,8 @@ import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBa
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
-import { yarnCommand } from '../../src/testkit/process/commands';
+import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
+import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
@@ -30,7 +31,6 @@ const run = createRunDirs({ runLabel: 'core' });
 
 async function createLocalCodexStub(params: Readonly<{
   testDir: string;
-  codexSessionsDir: string;
 }>): Promise<Readonly<{
   fakeCodexPath: string;
   codexSessionId: string;
@@ -41,10 +41,10 @@ async function createLocalCodexStub(params: Readonly<{
   await mkdir(fakeBinDir, { recursive: true });
   const fakeCodexPath = resolve(join(fakeBinDir, 'codex'));
   const codexSessionId = `codex-session-${randomUUID()}`;
-  const rolloutPath = resolve(join(params.codexSessionsDir, 'rollout-test.jsonl'));
+  const rolloutPath = resolve(join(params.testDir, 'codex-sessions', 'rollout-test.jsonl'));
   const fakeCodexLog = resolve(join(params.testDir, 'fake-codex.jsonl'));
 
-  await mkdir(params.codexSessionsDir, { recursive: true });
+  await mkdir(resolve(join(params.testDir, 'codex-sessions')), { recursive: true });
   await writeFile(
     fakeCodexPath,
     `#!/usr/bin/env node
@@ -146,9 +146,7 @@ async function runRemoteToLocalMirroringScenario(): Promise<void> {
   const testName = 'codex-switch-remote-to-local';
   const testDir = run.testDir(testName);
   const toolTraceFile = resolve(join(testDir, 'tooltrace.jsonl'));
-  const codexHomeDir = resolve(join(testDir, '.codex'));
-  const codexSessionsDir = resolve(join(codexHomeDir, 'sessions'));
-  const localCodex = await createLocalCodexStub({ testDir, codexSessionsDir });
+  const localCodex = await createLocalCodexStub({ testDir });
 
   let server: StartedServer | null = null;
   let proc: SpawnedProcess | null = null;
@@ -210,6 +208,7 @@ async function runRemoteToLocalMirroringScenario(): Promise<void> {
     const cliEnv: NodeJS.ProcessEnv = {
       ...process.env,
       CI: '1',
+      HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
       HAPPIER_VARIANT: 'dev',
       HAPPIER_HOME_DIR: cliHome,
       HAPPIER_SERVER_URL: server.baseUrl,
@@ -217,21 +216,23 @@ async function runRemoteToLocalMirroringScenario(): Promise<void> {
       HAPPIER_SESSION_ATTACH_FILE: attachFile,
       HAPPIER_STACK_TOOL_TRACE: '1',
       HAPPIER_STACK_TOOL_TRACE_FILE: toolTraceFile,
-      CODEX_HOME: codexHomeDir,
       HAPPIER_CODEX_TUI_BIN: localCodex.fakeCodexPath,
-      HAPPIER_CODEX_SESSIONS_DIR: codexSessionsDir,
+      HAPPIER_CODEX_SESSIONS_DIR: resolve(join(testDir, 'codex-sessions')),
       HAPPIER_E2E_CODEX_SESSION_ID: localCodex.codexSessionId,
       HAPPIER_E2E_FAKE_CODEX_LOG: localCodex.fakeCodexLog,
       HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
     };
 
+    await ensureCliDistBuilt({ testDir, env: cliEnv }, { skipSourceFreshnessCheck: true });
+    const cliLaunchSpec = await resolveCliTestLaunchSpec(
+      { testDir, env: cliEnv },
+      { snapshotDir: resolve(join(testDir, 'cli-dist')) },
+    );
+
     proc = spawnLoggedProcess({
-      command: yarnCommand(),
+      command: cliLaunchSpec.command,
       args: [
-        '-s',
-        'workspace',
-        '@happier-dev/cli',
-        'dev',
+        ...cliLaunchSpec.args,
         'codex',
         '--existing-session',
         sessionId,
@@ -241,15 +242,25 @@ async function runRemoteToLocalMirroringScenario(): Promise<void> {
         'remote',
       ],
       cwd: repoRootDir(),
-      env: cliEnv,
+      env: {
+        ...cliEnv,
+        ...(cliLaunchSpec.env ?? {}),
+      },
       stdoutPath: resolve(join(testDir, 'cli.stdout.log')),
       stderrPath: resolve(join(testDir, 'cli.stderr.log')),
     });
 
-    ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
+    const serverBaseUrl = server.baseUrl;
+    ui = createUserScopedSocketCollector(serverBaseUrl, auth.token);
     ui.connect();
 
     await waitFor(() => ui?.isConnected() === true, { timeoutMs: 20_000 });
+    const baseline = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+    const baselineAgentStateVersion = baseline.agentStateVersion;
+    await waitFor(async () => {
+      const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+      return snap.active === true || (typeof snap.agentStateVersion === 'number' && snap.agentStateVersion > baselineAgentStateVersion);
+    }, { timeoutMs: 45_000 });
 
     const switched = await requestSessionSwitchRpc({ ui, sessionId, to: 'local', secret, timeoutMs: 20_000 });
   expect(switched).toBe(true);
