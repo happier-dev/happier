@@ -44,8 +44,8 @@ async function resolveHappierMcpServerConfig(
   accountSettings?: AccountSettings | null,
 ): Promise<McpServerConfig> {
   const config = await resolveNodeBackedMcpServerCommand({
-    distEntrypointSegments: ['backends', 'codex', 'mcp', 'happierStdioBridge.mjs'],
-    sourceEntrypointSegments: ['backends', 'codex', 'mcp', 'happierStdioBridge.ts'],
+    distEntrypointSegments: ['mcp', 'bridges', 'happierMcpStdioBridge.mjs'],
+    sourceEntrypointSegments: ['mcp', 'bridges', 'happierMcpStdioBridge.ts'],
     args: ['--url', url],
     preferSourceEntrypoint: isTruthyEnvFlag(process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT),
   })

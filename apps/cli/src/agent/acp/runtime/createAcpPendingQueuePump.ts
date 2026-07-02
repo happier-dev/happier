@@ -1,8 +1,16 @@
 import { readAuthenticationStatus } from '@/api/client/httpStatusError';
+import type {
+  DrainPendingOptions,
+  SessionProviderInputConsumer,
+} from '@/agent/runtime/session/input/_types';
+import { PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 
 export type AcpRuntimePendingQueue = Readonly<{
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   popPendingMessage: () => Promise<boolean>;
+  inputConsumer?: Pick<SessionProviderInputConsumer<never, never>, 'drainPending'>;
+  shouldAttemptMaterialization?: (() => boolean | Promise<boolean>) | null;
+  reconcilePendingQueueState?: ((opts: { force: boolean }) => unknown | Promise<unknown>) | null;
   maxPopPerWake?: number;
   drainDuringTurn?: boolean;
   drainAfterStartOrLoad?: boolean;
@@ -29,11 +37,28 @@ export function createAcpPendingQueuePump(params: Readonly<{
     pendingPumpController = null;
   };
 
-  const drainPendingOnce = async (controller?: AbortController): Promise<void> => {
+  const drainPendingOnce = async (controller?: AbortController, reason = 'acp-pending-pump'): Promise<void> => {
     if (!params.pendingQueue) return;
-    const maxPopPerWake = Math.max(1, params.pendingQueue.maxPopPerWake ?? 25);
+    const maxPopPerWake = Math.max(1, params.pendingQueue.maxPopPerWake ?? PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE);
+    if (params.pendingQueue.inputConsumer) {
+      const result = await params.pendingQueue.inputConsumer.drainPending({
+        maxPopPerWake,
+        reason,
+        abortSignal: controller?.signal,
+        logPrefix: '[ACP-RUNTIME]',
+        shouldContinue: () => controller?.signal.aborted !== true,
+      } satisfies DrainPendingOptions);
+      if (result.stoppedReason === 'auth_failure') {
+        stop();
+      }
+      return;
+    }
     for (let i = 0; i < maxPopPerWake; i += 1) {
       if (controller?.signal.aborted) break;
+      if ((await (params.pendingQueue.shouldAttemptMaterialization?.() ?? true)) !== true) {
+        await params.pendingQueue.reconcilePendingQueueState?.({ force: true });
+        if ((await (params.pendingQueue.shouldAttemptMaterialization?.() ?? true)) !== true) break;
+      }
       let did = false;
       try {
         did = await params.pendingQueue.popPendingMessage();
@@ -74,7 +99,7 @@ export function createAcpPendingQueuePump(params: Readonly<{
       });
 
     void (async () => {
-      await drainPendingOnce(controller);
+      await drainPendingOnce(controller, 'acp-in-flight-start');
 
       while (!controller.signal.aborted) {
         const iteration = new AbortController();
@@ -101,7 +126,7 @@ export function createAcpPendingQueuePump(params: Readonly<{
         }
         if (controller.signal.aborted) break;
 
-        await drainPendingOnce(controller);
+        await drainPendingOnce(controller, 'acp-in-flight-wake');
       }
     })();
   };
@@ -111,7 +136,7 @@ export function createAcpPendingQueuePump(params: Readonly<{
     stop,
     drainAfterStartOrLoad: async () => {
       if (params.pendingQueue?.drainAfterStartOrLoad !== true) return;
-      await drainPendingOnce();
+      await drainPendingOnce(undefined, 'acp-start-or-load');
     },
   };
 }

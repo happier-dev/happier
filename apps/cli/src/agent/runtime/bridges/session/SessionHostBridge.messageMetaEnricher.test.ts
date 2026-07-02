@@ -29,9 +29,11 @@ vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
     resolveBackendEngineAdapterResolutionMock(backendId),
   resolveBackendExecutionSurfaces: async () => ({
     terminalRuntime: null,
-    externalSessions: null,
+    externalSession: null,
     attach: null,
-    sessionHandoff: null,
+    handoff: null,
+    fork: null,
+    checkpoint: null,
   }),
 }));
 

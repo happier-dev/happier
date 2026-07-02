@@ -27,7 +27,7 @@ describe('executionRun intent profile registry', () => {
   it('keeps special start shaping isolated to profiles that need runtime evidence', () => {
     expect(typeof resolveExecutionRunIntentProfile('voice_agent').prepareStartParams).toBe('function');
     expect(typeof resolveExecutionRunIntentProfile('scm_commit_message').prepareStartParams).toBe('function');
-    expect(resolveExecutionRunIntentProfile('review').prepareStartParams).toBeUndefined();
+    expect(typeof resolveExecutionRunIntentProfile('review').prepareStartParams).toBe('function');
     expect(resolveExecutionRunIntentProfile('plan').prepareStartParams).toBeUndefined();
     expect(resolveExecutionRunIntentProfile('delegate').prepareStartParams).toBeUndefined();
     expect(resolveExecutionRunIntentProfile('memory_hints').prepareStartParams).toBeUndefined();

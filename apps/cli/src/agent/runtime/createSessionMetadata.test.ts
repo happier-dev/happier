@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { Metadata } from '@/api/types';
 
 import { createSessionMetadata } from './createSessionMetadata';
+import { HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY } from './sessionConnectedServicesBindingsEnv';
+
+const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
+    'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
 
 describe('createSessionMetadata', () => {
     it('does not seed legacy messageQueueV1 metadata', () => {
@@ -15,7 +19,7 @@ describe('createSessionMetadata', () => {
         expect((metadata as any).messageQueueV1).toBeUndefined();
     });
 
-    it('seeds only the canonical sessionModeOverrideV1 when sessionModeId is provided', () => {
+    it('seeds session mode override aliases when sessionModeId is provided', () => {
         const { metadata } = createSessionMetadata({
             flavor: 'opencode',
             machineId: 'machine-1',
@@ -25,7 +29,7 @@ describe('createSessionMetadata', () => {
         } as any);
 
         expect((metadata as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
-        expect((metadata as any).acpSessionModeOverrideV1).toBeUndefined();
+        expect((metadata as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
     });
 
     it('seeds modelOverrideV1 when modelId is provided', () => {
@@ -81,7 +85,7 @@ describe('createSessionMetadata', () => {
         }
     });
 
-    it('ignores non-string config option values when seeding daemon-provided overrides', () => {
+    it('preserves typed config option values when seeding daemon-provided overrides', () => {
         const previous = process.env.HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON;
         process.env.HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON = JSON.stringify({
             v: 1,
@@ -101,16 +105,18 @@ describe('createSessionMetadata', () => {
 
             expect((metadata as any).sessionConfigOptionOverridesV1).toEqual({
                 v: 1,
-                updatedAt: 123,
+                updatedAt: 124,
                 overrides: {
                     speed: { updatedAt: 123, value: 'fast' },
+                    telemetry: { updatedAt: 124, value: true },
                 },
             });
             expect((metadata as any).acpConfigOptionOverridesV1).toEqual({
                 v: 1,
-                updatedAt: 123,
+                updatedAt: 124,
                 overrides: {
                     speed: { updatedAt: 123, value: 'fast' },
+                    telemetry: { updatedAt: 124, value: true },
                 },
             });
         } finally {
@@ -162,6 +168,104 @@ describe('createSessionMetadata', () => {
                 delete process.env.HAPPIER_SESSION_MCP_SELECTION_JSON;
             } else {
                 process.env.HAPPIER_SESSION_MCP_SELECTION_JSON = previous;
+            }
+        }
+    });
+
+    it('seeds connected service bindings from the daemon-provided environment override', () => {
+        const previous = process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY];
+        process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY] = JSON.stringify({
+            v: 1,
+            bindingsByServiceId: {
+                'openai-codex': {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'happier',
+                },
+            },
+        });
+
+        try {
+            const { metadata } = createSessionMetadata({
+                flavor: 'codex',
+                machineId: 'machine-1',
+                startedBy: 'daemon',
+            });
+
+            expect((metadata as Record<string, unknown>).connectedServices).toEqual({
+                v: 1,
+                bindingsByServiceId: {
+                    'openai-codex': {
+                        source: 'connected',
+                        selection: 'profile',
+                        profileId: 'happier',
+                    },
+                },
+            });
+            expect(process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY]).toBeUndefined();
+        } finally {
+            if (previous === undefined) {
+                delete process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY];
+            } else {
+                process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY] = previous;
+            }
+        }
+    });
+
+    it('seeds connected-service materialization identity from the daemon-provided environment override', () => {
+        const previous = process.env[HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY];
+        const identity = {
+            v: 1,
+            id: 'csm_first_spawn',
+            createdAt: 123,
+        };
+        process.env[HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY] = JSON.stringify(identity);
+
+        try {
+            const { metadata } = createSessionMetadata({
+                flavor: 'codex',
+                machineId: 'machine-1',
+                startedBy: 'daemon',
+            });
+
+            expect((metadata as Record<string, unknown>).connectedServiceMaterializationIdentityV1).toEqual(identity);
+            expect(process.env[HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY]).toBeUndefined();
+        } finally {
+            if (previous === undefined) {
+                delete process.env[HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY];
+            } else {
+                process.env[HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY] = previous;
+            }
+        }
+    });
+
+    it('ignores invalid connected service bindings from the daemon-provided environment override', () => {
+        const previous = process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY];
+        process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY] = JSON.stringify({
+            v: 1,
+            bindingsByServiceId: {
+                'not-a-service': {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'happier',
+                },
+            },
+        });
+
+        try {
+            const { metadata } = createSessionMetadata({
+                flavor: 'codex',
+                machineId: 'machine-1',
+                startedBy: 'daemon',
+            });
+
+            expect((metadata as Record<string, unknown>).connectedServices).toBeUndefined();
+            expect(process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY]).toBeUndefined();
+        } finally {
+            if (previous === undefined) {
+                delete process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY];
+            } else {
+                process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY] = previous;
             }
         }
     });

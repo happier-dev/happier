@@ -1,9 +1,19 @@
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { getExternalSessionProviderOps } from '@/backends/catalog';
+import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 
-import type { ExternalSessionFollowLease, ExternalSessionProviderOps } from '@/session/external/providerOps';
+import type {
+    ExternalSessionExecutionSurface,
+    ExternalSessionFollowLease,
+} from '@/session/external/providerOps';
 import type { LocalHostedDirectTranscriptBinding } from './directTranscriptBinding';
+
+type LocalHostedDirectTranscriptProviderOps = Readonly<{
+    validateSource: NonNullable<ExternalSessionExecutionSurface['validateSource']>;
+    pageTranscript: NonNullable<ExternalSessionExecutionSurface['pageTranscript']>;
+    readAfterTranscript: NonNullable<ExternalSessionExecutionSurface['readAfterTranscript']>;
+    acquireFollowLease?: ExternalSessionExecutionSurface['acquireFollowLease'];
+}>;
 
 function resolvePageMaxBytes(): number {
     const raw = Number.parseInt(String(process.env.HAPPIER_EXTERNAL_SESSIONS_PAGE_MAX_BYTES ?? ''), 10);
@@ -20,7 +30,7 @@ function resolvePageMaxItems(): number {
 async function replayTranscriptHistory(params: Readonly<{
     source: LocalHostedDirectTranscriptBinding['source'];
     remoteSessionId: string;
-    providerOps: ExternalSessionProviderOps;
+    providerOps: LocalHostedDirectTranscriptProviderOps;
     onItems: (items: readonly ExternalSessionTranscriptRawMessageV1[]) => Promise<void> | void;
 }>): Promise<string | null> {
     const pages: ExternalSessionTranscriptRawMessageV1[][] = [];
@@ -35,6 +45,7 @@ async function replayTranscriptHistory(params: Readonly<{
             cursor,
             maxBytes: resolvePageMaxBytes(),
             maxItems: resolvePageMaxItems(),
+            allowProviderFallback: !params.providerOps.acquireFollowLease,
         });
         tailCursor ??= page.tailCursor;
 
@@ -57,7 +68,7 @@ async function replayTranscriptHistory(params: Readonly<{
 async function bridgeTranscriptHandoffGap(params: Readonly<{
     source: LocalHostedDirectTranscriptBinding['source'];
     remoteSessionId: string;
-    providerOps: ExternalSessionProviderOps;
+    providerOps: LocalHostedDirectTranscriptProviderOps;
     fromCursor: string | null;
     toCursor: string | null;
     onItems: (items: readonly ExternalSessionTranscriptRawMessageV1[]) => Promise<void> | void;
@@ -76,6 +87,7 @@ async function bridgeTranscriptHandoffGap(params: Readonly<{
             cursor,
             maxBytes: resolvePageMaxBytes(),
             maxItems: resolvePageMaxItems(),
+            allowProviderFallback: false,
         });
 
         if (page.items.length > 0) {
@@ -92,10 +104,41 @@ async function bridgeTranscriptHandoffGap(params: Readonly<{
     }
 }
 
+async function resolveExternalSessionSurface(
+    providerId: LocalHostedDirectTranscriptBinding['providerId'],
+): Promise<ExternalSessionExecutionSurface> {
+    const externalSession = (await resolveBackendExecutionSurfaces(providerId)).externalSession;
+    if (!externalSession) {
+        throw new Error(`Unsupported external-session provider: ${providerId}`);
+    }
+    return externalSession;
+}
+
+function requireLocalHostedDirectTranscriptProviderOps(
+    providerId: LocalHostedDirectTranscriptBinding['providerId'],
+    providerOps: ExternalSessionExecutionSurface,
+): LocalHostedDirectTranscriptProviderOps {
+    if (!providerOps.validateSource) {
+        throw new Error(`Unsupported external-session provider: ${providerId} missing validateSource`);
+    }
+    if (!providerOps.pageTranscript) {
+        throw new Error(`Unsupported external-session provider: ${providerId} missing pageTranscript`);
+    }
+    if (!providerOps.readAfterTranscript) {
+        throw new Error(`Unsupported external-session provider: ${providerId} missing readAfterTranscript`);
+    }
+    return {
+        validateSource: providerOps.validateSource,
+        pageTranscript: providerOps.pageTranscript,
+        readAfterTranscript: providerOps.readAfterTranscript,
+        ...(providerOps.acquireFollowLease ? { acquireFollowLease: providerOps.acquireFollowLease } : {}),
+    };
+}
+
 export function createLocalHostedDirectTranscriptMirror(params: Readonly<{
     binding: LocalHostedDirectTranscriptBinding;
     onItems: (items: readonly ExternalSessionTranscriptRawMessageV1[]) => Promise<void> | void;
-    getProviderOps?: (providerId: LocalHostedDirectTranscriptBinding['providerId']) => Promise<ExternalSessionProviderOps>;
+    getProviderOps?: (providerId: LocalHostedDirectTranscriptBinding['providerId']) => Promise<ExternalSessionExecutionSurface>;
 }>) {
     let startPromise: Promise<void> | null = null;
     let stopRequested = false;
@@ -136,7 +179,10 @@ export function createLocalHostedDirectTranscriptMirror(params: Readonly<{
     };
 
     const ensureStarted = async (): Promise<void> => {
-        const providerOps = await (params.getProviderOps ?? getExternalSessionProviderOps)(params.binding.providerId);
+        const providerOps = requireLocalHostedDirectTranscriptProviderOps(
+            params.binding.providerId,
+            await (params.getProviderOps ?? resolveExternalSessionSurface)(params.binding.providerId),
+        );
         const validation = await providerOps.validateSource({
             source: params.binding.source,
             env: params.binding.env ?? process.env,
@@ -148,6 +194,16 @@ export function createLocalHostedDirectTranscriptMirror(params: Readonly<{
         const source = validation.source;
 
         if (providerOps.acquireFollowLease) {
+            const replayTailCursor = await replayTranscriptHistory({
+                source,
+                remoteSessionId: params.binding.remoteSessionId,
+                providerOps,
+                onItems: deliverItems,
+            });
+            if (stopRequested) {
+                return;
+            }
+
             followLease = await providerOps.acquireFollowLease({
                 source,
                 remoteSessionId: params.binding.remoteSessionId,
@@ -157,8 +213,6 @@ export function createLocalHostedDirectTranscriptMirror(params: Readonly<{
                 await releaseFollowLease();
                 return;
             }
-
-            const followLeaseTailCursor = followLease.getTailCursor?.() ?? null;
 
             if (typeof followLease.subscribeToTranscriptUpdates === 'function') {
                 unsubscribe = followLease.subscribeToTranscriptUpdates((update) => {
@@ -174,15 +228,7 @@ export function createLocalHostedDirectTranscriptMirror(params: Readonly<{
                 });
             }
 
-            const replayTailCursor = await replayTranscriptHistory({
-                source,
-                remoteSessionId: params.binding.remoteSessionId,
-                providerOps,
-                onItems: deliverItems,
-            });
-            if (stopRequested) {
-                return;
-            }
+            const followLeaseTailCursor = followLease.getTailCursor?.() ?? null;
 
             await bridgeTranscriptHandoffGap({
                 source,

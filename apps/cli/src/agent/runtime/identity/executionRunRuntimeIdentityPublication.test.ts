@@ -47,6 +47,21 @@ function createEngineResolution(
     backendId: 'acme.backend',
     providerId: 'acme.provider',
     provenance: 'external',
+    runtimeOwner: {
+      backendId: 'acme.backend',
+      selected: {
+        kind: 'plugin_engine',
+        ownerId: 'acme.plugin',
+        provenance: 'external',
+        pluginId: 'acme.plugin',
+      },
+      candidates: [{
+        kind: 'plugin_engine',
+        ownerId: 'acme.plugin',
+        provenance: 'external',
+        pluginId: 'acme.plugin',
+      }],
+    },
     backend: {
       id: 'acme.backend',
       providerId: 'acme.provider',

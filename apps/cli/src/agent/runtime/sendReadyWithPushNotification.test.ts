@@ -194,9 +194,11 @@ describe('sendReadyWithPushNotification', () => {
     })
   })
 
-  it('still emits ready event when push notification fails', () => {
+  it('redacts non-Axios push errors before logging', () => {
     const session = createSessionStub('session-456')
-    const pushError = new Error('push unavailable')
+    const pushError = new Error(
+      'push unavailable for https://alice:SUPER_SECRET_PASSWORD@push.example.test/v1/send?token=secret Authorization: Bearer PUSH_SECRET',
+    )
     const sendToAllDevices = vi.fn(() => {
       throw pushError
     })
@@ -212,7 +214,14 @@ describe('sendReadyWithPushNotification', () => {
 
     expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' })
     expect(sendToAllDevices).toHaveBeenCalledTimes(1)
-    expect(loggerDebug).toHaveBeenCalledWith('[OpenCode] Failed to send ready push', pushError)
+    const [, logged] = loggerDebug.mock.calls[0] ?? []
+    expect(logged).toEqual(expect.objectContaining({
+      name: 'Error',
+      message: 'push unavailable for https://push.example.test/v1/send Authorization: <redacted>',
+    }))
+    expect(JSON.stringify(logged)).not.toContain('SUPER_SECRET_PASSWORD')
+    expect(JSON.stringify(logged)).not.toContain('token=secret')
+    expect(JSON.stringify(logged)).not.toContain('PUSH_SECRET')
   })
 
   it('sanitizes axios-shaped errors before logging', () => {

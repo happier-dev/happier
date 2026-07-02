@@ -12,7 +12,7 @@ vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   getTerminalRuntimeOps,
 }));
 
-import { requireTerminalRuntimeBindTranscript } from './bindTranscript';
+import { requireTerminalRuntimeResolveTranscriptBinding } from './resolveTranscriptBinding';
 import { requireTerminalRuntimeLaunch } from './requireTerminalRuntimeLaunch';
 
 afterEach(() => {
@@ -38,9 +38,11 @@ describe('terminal runtime requirement helpers', () => {
       terminalRuntime: {
         launch,
       },
-      externalSessions: null,
+      externalSession: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     });
     getTerminalRuntimeOps.mockReset();
 
@@ -54,19 +56,21 @@ describe('terminal runtime requirement helpers', () => {
 
   it('resolve transcript binding through the generic backend execution surface', async () => {
     const binding = createMockLocalHostedDirectTranscriptBinding();
-    const bindTranscript = vi.fn(async () => binding);
+    const resolveTranscriptBinding = vi.fn(async () => binding);
     resolveBackendExecutionSurfaces.mockResolvedValue({
       terminalRuntime: {
-        bindTranscript,
+        resolveTranscriptBinding,
       },
-      externalSessions: null,
+      externalSession: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     });
     getTerminalRuntimeOps.mockReset();
 
-    const resolvedBindTranscript = await requireTerminalRuntimeBindTranscript('acme.runtime.backend');
-    await expect(resolvedBindTranscript({})).resolves.toEqual({
+    const resolvedTranscriptBinding = await requireTerminalRuntimeResolveTranscriptBinding('acme.runtime.backend');
+    await expect(resolvedTranscriptBinding({})).resolves.toEqual({
       providerId: 'codex',
       source: {
         kind: 'codexHome',
@@ -78,6 +82,6 @@ describe('terminal runtime requirement helpers', () => {
 
     expect(resolveBackendExecutionSurfaces).toHaveBeenCalledWith('acme.runtime.backend');
     expect(getTerminalRuntimeOps).not.toHaveBeenCalled();
-    expect(bindTranscript).toHaveBeenCalledWith({});
+    expect(resolveTranscriptBinding).toHaveBeenCalledWith({});
   });
 });

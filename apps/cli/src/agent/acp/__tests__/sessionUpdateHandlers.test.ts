@@ -3,9 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { HandlerContext, SessionUpdate } from '../sessionUpdateHandlers';
 import { handleToolCall, handleToolCallUpdate, markToolCallRunningAfterPermission } from '../sessionUpdateHandlers';
 import { DefaultTransport, defaultTransport } from '../../transport';
-import { CodexAcpTransport } from '@/backends/codex/acp/transport';
+import { createAcpTransportHandlerFromDefinition, normalizePluginAcpDefinition } from '@/agent/acp/runtime/definition';
 import { GeminiTransport } from '@/backends/gemini/acp/transport';
-import { KimiTransport } from '@/backends/kimi/acp/transport';
+import { createCodexAcpBackendSpec } from '@happier-dev/plugins-codex/agent/acp/backend';
+import { KIMI_ACP_BACKEND_SPEC } from '@happier-dev/plugins-kimi/agent/acp/definition';
 
 function createCtx(opts?: { transport?: HandlerContext['transport'] }): HandlerContext & {
   emitted: any[];
@@ -30,6 +31,23 @@ function createCtx(opts?: { transport?: HandlerContext['transport'] }): HandlerC
     setIdleTimeout: () => {},
     emitted,
   };
+}
+
+function createCodexAcpTransport(): HandlerContext['transport'] {
+  return createAcpTransportHandlerFromDefinition(normalizePluginAcpDefinition({
+    pluginId: 'happier.agent.codex',
+    spec: createCodexAcpBackendSpec({
+      command: 'codex-acp',
+      env: {},
+    }),
+  }));
+}
+
+function createKimiAcpTransport(): HandlerContext['transport'] {
+  return createAcpTransportHandlerFromDefinition(normalizePluginAcpDefinition({
+    pluginId: 'happier.agent.kimi',
+    spec: KIMI_ACP_BACKEND_SPEC,
+  }));
 }
 
 describe('sessionUpdateHandlers tool call tracking', () => {
@@ -185,7 +203,7 @@ describe('sessionUpdateHandlers tool call tracking', () => {
 	    vi.useRealTimers();
 	  });
 
-	  it('keeps tool calls waiting for permission until permission approval even if an in_progress update arrives', () => {
+  it('keeps tool calls waiting for permission until permission approval even if an in_progress update arrives', () => {
 	    vi.useFakeTimers();
 	    class ShortTimeoutTransport extends DefaultTransport {
 	      getToolCallTimeout(): number {
@@ -239,8 +257,45 @@ describe('sessionUpdateHandlers tool call tracking', () => {
 	    expect(ctx.toolCallTimeouts.has('call_waiting_1')).toBe(true);
 	    expect(ctx.toolCallLifecycleStates.get('call_waiting_1')).toBe('running');
 
-	    vi.useRealTimers();
-	  });
+    vi.useRealTimers();
+  });
+
+  it('does not arm a tool-call watchdog when the transport disables it with null', () => {
+    vi.useFakeTimers();
+    try {
+      class DisabledToolTimeoutTransport extends DefaultTransport {
+        override getToolCallTimeout(): null {
+          return null;
+        }
+      }
+
+      const ctx = createCtx({
+        transport: new DisabledToolTimeoutTransport(defaultTransport.agentName),
+      });
+
+      handleToolCall(
+        {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call_no_timeout',
+          kind: 'execute',
+          title: 'Run long task',
+          content: { command: ['/bin/sh', '-lc', 'sleep 10'] },
+        },
+        ctx,
+      );
+
+      expect(ctx.activeToolCalls.has('call_no_timeout')).toBe(true);
+      expect(ctx.toolCallTimeouts.has('call_no_timeout')).toBe(false);
+
+      vi.advanceTimersByTime(120_001);
+      const timedOut = ctx.emitted.filter(
+        (m) => m.type === 'tool-result' && m.callId === 'call_no_timeout' && m.result?.status === 'timeout',
+      );
+      expect(timedOut).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('infers tool kind/name for terminal tool_call_update events when kind/start are missing (Gemini)', () => {
     vi.useFakeTimers();
@@ -536,7 +591,7 @@ describe('sessionUpdateHandlers tool call tracking', () => {
   });
 
   it('infers tool name from title when ACP tool kind and id are opaque (Kimi)', () => {
-    const ctx = createCtx({ transport: new KimiTransport() });
+    const ctx = createCtx({ transport: createKimiAcpTransport() });
 
     const update: SessionUpdate = {
       sessionUpdate: 'tool_call',
@@ -729,7 +784,7 @@ describe('sessionUpdateHandlers tool call tracking', () => {
   });
 
   it('keeps opaque Codex custom MCP tools out of change_title when ACP only provides a provider tool title wrapper', () => {
-    const ctx = createCtx({ transport: new CodexAcpTransport(180_000, 1_000) });
+    const ctx = createCtx({ transport: createCodexAcpTransport() });
 
     handleToolCall(
       {

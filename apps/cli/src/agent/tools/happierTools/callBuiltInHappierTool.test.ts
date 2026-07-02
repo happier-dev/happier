@@ -14,7 +14,7 @@ function createMockResolvedContributionRegistry(params?: Readonly<{
   actionsById: Map<never, never>;
   resourcesById: Map<never, never>;
   uiDescriptorsById: Map<never, never>;
-  runtimeCoreHooksByBackendId: Map<never, never>;
+  surfaceHandlersByBackendId: Map<never, never>;
   catalogEntriesById: {};
   providerDefinitionsById: Map<never, never>;
   backendDefinitionsById: Map<never, never>;
@@ -32,7 +32,7 @@ function createMockResolvedContributionRegistry(params?: Readonly<{
     actionsById: new Map<never, never>(),
     resourcesById: new Map<never, never>(),
     uiDescriptorsById: new Map<never, never>(),
-    runtimeCoreHooksByBackendId: new Map<never, never>(),
+    surfaceHandlersByBackendId: new Map<never, never>(),
     catalogEntriesById: {},
     providerDefinitionsById: new Map<never, never>(),
     backendDefinitionsById: new Map<never, never>(),

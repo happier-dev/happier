@@ -201,7 +201,7 @@ export function canonicalizeToolNameV2(opts: {
         const changes = asRecord((record as any).changes);
         if (changes && Object.keys(changes).length > 0) return 'Patch';
         if (hasEdits) return 'MultiEdit';
-        // Some providers (e.g. Auggie/OpenCode ACP) use "Edit" to write a full file's content.
+        // Some ACP providers use "Edit" to write a full file's content.
         if (hasFullFileContent && !hasOldNew) return 'Write';
         return 'Edit';
     }

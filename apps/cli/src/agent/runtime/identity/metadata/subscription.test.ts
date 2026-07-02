@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import type { Metadata } from '@/api/types';
 import type { RuntimeTurnMessageHandler } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { RuntimeEventV1 } from '@happier-dev/protocol';
 
 import { subscribeSessionRuntimePublicationToMetadata } from './subscription';
 
@@ -38,7 +39,7 @@ function createHarness() {
     > => ({ ok: true, version: 1 })),
   };
   const runtime = {
-    subscribeRuntimeMessages: vi.fn((handler: RuntimeTurnMessageHandler) => {
+    subscribeRuntimeEvents: vi.fn((handler: RuntimeTurnMessageHandler) => {
       runtimeHandler = handler;
       return () => {
         if (runtimeHandler === handler) {
@@ -53,7 +54,7 @@ function createHarness() {
     sessionState,
     runtime,
     emit(message: unknown) {
-      runtimeHandler?.(message);
+      runtimeHandler?.(message as RuntimeEventV1);
     },
   };
 }
@@ -191,7 +192,7 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
       providerId: 'codex',
       provider: {
         backendMode: 'appServer',
-        vendorSessionId: 'thread-1',
+        providerSessionId: 'thread-1',
       },
     };
     harness.emit({

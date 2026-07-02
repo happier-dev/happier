@@ -3,7 +3,7 @@ import type { AccountSettings } from '@happier-dev/protocol';
 import { emitReadyIfIdle } from '@/agent/runtime/emitReadyIfIdle';
 import type { TurnAssistantTextSnapshotStore } from '@/api/session/turns/assistantTextSnapshot';
 
-import { getSessionNotificationTitle } from './readyNotificationContext';
+import { getSessionNotificationTitle } from './sessionNotificationContext';
 import { resolveReadyNotificationAssistantText } from './resolveReadyNotificationAssistantText';
 import { sendReadyWithPushNotification } from './sendReadyWithPushNotification';
 

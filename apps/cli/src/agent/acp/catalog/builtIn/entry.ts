@@ -9,10 +9,14 @@ import { loadBuiltInRuntimeOwners } from './runtimeOwners';
 type BuiltInAcpEntryOverrides = Readonly<{
   getExternalSessionProviderOps?: AgentCatalogEntry['getExternalSessionProviderOps'];
   getConnectedServicesMaterializer?: AgentCatalogEntry['getConnectedServicesMaterializer'];
+  getConnectedServiceRuntimeAuthAdapter?: AgentCatalogEntry['getConnectedServiceRuntimeAuthAdapter'];
+  getConnectedServiceStateSharingDescriptor?: AgentCatalogEntry['getConnectedServiceStateSharingDescriptor'];
+  resolveConnectedServiceSwitchContinuity?: AgentCatalogEntry['resolveConnectedServiceSwitchContinuity'];
+  verifyResumeReachable?: AgentCatalogEntry['verifyResumeReachable'];
   getProviderAttachOps?: AgentCatalogEntry['getProviderAttachOps'];
   getTerminalRuntimeOps?: AgentCatalogEntry['getTerminalRuntimeOps'];
-  getReplayForkContinuationHandler?: AgentCatalogEntry['getReplayForkContinuationHandler'];
-  getSessionHandoffProviderOps?: AgentCatalogEntry['getSessionHandoffProviderOps'];
+  getForkSurface?: AgentCatalogEntry['getForkSurface'];
+  getHandoffSurface?: AgentCatalogEntry['getHandoffSurface'];
   normalizeSessionControlPermissionMode?: AgentCatalogEntry['normalizeSessionControlPermissionMode'];
   getPreflightSessionControlsProbeAdapter?: AgentCatalogEntry['getPreflightSessionControlsProbeAdapter'];
 }>;
@@ -57,15 +61,27 @@ export function createBuiltInEntry(
     ...(overrides.getConnectedServicesMaterializer
       ? { getConnectedServicesMaterializer: overrides.getConnectedServicesMaterializer }
       : {}),
+    ...(overrides.getConnectedServiceRuntimeAuthAdapter
+      ? { getConnectedServiceRuntimeAuthAdapter: overrides.getConnectedServiceRuntimeAuthAdapter }
+      : {}),
+    ...(overrides.getConnectedServiceStateSharingDescriptor
+      ? { getConnectedServiceStateSharingDescriptor: overrides.getConnectedServiceStateSharingDescriptor }
+      : {}),
+    ...(overrides.resolveConnectedServiceSwitchContinuity
+      ? { resolveConnectedServiceSwitchContinuity: overrides.resolveConnectedServiceSwitchContinuity }
+      : {}),
+    ...(overrides.verifyResumeReachable
+      ? { verifyResumeReachable: overrides.verifyResumeReachable }
+      : {}),
     ...(overrides.getProviderAttachOps ? { getProviderAttachOps: overrides.getProviderAttachOps } : {}),
     ...(overrides.getTerminalRuntimeOps
       ? { getTerminalRuntimeOps: overrides.getTerminalRuntimeOps }
       : {}),
-    ...(overrides.getReplayForkContinuationHandler
-      ? { getReplayForkContinuationHandler: overrides.getReplayForkContinuationHandler }
+    ...(overrides.getForkSurface
+      ? { getForkSurface: overrides.getForkSurface }
       : {}),
-    ...(overrides.getSessionHandoffProviderOps
-      ? { getSessionHandoffProviderOps: overrides.getSessionHandoffProviderOps }
+    ...(overrides.getHandoffSurface
+      ? { getHandoffSurface: overrides.getHandoffSurface }
       : {}),
     ...(overrides.normalizeSessionControlPermissionMode
       ? { normalizeSessionControlPermissionMode: overrides.normalizeSessionControlPermissionMode }

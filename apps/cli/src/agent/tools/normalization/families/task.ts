@@ -47,7 +47,7 @@ function coerceTextFromContentBlocks(content: unknown): string | null {
 }
 
 function stripTaskMetadataBlocks(text: string): string {
-    // OpenCode Task tool often embeds metadata in a pseudo-XML block:
+    // ACP task tools can embed display metadata in a pseudo-XML block:
     // <task_metadata>\n...\n</task_metadata>
     // Strip this for display output.
     return text.replace(/<task_metadata>[\s\S]*?<\/task_metadata>/g, '').trim();
@@ -72,7 +72,7 @@ export function normalizeTaskResult(rawOutput: unknown): UnknownRecord {
     const record = asRecord(rawOutput);
     if (!record) return { value: rawOutput };
 
-    // OpenCode Task results commonly return { output: string, metadata: {...} }.
+    // ACP task results commonly return { output: string, metadata: {...} }.
     // Normalize into Task.content (while keeping the original output field for backward compatibility).
     if (typeof (record as any).output === 'string') {
         const content = stripTaskMetadataBlocks(String((record as any).output));

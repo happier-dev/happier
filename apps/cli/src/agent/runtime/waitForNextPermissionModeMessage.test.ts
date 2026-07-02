@@ -1,24 +1,109 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { MaterializeNextPendingResult } from '@/api/session/sessionClientPort';
 import type { PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createDeferred } from '@/testkit/async/deferred';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { writeSessionPendingQueueHoldV1ToMetadata } from '@happier-dev/protocol';
 
 import { waitForNextPermissionModeMessage } from './waitForNextPermissionModeMessage';
 
 type QueueMode = { permissionMode: PermissionMode };
-type PermissionModeSessionFixture = Pick<ApiSessionClient, 'popPendingMessage' | 'waitForMetadataUpdate'>;
+type PermissionModeSessionFixture = Pick<ApiSessionClient, 'popPendingMessage' | 'waitForMetadataUpdate'> & {
+  materializeNextPendingMessageSafely?: (opts?: {
+    reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
+  }) => Promise<MaterializeNextPendingResult>;
+  getMetadataSnapshot?: () => unknown;
+};
 
 function createQueue(): MessageQueue2<QueueMode> {
   return new MessageQueue2<QueueMode>(() => 'hash');
 }
 
 function asSessionClient(session: PermissionModeSessionFixture): ApiSessionClient {
-  return session as unknown as ApiSessionClient;
+  return {
+    getMetadataSnapshot: () => null,
+    ...session,
+  } as unknown as ApiSessionClient;
 }
 
 describe('waitForNextPermissionModeMessage', () => {
+  it('rejects when safe materialization reports terminal supervisor auth failure', async () => {
+    const queue = createQueue();
+    const popPendingMessage = vi.fn(async () => true);
+    const materializeNextPendingMessageSafely = vi.fn(async () => ({
+      type: 'deferred',
+      reason: 'supervisor_auth_failed',
+    }) satisfies MaterializeNextPendingResult);
+
+    const session: PermissionModeSessionFixture = {
+      popPendingMessage,
+      materializeNextPendingMessageSafely,
+      async waitForMetadataUpdate() {
+        return false;
+      },
+    };
+
+    const result = await Promise.race([
+      waitForNextPermissionModeMessage({
+        messageQueue: queue,
+        abortSignal: new AbortController().signal,
+        session: asSessionClient(session),
+      }).then(
+        () => 'resolved',
+        (error: unknown) => error instanceof Error ? error.message : String(error),
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve('timed-out'), 10)),
+    ]);
+
+    expect(result).toMatch(/auth/i);
+    expect(popPendingMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not materialize pending messages while pending edit hold metadata is active', async () => {
+    const queue = createQueue();
+    const abortController = new AbortController();
+    const waitingForMetadata = createDeferred<void>();
+    const metadataWithHold = writeSessionPendingQueueHoldV1ToMetadata(createTestMetadata(), {
+      holdId: 'hold-1',
+      localId: 'pending-1',
+      updatedAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    });
+    const materializeNextPendingMessageSafely = vi.fn(async () => ({
+      type: 'materialized' as const,
+      localId: 'pending-1',
+      seq: 1,
+      content: null,
+    }));
+    const popPendingMessage = vi.fn(async () => true);
+
+    const resultPromise = waitForNextPermissionModeMessage({
+      messageQueue: queue,
+      abortSignal: abortController.signal,
+      session: asSessionClient({
+        popPendingMessage,
+        materializeNextPendingMessageSafely,
+        getMetadataSnapshot: () => metadataWithHold,
+        async waitForMetadataUpdate(abortSignal?: AbortSignal) {
+          waitingForMetadata.resolve();
+          return await new Promise<boolean>((resolve) => {
+            abortSignal?.addEventListener('abort', () => resolve(false), { once: true });
+          });
+        },
+      }),
+    });
+
+    await waitingForMetadata.promise;
+    expect(materializeNextPendingMessageSafely).not.toHaveBeenCalled();
+    expect(popPendingMessage).not.toHaveBeenCalled();
+
+    abortController.abort();
+    await expect(resultPromise).resolves.toBeNull();
+  });
+
   it('wakes on metadata update and then processes a pending-queue item', async () => {
     const queue = createQueue();
     const metadataUpdate = createDeferred<boolean>();

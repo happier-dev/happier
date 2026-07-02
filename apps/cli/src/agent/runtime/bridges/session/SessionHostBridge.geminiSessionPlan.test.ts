@@ -31,9 +31,11 @@ describe('SessionHostBridge (gemini session plan)', () => {
     });
     resolveBackendExecutionSurfacesMock.mockResolvedValue({
       terminalRuntime: null,
-      externalSessions: null,
+      externalSession: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     });
 
     const createdPlan = {

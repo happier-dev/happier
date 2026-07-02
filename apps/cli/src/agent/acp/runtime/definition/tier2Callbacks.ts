@@ -165,6 +165,7 @@ export function resolveAcpTier2Argv(params: Readonly<{
   definition: AcpRuntimeDefinitionV1;
   baseArgs: readonly string[];
   cwd: string;
+  env: Readonly<Record<string, string>>;
   permissionMode?: string;
 }>): MaybePromise<readonly string[]> {
   const callback = params.definition.callbacks.argvBuilder;
@@ -178,6 +179,7 @@ export function resolveAcpTier2Argv(params: Readonly<{
     invoke: () => callback({
       baseArgs: params.baseArgs,
       cwd: params.cwd,
+      env: params.env,
       ...(params.permissionMode ? { permissionMode: params.permissionMode } : {}),
     }),
   });
@@ -192,6 +194,7 @@ export function resolveAcpTier2Env(params: Readonly<{
   definition: AcpRuntimeDefinitionV1;
   cwd: string;
   env: Readonly<Record<string, string>>;
+  permissionMode?: string;
 }>): MaybePromise<Readonly<Record<string, string>>> {
   const callback = params.definition.callbacks.envBuilder;
   if (!callback) {
@@ -204,6 +207,7 @@ export function resolveAcpTier2Env(params: Readonly<{
     invoke: () => callback({
       cwd: params.cwd,
       env: params.env,
+      ...(params.permissionMode ? { permissionMode: params.permissionMode } : {}),
     }),
   });
   return mapMaybePromise(result, (value) => Object.freeze({

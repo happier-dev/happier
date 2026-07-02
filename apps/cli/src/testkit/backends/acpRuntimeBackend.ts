@@ -10,6 +10,7 @@ type FakeAcpRuntimeBackendOptions = {
     sessionId?: string;
     startSession?: AcpRuntimeBackend['startSession'];
     sendPrompt?: AcpRuntimeBackend['sendPrompt'];
+    compactContext?: AcpRuntimeBackend['compactContext'];
     waitForResponseComplete?: AcpRuntimeBackend['waitForResponseComplete'];
     setSessionMode?: AcpRuntimeBackend['setSessionMode'];
     setSessionModel?: AcpRuntimeBackend['setSessionModel'];
@@ -38,6 +39,13 @@ export function createFakeAcpRuntimeBackend(opts?: FakeAcpRuntimeBackendOptions)
             }
             // noop
         },
+        ...(opts?.compactContext
+            ? {
+                async compactContext(activeSessionId: string, command: string) {
+                    return await opts.compactContext!(activeSessionId, command);
+                },
+            }
+            : {}),
         async waitForResponseComplete(timeoutMs?: number | null) {
             if (opts?.waitForResponseComplete) {
                 return await opts.waitForResponseComplete(timeoutMs);

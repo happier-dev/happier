@@ -55,9 +55,11 @@ describe('createBuiltInEntry', () => {
       },
       executionSurfaces: {
         terminalRuntime: null,
-        externalSessions: null,
+        externalSession: null,
         attach: null,
-        sessionHandoff: null,
+        handoff: null,
+        fork: null,
+        checkpoint: null,
       },
     }));
 
@@ -76,8 +78,8 @@ describe('createBuiltInEntry', () => {
 
   it('forwards the typed runtime-adapter and host-bridge hooks that built-in ACP entries may need', async () => {
     const providerAttachOps = {
-      evaluateEligibility: vi.fn(),
-      runAttach: vi.fn(),
+      evaluateAvailability: vi.fn(),
+      attach: vi.fn(),
     };
     const sessionHandoffProviderOps = {
       exportBundle: vi.fn(),
@@ -90,13 +92,13 @@ describe('createBuiltInEntry', () => {
 
     const entry = createBuiltInEntry('kiro', {
       getProviderAttachOps: async () => providerAttachOps,
-      getSessionHandoffProviderOps: async () => sessionHandoffProviderOps,
+      getHandoffSurface: async () => sessionHandoffProviderOps,
       normalizeSessionControlPermissionMode,
       getPreflightSessionControlsProbeAdapter: async () => preflightSessionControlsProbeAdapter,
     });
 
     await expect(entry.getProviderAttachOps?.()).resolves.toBe(providerAttachOps);
-    await expect(entry.getSessionHandoffProviderOps?.()).resolves.toBe(sessionHandoffProviderOps);
+    await expect(entry.getHandoffSurface?.()).resolves.toBe(sessionHandoffProviderOps);
     expect(entry.normalizeSessionControlPermissionMode?.('safe-yolo')).toBe('safe-yolo:normalized');
     await expect(entry.getPreflightSessionControlsProbeAdapter?.()).resolves.toBe(preflightSessionControlsProbeAdapter);
   });

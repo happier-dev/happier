@@ -5,6 +5,7 @@ import type {
   SessionId,
   StartSessionResult,
 } from '@/agent/core/AgentBackend';
+import type { RuntimeEventV1 } from '@happier-dev/protocol';
 
 import type { RuntimeTurnOperations } from './runtimeTurnOperations';
 
@@ -36,6 +37,13 @@ export function createRuntimeTurnOperationsFromLegacyAgentBackend(backend: Agent
     async sendTurnPrompt(prompt) {
       await backend.sendPrompt(requireRuntimeTurnSessionId(currentSessionId), prompt);
     },
+    ...(typeof backend.compactContext === 'function'
+      ? {
+          async compactContext(command: string) {
+            await backend.compactContext!(requireRuntimeTurnSessionId(currentSessionId), command);
+          },
+        }
+      : {}),
     async steerInFlightTurn(message) {
       if (typeof backend.sendSteerPrompt !== 'function') {
         throw new Error('Runtime turn operation does not support in-flight steering');
@@ -46,10 +54,11 @@ export function createRuntimeTurnOperationsFromLegacyAgentBackend(backend: Agent
       if (typeof backend.waitForResponseComplete !== 'function') return;
       await backend.waitForResponseComplete(opts?.timeoutMs ?? null);
     },
-    subscribeRuntimeMessages(handler) {
-      backend.onMessage(handler);
+    subscribeRuntimeEvents(handler) {
+      const wrapped: AgentMessageHandler = (message) => handler(message as unknown as RuntimeEventV1);
+      backend.onMessage(wrapped);
       return () => {
-        backend.offMessage?.(handler);
+        backend.offMessage?.(wrapped);
       };
     },
     async respondToPermission(requestId, approved) {
@@ -93,6 +102,14 @@ export function createLegacyAgentBackendFromRuntimeTurnOperations(
       operations.beginTurnLifecycle();
       await operations.sendTurnPrompt(prompt);
     },
+    ...(typeof operations.compactContext === 'function'
+      ? {
+          async compactContext(_sessionId: SessionId, command: string) {
+            operations.beginTurnLifecycle();
+            await operations.compactContext!(command);
+          },
+        }
+      : {}),
     async sendSteerPrompt(_sessionId, prompt) {
       await operations.steerInFlightTurn(prompt);
     },
@@ -101,8 +118,8 @@ export function createLegacyAgentBackendFromRuntimeTurnOperations(
     },
     onMessage(handler) {
       if (unsubscribeByHandler.has(handler)) return;
-      const unsubscribe = operations.subscribeRuntimeMessages((message) => {
-        handler(message as AgentMessage);
+      const unsubscribe = operations.subscribeRuntimeEvents((message) => {
+        handler(message as unknown as AgentMessage);
       });
       unsubscribeByHandler.set(handler, unsubscribe);
     },

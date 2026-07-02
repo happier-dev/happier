@@ -2,7 +2,7 @@ import React from 'react';
 
 import {
   getAgentResumeConfig,
-  getProviderCliRuntimeSpec,
+  getAgentCliRuntimeSpec,
   isAgentId,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
@@ -21,12 +21,12 @@ import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { BuiltInAcpTerminalDisplay } from './ui/TerminalDisplay';
 
-function resolveProviderCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
+function resolveAgentCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
   if (isAgentId(agentId)) {
-    return getProviderCliRuntimeSpec(agentId);
+    return getAgentCliRuntimeSpec(agentId);
   }
   if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
-    return legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
+    return legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
   }
   throw new Error(`Unsupported built-in session provider lookup id '${agentId}'`);
 }
@@ -42,7 +42,7 @@ function resolveAgentResumeConfigForLookupId(agentId: CatalogAgentLookupId) {
 }
 
 function normalizeDisplayTitle(agentId: CatalogAgentLookupId): string {
-  const title = resolveProviderCliRuntimeSpecForLookupId(agentId).title.trim();
+  const title = resolveAgentCliRuntimeSpecForLookupId(agentId).title.trim();
   return title.endsWith(' CLI') ? title.slice(0, -4) : title;
 }
 

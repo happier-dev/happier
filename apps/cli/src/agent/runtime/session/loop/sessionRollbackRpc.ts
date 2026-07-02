@@ -7,17 +7,25 @@ import {
   RPC_ERROR_CODES,
   RPC_ERROR_MESSAGES,
   CheckpointCodeRollbackActionRequestSchema,
+  SessionCheckpointRequestV1Schema,
+  SessionRestoreRequestV1Schema,
   type CheckpointCodeRollbackRequest,
   type CheckpointCodeRollbackResult,
+  type SessionCheckpointRequestV1,
+  type SessionCheckpointResultV1,
   SessionRollbackRpcParamsSchema,
   type SessionRollbackRpcParams,
   type SessionRollbackRpcResult,
+  type SessionRestoreRequestV1,
+  type SessionRestoreResultV1,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 export type SessionRollbackRuntimeFacet = Readonly<{
   rollbackConversation: (request: SessionRollbackRpcParams) => Promise<SessionRollbackRpcResult>;
   checkpointCodeRollback?: (request: CheckpointCodeRollbackRequest) => Promise<CheckpointCodeRollbackResult>;
+  sessionCheckpoint?: (request: SessionCheckpointRequestV1) => Promise<SessionCheckpointResultV1>;
+  sessionRestore?: (request: SessionRestoreRequestV1) => Promise<SessionRestoreResultV1>;
 }>;
 
 export function resolveSessionRollbackRuntimeFacet(runtime: unknown): SessionRollbackRuntimeFacet | null {
@@ -30,6 +38,12 @@ export function resolveSessionRollbackRuntimeFacet(runtime: unknown): SessionRol
         rollbackConversation: candidate.rollbackConversation.bind(runtime),
         ...(typeof candidate.checkpointCodeRollback === 'function'
           ? { checkpointCodeRollback: candidate.checkpointCodeRollback.bind(runtime) }
+          : {}),
+        ...(typeof candidate.sessionCheckpoint === 'function'
+          ? { sessionCheckpoint: candidate.sessionCheckpoint.bind(runtime) }
+          : {}),
+        ...(typeof candidate.sessionRestore === 'function'
+          ? { sessionRestore: candidate.sessionRestore.bind(runtime) }
           : {}),
       }
     : null;
@@ -69,6 +83,78 @@ export function registerSessionRollbackRpcHandler(
       } satisfies SessionRollbackRpcResult;
     }
     return dispatched.result as SessionRollbackRpcResult;
+  });
+
+  rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_CHECKPOINT, async (raw: unknown) => {
+    const parsed = SessionCheckpointRequestV1Schema.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        errorCode: 'invalid_request',
+        error: 'invalid_request',
+      } satisfies SessionCheckpointResultV1;
+    }
+    const dispatched = await dispatchActionFromRpc({
+      actionId: 'session.checkpoint',
+      input: parsed.data,
+      executor: createSessionLifecycleRpcActionExecutor({
+        'session.checkpoint': async (request: unknown) => {
+          const runtimeFacet = resolveRuntimeFacet();
+          if (!runtimeFacet?.sessionCheckpoint) {
+            return {
+              ok: false,
+              errorCode: 'checkpoint_source_unavailable',
+              error: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            } satisfies SessionCheckpointResultV1;
+          }
+          return await runtimeFacet.sessionCheckpoint(request as SessionCheckpointRequestV1);
+        },
+      }),
+    });
+    if (!dispatched.ok) {
+      return {
+        ok: false,
+        errorCode: 'checkpoint_failed',
+        error: dispatched.errorCode,
+      } satisfies SessionCheckpointResultV1;
+    }
+    return dispatched.result as SessionCheckpointResultV1;
+  });
+
+  rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_RESTORE, async (raw: unknown) => {
+    const parsed = SessionRestoreRequestV1Schema.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        errorCode: 'invalid_request',
+        error: 'invalid_request',
+      } satisfies SessionRestoreResultV1;
+    }
+    const dispatched = await dispatchActionFromRpc({
+      actionId: 'session.restore',
+      input: parsed.data,
+      executor: createSessionLifecycleRpcActionExecutor({
+        'session.restore': async (request: unknown) => {
+          const runtimeFacet = resolveRuntimeFacet();
+          if (!runtimeFacet?.sessionRestore) {
+            return {
+              ok: false,
+              errorCode: 'restore_target_missing',
+              error: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            } satisfies SessionRestoreResultV1;
+          }
+          return await runtimeFacet.sessionRestore(request as SessionRestoreRequestV1);
+        },
+      }),
+    });
+    if (!dispatched.ok) {
+      return {
+        ok: false,
+        errorCode: 'restore_target_missing',
+        error: dispatched.errorCode,
+      } satisfies SessionRestoreResultV1;
+    }
+    return dispatched.result as SessionRestoreResultV1;
   });
 
   rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK, async (raw: unknown) => {

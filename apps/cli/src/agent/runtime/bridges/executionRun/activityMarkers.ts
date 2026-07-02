@@ -65,12 +65,12 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
     ...(typeof run.summary === 'string' && run.summary.trim().length > 0 ? { summary: run.summary } : {}),
     ...(run.error?.code ? { errorCode: run.error.code } : {}),
     resumeHandle: (() => {
-      const vendorSessionId = readBackendResumableChildSessionId(args.controllers.get(args.runId) ?? null);
-      if (typeof vendorSessionId === 'string' && vendorSessionId.trim().length > 0) {
-        return { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(run.backendTarget), vendorSessionId };
+      const providerSessionId = readBackendResumableChildSessionId(args.controllers.get(args.runId) ?? null);
+      if (typeof providerSessionId === 'string' && providerSessionId.trim().length > 0) {
+        return { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(run.backendTarget), providerSessionId };
       }
       return run.resumeHandle
-        && run.resumeHandle.kind === 'vendor_session.v1'
+        && run.resumeHandle.kind === 'provider_session.v1'
         && areExecutionRunBackendTargetsEqual(run.resumeHandle.backendTarget, run.backendTarget)
         ? run.resumeHandle
         : null;

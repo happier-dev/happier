@@ -199,7 +199,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     eventId: BridgeLifecycleHookEventIdV1;
     scope?: HookScopeV1;
     happySessionId?: string;
-    vendorSessionId?: string;
+    providerSessionId?: string;
     providerId?: string;
     backendId?: string;
     backendTarget?: string;
@@ -217,7 +217,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
         eventId: params.eventId,
         ...(params.scope ? { scope: params.scope } : {}),
         ...(params.happySessionId ? { happySessionId: params.happySessionId } : {}),
-        ...(params.vendorSessionId ? { vendorSessionId: params.vendorSessionId } : {}),
+        ...(params.providerSessionId ? { providerSessionId: params.providerSessionId } : {}),
         ...(params.providerId ? { providerId: params.providerId } : {}),
         ...(params.backendId ? { backendId: params.backendId } : {}),
         ...(params.backendTarget ? { backendTarget: params.backendTarget } : {}),

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
+
 import type { Metadata } from '@/api/types';
 import { createSessionConfigOptionOverrideSynchronizer } from './sessionConfigOptionOverrideSync';
 
@@ -115,6 +117,72 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
     expect(setSessionConfigOption).toHaveBeenNthCalledWith(2, 'telemetry', true);
+  });
+
+  it('keeps an override pending (re-attempts) when the runtime reports a non-applied outcome', async () => {
+    // gap 27: a plugin that swallows/defers the override (e.g. unified terminal already running)
+    // returns a non-applied outcome. The synchronizer must NOT mark it applied, so a later sync
+    // re-attempts it at the next safe boundary instead of swallowing it forever.
+    const setSessionConfigOption = vi
+      .fn<(_configId: string, _value: any) => Promise<RuntimeConfigUpdateOutcomeV1 | void>>()
+      .mockResolvedValue({ status: 'requires_interactive_control' });
+
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () =>
+          ({
+            sessionConfigOptionOverridesV1: {
+              v: 1,
+              updatedAt: 40,
+              overrides: {
+                reasoning_effort: { updatedAt: 40, value: 'high' },
+              },
+            },
+          }) as any,
+      },
+      runtime: { setSessionConfigOption },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(1);
+
+    sync.syncFromMetadata();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
+    expect(setSessionConfigOption).toHaveBeenLastCalledWith('reasoning_effort', 'high');
+  });
+
+  it('marks an override applied (no re-attempt) when the runtime reports an applied outcome', async () => {
+    const setSessionConfigOption = vi
+      .fn<(_configId: string, _value: any) => Promise<RuntimeConfigUpdateOutcomeV1 | void>>()
+      .mockResolvedValue({ status: 'applied' });
+
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () =>
+          ({
+            sessionConfigOptionOverridesV1: {
+              v: 1,
+              updatedAt: 41,
+              overrides: {
+                reasoning_effort: { updatedAt: 41, value: 'medium' },
+              },
+            },
+          }) as any,
+      },
+      runtime: { setSessionConfigOption },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(1);
+
+    sync.syncFromMetadata();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(1);
   });
 
   it('applies the newest config option value across canonical and legacy aliases', async () => {

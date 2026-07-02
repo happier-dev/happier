@@ -234,7 +234,7 @@ export class MessageQueue2<Mode, Message = string> {
       if (abortSignal) {
         abortHandler = () => {
           const reason = (abortSignal as any)?.reason;
-          if (reason !== 'waitForMessagesOrPending') {
+          if (reason !== 'sessionProviderInputConsumer' && reason !== 'sessionProviderInputConsumer-meta-false') {
             const now = Date.now();
             if (now - this.lastAbortLogAt > 2000) {
               this.lastAbortLogAt = now;

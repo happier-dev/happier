@@ -5,13 +5,18 @@ import type {
   AcpCapabilityFlagsV1,
   AcpMcpInputPolicyV1,
   AcpMessageMetaHooksV1,
+  AcpPermissionOptionSelectionV1,
   AcpPermissionModeArgvSpecV1,
+  AcpStderrRulesV1,
   AcpTier2ArgvBuilderV1,
   AcpTier2EnvBuilderV1,
   AcpTier2PermissionDecisionV1,
   AcpTier2PreflightV1,
   AcpTimeoutsV1,
+  AcpToolNameInferenceV1,
+  AcpToolNameResolverV1,
   AcpTransportSpecV1,
+  ExecRuntimeServiceV1,
 } from '@happier-dev/plugin-sdk';
 
 export type AcpRuntimeDefinitionSourceV1 =
@@ -57,6 +62,9 @@ export type AcpRuntimeDefinitionV1 = Readonly<{
   transportLifecycle?: AcpBackendSpecV1['transportLifecycle'];
   permissionModeArgv?: AcpPermissionModeArgvSpecV1;
   sessionIdHeaderName?: string;
+  toolNameInference?: AcpToolNameInferenceV1;
+  stderrRules?: AcpStderrRulesV1;
+  permissionOptionSelection?: AcpPermissionOptionSelectionV1;
   bootstrap?: AcpBootstrapV1;
   messageMeta?: AcpMessageMetaHooksV1;
   mcp: AcpMcpInputPolicyV1;
@@ -65,6 +73,7 @@ export type AcpRuntimeDefinitionV1 = Readonly<{
     envBuilder?: AcpTier2EnvBuilderV1;
     preflight?: AcpTier2PreflightV1;
     permissionDecision?: AcpTier2PermissionDecisionV1;
+    toolNameResolver?: AcpToolNameResolverV1;
   }>;
 }>;
 
@@ -85,8 +94,19 @@ export type AcpRuntimeDefinitionInitV1 = Readonly<{
   transportLifecycle?: AcpBackendSpecV1['transportLifecycle'];
   permissionModeArgv?: AcpPermissionModeArgvSpecV1;
   sessionIdHeaderName?: string;
+  toolNameInference?: AcpToolNameInferenceV1;
+  stderrRules?: AcpStderrRulesV1;
+  permissionOptionSelection?: AcpPermissionOptionSelectionV1;
   bootstrap?: AcpBootstrapV1;
   messageMeta?: AcpMessageMetaHooksV1;
   mcp?: AcpMcpInputPolicyV1;
   callbacks?: AcpRuntimeDefinitionV1['callbacks'];
+}>;
+
+export type AcpRuntimeDefinitionBridgeV1 = Readonly<{
+  exec: Pick<ExecRuntimeServiceV1, 'systemTools'>;
+  createDefinition(params: Readonly<{
+    cwd: string;
+    env?: Readonly<Record<string, string | undefined>>;
+  }>): AcpRuntimeDefinitionV1;
 }>;

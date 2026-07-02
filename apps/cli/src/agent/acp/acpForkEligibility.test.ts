@@ -11,11 +11,20 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
       delivery: 'shell_bridge',
     },
   } as const;
+  const nativeMcpGeminiAgent = {
+    ...actual.AGENTS_CORE.gemini,
+    tools: {
+      ...actual.AGENTS_CORE.gemini.tools,
+      delivery: 'native_mcp',
+      support: 'supported',
+    },
+  } as const;
 
   return {
     ...actual,
     AGENTS_CORE: {
       ...actual.AGENTS_CORE,
+      gemini: nativeMcpGeminiAgent,
       shellBridgeAcp: shellBridgeAcpAgent,
     } as unknown as typeof actual.AGENTS_CORE,
   };
@@ -33,6 +42,15 @@ describe('isAcpForkEligibleForProvider', () => {
     ).toBe(true);
   });
 
+  it('keeps Gemini ACP fork eligible when its tool delivery is native MCP', () => {
+    expect(
+      isAcpForkEligibleForProvider({
+        providerId: 'gemini',
+        metadata: {},
+      }),
+    ).toBe(true);
+  });
+
   it('treats canonical codex runtime metadata as ACP eligibility for codex', () => {
     expect(
       isAcpForkEligibleForProvider({
@@ -41,7 +59,7 @@ describe('isAcpForkEligibleForProvider', () => {
           agentRuntimeDescriptorV1: {
             v: 1,
             providerId: 'codex',
-            provider: { backendMode: 'acp', vendorSessionId: 'codex_parent' },
+            provider: { backendMode: 'acp', providerSessionId: 'codex_parent' },
           },
           codexSessionId: 'codex_parent',
         },
@@ -101,12 +119,12 @@ describe('isAcpForkEligibleForProvider', () => {
           runtimeDescriptorV1: {
             v: 1,
             providerId: 'codex',
-            provider: { backendMode: 'appServer', vendorSessionId: 'codex_parent' },
+            provider: { backendMode: 'appServer', providerSessionId: 'codex_parent' },
           },
           agentRuntimeDescriptorV1: {
             v: 1,
             providerId: 'codex',
-            provider: { backendMode: 'acp', vendorSessionId: 'codex_parent_legacy' },
+            provider: { backendMode: 'acp', providerSessionId: 'codex_parent_legacy' },
           },
           codexSessionId: 'codex_parent',
         },
@@ -135,7 +153,7 @@ describe('isAcpForkEligibleForProvider', () => {
           agentRuntimeDescriptorV1: {
             v: 1,
             providerId: 'opencode',
-            provider: { vendorSessionId: 'opencode_parent' },
+            provider: { providerSessionId: 'opencode_parent' },
           },
           opencodeBackendMode: 'server',
         },
@@ -163,5 +181,48 @@ describe('isAcpForkEligibleForProvider', () => {
         },
       }),
     ).toBe(true);
+  });
+
+  it('treats provider-keyed legacy runtime descriptors as ACP eligibility for the matching provider', () => {
+    expect(
+      isAcpForkEligibleForProvider({
+        providerId: 'opencode',
+        metadata: {
+          opencodeRuntimeDescriptorV1: {
+            v: 1,
+            backendMode: 'acp',
+          },
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('treats provider-keyed linked external-session metadata as ACP eligibility for the matching provider', () => {
+    expect(
+      isAcpForkEligibleForProvider({
+        providerId: 'opencode',
+        metadata: {
+          externalSessionV1: {
+            v: 1,
+            providerId: 'opencode',
+            opencodeBackendMode: 'acp',
+          },
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('does not treat provider-specific legacy mode aliases as generic ACP eligibility', () => {
+    expect(
+      isAcpForkEligibleForProvider({
+        providerId: 'opencode',
+        metadata: {
+          opencodeRuntimeDescriptorV1: {
+            v: 1,
+            backendMode: 'mcp_resume',
+          },
+        },
+      }),
+    ).toBe(false);
   });
 });

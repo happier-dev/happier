@@ -1,4 +1,5 @@
 import { decodeBase64 } from '@/api/encryption';
+import type { AgentState, Metadata } from '@/api/types';
 import { assertSessionAttachFilePathWithinBaseDir, resolveSessionAttachBaseDir } from '@/agent/runtime/sessionAttachPaths';
 import { SessionAttachPayloadSchema } from '@/agent/runtime/sessionAttachPayload';
 import { configuration } from '@/configuration';
@@ -7,12 +8,19 @@ import { lstat, readFile, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 export type SessionAttachSecret =
-  | Readonly<{ encryptionMode: 'plain'; lastObservedMessageSeq?: number }>
-  | Readonly<{ encryptionMode: 'e2ee'; encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey'; lastObservedMessageSeq?: number }>;
+  | Readonly<{ encryptionMode: 'plain'; lastObservedMessageSeq?: number; initialTranscriptAfterSeq?: number; snapshot?: SessionAttachSnapshot }>
+  | Readonly<{ encryptionMode: 'e2ee'; encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey'; lastObservedMessageSeq?: number; initialTranscriptAfterSeq?: number; snapshot?: SessionAttachSnapshot }>;
 
-function readLastObservedMessageSeq(payload: unknown): number | undefined {
-  if (!payload || typeof payload !== 'object' || !('lastObservedMessageSeq' in payload)) return undefined;
-  const value = payload.lastObservedMessageSeq;
+export type SessionAttachSnapshot = Readonly<{
+  metadata: Metadata;
+  metadataVersion: number;
+  agentState: AgentState | null;
+  agentStateVersion: number;
+}>;
+
+function readNonNegativeIntegerProperty(payload: unknown, key: string): number | undefined {
+  if (!payload || typeof payload !== 'object' || !(key in payload)) return undefined;
+  const value = (payload as Record<string, unknown>)[key];
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
@@ -48,11 +56,15 @@ export async function readSessionAttachFromEnv(): Promise<SessionAttachSecret | 
     }
 
     const payload = parsed.data;
-    const lastObservedMessageSeq = readLastObservedMessageSeq(payload);
+    const lastObservedMessageSeq = readNonNegativeIntegerProperty(payload, 'lastObservedMessageSeq');
+    const initialTranscriptAfterSeq = readNonNegativeIntegerProperty(payload, 'initialTranscriptAfterSeq');
+    const snapshot = 'snapshot' in payload ? payload.snapshot : undefined;
     if ('encryptionMode' in payload && payload.encryptionMode === 'plain') {
       return {
         encryptionMode: 'plain',
         ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
+        ...(initialTranscriptAfterSeq !== undefined ? { initialTranscriptAfterSeq } : {}),
+        ...(snapshot ? { snapshot: snapshot as SessionAttachSnapshot } : {}),
       };
     }
 
@@ -67,6 +79,8 @@ export async function readSessionAttachFromEnv(): Promise<SessionAttachSecret | 
       encryptionKey: key,
       encryptionVariant: payload.encryptionVariant,
       ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
+      ...(initialTranscriptAfterSeq !== undefined ? { initialTranscriptAfterSeq } : {}),
+      ...(snapshot ? { snapshot: snapshot as SessionAttachSnapshot } : {}),
     };
   } finally {
     // Best-effort cleanup to keep the key short-lived on disk.

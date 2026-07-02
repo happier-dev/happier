@@ -48,6 +48,12 @@ export interface CreateAcpBackendOptions {
 
   /** Optional transport handler for agent-specific behavior */
   transportHandler?: TransportHandler;
+
+  /** Optional ACP auth method to invoke after initialize. */
+  authMethodId?: string;
+
+  /** Optional ACP authenticate metadata forwarded as `_meta`. */
+  authMeta?: Record<string, unknown>;
 }
 
 /**
@@ -85,6 +91,8 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     permissionHandler: options.permissionHandler,
     ...(typeof options.fsEnabled === 'boolean' ? { fsEnabled: options.fsEnabled } : {}),
     transportHandler: options.transportHandler ?? new DefaultTransport(options.agentName),
+    ...(options.authMethodId ? { authMethodId: options.authMethodId } : {}),
+    ...(options.authMeta ? { authMeta: options.authMeta } : {}),
   };
 
   return new AcpBackend(backendOptions);

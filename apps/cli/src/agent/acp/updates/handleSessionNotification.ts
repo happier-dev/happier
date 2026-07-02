@@ -118,39 +118,6 @@ export function handleAcpSessionNotification(params: Readonly<{
     params.onResponseTrafficObserved();
   }
 
-  const isGeminiAcpDebugEnabled = (() => {
-    const flag = process.env.HAPPIER_STACK_GEMINI_ACP_DEBUG;
-    return flag === '1' || flag === 'true';
-  })();
-
-  const sanitizeForLogs = (value: unknown, depth = 0): unknown => {
-    if (depth > 4) return '[truncated depth]';
-    if (typeof value === 'string') {
-      const max = 400;
-      if (value.length <= max) return value;
-      return `${value.slice(0, max)}… [truncated ${value.length - max} chars]`;
-    }
-    if (Array.isArray(value)) {
-      if (value.length > 50) {
-        return [...value.slice(0, 50).map((entry) => sanitizeForLogs(entry, depth + 1)), `… [truncated ${value.length - 50} items]`];
-      }
-      return value.map((entry) => sanitizeForLogs(entry, depth + 1));
-    }
-    if (value && typeof value === 'object') {
-      const obj = value as Record<string, unknown>;
-      const out: Record<string, unknown> = {};
-      for (const [key, entry] of Object.entries(obj)) {
-        if (/(token|secret|authorization|cookie|api[_-]?key|password)/i.test(key)) {
-          out[key] = '[redacted]';
-          continue;
-        }
-        out[key] = sanitizeForLogs(entry, depth + 1);
-      }
-      return out;
-    }
-    return value;
-  };
-
   const handleOneUpdate = (update: SessionUpdate): void => {
     const sessionUpdateType = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
     params.sessionUpdateShapeLogger?.log?.(
@@ -195,13 +162,12 @@ export function handleAcpSessionNotification(params: Readonly<{
     }
 
     if (
-      isGeminiAcpDebugEnabled &&
-      params.transport.agentName === 'gemini' &&
       (sessionUpdateType === 'tool_call_update' || sessionUpdateType === 'tool_call') &&
       (update.status === 'completed' || update.status === 'failed' || update.status === 'cancelled')
     ) {
-      logger.debug('[AcpBackend] [GeminiACP] Terminal tool update keys:', Object.keys(update));
-      logger.debug('[AcpBackend] [GeminiACP] Terminal tool update payload:', JSON.stringify(sanitizeForLogs(update), null, 2));
+      params.transport.logTerminalToolUpdate?.(update, {
+        sessionUpdateType,
+      });
     }
 
     const ctx = params.createHandlerContext();

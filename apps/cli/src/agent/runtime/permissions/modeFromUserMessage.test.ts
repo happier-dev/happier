@@ -17,6 +17,7 @@ describe('resolvePermissionModeForQueueingUserMessage', () => {
     expect(result).toEqual({
       currentPermissionMode: 'safe-yolo',
       queuePermissionMode: 'safe-yolo',
+      didChange: false,
     });
     expect(updateMetadata).not.toHaveBeenCalled();
   });
@@ -37,6 +38,7 @@ describe('resolvePermissionModeForQueueingUserMessage', () => {
     expect(result).toEqual({
       currentPermissionMode: 'safe-yolo',
       queuePermissionMode: 'safe-yolo',
+      didChange: true,
     });
     expect(metadata.permissionMode).toBe('safe-yolo');
     expect(metadata.permissionModeUpdatedAt).toBe(42);
@@ -55,6 +57,25 @@ describe('resolvePermissionModeForQueueingUserMessage', () => {
     expect(result).toEqual({
       currentPermissionMode: undefined,
       queuePermissionMode: 'default',
+      didChange: false,
+    });
+    expect(updateMetadata).not.toHaveBeenCalled();
+  });
+
+  it('reports no change for an alias respelling of the current mode (ported S-6)', () => {
+    const updateMetadata = vi.fn<(updater: (current: Metadata) => Metadata) => void>();
+
+    const result = resolvePermissionModeForQueueingUserMessage({
+      currentPermissionMode: 'acceptEdits',
+      messagePermissionModeRaw: 'safe-yolo',
+      updateMetadata,
+      nowMs: () => 7,
+    });
+
+    expect(result).toEqual({
+      currentPermissionMode: 'safe-yolo',
+      queuePermissionMode: 'safe-yolo',
+      didChange: false,
     });
     expect(updateMetadata).not.toHaveBeenCalled();
   });

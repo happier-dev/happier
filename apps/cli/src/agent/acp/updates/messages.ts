@@ -111,9 +111,8 @@ export function handleAgentMessageChunk(
     if (mediaHandled) emitSessionMediaExtractionResult(mediaResult, ctx);
     return { handled: mediaHandled };
   }
-  // Some ACP providers emit whitespace-only chunks (often "\n") as keepalives.
-  // Dropping the text avoids spammy blank lines, but media in the same ACP content still belongs to the transcript row.
-  if (!text.trim()) {
+  // Preserve media-only transcript rows without treating their whitespace label as visible text.
+  if (!text.trim() && mediaHandled) {
     if (mediaHandled) emitSessionMediaExtractionResult(mediaResult, ctx);
     return { handled: true };
   }
@@ -165,6 +164,8 @@ export function handleAgentThoughtChunk(
     name: 'thinking',
     payload: { text },
   });
+
+  refreshMessageIdleTimeout(ctx);
 
   return { handled: true };
 }

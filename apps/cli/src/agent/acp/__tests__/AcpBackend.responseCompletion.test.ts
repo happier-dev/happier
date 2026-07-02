@@ -592,51 +592,466 @@ function writeFakeAcpToolPhasesWithLateUpdatesAgentScript(params: {
   return scriptPath;
 }
 
+async function withEnvVar<T>(key: string, value: string, run: () => Promise<T>): Promise<T> {
+  const previous = process.env[key];
+  process.env[key] = value;
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = previous;
+    }
+  }
+}
+
+function writeFakeAcpThoughtThenPromptStopAgentScript(params: {
+  dir: string;
+  stopReason?: string;
+  promptResponseDelayMs?: number;
+  sendLateThoughtAfterResponseMs?: number;
+}): string {
+  const scriptPath = join(params.dir, 'fake-acp-thought-stop-agent.mjs');
+  const stopReason = params.stopReason ?? 'end_turn';
+  const promptResponseDelayMs = Number.isFinite(params.promptResponseDelayMs)
+    ? Math.max(0, Math.trunc(params.promptResponseDelayMs ?? 0))
+    : 50;
+  const sendLateThoughtAfterResponseMs = Number.isFinite(params.sendLateThoughtAfterResponseMs)
+    ? Math.max(0, Math.trunc(params.sendLateThoughtAfterResponseMs ?? 0))
+    : null;
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          send({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'test-session',
+              update: {
+                sessionUpdate: 'agent_thought_chunk',
+                content: { type: 'text', text: 'thinking before final response' },
+              },
+            },
+          });
+          setTimeout(() => {
+            ok(id, { stopReason: ${JSON.stringify(stopReason)} });
+            const lateDelay = ${sendLateThoughtAfterResponseMs == null ? 'null' : JSON.stringify(sendLateThoughtAfterResponseMs)};
+            if (lateDelay !== null) {
+              setTimeout(() => {
+                send({
+                  jsonrpc: '2.0',
+                  method: 'session/update',
+                  params: {
+                    sessionId: 'test-session',
+                    update: {
+                      sessionUpdate: 'agent_thought_chunk',
+                      content: { type: 'text', text: 'late stale thought' },
+                    },
+                  },
+                });
+              }, lateDelay);
+            }
+          }, ${promptResponseDelayMs});
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
+function writeFakeAcpEndlessMessageChunksAgentScript(params: {
+  dir: string;
+  chunkIntervalMs: number;
+}): string {
+  const scriptPath = join(params.dir, 'fake-acp-endless-chunks-agent.mjs');
+  const chunkIntervalMs = Number.isFinite(params.chunkIntervalMs) ? Math.max(1, Math.trunc(params.chunkIntervalMs)) : 1;
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/cancel') {
+          ok(id, {});
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          let i = 0;
+          setInterval(() => {
+            i += 1;
+            send({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: 'test-session',
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  content: { type: 'text', text: 'chunk_' + i },
+                },
+              },
+            });
+          }, ${chunkIntervalMs});
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
+function writeFakeAcpSilentAfterInitialUpdateAgentScript(params: { dir: string }): string {
+  const scriptPath = join(params.dir, 'fake-acp-silent-after-update-agent.mjs');
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          ok(id, {});
+          send({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'test-session',
+              update: {
+                sessionUpdate: 'available_commands_update',
+                availableCommands: [],
+              },
+            },
+          });
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
+function writeFakeAcpPendingToolThenSecondPromptAgentScript(params: {
+  dir: string;
+  lateStaleUpdateDelayMs: number;
+  secondPromptAckDelayMs?: number;
+  secondPromptOutputDelayMs?: number;
+}): string {
+  const scriptPath = join(params.dir, 'fake-acp-pending-tool-then-second-prompt-agent.mjs');
+  const lateStaleUpdateDelayMs = Number.isFinite(params.lateStaleUpdateDelayMs)
+    ? Math.max(1, Math.trunc(params.lateStaleUpdateDelayMs))
+    : 75;
+  const secondPromptAckDelayMs = Number.isFinite(params.secondPromptAckDelayMs)
+    ? Math.max(0, Math.trunc(params.secondPromptAckDelayMs ?? 0))
+    : 0;
+  const secondPromptOutputDelayMs = Number.isFinite(params.secondPromptOutputDelayMs)
+    ? Math.max(1, Math.trunc(params.secondPromptOutputDelayMs ?? 0))
+    : 5;
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+    let promptCount = 0;
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    function sendLateStaleUpdates() {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'test-session',
+          update: {
+            sessionUpdate: 'agent_thought_chunk',
+            content: { type: 'text', text: 'late stale thinking from first turn' },
+          },
+        },
+      });
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'test-session',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'late stale output from first turn' },
+          },
+        },
+      });
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'test-session',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'stale_tool_call_1',
+            status: 'completed',
+            kind: 'execute',
+            title: 'Shell: sleep 999',
+            content: [
+              { type: 'content', content: { type: 'text', text: 'late stale tool output from first turn' } },
+            ],
+          },
+        },
+      });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/cancel') {
+          ok(id, {});
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          promptCount += 1;
+          if (promptCount === 1) {
+            ok(id, {});
+            send({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: 'test-session',
+                update: {
+                  sessionUpdate: 'tool_call_update',
+                  toolCallId: 'stale_tool_call_1',
+                  status: 'pending',
+                  kind: 'execute',
+                  title: 'Shell: sleep 999',
+                  rawInput: { command: ['sleep', '999'] },
+                },
+            },
+          });
+          send({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'test-session',
+              update: {
+                sessionUpdate: 'tool_call_update',
+                toolCallId: 'stale_tool_call_1',
+                status: 'in_progress',
+                kind: 'execute',
+                title: 'Shell: sleep 999',
+                rawInput: { command: ['sleep', '999'] },
+              },
+            },
+          });
+          setTimeout(sendLateStaleUpdates, ${lateStaleUpdateDelayMs});
+            continue;
+          }
+
+          setTimeout(() => ok(id, {}), ${secondPromptAckDelayMs});
+          setTimeout(() => {
+            send({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: 'test-session',
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  content: { type: 'text', text: 'second turn output' },
+                },
+              },
+            });
+          }, ${secondPromptOutputDelayMs});
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
 describe('AcpBackend.waitForResponseComplete', () => {
   it('does not apply a default timeout when timeoutMs is omitted', async () => {
     vi.useFakeTimers();
 
-    await withTempDir('happier-acp-no-default-timeout-', async (dir) => {
-      const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
-      let backendForCleanup: AcpBackend | undefined;
-      let waiting: Promise<void> | null = null;
+    await withEnvVar('HAPPIER_ACP_TURN_INACTIVITY_TIMEOUT_MS', '300000', async () => {
+      await withTempDir('happier-acp-no-default-timeout-', async (dir) => {
+        const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
+        let backendForCleanup: AcpBackend | undefined;
+        let waiting: Promise<void> | null = null;
 
-      try {
-        const backend = new AcpBackend({
-          agentName: 'test',
-          cwd: dir,
-          command: process.execPath,
-          args: [scriptPath],
-          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
-        });
-        backendForCleanup = backend;
-
-        const started = await backend.startSession();
-        await backend.sendPrompt(started.sessionId, 'hi');
-
-        waiting = backend.waitForResponseComplete();
-        await vi.advanceTimersByTimeAsync(121_000);
-
-        const marker = new Promise<'marker'>((resolve) => setTimeout(() => resolve('marker'), 0));
-        await vi.advanceTimersByTimeAsync(0);
-
-        await expect(
-          Promise.race([
-            waiting.then(() => 'completed' as const),
-            marker,
-          ]),
-        ).resolves.toBe('marker');
-      } finally {
-        vi.useRealTimers();
         try {
-          await backendForCleanup?.dispose();
-        } catch {
-          // best-effort
+          const backend = new AcpBackend({
+            agentName: 'test',
+            cwd: dir,
+            command: process.execPath,
+            args: [scriptPath],
+            transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+          });
+          backendForCleanup = backend;
+
+          const started = await backend.startSession();
+          await backend.sendPrompt(started.sessionId, 'hi');
+
+          waiting = backend.waitForResponseComplete();
+          await vi.advanceTimersByTimeAsync(121_000);
+
+          const marker = new Promise<'marker'>((resolve) => setTimeout(() => resolve('marker'), 0));
+          await vi.advanceTimersByTimeAsync(0);
+
+          await expect(
+            Promise.race([
+              waiting.then(() => 'completed' as const),
+              marker,
+            ]),
+          ).resolves.toBe('marker');
+        } finally {
+          vi.useRealTimers();
+          try {
+            await backendForCleanup?.dispose();
+          } catch {
+            // best-effort
+          }
+          if (waiting) {
+            await waiting.catch(() => {});
+          }
         }
-        if (waiting) {
-          await waiting.catch(() => {});
-        }
-      }
+      });
     });
   }, 20_000);
 
@@ -754,6 +1169,51 @@ describe('AcpBackend.waitForResponseComplete', () => {
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
       }
+    });
+  }, 20_000);
+
+  it('keeps legacy updates-array notifications array-shaped after stale-update filtering', async () => {
+    await withTempDir('happier-acp-legacy-updates-array-', async (dir) => {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        transportHandler: createAcpTestTransportHandler({
+          idleTimeoutMs: 1,
+          postPromptNoUpdatesTimeoutMs: 1,
+        }),
+      });
+      const internals = backend as unknown as {
+        prePromptResponseUpdateGuard: 'none' | 'completed' | 'terminal';
+        handleSessionUpdate: (notification: {
+          sessionId: string;
+          updates: ReadonlyArray<Record<string, unknown>>;
+        }) => void;
+      };
+      const modelOutput: string[] = [];
+      backend.onMessage((msg) => {
+        if (msg.type === 'model-output' && typeof msg.textDelta === 'string') {
+          modelOutput.push(msg.textDelta);
+        }
+      });
+
+      internals.prePromptResponseUpdateGuard = 'completed';
+      internals.handleSessionUpdate({
+        sessionId: 'test-session',
+        updates: [
+          {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'legacy-one' },
+          },
+          {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'legacy-two' },
+          },
+        ],
+      });
+
+      expect(modelOutput).toEqual(['legacy-one', 'legacy-two']);
     });
   }, 20_000);
 
@@ -1306,6 +1766,242 @@ describe('AcpBackend.waitForResponseComplete', () => {
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
       }
+    });
+  }, 20_000);
+
+  it('resolves from prompt stopReason after a thinking-only update without waiting for idle fallback', async () => {
+    await withTempDir('happier-acp-stop-reason-thinking-only-', async (dir) => {
+      const scriptPath = writeFakeAcpThoughtThenPromptStopAgentScript({
+        dir,
+        stopReason: 'end_turn',
+        promptResponseDelayMs: 50,
+      });
+      let backendForCleanup: AcpBackend | undefined;
+
+      try {
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 10_000 }),
+        });
+        backendForCleanup = backend;
+
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        const outcome = await (backend.waitForResponseComplete(250) as Promise<unknown>);
+        expect(outcome).toEqual({ kind: 'completed', stopReason: 'end_turn' });
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it('does not resolve a thinking-only turn before the prompt stopReason arrives', async () => {
+    await withTempDir('happier-acp-thinking-waits-for-stop-reason-', async (dir) => {
+      const scriptPath = writeFakeAcpThoughtThenPromptStopAgentScript({
+        dir,
+        stopReason: 'end_turn',
+        promptResponseDelayMs: 400,
+      });
+      let backendForCleanup: AcpBackend | undefined;
+
+      try {
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 10,
+            idleWithoutAssistantMessageTimeoutMs: 100,
+          }),
+        });
+        backendForCleanup = backend;
+
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        const waitForCompletion = backend.waitForResponseComplete(2_000) as Promise<unknown>;
+        await expect(Promise.race([
+          waitForCompletion.then(() => 'completed' as const),
+          new Promise<'timer'>((resolve) => setTimeout(() => resolve('timer'), 250)),
+        ])).resolves.toBe('timer');
+
+        await expect(waitForCompletion).resolves.toEqual({ kind: 'completed', stopReason: 'end_turn' });
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it.each([
+    ['max_tokens', { kind: 'completed', stopReason: 'max_tokens' }],
+    ['max_turn_requests', { kind: 'completed', stopReason: 'max_turn_requests' }],
+    ['cancelled', { kind: 'aborted', stopReason: 'cancelled' }],
+    ['refusal', { kind: 'refused', stopReason: 'refusal' }],
+  ] as const)('maps prompt stopReason:%s to a typed turn outcome', async (stopReason, expectedOutcome) => {
+    await withTempDir(`happier-acp-stop-reason-${stopReason}-`, async (dir) => {
+      const scriptPath = writeFakeAcpThoughtThenPromptStopAgentScript({
+        dir,
+        stopReason,
+        promptResponseDelayMs: 25,
+      });
+      let backendForCleanup: AcpBackend | undefined;
+
+      try {
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 10_000 }),
+        });
+        backendForCleanup = backend;
+
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        await expect(backend.waitForResponseComplete(250) as Promise<unknown>).resolves.toEqual(expectedOutcome);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it('resolves with a timed_out outcome when the absolute turn hard cap expires despite continued updates', async () => {
+    await withEnvVar('HAPPIER_ACP_TURN_HARD_CAP_TIMEOUT_MS', '150', async () => {
+      await withTempDir('happier-acp-hard-cap-', async (dir) => {
+        const scriptPath = writeFakeAcpEndlessMessageChunksAgentScript({
+          dir,
+          chunkIntervalMs: 20,
+        });
+        let backendForCleanup: AcpBackend | undefined;
+
+        try {
+          const backend = new AcpBackend({
+            agentName: 'test',
+            cwd: dir,
+            command: process.execPath,
+            args: [scriptPath],
+            transportHandler: createAcpTestTransportHandler({
+              idleTimeoutMs: 100,
+              promptLivenessTimeoutMs: 500,
+            }),
+          });
+          backendForCleanup = backend;
+
+          const started = await backend.startSession();
+          await backend.sendPrompt(started.sessionId, 'hi');
+
+          const result = await Promise.race([
+            (backend.waitForResponseComplete(5_000) as Promise<unknown>).then((outcome) => ({ type: 'outcome' as const, outcome })),
+            new Promise<{ type: 'timer' }>((resolve) => setTimeout(() => resolve({ type: 'timer' }), 600)),
+          ]);
+
+          expect(result).toEqual({
+            type: 'outcome',
+            outcome: { kind: 'timed_out', capMs: 150 },
+          });
+        } finally {
+          await backendForCleanup?.dispose().catch(() => {});
+        }
+      });
+    });
+  }, 20_000);
+
+  it('rejects when the turn inactivity watchdog observes total silence after an update', async () => {
+    await withEnvVar('HAPPIER_ACP_TURN_INACTIVITY_TIMEOUT_MS', '100', async () => {
+      await withTempDir('happier-acp-turn-inactivity-', async (dir) => {
+        const scriptPath = writeFakeAcpSilentAfterInitialUpdateAgentScript({ dir });
+        let backendForCleanup: AcpBackend | undefined;
+
+        try {
+          const backend = new AcpBackend({
+            agentName: 'test',
+            cwd: dir,
+            command: process.execPath,
+            args: [scriptPath],
+            transportHandler: createAcpTestTransportHandler({ promptLivenessTimeoutMs: 500 }),
+          });
+          backendForCleanup = backend;
+
+          const started = await backend.startSession();
+          await backend.sendPrompt(started.sessionId, 'hi');
+
+          await expect(backend.waitForResponseComplete(5_000)).rejects.toThrow(/inactivity/i);
+        } finally {
+          await backendForCleanup?.dispose().catch(() => {});
+        }
+      });
+    });
+  }, 20_000);
+
+  it('drops prior-turn chunks from a terminal path after the next prompt starts waiting', async () => {
+    await withEnvVar('HAPPIER_ACP_TURN_HARD_CAP_TIMEOUT_MS', '120', async () => {
+      await withEnvVar('HAPPIER_ACP_TURN_INACTIVITY_TIMEOUT_MS', '300000', async () => {
+        await withTempDir('happier-acp-terminal-stale-update-after-next-prompt-', async (dir) => {
+          const scriptPath = writeFakeAcpPendingToolThenSecondPromptAgentScript({
+            dir,
+            lateStaleUpdateDelayMs: 180,
+            secondPromptAckDelayMs: 90,
+            secondPromptOutputDelayMs: 95,
+          });
+          let backendForCleanup: AcpBackend | undefined;
+
+          try {
+            const backend = new AcpBackend({
+              agentName: 'test',
+              cwd: dir,
+              command: process.execPath,
+              args: [scriptPath],
+              transportHandler: createAcpTestTransportHandler({
+                idleTimeoutMs: 1,
+                promptLivenessTimeoutMs: 500,
+              }),
+            });
+            backendForCleanup = backend;
+
+            const chunks: string[] = [];
+            const thinkingEvents: string[] = [];
+            const toolResults: string[] = [];
+            backend.onMessage((msg) => {
+              if (msg.type === 'model-output' && typeof msg.textDelta === 'string') {
+                chunks.push(msg.textDelta);
+                return;
+              }
+              if (msg.type === 'tool-result') {
+                toolResults.push(JSON.stringify(msg.result));
+                return;
+              }
+              if (msg.type !== 'event' || msg.name !== 'thinking') return;
+              const payload = msg.payload;
+              if (!payload || typeof payload !== 'object') return;
+              const text = (payload as { text?: unknown }).text;
+              if (typeof text === 'string') thinkingEvents.push(text);
+            });
+
+            const started = await backend.startSession();
+            await backend.sendPrompt(started.sessionId, 'first prompt leaves a tool pending');
+            await expect(backend.waitForResponseComplete(5_000) as Promise<unknown>).resolves.toEqual({
+              kind: 'timed_out',
+              capMs: 120,
+            });
+
+            await backend.sendPrompt(started.sessionId, 'second prompt starts before stale chunks arrive');
+            await expect(backend.waitForResponseComplete(1_000)).resolves.toBeUndefined();
+            await new Promise((resolve) => setTimeout(resolve, 260));
+
+            expect(chunks).toEqual(['second turn output']);
+            expect(thinkingEvents).toEqual([]);
+            expect(toolResults).toEqual([]);
+          } finally {
+            await backendForCleanup?.dispose().catch(() => {});
+          }
+        });
+      });
     });
   }, 20_000);
 });

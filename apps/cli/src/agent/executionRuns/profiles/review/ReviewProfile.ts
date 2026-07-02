@@ -1,4 +1,5 @@
 import {
+  REVIEW_SCM_SCOPE_INPUT_KEY,
   ReviewFindingsV1Schema,
   ReviewFindingsV2Schema,
   ReviewTriageOverlaySchema,
@@ -12,11 +13,31 @@ import { buildReviewFindingsV2Payload } from '../../../reviews/normalize/buildRe
 import { buildReviewGuidanceBlock, buildStandardReviewPrompt } from '../../../reviews/prompt/buildStandardReviewPrompt';
 import { normalizeReviewOutput } from '../../../reviews/normalize/normalizeReviewOutput';
 import { stripTrailingJsonObjectFromText } from '../shared/stripTrailingJsonObjectFromText';
+import { resolveReviewScmScope } from '../../../reviews/scope/resolve';
+
+function readIntentInputRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+}
 
 export const ReviewProfile: ExecutionRunIntentProfile = {
   intent: 'review',
   transcriptMaterialization: 'full',
   emitFinalSidechainMessageWhenStreamed: true,
+  prepareStartParams: async ({ request, cwd }) => {
+    const existing = readIntentInputRecord(request.intentInput);
+    const scmReviewScope = await resolveReviewScmScope({
+      cwd,
+      intentInput: existing,
+    });
+    return {
+      intentInput: {
+        ...existing,
+        [REVIEW_SCM_SCOPE_INPUT_KEY]: scmReviewScope,
+      },
+    };
+  },
   buildPrompt: (params) => buildStandardReviewPrompt({ instructions: params.instructions, intentInput: params.intentInput }),
   computeSidechainStreamText: ({ fullText }) => {
     const stripped = stripTrailingJsonObjectFromText(fullText).trimEnd();

@@ -4,7 +4,7 @@ const createExecutionRunRuntimeMock = vi.fn();
 const readCredentialsMock = vi.fn();
 const bootstrapAccountSettingsContextMock = vi.fn();
 
-vi.mock('@/agent/executionRuns/runtime/createExecutionRunRuntime', () => ({
+vi.mock('@/agent/runtime/bridges/executionRun/runtime/create', () => ({
   createExecutionRunRuntime: (...args: unknown[]) => createExecutionRunRuntimeMock(...args),
 }));
 

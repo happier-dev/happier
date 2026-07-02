@@ -1,6 +1,6 @@
 import type { ExecutionRunIntent } from '@happier-dev/protocol';
 
-import type { ExecutionRunManagerStartParams } from '../runtime/executionRunTypes';
+import type { ExecutionRunManagerStartParams } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 
 type ExecutionRunRetentionPolicy = ExecutionRunManagerStartParams['retentionPolicy'];
 type ExecutionRunClass = ExecutionRunManagerStartParams['runClass'];

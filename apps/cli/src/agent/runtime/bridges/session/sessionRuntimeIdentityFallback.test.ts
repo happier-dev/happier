@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCodexRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol';
+import { buildCodexAgentRuntimeDescriptorV1 as buildCodexRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol/providers/runtimeDescriptorContributionsV1';
 
 import { resolveSessionRuntimeIdentityFallback } from '@/agent/runtime/identity';
 
@@ -18,7 +18,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
         },
         agentRuntimeDescriptorV1: buildCodexRuntimeIdentityDescriptorV1({
           backendMode: 'appServer',
-          vendorSessionId: 'runtime-session',
+          providerSessionId: 'runtime-session',
           home: 'connectedService',
           connectedServiceId: 'svc_1',
         }),
@@ -26,10 +26,10 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
     });
 
     expect(result.providerId).toBe('codex');
-    expect(result.vendorSessionId).toBe('runtime-session');
+    expect(result.providerSessionId).toBe('runtime-session');
     expect(result.sourceTier).toBe('canonical_runtime_descriptor');
     expect(result.runtimeIdentityPublication.runtimeDescriptor?.providerId).toBe('codex');
-    expect(result.runtimeIdentityPublication.runtimeDescriptor?.vendorSessionId).toBe('runtime-session');
+    expect(result.runtimeIdentityPublication.runtimeDescriptor?.providerSessionId).toBe('runtime-session');
     expect(result.runtimeIdentityPublication.compatibilitySources).toEqual(['runtimeDescriptorV1']);
   });
 
@@ -49,7 +49,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
     });
 
     expect(result.providerId).toBe('claude');
-    expect(result.vendorSessionId).toBe('claude-session-1');
+    expect(result.providerSessionId).toBe('claude-session-1');
     expect(result.sourceTier).toBe('legacy_session_metadata');
     expect(result.runtimeIdentityPublication.runtimeDescriptor).toBeNull();
     expect(result.runtimeIdentityPublication.compatibilitySources).toEqual(['legacy_provider_metadata']);
@@ -60,12 +60,12 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
       metadata: {},
       providerDefaults: {
         providerId: 'opencode',
-        vendorSessionId: 'default-runtime-session',
+        providerSessionId: 'default-runtime-session',
       },
     });
 
     expect(result.providerId).toBe('opencode');
-    expect(result.vendorSessionId).toBe('default-runtime-session');
+    expect(result.providerSessionId).toBe('default-runtime-session');
     expect(result.sourceTier).toBe('provider_defaults');
   });
 
@@ -85,7 +85,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
     });
 
     expect(result.providerId).toBe('opencode');
-    expect(result.vendorSessionId).toBe('direct-runtime-session');
+    expect(result.providerSessionId).toBe('direct-runtime-session');
     expect(result.sourceTier).toBe('legacy_session_metadata');
   });
 
@@ -104,7 +104,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
     });
 
     expect(result.providerId).toBe('opencode');
-    expect(result.vendorSessionId).toBe('legacy-direct-runtime-session');
+    expect(result.providerSessionId).toBe('legacy-direct-runtime-session');
     expect(result.sourceTier).toBe('legacy_session_metadata');
   });
 });

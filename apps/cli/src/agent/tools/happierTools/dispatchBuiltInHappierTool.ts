@@ -1,8 +1,9 @@
-import { type ActionId, type ApprovalRequestOriginV1, type ResolvedActionOption } from '@happier-dev/protocol';
+import { type ActionId, type ActionsSettingsV1, type ApprovalRequestOriginV1, type ResolvedActionOption } from '@happier-dev/protocol';
 import {
   getActionToolIdForToolName,
   getEquivalentActionIdForBuiltInTool,
   isActionAvailableOnToolSurface,
+  isActionDirectToolAvailableOnToolSurface,
 } from './actionToolCatalog';
 import type { HappierBuiltInToolDispatchResult } from './types';
 import {
@@ -97,20 +98,46 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   args: unknown;
   sessionId: string;
   surface?: 'mcp' | 'cli' | 'session_agent';
+  actionsSettings?: ActionsSettingsV1 | null;
   approvalOrigin?: ApprovalRequestOriginV1 | null;
   registry?: import('@/plugins/projection/registry/types').ResolvedContributionRegistry;
   deps: DispatchDeps;
 }>): Promise<HappierBuiltInToolDispatchResult> {
   const isActionEnabled = params.deps.isActionEnabled ?? (() => true);
   const surface = params.surface ?? 'session_agent';
+  const actionsSettings = params.actionsSettings ?? null;
 
-  const gatedManualActionId = getEquivalentActionIdForBuiltInTool(params.toolName, { registry: params.registry });
+  const actionBackedActionId = getActionToolIdForToolName(params.toolName, { registry: params.registry });
+  if (actionBackedActionId) {
+    const isAvailable = isActionAvailableOnToolSurface({
+      actionId: actionBackedActionId,
+      surface,
+      isActionEnabled,
+      actionsSettings,
+      registry: params.registry,
+    });
+    if (!isAvailable) {
+      return err('action_disabled', 'Action is disabled');
+    }
+    if (!isActionDirectToolAvailableOnToolSurface({
+      actionId: actionBackedActionId,
+      surface,
+      isActionEnabled,
+      actionsSettings,
+      registry: params.registry,
+    })) {
+      return err('unknown_tool', `Unknown built-in Happier tool: ${params.toolName}`);
+    }
+  }
+
+  const gatedManualActionId = actionBackedActionId ? null : getEquivalentActionIdForBuiltInTool(params.toolName, { registry: params.registry });
   if (
     gatedManualActionId
     && !isActionAvailableOnToolSurface({
       actionId: gatedManualActionId,
       surface,
       isActionEnabled,
+      actionsSettings,
       registry: params.registry,
     })
   ) {
@@ -152,7 +179,16 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     if (!normalized.ok) return err(normalized.errorCode, normalized.error);
 
     const equivalentActionId = getExecutionRunStartEquivalentActionId(normalized.request);
-    if (equivalentActionId && !isActionEnabled(equivalentActionId)) {
+    if (
+      equivalentActionId
+      && !isActionAvailableOnToolSurface({
+        actionId: equivalentActionId,
+        surface,
+        isActionEnabled,
+        actionsSettings,
+        registry: params.registry,
+      })
+    ) {
       return err('action_disabled', 'Action is disabled');
     }
 
@@ -178,6 +214,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
       actionId: parsed.data.actionId,
       surface,
       isActionEnabled,
+      actionsSettings,
       registry: params.registry,
     })) {
       return err('action_disabled', 'Action is disabled');
@@ -193,16 +230,8 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     );
   }
 
-  const actionId = getActionToolIdForToolName(params.toolName, { registry: params.registry });
+  const actionId = actionBackedActionId;
   if (actionId) {
-    if (!isActionAvailableOnToolSurface({
-      actionId,
-      surface,
-      isActionEnabled,
-      registry: params.registry,
-    })) {
-      return err('action_disabled', 'Action is disabled');
-    }
     return await params.deps.executeActionByToolName(
       params.toolName,
       params.args,

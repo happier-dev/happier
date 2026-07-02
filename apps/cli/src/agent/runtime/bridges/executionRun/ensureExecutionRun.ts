@@ -60,7 +60,7 @@ export async function ensureExecutionRun(args: Readonly<{
     const resumeHandle =
       run.resumeHandle
       && areExecutionRunBackendTargetsEqual(convertBackendTargetRefV2ToV1(run.resumeHandle.backendTarget), run.backendTarget)
-      && (run.resumeHandle.kind === 'vendor_session.v1' || run.resumeHandle.kind === 'voice_agent_sessions.v1')
+      && (run.resumeHandle.kind === 'provider_session.v1' || run.resumeHandle.kind === 'voice_agent_sessions.v1')
         ? run.resumeHandle
         : null;
     if (!resumeHandle) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Missing resume handle' };

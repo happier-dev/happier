@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentBackend, AgentId, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
 import type { BackendFactory, ResolveVoiceSystemAppendBlocksArgs } from './voiceAgentTypes';
 
 function asExecutionRunHostRuntime<T extends AgentBackend>(backend: T): T & ExecutionRunHostRuntime {

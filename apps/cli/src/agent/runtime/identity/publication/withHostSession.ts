@@ -3,14 +3,25 @@ import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOpe
 import type { NormalizedRuntimeEventPublication } from '@/agent/runtime/events/createNormalizedRuntimeEventWriter';
 import { createNormalizedRuntimeEventPublicationHub } from '@/agent/runtime/events/createNormalizedRuntimeEventPublicationHub';
 import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
+import type { RuntimeEventV1 } from '@happier-dev/protocol';
+
+function isRuntimeEvent(message: unknown): message is RuntimeEventV1 {
+  return Boolean(message)
+    && typeof message === 'object'
+    && typeof (message as Readonly<Record<string, unknown>>).kind === 'string';
+}
 
 function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
   runtime: RuntimeTurnOperations;
   identity: NormalizedRuntimeEventPublication;
 }>): RuntimeTurnOperations {
-  const hub = createNormalizedRuntimeEventPublicationHub<unknown>({
+  const hub = createNormalizedRuntimeEventPublicationHub<RuntimeEventV1>({
     identity: params.identity,
-    subscribeUpstream: (handler) => params.runtime.subscribeRuntimeMessages(handler),
+    subscribeUpstream: (handler) => params.runtime.subscribeRuntimeEvents((message) => {
+      if (isRuntimeEvent(message)) {
+        handler(message);
+      }
+    }),
   });
 
   return Object.freeze({
@@ -24,13 +35,20 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
     async sendTurnPrompt(prompt) {
       await params.runtime.sendTurnPrompt(prompt);
     },
+    ...(typeof params.runtime.compactContext === 'function'
+      ? {
+          async compactContext(command: string) {
+            await params.runtime.compactContext!(command);
+          },
+        }
+      : {}),
     async steerInFlightTurn(message) {
       await params.runtime.steerInFlightTurn(message);
     },
     async waitForTurnCompletion(opts) {
       await params.runtime.waitForTurnCompletion(opts);
     },
-    subscribeRuntimeMessages(handler) {
+    subscribeRuntimeEvents(handler) {
       return hub.subscribe(handler);
     },
     async respondToPermission(requestId, approved) {

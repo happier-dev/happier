@@ -127,17 +127,103 @@ describe('readSessionAttachFromEnv', () => {
         v: 2,
         encryptionMode: 'plain',
         lastObservedMessageSeq: 55,
+        initialTranscriptAfterSeq: 0,
       };
 
       await writeFile(filePath, JSON.stringify(payload), { mode: 0o600 });
       process.env.HAPPIER_SESSION_ATTACH_FILE = filePath;
 
       const res = await readSessionAttachFromEnv();
-      expect(res).toEqual({ encryptionMode: 'plain', lastObservedMessageSeq: 55 });
+      expect(res).toEqual({
+        encryptionMode: 'plain',
+        lastObservedMessageSeq: 55,
+        initialTranscriptAfterSeq: 0,
+      });
       expect(process.env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
 
       // File should be deleted.
       await expect(stat(filePath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      envScope.restore();
+      await removeTempDir(dir);
+    }
+  });
+
+  test('preserves v2 e2ee attach cursor fields', async () => {
+    const dir = await createTempDir('happy-attach-');
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: dir,
+        HAPPIER_SESSION_ATTACH_FILE: undefined,
+      });
+
+      vi.resetModules();
+
+      const { encodeBase64 } = await import('@/api/encryption');
+      const { readSessionAttachFromEnv } = await import('./sessionAttach');
+
+      const attachDir = join(dir, 'tmp', 'session-attach');
+      await mkdir(attachDir, { recursive: true });
+      const filePath = join(attachDir, 'attach.json');
+
+      const key = new Uint8Array(32).fill(7);
+      const payload = {
+        v: 2,
+        encryptionMode: 'e2ee',
+        encryptionKeyBase64: encodeBase64(key, 'base64'),
+        encryptionVariant: 'dataKey',
+        lastObservedMessageSeq: 55,
+        initialTranscriptAfterSeq: 54,
+      };
+
+      await writeFile(filePath, JSON.stringify(payload), { mode: 0o600 });
+      process.env.HAPPIER_SESSION_ATTACH_FILE = filePath;
+
+      const res = await readSessionAttachFromEnv();
+      expect(res).toEqual({
+        encryptionMode: 'e2ee',
+        encryptionKey: key,
+        encryptionVariant: 'dataKey',
+        lastObservedMessageSeq: 55,
+        initialTranscriptAfterSeq: 54,
+      });
+    } finally {
+      envScope.restore();
+      await removeTempDir(dir);
+    }
+  });
+
+  test('rejects malformed v2 e2ee attach payloads instead of treating them as legacy', async () => {
+    const dir = await createTempDir('happy-attach-');
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: dir,
+        HAPPIER_SESSION_ATTACH_FILE: undefined,
+      });
+
+      vi.resetModules();
+
+      const { encodeBase64 } = await import('@/api/encryption');
+      const { readSessionAttachFromEnv } = await import('./sessionAttach');
+
+      const attachDir = join(dir, 'tmp', 'session-attach');
+      await mkdir(attachDir, { recursive: true });
+      const filePath = join(attachDir, 'attach.json');
+
+      const key = new Uint8Array(32).fill(7);
+      const payload = {
+        v: 2,
+        encryptionMode: 'unsupported',
+        encryptionKeyBase64: encodeBase64(key, 'base64'),
+        encryptionVariant: 'dataKey',
+        lastObservedMessageSeq: 55,
+        initialTranscriptAfterSeq: 54,
+      };
+
+      await writeFile(filePath, JSON.stringify(payload), { mode: 0o600 });
+      process.env.HAPPIER_SESSION_ATTACH_FILE = filePath;
+
+      await expect(readSessionAttachFromEnv()).rejects.toThrow('Invalid session attach file');
     } finally {
       envScope.restore();
       await removeTempDir(dir);

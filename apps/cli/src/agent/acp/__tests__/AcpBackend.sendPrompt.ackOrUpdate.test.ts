@@ -14,6 +14,16 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isLateEmptyResponseError(error: unknown): boolean {
+  const record = error && typeof error === 'object' ? error as Record<string, unknown> : null;
+  const data = record?.data;
+  const details =
+    data && typeof data === 'object' && typeof (data as Record<string, unknown>).details === 'string'
+      ? (data as Record<string, unknown>).details as string
+      : '';
+  return record?.code === -32603 && details.includes('Model stream ended with empty response text');
+}
+
 function writeFakeAcpAgentScript(params: {
   dir: string;
   promptAckDelayMs: number;
@@ -183,7 +193,7 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
     });
   }, 20_000);
 
-  it('ignores late Gemini empty-stream errors when sendPrompt returns early on first session/update', async () => {
+  it('ignores transport-suppressed late prompt errors when sendPrompt returns early on first session/update', async () => {
     await withTempDir('happier-acp-sendprompt-gemini-late-error-', async (dir) => {
       const scriptPath = writeFakeAcpAgentScript({
         dir,
@@ -199,8 +209,12 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
           command: process.execPath,
           args: [scriptPath],
           transportHandler: createAcpTestTransportHandler({
-            agentName: 'gemini',
+            agentName: 'provider-with-hook',
             idleTimeoutMs: 1,
+            shouldIgnorePromptError: (error, context) =>
+              isLateEmptyResponseError(error) &&
+              context.activeToolCallCount === 0 &&
+              (!context.waitingForResponse || context.sawSessionUpdateSincePrompt),
           }),
         });
         backendForCleanup = backend;

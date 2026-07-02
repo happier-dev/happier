@@ -44,6 +44,26 @@ export interface ToolNameContext {
 }
 
 /**
+ * Context passed to prompt-error suppression hooks.
+ */
+export interface PromptErrorContext {
+  /** Whether the generic ACP backend is still waiting for prompt response completion */
+  waitingForResponse: boolean;
+  /** Whether the prompt has already produced any session/update traffic */
+  sawSessionUpdateSincePrompt: boolean;
+  /** Number of tool calls still active for the current prompt */
+  activeToolCallCount: number;
+}
+
+/**
+ * Context passed to terminal tool update logging hooks.
+ */
+export interface TerminalToolUpdateLogContext {
+  /** ACP session update type that carried the terminal tool state */
+  sessionUpdateType: string;
+}
+
+/**
  * Result of stderr processing
  */
 export interface StderrResult {
@@ -139,9 +159,9 @@ export interface TransportHandler {
    *
    * @param toolCallId - The tool call ID
    * @param toolKind - The tool kind/type
-   * @returns Timeout in milliseconds
+   * @returns Timeout in milliseconds, or null to disable the watchdog
    */
-  getToolCallTimeout?(toolCallId: string, toolKind?: string): number;
+  getToolCallTimeout?(toolCallId: string, toolKind?: string): number | null;
 
   /**
    * Extract tool name from toolCallId.
@@ -176,6 +196,26 @@ export interface TransportHandler {
   ): string;
 
   /**
+   * Optional provider hook to suppress known non-fatal prompt errors.
+   *
+   * This keeps provider-specific post-response quirks out of the generic ACP prompt path.
+   * Implementations should return true only for tightly identified provider errors that are
+   * known to arrive after the turn has already produced or completed useful output.
+   */
+  shouldIgnorePromptError?(error: unknown, context: PromptErrorContext): boolean;
+
+  /**
+   * Optional provider hook for debug logging terminal tool update payloads.
+   *
+   * The generic ACP update path owns terminal-tool detection; providers own whether/how to log
+   * their payload shape, including provider-specific feature flags and redaction policy.
+   */
+  logTerminalToolUpdate?<T extends { sessionUpdate?: unknown; status?: unknown }>(
+    update: T,
+    context: TerminalToolUpdateLogContext,
+  ): void;
+
+  /**
    * Get idle detection timeout in milliseconds.
    *
    * This timeout is used to detect when the agent has finished producing output
@@ -207,7 +247,7 @@ export interface TransportHandler {
    * This timeout is a conservative fallback to avoid hanging forever on providers that ACK prompts
    * but never emit any `session/update` events for a turn.
    */
-  getPostPromptNoUpdatesTimeoutMs?(): number;
+  getPostPromptNoUpdatesTimeoutMs?(): number | null;
 
   /**
    * Get the maximum time to wait for ACP to acknowledge `session/prompt` or begin
@@ -217,7 +257,7 @@ export interface TransportHandler {
    * overall response-completion timeout, which continues waiting while the prompt
    * is actively producing updates.
    */
-  getPromptLivenessTimeoutMs?(): number;
+  getPromptLivenessTimeoutMs?(): number | null;
 
   /**
    * Get the quiet-period timeout to use after a tool call completes before declaring the turn idle.
@@ -259,4 +299,24 @@ export interface TransportHandler {
       input: unknown;
     }>,
   ): string | null | undefined;
+
+  /**
+   * Optional provider hook to sanitize a `tool_call` / `tool_call_update` before the generic
+   * normalizer reads its content. Used to fix provider-specific payload quirks (e.g. Cursor jams
+   * unified-diff header lines into `content[].oldText`/`newText` diff blocks) WITHOUT leaking
+   * provider logic into the provider-agnostic ACP update pipeline.
+   *
+   * Implementations MUST return the update unchanged (ideally the same reference) when there is
+   * nothing to fix, so this is safe to call on every update. Typed structurally to avoid a
+   * dependency cycle with the ACP `SessionUpdate` type.
+   */
+  sanitizeToolUpdateContent?<T extends { content?: unknown }>(update: T): T;
+
+  /**
+   * Whether this provider delivers plans/todos through a richer proprietary channel and therefore
+   * opts out of the generic ACP `plan` SessionUpdate -> TodoWrite render (to avoid a duplicate
+   * checklist). Example: Cursor delivers plans via the `cursor/create_plan` extension method.
+   * Defaults to false (render standard ACP plan updates).
+   */
+  suppressAcpPlanUpdate?(): boolean;
 }

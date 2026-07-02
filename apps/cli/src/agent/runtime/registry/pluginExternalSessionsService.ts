@@ -15,6 +15,7 @@ import type {
     ExternalSessionTranscriptUpdateV1,
     PluginContextV1,
 } from '@happier-dev/plugin-sdk';
+import type { ExternalSessionRuntimeContextV1 } from '@happier-dev/agents';
 
 import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
 import {
@@ -26,6 +27,21 @@ import {
 type ProviderOpsResolver = (
     providerId: ExternalSessionsProviderId,
 ) => ExternalSessionProviderOps | null | Promise<ExternalSessionProviderOps | null>;
+
+type ExternalSessionsRuntimeContextOperation =
+    | 'listCandidates'
+    | 'pageTranscript'
+    | 'readAfterTranscript'
+    | 'followTranscript';
+
+type ExternalSessionsRuntimeContextResolver = (
+    request: Readonly<{
+        operation: ExternalSessionsRuntimeContextOperation;
+        providerId: ExternalSessionsProviderId;
+        source: ExternalSessionsSource;
+        remoteSessionId?: string;
+    }>,
+) => ExternalSessionRuntimeContextV1 | null | Promise<ExternalSessionRuntimeContextV1 | null>;
 
 type PluginExternalSessionsAttachHandler = (
     params: ExternalSessionAttachParamsV1 & Readonly<{
@@ -41,6 +57,7 @@ type PluginExternalSessionsTakeoverHandler = (
 export type PluginExternalSessionsServiceParams = Readonly<{
     defaultProviderId: string;
     resolveProviderOps: ProviderOpsResolver;
+    resolveRuntimeContext?: ExternalSessionsRuntimeContextResolver;
     attach?: PluginExternalSessionsAttachHandler;
     takeover?: PluginExternalSessionsTakeoverHandler;
 }>;
@@ -77,19 +94,32 @@ async function resolveValidatedProviderOps(params: Readonly<{
     providerId: ExternalSessionsProviderId;
     source: ExternalSessionsSource;
     resolveProviderOps: ProviderOpsResolver;
-}>): Promise<Readonly<{ ops: ExternalSessionProviderOps; source: ExternalSessionsSource }>> {
+    resolveRuntimeContext?: ExternalSessionsRuntimeContextResolver;
+    operation: ExternalSessionsRuntimeContextOperation;
+    remoteSessionId?: string;
+}>): Promise<Readonly<{
+    ops: ExternalSessionProviderOps;
+    source: ExternalSessionsSource;
+    runtime: ExternalSessionRuntimeContextV1 | null;
+}>> {
     const ops = await params.resolveProviderOps(params.providerId);
     if (!ops) {
         throw new Error('provider_unavailable');
     }
+    const runtime = await params.resolveRuntimeContext?.({
+        operation: params.operation,
+        providerId: params.providerId,
+        source: params.source,
+        ...(params.remoteSessionId ? { remoteSessionId: params.remoteSessionId } : {}),
+    }) ?? null;
     const validation = await ops.validateSource({
         source: params.source,
-        env: process.env,
+        ...(runtime ? { runtime } : {}),
     });
     if (!validation.ok) {
         throw new Error(validation.error || 'invalid_source');
     }
-    return { ops, source: validation.source };
+    return { ops, source: validation.source, runtime };
 }
 
 function providerError(error: unknown): string {
@@ -99,20 +129,28 @@ function providerError(error: unknown): string {
 export function createPluginExternalSessionsService(
     params: PluginExternalSessionsServiceParams,
 ): PluginContextV1['sessions']['external'] {
-    const resolveProvider = async (rawProviderId: string | undefined, rawSource: unknown) => {
+    const resolveProvider = async (
+        rawProviderId: string | undefined,
+        rawSource: unknown,
+        operation: ExternalSessionsRuntimeContextOperation,
+        remoteSessionId?: string,
+    ) => {
         const providerId = normalizeProviderId(rawProviderId, params.defaultProviderId);
         const source = normalizeSource(rawSource);
         const resolved = await resolveValidatedProviderOps({
             providerId,
             source,
             resolveProviderOps: params.resolveProviderOps,
+            resolveRuntimeContext: params.resolveRuntimeContext,
+            operation,
+            remoteSessionId,
         });
         return { providerId, ...resolved };
     };
 
     const service: PluginContextV1['sessions']['external'] = Object.freeze({
         listCandidates: async (request: ExternalSessionListCandidatesParamsV1 = {}) => {
-            const { ops, source } = await resolveProvider(request.providerId, request.source);
+            const { ops, source, runtime } = await resolveProvider(request.providerId, request.source, 'listCandidates');
             const limit = normalizeBoundedInteger(request.limit, resolveDefaultCandidatesLimit(), 1, 500);
             const result = await ops.listCandidates({
                 source,
@@ -121,10 +159,15 @@ export function createPluginExternalSessionsService(
                 ...(typeof request.searchTerm === 'string' && request.searchTerm.trim().length > 0
                     ? { searchTerm: request.searchTerm.trim() }
                     : {}),
+                ...(request.searchMode === 'fast' || request.searchMode === 'full'
+                    ? { searchMode: request.searchMode }
+                    : {}),
+                ...(runtime ? { runtime } : {}),
             });
             return Object.freeze({
                 candidates: Object.freeze([...result.candidates]),
                 nextCursor: result.nextCursor ?? null,
+                ...(result.searchIncomplete ? { searchIncomplete: true } : {}),
             });
         },
         attach: async (request: ExternalSessionAttachParamsV1) => {
@@ -161,7 +204,12 @@ export function createPluginExternalSessionsService(
         },
         pageTranscript: async (request: ExternalSessionTranscriptPageParamsV1) => {
             try {
-                const { ops, source } = await resolveProvider(request.providerId, request.source);
+                const { ops, source, runtime } = await resolveProvider(
+                    request.providerId,
+                    request.source,
+                    'pageTranscript',
+                    request.remoteSessionId,
+                );
                 const maxBytes = normalizeBoundedInteger(request.maxBytes, resolveDefaultMaxBytes(), 1024, 10 * 1024 * 1024);
                 const maxItems = normalizeBoundedInteger(request.maxItems, resolveDefaultMaxItems(), 1, 5000);
                 const result = await ops.pageTranscript({
@@ -171,6 +219,7 @@ export function createPluginExternalSessionsService(
                     ...(typeof request.cursor === 'string' && request.cursor.trim().length > 0 ? { cursor: request.cursor.trim() } : {}),
                     maxBytes,
                     maxItems,
+                    ...(runtime ? { runtime } : {}),
                 });
                 return {
                     ok: true as const,
@@ -190,7 +239,12 @@ export function createPluginExternalSessionsService(
         },
         readAfterTranscript: async (request: ExternalSessionTranscriptReadAfterParamsV1) => {
             try {
-                const { ops, source } = await resolveProvider(request.providerId, request.source);
+                const { ops, source, runtime } = await resolveProvider(
+                    request.providerId,
+                    request.source,
+                    'readAfterTranscript',
+                    request.remoteSessionId,
+                );
                 const maxBytes = normalizeBoundedInteger(request.maxBytes, resolveDefaultMaxBytes(), 1024, 10 * 1024 * 1024);
                 const maxItems = normalizeBoundedInteger(request.maxItems, resolveDefaultMaxItems(), 1, 5000);
                 const result = await ops.readAfterTranscript({
@@ -199,6 +253,7 @@ export function createPluginExternalSessionsService(
                     cursor: request.cursor,
                     maxBytes,
                     maxItems,
+                    ...(runtime ? { runtime } : {}),
                 });
                 return {
                     ok: true as const,
@@ -222,13 +277,15 @@ export function createPluginExternalSessionsService(
             let unsubscribeUpdates: (() => void) | null = null;
             let releaseLease: (() => Promise<void>) | null = null;
 
-            void resolveProvider(request.providerId, request.source)
-                .then(async ({ ops, source }) => {
+            void resolveProvider(request.providerId, request.source, 'followTranscript', request.remoteSessionId)
+                .then(async ({ ops, source, runtime }) => {
                     if (!ops.acquireFollowLease) return;
                     const lease = await ops.acquireFollowLease({
                         source,
                         remoteSessionId: request.remoteSessionId,
                         reason: 'attached_view',
+                        ...(runtime?.session?.sessionId ? { linkedSessionId: runtime.session.sessionId } : {}),
+                        ...(runtime ? { runtime } : {}),
                     });
                     if (!lease) return;
                     releaseLease = lease.release;

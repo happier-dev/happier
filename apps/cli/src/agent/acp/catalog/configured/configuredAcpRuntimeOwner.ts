@@ -1,6 +1,6 @@
 import type { McpServerConfig } from '@/agent';
 import { applyAcpRuntimeSessionModel } from '@/agent/acp/runtime/sessionControls/applySessionControls';
-import { createCatalogProviderExecutionRunBackend } from '@/agent/executionRuns/runtime/backends/catalogProvider';
+import { createCatalogProviderExecutionRunBackend } from '@/agent/runtime/bridges/executionRun/runtime/catalog';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { Credentials } from '@/persistence';
 import { createConfiguredAcpBackend } from './createConfiguredAcpBackend';

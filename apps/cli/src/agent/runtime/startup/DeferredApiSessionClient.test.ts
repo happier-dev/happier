@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createDeferred } from '@/testkit/async/deferred';
 import { DeferredApiSessionClient } from './DeferredApiSessionClient';
 import type { Metadata } from '@/api/types';
+import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 
 function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
   return {
@@ -60,11 +61,19 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 1),
       discardCommittedMessageLocalIds: vi.fn(async () => 2),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;
 
+    const initialControls = {
+      handleUserMessage: vi.fn(() => ({ handled: false as const })),
+    } satisfies SessionRuntimeControls;
+    deferred.setSessionRuntimeControls(initialControls);
+
     await deferred.attach(real);
+
+    expect(real.setSessionRuntimeControls).toHaveBeenCalledWith(initialControls);
 
     await expect(deferred.waitForMetadataUpdate()).resolves.toBe(true);
     await expect(deferred.fetchLatestUserPermissionIntentFromTranscript({ take: 3 })).resolves.toEqual({
@@ -80,10 +89,16 @@ describe('DeferredApiSessionClient', () => {
     await deferred.flush();
     await deferred.close();
 
+    const nextControls = {
+      clearGoal: vi.fn(),
+    } satisfies SessionRuntimeControls;
+    deferred.setSessionRuntimeControls(nextControls);
+
     expect(real.waitForMetadataUpdate).toHaveBeenCalledTimes(1);
     expect(real.fetchLatestUserPermissionIntentFromTranscript).toHaveBeenCalledWith({ take: 3 });
     expect(real.popPendingMessage).toHaveBeenCalledTimes(1);
     expect(real.sendSessionDeath).toHaveBeenCalledTimes(1);
+    expect(real.setSessionRuntimeControls).toHaveBeenLastCalledWith(nextControls);
     expect(real.flush).toHaveBeenCalledTimes(1);
     expect(real.close).toHaveBeenCalledTimes(1);
   });
@@ -124,6 +139,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
       onUserMessage,
@@ -168,6 +184,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;
@@ -212,6 +229,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;
@@ -266,6 +284,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;
@@ -314,6 +333,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;
@@ -338,6 +358,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;
@@ -416,6 +437,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;
@@ -472,6 +494,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;
@@ -523,6 +546,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;
@@ -567,6 +591,7 @@ describe('DeferredApiSessionClient', () => {
       discardPendingMessageQueueV2All: vi.fn(async () => 0),
       discardCommittedMessageLocalIds: vi.fn(async () => 0),
       sendSessionDeath: vi.fn(),
+      setSessionRuntimeControls: vi.fn(),
       flush: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } as const;

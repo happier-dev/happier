@@ -1,4 +1,4 @@
-import { isCodingPromptSessionTitleUpdatesEnabled, type PromptBlockV1 } from '@happier-dev/protocol';
+import { resolveCodingPromptSessionTitleUpdatesModeV1, type PromptBlockV1 } from '@happier-dev/protocol';
 
 import { buildHappierToolsPromptAppendix } from '@/agent/tools/happierTools/runtime/buildHappierToolsPromptAppendix';
 
@@ -21,7 +21,7 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
       text: buildHappierToolsPromptAppendix({
         sessionId: args.sessionId,
         directory: args.directory,
-        sessionTitleUpdatesEnabled: isCodingPromptSessionTitleUpdatesEnabled(args.settings),
+        sessionTitleUpdatesMode: resolveCodingPromptSessionTitleUpdatesModeV1(args.settings),
         memoryRecallGuidance: args.memoryRecallGuidance,
       }),
     },

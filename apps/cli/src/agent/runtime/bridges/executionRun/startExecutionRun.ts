@@ -431,8 +431,8 @@ export async function startExecutionRun(args: Readonly<{
           const childSessionId = await (async () => {
             const handle = args.params.retentionPolicy === 'resumable' ? (args.params.resumeHandle ?? null) : null;
             const wantsResume =
-              handle?.kind === 'vendor_session.v1' && areExecutionRunBackendTargetsEqual(handle.backendTarget, args.params.backendTarget)
-                ? handle.vendorSessionId
+              handle?.kind === 'provider_session.v1' && areExecutionRunBackendTargetsEqual(handle.backendTarget, args.params.backendTarget)
+                ? handle.providerSessionId
                 : null;
             if (wantsResume) {
               if (!backendSupportsInitialResume) {
@@ -452,7 +452,7 @@ export async function startExecutionRun(args: Readonly<{
           if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume) {
               args.runs.set(runId, {
                 ...existing,
-                resumeHandle: { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(args.params.backendTarget), vendorSessionId: childSessionId },
+                resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(args.params.backendTarget), providerSessionId: childSessionId },
               });
             void args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
             args.onPublicStateUpdated?.(runId);
@@ -514,8 +514,8 @@ export async function startExecutionRun(args: Readonly<{
     const childSessionId = await (async () => {
       const handle = args.params.retentionPolicy === 'resumable' ? (args.params.resumeHandle ?? null) : null;
       const wantsResume =
-        handle?.kind === 'vendor_session.v1' && areExecutionRunBackendTargetsEqual(handle.backendTarget, args.params.backendTarget)
-          ? handle.vendorSessionId
+        handle?.kind === 'provider_session.v1' && areExecutionRunBackendTargetsEqual(handle.backendTarget, args.params.backendTarget)
+          ? handle.providerSessionId
           : null;
       if (wantsResume) {
         if (!backendSupportsInitialResume) {
@@ -537,7 +537,7 @@ export async function startExecutionRun(args: Readonly<{
     if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume) {
       args.runs.set(runId, {
         ...existing,
-        resumeHandle: { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(args.params.backendTarget), vendorSessionId: childSessionId },
+        resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(args.params.backendTarget), providerSessionId: childSessionId },
       });
       await args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
       args.onPublicStateUpdated?.(runId);

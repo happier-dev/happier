@@ -64,6 +64,63 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     }
   });
 
+  it('closes an unflushed assistant segment before the next turn can append output', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async (_provider, body, opts) => {
+        durableCalls.push({ localId: opts.localId, body, meta: opts.meta });
+      },
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+    backend.emit({ type: 'model-output', textDelta: 'First answer' } satisfies AgentMessage);
+
+    await vi.waitFor(() => {
+      expect(durableCalls.some((call) => call.body.type === 'message' && call.body.message === 'First answer')).toBe(true);
+    });
+    const firstTurnLocalId = durableCalls.find(
+      (call) => call.body.type === 'message' && call.body.message === 'First answer',
+    )?.localId;
+
+    runtime.beginTurn();
+    backend.emit({ type: 'model-output', textDelta: 'Second answer' } satisfies AgentMessage);
+    await runtime.flushTurn();
+
+    let secondTurnFinal: { localId: string; body: ACPMessageData; meta?: Record<string, unknown> } | undefined;
+    for (let i = durableCalls.length - 1; i >= 0; i -= 1) {
+      const call = durableCalls[i]!;
+      const streamMeta = call.meta?.happierStreamSegmentV1;
+      const segmentState = streamMeta && typeof streamMeta === 'object'
+        ? (streamMeta as { segmentState?: unknown }).segmentState
+        : undefined;
+      if (
+        call.body.type === 'message'
+        && call.body.message === 'Second answer'
+        && segmentState === 'complete'
+      ) {
+        secondTurnFinal = call;
+        break;
+      }
+    }
+    expect(firstTurnLocalId).toEqual(expect.any(String));
+    expect(secondTurnFinal?.localId).toEqual(expect.any(String));
+    expect(secondTurnFinal?.localId).not.toBe(firstTurnLocalId);
+    expect(durableCalls.some((call) => call.body.type === 'message' && call.body.message === 'First answerSecond answer')).toBe(false);
+  });
+
   it('emits live snapshots through the explicit transcript session port', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));

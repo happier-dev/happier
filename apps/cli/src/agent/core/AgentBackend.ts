@@ -140,6 +140,14 @@ export interface AgentBackend {
   sendPrompt(sessionId: SessionId, prompt: string): Promise<void>;
 
   /**
+   * Trigger provider-native context compaction when supported.
+   *
+   * Backends that expose a native control command should implement this instead of relying
+   * on `/compact` being delivered as ordinary prompt text.
+   */
+  compactContext?(sessionId: SessionId, command: string): Promise<void>;
+
+  /**
    * Send additional user input into an already in-flight turn, when supported.
    *
    * This is the "steer" capability: it should not start a new turn and should not

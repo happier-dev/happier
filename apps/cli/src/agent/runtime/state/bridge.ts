@@ -16,6 +16,7 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Credentials } from '@/persistence';
 import { createCliSessionStateMetadataUpdatePort } from './metadataUpdatePort';
 import { mergeHostSessionStateCapabilities } from './sessionStateMetadataCapabilities';
+import { enqueueDurableRegisteredSessionStateFieldWrite } from './registeredFieldDurability';
 
 export type CliRuntimeSessionStateBridge = Readonly<{
   engine: SessionStateSyncEngine;
@@ -32,7 +33,7 @@ export type CliRuntimeSessionStateBridge = Readonly<{
 
 export function createCliRuntimeSessionStateBridge(params: Readonly<{
   credentials: Credentials;
-  session: Pick<ApiSessionClient, 'sessionId'>;
+  session: Pick<ApiSessionClient, 'sessionId'> & Partial<Pick<ApiSessionClient, 'enqueueRegisteredSessionStateFieldMutation'>>;
   facet?: SessionStateFacet | null;
   capabilities?: SessionStateCapabilitiesV1 | null;
   metadataPort?: MetadataUpdatePort;
@@ -48,10 +49,20 @@ export function createCliRuntimeSessionStateBridge(params: Readonly<{
 
   return {
     engine,
-    writeHappierField: (writeParams) => engine.writeHappierField({
-      ...writeParams,
-      sessionId: params.session.sessionId,
-      ctx: writeParams.ctx ?? { sessionId: params.session.sessionId },
-    }),
+    writeHappierField: async (writeParams) => {
+      const durableResult = await enqueueDurableRegisteredSessionStateFieldWrite({
+        sessionId: params.session.sessionId,
+        fieldId: writeParams.fieldId,
+        value: writeParams.value,
+        source: 'runtime',
+        enqueue: params.session.enqueueRegisteredSessionStateFieldMutation,
+      });
+      if (durableResult) return durableResult;
+      return engine.writeHappierField({
+        ...writeParams,
+        sessionId: params.session.sessionId,
+        ctx: writeParams.ctx ?? { sessionId: params.session.sessionId },
+      });
+    },
   };
 }

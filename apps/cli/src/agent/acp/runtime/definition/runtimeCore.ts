@@ -1,9 +1,8 @@
 import React from 'react';
+import type { ExecRuntimeServiceV1, PluginContextV1 } from '@happier-dev/plugin-sdk';
 
-import type { AcpBackend } from '@/agent/acp/AcpBackend';
-import { createAcpBackend } from '@/agent/acp/createAcpBackend';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
-import { createCatalogProviderExecutionRunBackend } from '@/agent/executionRuns/runtime/backends/catalogProvider';
+import { createCatalogProviderExecutionRunBackend } from '@/agent/runtime/bridges/executionRun/runtime/catalog';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 import type {
   CliEngineAdapter,
@@ -31,15 +30,9 @@ import type {
   AcpRuntimeDefinitionInitV1,
   AcpRuntimeDefinitionV1,
 } from './_types';
-import { mergeDefinedStringEnv, resolveAcpRuntimeLaunch } from './launch';
+import { resolveAcpRuntimeLaunch } from './launch';
+import { createAcpBackendFromDefinition } from './backend';
 import { createProviderMessageMetaEnricher } from './messageMeta';
-import {
-  composeAcpTier2PermissionHandler,
-  isPromiseLike,
-  mapMaybePromise,
-  type MaybePromise,
-  runAcpTier2Preflight,
-} from './tier2Callbacks';
 import { createAcpTransportHandlerFromDefinition } from './transport';
 
 export {
@@ -75,6 +68,9 @@ export function createAcpRuntimeDefinition(
     ...(init.transportLifecycle ? { transportLifecycle: init.transportLifecycle } : {}),
     ...(init.permissionModeArgv ? { permissionModeArgv: init.permissionModeArgv } : {}),
     ...(init.sessionIdHeaderName ? { sessionIdHeaderName: init.sessionIdHeaderName } : {}),
+    ...(init.toolNameInference ? { toolNameInference: Object.freeze({ ...init.toolNameInference }) } : {}),
+    ...(init.stderrRules ? { stderrRules: Object.freeze({ ...init.stderrRules }) } : {}),
+    ...(init.permissionOptionSelection ? { permissionOptionSelection: Object.freeze({ ...init.permissionOptionSelection }) } : {}),
     ...(init.bootstrap ? { bootstrap: init.bootstrap } : {}),
     ...(init.messageMeta ? { messageMeta: init.messageMeta } : {}),
     mcp: Object.freeze(init.mcp ?? {
@@ -85,7 +81,7 @@ export function createAcpRuntimeDefinition(
 }
 
 function adaptAcpBackendToRuntimeBackend(
-  backend: ReturnType<typeof createAcpBackend>,
+  backend: Awaited<ReturnType<typeof createAcpBackendFromDefinition>>,
 ): AcpRuntimeBackend {
   const adapted: AcpRuntimeBackend = {
     startSession: (initialPrompt?: string) => backend.startSession(initialPrompt),
@@ -110,75 +106,6 @@ function adaptAcpBackendToRuntimeBackend(
   return Object.freeze(adapted);
 }
 
-export function createAcpBackendFromDefinition(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
-  cwd: string;
-  env?: Readonly<Record<string, string | undefined>>;
-  permissionMode?: string;
-  mcpServers?: Record<string, McpServerConfig>;
-  permissionHandler?: AcpPermissionHandler;
-}>): MaybePromise<AcpBackend> {
-  const launch = resolveAcpRuntimeLaunch({
-    definition: params.definition,
-    cwd: params.cwd,
-    ...(params.permissionMode ? { permissionMode: params.permissionMode } : {}),
-    ...(params.env ? { env: params.env } : {}),
-  });
-  const mcpServers = params.definition.mcp.policy === 'drop'
-    ? undefined
-    : params.mcpServers;
-  const createBackend = (resolvedLaunch: Awaited<typeof launch>): MaybePromise<AcpBackend> => {
-    const preflight = runAcpTier2Preflight({
-      definition: params.definition,
-      cwd: params.cwd,
-    });
-    return mapMaybePromise(preflight, () => createAcpBackend({
-      agentName: params.definition.backendId,
-      cwd: params.cwd,
-      command: resolvedLaunch.command,
-      args: [...resolvedLaunch.args],
-      env: mergeDefinedStringEnv(params.env, resolvedLaunch.env),
-      ...(mcpServers ? { mcpServers } : {}),
-      ...(typeof params.definition.fsEnabled === 'boolean' ? { fsEnabled: params.definition.fsEnabled } : {}),
-      permissionHandler: composeAcpTier2PermissionHandler({
-        definition: params.definition,
-        permissionHandler: params.permissionHandler,
-      }),
-      transportHandler: createAcpTransportHandlerFromDefinition(params.definition),
-    }));
-  };
-
-  return isPromiseLike(launch)
-    ? launch.then(createBackend)
-    : createBackend(launch);
-}
-
-export function createSynchronousAcpBackendFromDefinition(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
-  cwd: string;
-  env?: Readonly<Record<string, string | undefined>>;
-  permissionMode?: string;
-  mcpServers?: Record<string, McpServerConfig>;
-  permissionHandler?: AcpPermissionHandler;
-}>): AcpBackend {
-  if (
-    params.definition.callbacks.argvBuilder
-    || params.definition.callbacks.envBuilder
-    || params.definition.callbacks.preflight
-  ) {
-    throw new Error(
-      `ACP backend '${params.definition.backendId}' uses async Tier-2 startup callbacks and must be created through the async runtime path.`,
-    );
-  }
-  const backend = createAcpBackendFromDefinition(params);
-  if (isPromiseLike(backend)) {
-    throw new Error(
-      `ACP backend '${params.definition.backendId}' resolved asynchronously and must be created through the async runtime path.`,
-    );
-  }
-  return backend;
-}
-
 async function createRuntimeBackendFromDefinition(params: Readonly<{
   definition: AcpRuntimeDefinitionV1;
   cwd: string;
@@ -186,6 +113,8 @@ async function createRuntimeBackendFromDefinition(params: Readonly<{
   permissionMode?: string;
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
+  pluginContext?: PluginContextV1;
+  exec?: Pick<ExecRuntimeServiceV1, 'systemTools'>;
 }>): Promise<AcpRuntimeBackend> {
   return adaptAcpBackendToRuntimeBackend(await createAcpBackendFromDefinition(params));
 }
@@ -193,6 +122,9 @@ async function createRuntimeBackendFromDefinition(params: Readonly<{
 function createSessionRuntimePlan(
   definition: AcpRuntimeDefinitionV1,
   sessionParams: unknown,
+  options: Readonly<{
+    pluginContext?: PluginContextV1;
+  }>,
 ) {
   const opts = sessionParams as HostSessionRuntimeRunOptions;
   const TerminalDisplay: HostSessionRuntimeConfig['terminalDisplay'] = (props) =>
@@ -238,9 +170,11 @@ function createSessionRuntimePlan(
           createBackend: () => createRuntimeBackendFromDefinition({
             definition,
             cwd: directory,
+            ...(opts.environmentVariables ? { env: opts.environmentVariables } : {}),
             mcpServers,
             permissionHandler,
             permissionMode: getPermissionMode(),
+            ...(options.pluginContext ? { pluginContext: options.pluginContext } : {}),
           }),
         }),
         attachMetadataLogLabel: definition.backendId,
@@ -252,6 +186,9 @@ function createSessionRuntimePlan(
 
 export function createAcpRuntimeCoreFromDefinition(
   definition: AcpRuntimeDefinitionV1,
+  options: Readonly<{
+    pluginContext?: PluginContextV1;
+  }> = {},
 ): CliEngineAdapter {
   const messageMeta = createProviderMessageMetaEnricher({
     backendId: definition.backendId,
@@ -259,7 +196,7 @@ export function createAcpRuntimeCoreFromDefinition(
   });
   const runtimeCore: CliRuntimeCore = Object.freeze({
     async createSessionRuntime(sessionParams: unknown) {
-      return createSessionRuntimePlan(definition, sessionParams);
+      return createSessionRuntimePlan(definition, sessionParams, options);
     },
     createExecutionRunBackend(opts: CreateCliExecutionRunBackendParams) {
       return createCatalogProviderExecutionRunBackend({
@@ -270,6 +207,7 @@ export function createAcpRuntimeCoreFromDefinition(
           permissionMode: runtimeOptions.permissionMode,
           ...(runtimeOptions.env ? { env: runtimeOptions.env } : {}),
           ...(runtimeOptions.permissionHandler ? { permissionHandler: runtimeOptions.permissionHandler } : {}),
+          ...(options.pluginContext ? { pluginContext: options.pluginContext } : {}),
         }),
         buildRuntimeDescriptor: () => ({
           backendId: definition.backendId,

@@ -108,28 +108,8 @@ function extractCommandHintFromLabel(value: unknown): string | null {
     return codeBlockMatch[1].trim();
   }
 
-  const stripped = label.replace(/^(?:always\s+allow|allow|run|execute)\s+/i, '').trim();
-  if (stripped && stripped !== label) return stripped;
-
   if (/^(?:bash|zsh|sh)\b/i.test(label)) return label;
   return null;
-}
-
-function extractCommandHintFromOptions(options: unknown): string | null {
-  if (!Array.isArray(options)) return null;
-
-  let fallbackCandidate: string | null = null;
-  for (const option of options) {
-    const record = asRecord(option);
-    if (!record) continue;
-    const kind = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
-    const candidate = extractCommandHintFromLabel(record.name) ?? extractCommandHintFromLabel(record.title);
-    if (!candidate) continue;
-    if (kind.includes('allow')) return candidate;
-    if (!fallbackCandidate) fallbackCandidate = candidate;
-  }
-
-  return fallbackCandidate;
 }
 
 function extractCommandHintFromContentItems(value: unknown): string | null {
@@ -198,6 +178,47 @@ function normalizePermissionInputCandidate(value: unknown): Record<string, unkno
   return null;
 }
 
+const SHELL_LIKE_PERMISSION_TOOL_NAMES = new Set(['bash', 'execute', 'shell']);
+const GENERIC_EXECUTE_TITLES = new Set([
+  'execute',
+  'shell',
+  'bash',
+  'run shell command',
+  'run terminal command',
+  'run command',
+  'execute shell command',
+  'execute terminal command',
+  'execute command',
+  'shell command',
+]);
+
+function normalizeExecuteTitleLabel(value: string): string {
+  return value.trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+}
+
+function normalizePermissionTitleCommand(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string') return null;
+  const command = value.trim().replace(/\s+/g, ' ');
+  if (!command) return null;
+  if (GENERIC_EXECUTE_TITLES.has(normalizeExecuteTitleLabel(command))) return null;
+
+  const prefixed = command.match(
+    /^(shell|bash|execute|run shell command|run terminal command|run command|execute shell command|execute terminal command|execute command)\s*:\s*(.+)$/i,
+  );
+  const stripped = prefixed?.[2]?.trim();
+  if (stripped && !GENERIC_EXECUTE_TITLES.has(normalizeExecuteTitleLabel(stripped))) {
+    return { command: stripped };
+  }
+  return { command };
+}
+
+function isExecuteLikeToolCall(toolCall: PermissionToolCallLike | null | undefined): boolean {
+  const kind = typeof toolCall?.kind === 'string' ? toolCall.kind.trim().toLowerCase() : '';
+  if (kind === 'execute') return true;
+  const toolName = typeof toolCall?.toolName === 'string' ? toolCall.toolName.trim().toLowerCase() : '';
+  return SHELL_LIKE_PERMISSION_TOOL_NAMES.has(toolName);
+}
+
 export function extractPermissionInput(params: PermissionRequestLike): Record<string, unknown> {
   const toolCall = params.toolCall ?? undefined;
   const candidates = [
@@ -218,10 +239,9 @@ export function extractPermissionInput(params: PermissionRequestLike): Record<st
     }
   }
 
-  // Some ACP providers (notably Gemini) send command hints only in permission option labels.
-  const optionCommandHint = extractCommandHintFromOptions(params.options);
-  if (optionCommandHint) {
-    return { command: optionCommandHint };
+  if (isExecuteLikeToolCall(toolCall)) {
+    const titleCommand = normalizePermissionTitleCommand(toolCall?.title);
+    if (titleCommand) return titleCommand;
   }
 
   return {};

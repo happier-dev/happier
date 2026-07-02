@@ -1,9 +1,10 @@
 import { buildHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
+import type { CodingPromptSessionTitleUpdatesModeV1 } from '@happier-dev/protocol';
 
 export function buildHappierToolsPromptAppendix(params: Readonly<{
   sessionId: string;
   directory: string;
-  sessionTitleUpdatesEnabled?: boolean;
+  sessionTitleUpdatesMode?: CodingPromptSessionTitleUpdatesModeV1;
   memoryRecallGuidance?: Readonly<{
     enabled?: boolean;
     machineId?: string | null;
@@ -102,9 +103,28 @@ If \`memory_search\` returns a hit that you need to verify, use \`${memoryWindow
 Do not use provider-native memory files or ad-hoc workspace search as a substitute for \`memory_search\`. If \`memory_search\` returns no hits, say that plainly.`
     : '';
 
-  const titleGuidance = params.sessionTitleUpdatesEnabled === false
+  const titleMode = params.sessionTitleUpdatesMode ?? 'ongoing';
+  const titleGuidance = titleMode === 'disabled'
     ? ''
-    : `
+    : titleMode === 'initial'
+      ? `
+Based on the user's first message, use the Happier tools bridge to set a short descriptive session title.
+
+At the start of the session, use the Happier tools bridge to rename the session before replying when that would help keep the session organized.
+
+Before your first substantive reply in the session, execute the CLI bridge command to rename the session unless the user explicitly told you not to use tools.
+
+Required first action for this session: derive a short descriptive title from the user's message and execute the rename command.
+
+Before using provider-native tools for workspace inspection or analysis, execute the bridge rename command first.
+
+Do not inspect the workspace first and then rename the session afterward unless the user explicitly forbids tool usage for that turn.
+
+Only after the rename command succeeds should you inspect the workspace, use provider-native tools, or provide the substantive answer.
+
+Do not merely describe the command or say that you plan to rename the session later; execute the CLI bridge command first when the title update is allowed.
+`
+      : `
 Based on the user's message, use the Happier tools bridge to set or update a short descriptive session title.
 
 At the start of the session (and again if the task changes significantly), use the Happier tools bridge to rename the session before replying when that would help keep the session organized.
@@ -121,7 +141,7 @@ Only after the rename command succeeds should you inspect the workspace, use pro
 
 Do not merely describe the command or say that you plan to rename the session later; execute the CLI bridge command first when the title update is allowed.
 `;
-  const renameCommandGuidance = params.sessionTitleUpdatesEnabled === false
+  const renameCommandGuidance = titleMode === 'disabled'
     ? ''
     : `
 Use \`${renameCommand}\` to rename the session.

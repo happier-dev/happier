@@ -1,10 +1,15 @@
+import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
+
+export type { RuntimeConfigUpdateOutcomeV1 };
+
 export const RUNTIME_TURN_OPERATION_SET = [
   'beginTurnLifecycle',
   'startOrLoadSession',
   'sendTurnPrompt',
   'steerInFlightTurn',
   'waitForTurnCompletion',
-  'subscribeRuntimeMessages',
+  'subscribeRuntimeEvents',
   'respondToPermission',
   'cancelTurn',
   'readSessionIdentity',
@@ -36,19 +41,28 @@ export type RuntimeTurnCompletionOptions = Readonly<{
   timeoutMs?: number | null;
 }>;
 
-export type RuntimeTurnMessageHandler = (message: unknown) => void;
+export type RuntimePublicationEvent = Readonly<{
+  type: 'event';
+  name: 'runtime.descriptor' | 'runtime.capabilities' | 'runtime.facets';
+  payload?: unknown;
+}>;
+
+export type RuntimeTurnMessage = RuntimeEventV1 | RuntimePublicationEvent;
+
+export type RuntimeTurnMessageHandler = (message: RuntimeTurnMessage) => void;
 
 export type RuntimeTurnOperations = Readonly<{
   beginTurnLifecycle: () => void;
   startOrLoadSession: (opts?: RuntimeTurnStartOrLoadOptions) => Promise<unknown>;
   sendTurnPrompt: (prompt: string) => Promise<void>;
+  compactContext?: (command: string) => Promise<void>;
   steerInFlightTurn: (message: string) => Promise<void>;
   waitForTurnCompletion: (opts?: RuntimeTurnCompletionOptions) => Promise<void>;
-  subscribeRuntimeMessages: (handler: RuntimeTurnMessageHandler) => () => void;
+  subscribeRuntimeEvents: (handler: RuntimeTurnMessageHandler) => () => void;
   respondToPermission: (requestId: string, approved: boolean) => Promise<void>;
   cancelTurn: () => Promise<void>;
   readSessionIdentity: () => RuntimeTurnSessionIdentity;
-  updateSessionRuntimeConfig: (update: RuntimeTurnConfigUpdate) => Promise<void>;
+  updateSessionRuntimeConfig: (update: RuntimeTurnConfigUpdate) => Promise<RuntimeConfigUpdateOutcomeV1 | void>;
   resetOrDisposeRuntime: () => Promise<void>;
 }>;
 

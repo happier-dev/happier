@@ -1,4 +1,6 @@
 import type { AgentId, VendorResumeIdField } from '@happier-dev/agents';
+import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import type { AccountSettings, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 import type { Metadata, PermissionMode } from '@/api/types';
 import type { McpServerConfig } from '@/agent';
@@ -47,6 +49,8 @@ type CatalogProviderSessionIdentityRuntimeParams<TBackendOptions extends AgentFa
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
   memoryRecallGuidanceEnabled?: boolean;
+  accountSettings?: AccountSettings | null;
+  pendingQueueDrainMaxPopPerWake?: number;
   getPermissionMode?: (() => PermissionMode | null | undefined)
     | CatalogBackedAcpProviderRuntimeParams<TBackendOptions>['getPermissionMode']
     | CustomBackedAcpProviderRuntimeParams<TBackendOptions>['getPermissionMode'];
@@ -62,6 +66,7 @@ type CatalogProviderSessionIdentityRuntimeParams<TBackendOptions extends AgentFa
   hooks?:
     | CatalogBackedAcpProviderRuntimeParams<TBackendOptions>['hooks']
     | CustomBackedAcpProviderRuntimeParams<TBackendOptions>['hooks'];
+  buildRuntimeDescriptor?: (providerSessionId: string) => RuntimeDescriptorV1 | null;
 }> & CatalogProviderSessionIdentityPublication;
 
 export function createCatalogProviderSessionIdentityRuntime<TBackendOptions extends AgentFactoryOptions = AgentFactoryOptions>(
@@ -71,12 +76,22 @@ export function createCatalogProviderSessionIdentityRuntime<TBackendOptions exte
   const publishSessionIdentity = (() => {
     if (params.sessionIdMetadataKey) {
       const updateSessionRuntimeIdentity = createSessionRuntimeIdentityMetadataUpdater(params.sessionIdMetadataKey);
+      const buildRuntimeDescriptor = params.buildRuntimeDescriptor;
       return (nextSessionId: string | null) => {
         updateSessionRuntimeIdentity({
           sessionId: params.session.sessionId,
           getSessionId: () => nextSessionId,
           updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
           lastPublished: lastPublishedSessionId,
+          ...(buildRuntimeDescriptor
+            ? {
+                decorateMetadata: (metadata, providerSessionId) =>
+                  applyRuntimeDescriptorSessionMetadata(
+                    metadata,
+                    buildRuntimeDescriptor(providerSessionId),
+                  ),
+              }
+            : {}),
         } satisfies SessionRuntimeIdentityMetadataUpdaterParams);
       };
     }
@@ -107,6 +122,8 @@ export function createCatalogProviderSessionIdentityRuntime<TBackendOptions exte
       machineId: params.machineId,
     },
     getPermissionMode: params.getPermissionMode,
+    accountSettings: params.accountSettings,
+    pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     ...(params.resolvePermissionMode ? { resolvePermissionMode: params.resolvePermissionMode } : {}),
     ...(params.inFlightSteer ? { inFlightSteer: params.inFlightSteer } : {}),
     ...(params.hooks ? { hooks: params.hooks } : {}),

@@ -97,7 +97,7 @@ export function createAgentAttachStatePublisher(params: Readonly<{
               topology: capability.topology,
               canAttach: true,
               canDetach: attached,
-              remoteWritable: capability.topology === 'shared',
+              remoteWritable: capability.remoteWritable,
             }),
           }),
         });

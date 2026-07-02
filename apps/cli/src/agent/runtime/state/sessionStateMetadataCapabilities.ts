@@ -3,7 +3,7 @@ import type { SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 export const HOST_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV1 = {
   identity: {
     runtimeDescriptor: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-    vendorSessionId: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    providerSessionId: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
   intent: {
     model: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
@@ -13,6 +13,10 @@ export const HOST_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV
   },
   display: {
     title: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+  },
+  runtime: {
+    workState: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    usageLimitRecovery: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
 };
 
@@ -34,6 +38,10 @@ export function mergeHostSessionStateCapabilities(
     display: {
       ...HOST_SESSION_STATE_METADATA_CAPABILITIES.display,
       ...override.display,
+    },
+    runtime: {
+      ...HOST_SESSION_STATE_METADATA_CAPABILITIES.runtime,
+      ...override.runtime,
     },
   };
 }

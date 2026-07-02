@@ -75,6 +75,7 @@ export function createSessionClientWithMetadata(opts?: {
     const metadataUpdates: Metadata[] = [];
     const committed: ACPMessageData[] = [];
     const session: AcpRuntimeSessionClient = {
+        sessionId: 'test-session-id',
         keepAlive: () => {},
         sendAgentMessage: () => {},
         sendAgentMessageCommitted: async (_provider, body, _opts) => {
@@ -99,6 +100,7 @@ export function createBasicSessionClientWithOverrides(
     overrides: Partial<AcpRuntimeSessionClient> = {},
 ): AcpRuntimeSessionClient {
     return {
+        sessionId: 'test-session-id',
         keepAlive: () => {},
         sendAgentMessage: () => {},
         sendAgentMessageCommitted: async (_provider, _body, _opts) => {},
@@ -159,6 +161,9 @@ export function createMutableApiSessionClientFixture<TMetadata extends Record<st
         },
         async popPendingMessage() {
             return false;
+        },
+        shouldAttemptPendingMaterialization() {
+            return true;
         },
         async waitForMetadataUpdate() {
             return false;

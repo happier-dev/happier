@@ -6,9 +6,9 @@ import {
   type VendorResumeIdField,
 } from '@happier-dev/agents';
 
-const VENDOR_SESSION_ID_METADATA_CAPABILITIES: SessionStateCapabilitiesV1 = {
+const PROVIDER_SESSION_ID_METADATA_CAPABILITIES: SessionStateCapabilitiesV1 = {
   identity: {
-    vendorSessionId: {
+    providerSessionId: {
       supported: true,
       happierToProvider: { supported: false },
       providerToHappier: { supported: false },
@@ -21,6 +21,7 @@ export type SessionRuntimeIdentityMetadataUpdaterParams = {
   sessionId?: string | null;
   updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata, sessionId: string) => Promise<void> | void;
   lastPublished: { value: string | null };
+  decorateMetadata?: (metadata: Metadata, providerSessionId: string) => Metadata;
   afterUpdate?: (sessionId: string) => Promise<void> | void;
 };
 
@@ -49,7 +50,10 @@ export function createSessionRuntimeIdentityMetadataUpdater(
         update: async (_sessionId, updater) => {
           try {
             await Promise.resolve(params.updateHappySessionMetadata(
-              (metadata) => updater(metadata) as Metadata,
+              (metadata) => {
+                const nextMetadata = updater(metadata) as Metadata;
+                return params.decorateMetadata?.(nextMetadata, next) ?? nextMetadata;
+              },
               happierSessionId,
             ));
           } catch {
@@ -60,12 +64,12 @@ export function createSessionRuntimeIdentityMetadataUpdater(
         },
       };
       const result = createSessionStateSyncEngine({
-        capabilities: VENDOR_SESSION_ID_METADATA_CAPABILITIES,
+        capabilities: PROVIDER_SESSION_ID_METADATA_CAPABILITIES,
         facet: null,
         metadataPort,
       }).writeHappierField({
         sessionId: happierSessionId,
-        fieldId: 'identity.vendorSessionId',
+        fieldId: 'identity.providerSessionId',
         value: {
           metadataKey,
           value: next,

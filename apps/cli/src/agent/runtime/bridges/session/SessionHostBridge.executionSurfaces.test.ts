@@ -26,7 +26,7 @@ function createRuntimeTurnOperations() {
     sendTurnPrompt: vi.fn(async () => undefined),
     steerInFlightTurn: vi.fn(async () => undefined),
     waitForTurnCompletion: vi.fn(async () => undefined),
-    subscribeRuntimeMessages: vi.fn(() => () => undefined),
+    subscribeRuntimeEvents: vi.fn(() => () => undefined),
     respondToPermission: vi.fn(async () => undefined),
     cancelTurn: vi.fn(async () => undefined),
     readSessionIdentity: vi.fn(() => ({ sessionId: 'session-1' })),
@@ -47,9 +47,11 @@ describe('SessionHostBridge execution surfaces', () => {
       terminalRuntime: {
         launch: vi.fn(),
       },
-      externalSessions: null,
+      externalSession: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     };
     resolveBackendExecutionSurfacesMock.mockResolvedValue(expected);
 
@@ -161,7 +163,7 @@ describe('SessionHostBridge execution surfaces', () => {
     }
 
     const messages: unknown[] = [];
-    const unsubscribe = createdRuntime.operations.subscribeRuntimeMessages((message) => {
+    const unsubscribe = createdRuntime.operations.subscribeRuntimeEvents((message) => {
       messages.push(message);
     });
 

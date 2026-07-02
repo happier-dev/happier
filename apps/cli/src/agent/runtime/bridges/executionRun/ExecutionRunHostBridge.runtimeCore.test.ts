@@ -1,16 +1,43 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
+import type { RuntimeEventV1 } from '@happier-dev/protocol';
 import {
   createExecutionRunHostRuntimeFromAgentBackend,
-} from '@/agent/executionRuns/runtime/backend.testkit';
+} from '@/agent/runtime/bridges/executionRun/testkit';
 import { createExecutionRunHostRuntimeFromRuntimeTurnOperations } from '@/agent/runtime/bridges/executionRun/hostRuntimeFromTurnOps';
 import type { RuntimeTurnMessageHandler, RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 
 const resolveBackendEngineAdapterResolutionMock = vi.fn();
+const { dispatchBridgeLifecycleHookEvent } = vi.hoisted(() => ({
+  dispatchBridgeLifecycleHookEvent: vi.fn().mockResolvedValue({
+    matchedHandlerCount: 0,
+    outcomes: [],
+  }),
+}));
 
 vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   resolveBackendEngineAdapterResolution: (...args: unknown[]) => resolveBackendEngineAdapterResolutionMock(...args),
+}));
+
+vi.mock('@/plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent', () => ({
+  dispatchBridgeLifecycleHookEvent,
+}));
+
+vi.mock('@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled', () => ({
+  resolveCliMemoryRecallGuidanceEnabled: vi.fn(async () => false),
+}));
+
+vi.mock('@/agent/prompts/library/resolveCliVoicePromptStackBlocks', () => ({
+  resolveCliVoicePromptStackBlocks: vi.fn(async () => []),
+}));
+
+vi.mock('@/pets/discovery/resolveCodexPetRoots', () => ({
+  resolveCodexPetRoots: vi.fn(async () => []),
+  resolveCodexPetRootsWithDiagnostics: vi.fn(async () => ({
+    roots: [],
+    diagnostics: [],
+  })),
 }));
 
 type AssertNever<T extends never> = T;
@@ -73,9 +100,11 @@ function mockRuntimeCore(runtime: ReturnType<typeof createExecutionRunHostRuntim
     },
     executionSurfaces: {
       terminalRuntime: null,
-      externalSessions: null,
+      externalSession: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     },
     diagnostics: [],
   });
@@ -181,14 +210,14 @@ function createPermissionRequestRuntimeTurnOperations(params: Readonly<{
               },
             },
           },
-        } as AgentMessage);
+        } as unknown as RuntimeEventV1);
         handler({
           type: 'event',
           name: 'runtime.capabilities',
           payload: {
             executionRun: { supported: true },
           },
-        } as AgentMessage);
+        } as unknown as RuntimeEventV1);
       });
     },
     async sendTurnPrompt() {
@@ -201,18 +230,18 @@ function createPermissionRequestRuntimeTurnOperations(params: Readonly<{
             toolName: params.toolName,
             input: { path: '/tmp/execution-run-permission.txt' },
           },
-        } as AgentMessage);
+        } as unknown as RuntimeEventV1);
         handler({
           type: 'model-output',
           fullText: JSON.stringify({
             summary: params.summary,
           }),
-        } as AgentMessage);
+        } as unknown as RuntimeEventV1);
       });
     },
     async steerInFlightTurn() {},
     async waitForTurnCompletion() {},
-    subscribeRuntimeMessages(handler) {
+    subscribeRuntimeEvents(handler) {
       handlers.add(handler);
       return () => handlers.delete(handler);
     },
@@ -254,9 +283,11 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
       },
       executionSurfaces: {
         terminalRuntime: null,
-        externalSessions: null,
+        externalSession: null,
         attach: null,
-        sessionHandoff: null,
+        handoff: null,
+        fork: null,
+        checkpoint: null,
       },
       diagnostics: [],
     });
@@ -518,7 +549,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
               findings: [],
               summary: 'ok',
             }),
-          });
+          } as unknown as RuntimeEventV1);
         });
       },
       async steerInFlightTurn(message) {
@@ -527,7 +558,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
       async waitForTurnCompletion() {
         calls.push('waitForTurnCompletion');
       },
-      subscribeRuntimeMessages(handler) {
+      subscribeRuntimeEvents(handler) {
         handlers.add(handler);
         return () => handlers.delete(handler);
       },
@@ -595,12 +626,12 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
               toolName: 'write',
               input: { path: '/tmp/needs-parent-approval.txt' },
             },
-          } as AgentMessage);
+          } as unknown as RuntimeEventV1);
         });
       },
       async steerInFlightTurn() {},
       async waitForTurnCompletion() {},
-      subscribeRuntimeMessages(handler) {
+      subscribeRuntimeEvents(handler) {
         handlers.add(handler);
         return () => handlers.delete(handler);
       },

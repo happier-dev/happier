@@ -6,12 +6,12 @@ import { bindPluginDaemonConnectionStateSource } from './pluginConnectionStateSo
 const {
     resolveMergedContributionRegistryMock,
     resolveExecutablePluginRuntimeRegistryMock,
-    resolvePluginRuntimeAdapterSurfacesMock,
+    resolvePluginBackendSurfaceHandlersMock,
     pluginReloadControllerStateMock,
 } = vi.hoisted(() => ({
     resolveMergedContributionRegistryMock: vi.fn<(...args: unknown[]) => unknown>(),
     resolveExecutablePluginRuntimeRegistryMock: vi.fn<(...args: unknown[]) => unknown>(),
-    resolvePluginRuntimeAdapterSurfacesMock: vi.fn<(...args: unknown[]) => unknown>(),
+    resolvePluginBackendSurfaceHandlersMock: vi.fn<(...args: unknown[]) => unknown>(),
     pluginReloadControllerStateMock: vi.fn<(...args: unknown[]) => unknown>(),
 }));
 
@@ -29,8 +29,8 @@ vi.mock('../../../plugins/runtime/reload/singleton', () => ({
     },
 }));
 
-vi.mock('./resolvePluginRuntimeAdapterSurfaces', () => ({
-    resolvePluginRuntimeAdapterSurfaces: resolvePluginRuntimeAdapterSurfacesMock,
+vi.mock('./resolvePluginBackendSurfaceHandlers', () => ({
+    resolvePluginBackendSurfaceHandlers: resolvePluginBackendSurfaceHandlersMock,
 }));
 
 vi.mock('@/ui/logger', () => ({
@@ -135,11 +135,11 @@ function createPluginContributions() {
                 providerId: 'acme.sample.provider',
                 runtimeKind: 'native',
                 capabilities: {},
-                runtimeCoreHooks: [],
+                surfaceHandlers: [],
             },
         },
         runtimeKind: 'native',
-        runtimeCoreHooks: [],
+        surfaceHandlers: [],
         pluginId: 'acme.sample',
         daemonEntryPath: '/tmp/acme.sample/daemon.mjs',
     };
@@ -169,7 +169,7 @@ function createPluginContributions() {
         backends: [backend],
         actions: [],
         hookRegistrations: [],
-        runtimeCoreHooksByBackendId: new Map(),
+        surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: {},
         backendDefinitionsById: new Map([['acme.sample.backend', backend]]),
         providerDefinitionsById: new Map([['acme.sample.provider', provider]]),
@@ -182,12 +182,14 @@ async function capturePluginContext(params?: Parameters<typeof resolveCliEngineR
     let observedContext: PluginConnectionContextForTest | null = null;
 
     resolveMergedContributionRegistryMock.mockResolvedValue(contributions);
-    resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
+    resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
         surfaces: {
             terminalRuntime: null,
-            externalSessions: null,
+            externalSession: null,
             attach: null,
-            sessionHandoff: null,
+            handoff: null,
+            fork: null,
+            checkpoint: null,
         },
         diagnostics: [],
     });
@@ -238,7 +240,7 @@ describe('PluginContextV1 connection service', () => {
     beforeEach(() => {
         resolveMergedContributionRegistryMock.mockReset();
         resolveExecutablePluginRuntimeRegistryMock.mockReset();
-        resolvePluginRuntimeAdapterSurfacesMock.mockReset();
+        resolvePluginBackendSurfaceHandlersMock.mockReset();
         pluginReloadControllerStateMock.mockReset();
         pluginReloadControllerStateMock.mockReturnValue({
             generation: 0,

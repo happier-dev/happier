@@ -1,8 +1,52 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import type { ExecutionRunStartRequest } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { ReviewProfile } from './ReviewProfile';
 
 describe('ReviewProfile', () => {
+  it('adds unsupported host-resolved SCM scope for non-repository review starts', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'happier-review-non-repo-'));
+    const request = {
+      intent: 'review',
+      backendTarget: { kind: 'backend', backendId: 'coderabbit' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      intentInput: {
+        engineIds: ['coderabbit'],
+        instructions: 'Review.',
+        changeType: 'uncommitted',
+        base: { kind: 'none' },
+      },
+    } satisfies ExecutionRunStartRequest;
+
+    try {
+      expect(ReviewProfile.prepareStartParams).toEqual(expect.any(Function));
+      const patch = await ReviewProfile.prepareStartParams!({ request, cwd });
+      expect(patch).toMatchObject({
+        intentInput: {
+          scmReviewScope: {
+            kind: 'review_scm_scope.v1',
+            status: 'unsupported',
+            diagnostics: [
+              expect.objectContaining({
+                code: 'not_repository',
+              }),
+            ],
+          },
+        },
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('parses trailing JSON when model output includes preamble text', () => {
     const start = {
       sessionId: 'sess_1',

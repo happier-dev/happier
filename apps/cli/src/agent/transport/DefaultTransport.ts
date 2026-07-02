@@ -185,7 +185,7 @@ export class DefaultTransport implements TransportHandler {
   /**
    * Default tool call timeout based on tool kind
    */
-  getToolCallTimeout(_toolCallId: string, toolKind?: string): number {
+  getToolCallTimeout(_toolCallId: string, toolKind?: string): number | null {
     if (toolKind === 'think') {
       return DEFAULT_TIMEOUTS.think;
     }
@@ -216,6 +216,21 @@ export class DefaultTransport implements TransportHandler {
    */
   getPreToolCallIdleTimeoutMs(): number | undefined {
     return undefined;
+  }
+
+  /**
+   * Default: no provider-specific content fixups. Provider transports override this to repair
+   * payload quirks (e.g. Cursor's diff header noise) before the generic normalizer reads them.
+   */
+  sanitizeToolUpdateContent<T extends { content?: unknown }>(update: T): T {
+    return update;
+  }
+
+  /**
+   * Default: render standard ACP plan updates through the shared TodoWrite checklist.
+   */
+  suppressAcpPlanUpdate(): boolean {
+    return false;
   }
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RuntimeEventV1Schema } from '@happier-dev/protocol';
 
 import {
   classifyPrimarySessionRuntimeIssue,
@@ -25,6 +26,26 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
     expect(JSON.stringify(issue)).not.toContain('sk-123');
   });
 
+  it('preserves sanitized model-not-found details from nested provider errors', async () => {
+    const issue = classifyPrimarySessionRuntimeIssue({
+      provider: 'opencode',
+      cause: 'session_error',
+      error: {
+        message: 'OpenCode session failed',
+        data: {
+          message: 'Model not found: anthropic/claude-sonnet-4-6.',
+        },
+      },
+      occurredAt: 150,
+    });
+
+    expect(issue).toMatchObject({
+      source: 'provider_session_error',
+      sanitizedPreview: 'Model not found: anthropic/claude-sonnet-4-6',
+    });
+    expect(JSON.stringify(issue)).not.toContain('OpenCode session failed');
+  });
+
   it.each([
     ['process_exit', 'provider_process_exit'],
     ['session_error', 'provider_session_error'],
@@ -45,113 +66,136 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
     expect(issue.code).toBe(expectedSource);
   });
 
-  it('emits turn_failed and records the issue through a caller-owned persistence hook', async () => {
+  it('publishes a typed turn-failed runtime event without legacy projection by default', async () => {
     const sendAgentMessage = vi.fn();
+    const publishRuntimeEvent = vi.fn();
     const recordIssue = vi.fn();
 
     const issue = await surfacePrimarySessionRuntimeIssue({
-      provider: 'codex',
+      provider: 'claude',
       cause: 'auth_error',
       error: '401 Unauthorized raw details',
       occurredAt: 300,
-      providerTurnId: 'turn_1',
-      session: { sendAgentMessage },
+      sessionTurnId: 'session-turn-1',
+      providerTurnId: 'provider-turn-1',
+      session: {
+        sessionId: 'happy-session-1',
+        sendAgentMessage,
+      },
+      publishRuntimeEvent,
       recordIssue,
     });
 
     expect(issue).not.toBeNull();
     if (issue === null) return;
     expect(issue.source).toBe('auth_error');
-    expect(sendAgentMessage).toHaveBeenCalledWith('codex', expect.objectContaining({
-      type: 'turn_failed',
-      id: expect.any(String),
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+    const event = RuntimeEventV1Schema.parse(publishRuntimeEvent.mock.calls[0]?.[0]);
+    expect(event).toEqual(expect.objectContaining({
+      kind: 'turn-failed',
+      sessionId: 'happy-session-1',
+      emittedAtMs: 300,
+      turnId: 'session-turn-1',
+      providerTurnId: 'provider-turn-1',
+      issue,
     }));
+    expect(event.turnId).not.toBe(event.providerTurnId);
     expect(recordIssue).toHaveBeenCalledWith({
+      provider: 'claude',
+      providerTurnId: 'provider-turn-1',
       latestTurnStatus: 'failed',
       lastRuntimeIssue: issue,
     });
   });
 
-  it('persists failed primary-turn runtime state through the session owner when available', async () => {
+  it('emits ACP turn_failed markers only when explicitly requested as ACP compatibility', async () => {
     const sendAgentMessage = vi.fn();
-    const updatePrimaryTurnRuntimeState = vi.fn();
 
     const issue = await surfacePrimarySessionRuntimeIssue({
       provider: 'acp',
       cause: 'usage_limit',
       error: 'quota exceeded',
       occurredAt: 350,
-      session: { sendAgentMessage, updatePrimaryTurnRuntimeState },
+      session: { sendAgentMessage },
+      emitAcpLifecycleMarker: true,
     });
 
     expect(issue).not.toBeNull();
-    if (issue === null) return;
-    expect(updatePrimaryTurnRuntimeState).toHaveBeenCalledWith({
-      latestTurnStatus: 'failed',
-      lastRuntimeIssue: issue,
-    });
+    expect(sendAgentMessage).toHaveBeenCalledWith('acp', expect.objectContaining({
+      type: 'turn_failed',
+      id: expect.any(String),
+    }));
   });
 
-  it('treats failed primary-turn runtime state persistence as non-fatal', async () => {
+  it('ignores stale primary-turn projection compatibility input', async () => {
     const sendAgentMessage = vi.fn();
-    const updatePrimaryTurnRuntimeState = vi.fn(async () => {
+    const legacyWriter = vi.fn(async () => {
       throw new Error('update-state socket is not connected');
     });
     const recordIssue = vi.fn();
+    const legacyWriterKey = ['updatePrimaryTurn', 'RuntimeState'].join('');
+    const legacyCompatibilityKey = ['primaryTurnRuntimeState', 'Compatibility'].join('');
 
     const issue = await surfacePrimarySessionRuntimeIssue({
       provider: 'acp',
       cause: 'stream_error',
       error: 'socket disconnected',
       occurredAt: 375,
-      session: { sendAgentMessage, updatePrimaryTurnRuntimeState },
+      session: { sendAgentMessage, [legacyWriterKey]: legacyWriter } as never,
+      [legacyCompatibilityKey]: 'acp-only',
       recordIssue,
-    });
+    } as never);
 
     expect(issue).not.toBeNull();
+    expect(legacyWriter).not.toHaveBeenCalled();
     expect(recordIssue).toHaveBeenCalledWith(expect.objectContaining({
       latestTurnStatus: 'failed',
     }));
   });
 
-  it('emits turn_cancelled for intentional stops without recording a runtime issue', async () => {
+  it('publishes a typed turn-cancelled runtime event without recording a runtime issue', async () => {
     const sendAgentMessage = vi.fn();
-    const updatePrimaryTurnRuntimeState = vi.fn();
+    const publishRuntimeEvent = vi.fn();
     const recordIssue = vi.fn();
 
     const issue = await surfacePrimarySessionRuntimeIssue({
       provider: 'pi',
+      sessionTurnId: 'session-turn-cancelled-1',
+      providerTurnId: 'provider-turn-cancelled-1',
       cause: 'cancelled',
       error: 'user cancelled',
       occurredAt: 400,
-      session: { sendAgentMessage, updatePrimaryTurnRuntimeState },
+      session: {
+        sessionId: 'happy-session-1',
+        sendAgentMessage,
+      },
+      publishRuntimeEvent,
       recordIssue,
     });
 
     expect(issue).toBeNull();
-    expect(sendAgentMessage).toHaveBeenCalledWith('pi', expect.objectContaining({
-      type: 'turn_cancelled',
-      id: expect.any(String),
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+    expect(RuntimeEventV1Schema.parse(publishRuntimeEvent.mock.calls[0]?.[0])).toEqual(expect.objectContaining({
+      kind: 'turn-cancelled',
+      sessionId: 'happy-session-1',
+      emittedAtMs: 400,
+      turnId: 'session-turn-cancelled-1',
+      providerTurnId: 'provider-turn-cancelled-1',
+      reason: 'cancelled',
     }));
-    expect(updatePrimaryTurnRuntimeState).toHaveBeenCalledWith({
-      latestTurnStatus: 'cancelled',
-      lastRuntimeIssue: null,
-    });
     expect(recordIssue).not.toHaveBeenCalled();
   });
 
-  it('treats failed cancelled-turn runtime state persistence as non-fatal', async () => {
+  it('keeps cancelled ACP lifecycle markers behind explicit ACP compatibility', async () => {
     const sendAgentMessage = vi.fn();
-    const updatePrimaryTurnRuntimeState = vi.fn(async () => {
-      throw new Error('update-state socket is not connected');
-    });
 
     await expect(surfacePrimarySessionRuntimeIssue({
       provider: 'pi',
       cause: 'cancelled',
       error: 'user cancelled',
       occurredAt: 425,
-      session: { sendAgentMessage, updatePrimaryTurnRuntimeState },
+      session: { sendAgentMessage },
+      emitAcpLifecycleMarker: true,
     })).resolves.toBeNull();
 
     expect(sendAgentMessage).toHaveBeenCalledWith('pi', expect.objectContaining({
@@ -173,5 +217,48 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
 
     expect(issue.source).toBe(source);
     expect(issue.code).toBe(source);
+  });
+
+  it('projects runtime-auth usage-limit classifications into normalized issue details', () => {
+    const issue = classifyPrimarySessionRuntimeIssue({
+      provider: 'codex',
+      cause: 'status_error',
+      error: {
+        runtimeAuthClassification: {
+          kind: 'rate_limit',
+          serviceId: 'openai-codex',
+          profileId: 'work',
+          groupId: 'pool',
+          resetsAtMs: 1_234_000,
+          retryAfterMs: 30_000,
+          planType: 'plus',
+          rateLimits: {
+            providerLimitId: 'daily_tokens',
+            quotaScope: 'workspace',
+            action: { kind: 'open_url', url: 'https://chatgpt.com/codex/settings/usage' },
+          },
+        },
+      },
+      occurredAt: 600,
+    });
+
+    expect(issue).toMatchObject({
+      source: 'usage_limit',
+      code: 'usage_limit',
+      usageLimit: {
+        resetAtMs: 1_234_000,
+        retryAfterMs: 30_000,
+        quotaScope: 'workspace',
+        recoverability: 'switch_account',
+        providerLimitId: 'daily_tokens',
+        planType: 'plus',
+        action: { kind: 'open_url', url: 'https://chatgpt.com/codex/settings/usage' },
+        connectedService: {
+          serviceId: 'openai-codex',
+          profileId: 'work',
+          groupId: 'pool',
+        },
+      },
+    });
   });
 });

@@ -1,7 +1,7 @@
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type { SessionId } from '@/agent/core/AgentBackend';
-import { createExecutionRunRuntime } from '@/agent/executionRuns/runtime/createExecutionRunRuntime';
+import { createExecutionRunRuntime } from '@/agent/runtime/bridges/executionRun/runtime/create';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { Credentials } from '@/persistence';

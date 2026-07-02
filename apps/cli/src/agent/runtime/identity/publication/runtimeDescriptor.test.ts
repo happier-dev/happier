@@ -171,7 +171,7 @@ describe('publishSessionRuntimeDescriptor', () => {
       providerId: 'opencode',
       provider: {
         backendMode: 'server',
-        vendorSessionId: 'opencode-session-1',
+        providerSessionId: 'opencode-session-1',
       },
     } as const;
 

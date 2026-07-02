@@ -61,9 +61,9 @@ export function finishExecutionRun(args: Readonly<{
 
   const resumeHandle: ExecutionRunResumeHandle | null = (() => {
     if (existing.retentionPolicy !== 'resumable') return null;
-    const vendorSessionId = readBackendResumableChildSessionId(args.controllers.get(args.runId) ?? null);
-    if (typeof vendorSessionId === 'string' && vendorSessionId.trim().length > 0) {
-      return { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(existing.backendTarget), vendorSessionId };
+    const providerSessionId = readBackendResumableChildSessionId(args.controllers.get(args.runId) ?? null);
+    if (typeof providerSessionId === 'string' && providerSessionId.trim().length > 0) {
+      return { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(existing.backendTarget), providerSessionId };
     }
     return existing.resumeHandle ?? null;
   })();
@@ -82,6 +82,12 @@ export function finishExecutionRun(args: Readonly<{
   if (updated.status !== 'running') {
     args.budgetRegistry?.releaseExecutionRun(args.runId);
   }
+
+  const livenessProbe = (() => {
+    const output = args.toolResult.output;
+    if (!output || typeof output !== 'object' || Array.isArray(output)) return undefined;
+    return (output as { livenessProbe?: unknown }).livenessProbe;
+  })();
 
   // Best-effort: update daemon-visible marker for machine-wide run visibility.
   const markerPayload = {
@@ -103,6 +109,7 @@ export function finishExecutionRun(args: Readonly<{
     finishedAtMs: args.next.finishedAtMs,
     ...(typeof updated.summary === 'string' && updated.summary.trim().length > 0 ? { summary: updated.summary } : {}),
     ...(updated.error?.code ? { errorCode: updated.error.code } : {}),
+    ...(livenessProbe === undefined ? {} : { diagnostics: { livenessProbe } }),
     resumeHandle,
   } as const;
 

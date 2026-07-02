@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 
+import psList from 'ps-list'
+
 export function spawnTestProcess(
   command: string,
   args: readonly string[] = [],
@@ -36,6 +38,30 @@ export function spawnInlineNodeTestProcess(source: string, options: SpawnOptions
 
 export function spawnDetachedInlineNodeTestProcess(source: string, options: SpawnOptions = {}): ChildProcess {
   return spawnDetachedTestProcess(process.execPath, ['-e', source], options)
+}
+
+async function waitForProcessParent(
+  pid: number,
+  expectedParentPid: number,
+  opts: { timeoutMs: number; intervalMs?: number },
+): Promise<void> {
+  if (process.platform === 'win32') return
+  const intervalMs = opts.intervalMs ?? 25
+  const start = Date.now()
+
+  while (Date.now() - start < opts.timeoutMs) {
+    try {
+      const processes = await psList()
+      const entry = processes.find((processInfo) => processInfo.pid === pid)
+      if (entry?.ppid === expectedParentPid) return
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, opts.timeoutMs)))
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+
+  throw new Error(`Timed out waiting for pid ${pid} to be visible as a child of ${expectedParentPid}`)
 }
 
 export async function spawnInlineNodeParentWithChild(
@@ -99,6 +125,8 @@ export async function spawnInlineNodeParentWithChild(
     throw error
   })
 
+  await waitForProcessParent(childPid, parent.pid!, { timeoutMs })
+
   return { parent, childPid }
 }
 
@@ -111,6 +139,17 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
+async function isPidRunning(pid: number): Promise<boolean> {
+  if (!isPidAlive(pid)) return false
+  if (process.platform === 'win32') return true
+  try {
+    const processes = await psList()
+    return processes.some((processInfo) => processInfo.pid === pid)
+  } catch {
+    return isPidAlive(pid)
+  }
+}
+
 export async function waitForProcessExit(
   pid: number,
   opts: { timeoutMs?: number; intervalMs?: number } = {},
@@ -120,9 +159,9 @@ export async function waitForProcessExit(
   const start = Date.now()
 
   while (Date.now() - start < timeoutMs) {
-    if (!isPidAlive(pid)) return true
+    if (!(await isPidRunning(pid))) return true
     await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }
 
-  return !isPidAlive(pid)
+  return !(await isPidRunning(pid))
 }

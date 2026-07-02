@@ -61,6 +61,15 @@ export function createReplaySeedV1ConsumeUpdater(params: Readonly<{ localId: str
   };
 }
 
+function hasNonEmptyMetadataSnapshot(metadata: unknown): boolean {
+  return Boolean(
+    metadata
+    && typeof metadata === 'object'
+    && !Array.isArray(metadata)
+    && Object.keys(metadata as Record<string, unknown>).length > 0,
+  );
+}
+
 export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
   session: {
     getMetadataSnapshot: () => unknown;
@@ -74,13 +83,16 @@ export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
   nowMs: number;
   refreshMetadataBeforeRead: boolean;
 }>): Promise<{ providerPrompt: string; seedApplied: boolean; seedText: string }> {
-  if (params.refreshMetadataBeforeRead && typeof params.session.refreshSessionSnapshotFromServerBestEffort === 'function') {
+  const localMetadata = params.session.getMetadataSnapshot();
+  const shouldRefreshBeforeRead = params.refreshMetadataBeforeRead && !hasNonEmptyMetadataSnapshot(localMetadata);
+
+  if (shouldRefreshBeforeRead && typeof params.session.refreshSessionSnapshotFromServerBestEffort === 'function') {
     try {
       await params.session.refreshSessionSnapshotFromServerBestEffort({ reason: 'waitForMetadataUpdate' });
     } catch {
       // Best-effort only; avoid blocking on snapshot refresh failures.
     }
-  } else if (params.refreshMetadataBeforeRead && typeof params.session.ensureMetadataSnapshot === 'function') {
+  } else if (shouldRefreshBeforeRead && typeof params.session.ensureMetadataSnapshot === 'function') {
     try {
       await params.session.ensureMetadataSnapshot();
     } catch {

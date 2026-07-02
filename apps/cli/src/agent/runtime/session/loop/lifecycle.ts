@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { resolveRuntimeCheckpointToolProtocol } from '@happier-dev/agents/session/controls/checkpoints';
 import { render } from 'ink';
 import React from 'react';
 
@@ -42,10 +43,16 @@ import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndClos
 import { createSessionMetadataShutdownDeadline } from '@/session/services/sessionMetadataShutdownDeadline';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
+import { resolveSessionPendingQueueMaxPopPerWake } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 import { resolvePendingQueueHandoff } from '@/agent/runtime/mode/switching/pendingQueueHandoffOrchestrator';
 import { publishTerminalPendingHandoffState } from '@/agent/runtime/mode/switching/publishTerminalPendingHandoffState';
 import { createTerminalTurnStateMachine } from '@/agent/runtime/terminal/turnStateMachine';
 import { mapRuntimeMessageToTerminalLifecycleObservation } from '@/agent/runtime/terminal/runtimeMessageObservationAdapter';
+import {
+  createSessionTurnLifecycle,
+  observeRuntimeMessageForSessionTurnLifecycle,
+} from '@/agent/runtime/session/turn/lifecycle';
+import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import type {
   HostSessionRuntimeConfig,
   HostSessionRuntimeDeps,
@@ -64,8 +71,11 @@ import {
   type HostSessionTerminalRemoteHandoffReason,
   type HostSessionTerminalRemoteHandoffResult,
 } from './terminalRemoteModeRuntime';
+import { configuration } from '@/configuration';
 
 export const HOST_SESSION_RUNTIME_PLAN_KIND = 'hostSessionRuntimePlan' as const;
+
+const KEEP_ALIVE_DUPLICATE_SUPPRESSION_MS = 100;
 
 export type HostSessionRuntimePlan = Readonly<{
   kind: typeof HOST_SESSION_RUNTIME_PLAN_KIND;
@@ -175,7 +185,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     session: params.session,
     runtimeDirectory: params.runtimeDirectory,
     provider: params.config.agentMessageType,
-    protocol: params.policyAgentId === 'codex' ? 'codex' : params.policyAgentId === 'claude' ? 'claude' : 'acp',
+    protocol: resolveRuntimeCheckpointToolProtocol(params.config.checkpointToolProtocol),
   });
   const terminalRemoteModeLoop = resolveHostSessionTerminalRemoteModeLoop(hookRuntimeForCallbacks);
   const resolvedStartingMode = resolveStartingMode({
@@ -184,10 +194,24 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     providerHint: terminalRemoteModeLoop?.startingMode,
   });
   const terminalTurnStateMachine = createTerminalTurnStateMachine();
+  const sessionTurnLifecycle = createSessionTurnLifecycle({
+    session: params.session,
+    provider: params.policyAgentId,
+  });
   let activeTerminalRemoteMode: TerminalRemoteSessionMode =
     resolvedStartingMode.kind === 'switching' ? resolvedStartingMode.startingMode : 'remote';
   let terminalHandoffFailureRequiresManualAction = false;
-  const observeTerminalLifecycleMessage = (message: unknown): void => {
+  const observeRuntimeLifecycleMessage = (message: unknown): void => {
+    void projectRuntimeTranscriptEvent({
+      session: params.session,
+      event: message,
+    }).catch((error) => {
+      logger.debug(`${params.config.uiLogPrefix} Runtime transcript projection failed (non-fatal)`, error);
+    });
+    observeRuntimeMessageForSessionTurnLifecycle({
+      lifecycle: sessionTurnLifecycle,
+      message,
+    });
     const observation = mapRuntimeMessageToTerminalLifecycleObservation({
       agentId: params.policyAgentId,
       message,
@@ -197,9 +221,9 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       terminalTurnStateMachine.observe(observation);
     }
   };
-  const unsubscribeRuntimeMessages = (() => {
+  const unsubscribeRuntimeEvents = (() => {
     try {
-      return runtimeForPromptLoop.subscribeRuntimeMessages(observeTerminalLifecycleMessage);
+      return runtimeForPromptLoop.subscribeRuntimeEvents(observeRuntimeLifecycleMessage);
     } catch (error) {
       logger.debug(`${params.config.uiLogPrefix} Failed to subscribe to terminal lifecycle messages (non-fatal)`, error);
       return () => undefined;
@@ -213,7 +237,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       await runtimeForPromptLoop.updateSessionRuntimeConfig({ modelId });
     },
     setSessionConfigOption: async (configId, value) => {
-      await runtimeForPromptLoop.updateSessionRuntimeConfig({ configOption: { id: configId, value } });
+      return await runtimeForPromptLoop.updateSessionRuntimeConfig({ configOption: { id: configId, value } });
     },
   };
   const resolveToolDeliverySessionId = (): string | null =>
@@ -237,7 +261,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const handleAbort = async () => {
     logger.debug(`${params.config.uiLogPrefix} Abort requested`);
     resetAssistantTextSnapshotTurnScope(params.session, 'abort');
-    params.session.sendAgentMessage(params.config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
+    params.session.sendAgentMessage(params.config.agentMessageType, { type: 'turn_cancelled', id: randomUUID() });
     params.permissionHandler.reset();
     try {
       abortController.abort();
@@ -308,16 +332,38 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   }
 
   const getKeepAliveMode = (): HostSessionKeepAliveMode => params.config.resolveKeepAliveMode?.() ?? 'remote';
+  let lastKeepAliveSentAt = 0;
+  let lastKeepAliveSignature: string | null = null;
   const publishKeepAlive = (): void => {
-    params.session.keepAlive(params.runtimeState.thinking, getKeepAliveMode() === 'terminal' ? 'local' : 'remote');
+    const now = Date.now();
+    const mode = getKeepAliveMode() === 'terminal' ? 'local' : 'remote';
+    const signature = `${params.session.sessionId}:${params.runtimeState.thinking ? 'thinking' : 'idle'}:${mode}`;
+    if (lastKeepAliveSignature === signature && now - lastKeepAliveSentAt < KEEP_ALIVE_DUPLICATE_SUPPRESSION_MS) return;
+    params.session.keepAlive(params.runtimeState.thinking, mode);
+    lastKeepAliveSignature = signature;
+    lastKeepAliveSentAt = now;
+  };
+  const setThinkingState = (value: boolean): void => {
+    if (params.runtimeState.thinking === value) return;
+    params.runtimeState.thinking = value;
+    publishKeepAlive();
   };
   publishKeepAlive();
-  const keepAliveInterval = setInterval(() => publishKeepAlive(), 2000);
+  const keepAliveTickIntervalMs = Math.min(configuration.sessionKeepAliveIdleMs, configuration.sessionKeepAliveThinkingMs);
+  const keepAliveInterval = setInterval(() => {
+    const cadenceMs = params.runtimeState.thinking
+      ? configuration.sessionKeepAliveThinkingMs
+      : configuration.sessionKeepAliveIdleMs;
+    if (Date.now() - lastKeepAliveSentAt >= cadenceMs) {
+      publishKeepAlive();
+    }
+  }, keepAliveTickIntervalMs);
+  keepAliveInterval.unref?.();
 
   const cleanupOnce = async () => {
     if (cleanupRan) return;
     cleanupRan = true;
-    unsubscribeRuntimeMessages();
+    unsubscribeRuntimeEvents();
     await params.config.lifecycleHooks?.onBeforeDispose?.({ session: params.session, runtime: hookRuntimeForCallbacks });
     await cleanupBackendRunResourcesFn({
       keepAliveInterval,
@@ -384,12 +430,15 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
 
   const initialResumeId = params.initialResumeId.trim();
   const resolvePendingCountForHandoff = async (): Promise<number> => {
-    try {
-      const count = await params.session.peekPendingMessageQueueV2Count();
-      return Number.isFinite(count) && count > 0 ? Math.floor(count) : 1;
-    } catch {
-      return 1;
+    const pendingQueueState = params.session.getPendingQueueState?.();
+    if (pendingQueueState?.known) {
+      return Math.max(0, pendingQueueState.pendingCount);
     }
+    if (typeof params.session.shouldAttemptPendingMaterialization === 'function'
+      && !params.session.shouldAttemptPendingMaterialization()) {
+      return 0;
+    }
+    return 1;
   };
   const resolveResumeReadiness = (): { ready: boolean; detail?: string } => {
     const adapterReadiness = terminalRemoteModeLoop?.getResumeReadiness?.();
@@ -470,7 +519,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const beforePendingMaterialize = async (): Promise<boolean> => {
     const decision = resolvePendingQueueHandoff({
       currentMode: activeTerminalRemoteMode,
-      remoteTurnInFlight: false,
+      remoteTurnInFlight: sessionTurnLifecycle.hasActiveTurn(),
       terminalTopology: terminalRemoteModeLoop ? 'exclusive' : null,
       terminalTurnState: terminalTurnStateMachine.getState(),
       pendingCount: await resolvePendingCountForHandoff(),
@@ -592,9 +641,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       shouldExit: () => shouldExit,
       getAbortSignal: () => abortController.signal,
       keepAlive: () => publishKeepAlive(),
-      setThinking: (value) => {
-        params.runtimeState.thinking = value;
-      },
+      setThinking: setThinkingState,
       sendReady: createSendReady,
       currentPermissionModeUpdatedAt: params.permissionModeState.getCurrentPermissionModeUpdatedAt(),
       setCurrentPermissionMode: params.permissionModeState.setCurrentPermissionMode,
@@ -602,6 +649,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       initialResumeId: initialResumeId || undefined,
       strictInitialResume: initialResumeId.length > 0,
       startRuntimeBeforeFirstPrompt: params.config.startRuntimeBeforeFirstPrompt === true,
+      pendingQueueDrainMaxPopPerWake: resolveSessionPendingQueueMaxPopPerWake(params.opts.accountSettingsContext?.settings ?? null),
       resolveFreshSessionSystemPrompt: async ({ baseOverride }) =>
         await resolveEffectiveCodingPromptText({
           credentials: params.opts.credentials,

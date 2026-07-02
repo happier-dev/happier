@@ -3,7 +3,7 @@ import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecy
 import {
   createCatalogProviderExecutionRunBackend,
   type CatalogProviderExecutionRunBackendConfig,
-} from '@/agent/executionRuns/runtime/backends/catalogProvider';
+} from '@/agent/runtime/bridges/executionRun/runtime/catalog';
 
 import type {
   CliRuntimeCoreFactory,

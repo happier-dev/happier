@@ -1,4 +1,10 @@
-import { listActionSpecs, type ActionId } from '@happier-dev/protocol';
+import {
+  isActionEnabledByActionsSettings,
+  isActionDirectToolExposedOn,
+  listActionSpecs,
+  type ActionId,
+  type ActionsSettingsV1,
+} from '@happier-dev/protocol';
 
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type {
@@ -48,6 +54,7 @@ const MANUAL_TOOL_EQUIVALENT_ACTION_IDS = new Map<string, ActionId>([
   ['action_spec_get', 'action.spec.get'],
   ['action_options_resolve', 'action.options.resolve'],
 ]);
+const DIRECT_MANUAL_TOOL_NAMES = new Set(['change_title']);
 
 function resolveActionToolRegistry(params?: Readonly<{
   registry?: ResolvedContributionRegistry;
@@ -192,6 +199,7 @@ export function isActionAvailableOnToolSurface(params: Readonly<{
   actionId: ActionId | string;
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
+  actionsSettings?: ActionsSettingsV1 | null;
   registry?: ResolvedContributionRegistry;
 }>): boolean {
   const surface = params.surface ?? 'session_agent';
@@ -203,26 +211,83 @@ export function isActionAvailableOnToolSurface(params: Readonly<{
   if (actionEntry.surfaces[surface] !== true) {
     return false;
   }
-  return actionEntry.provenance === 'external' ? true : isActionEnabled(actionEntry.id as ActionId);
+  if (actionEntry.provenance === 'external') {
+    return true;
+  }
+  if (
+    params.actionsSettings
+    && !isActionEnabledByActionsSettings(actionEntry.id as ActionId, params.actionsSettings, { surface })
+  ) {
+    return false;
+  }
+  return isActionEnabled(actionEntry.id as ActionId);
+}
+
+export function isActionDirectToolAvailableOnToolSurface(params: Readonly<{
+  actionId: ActionId | string;
+  surface?: HappierBuiltInToolSurface;
+  isActionEnabled?: ActionEnabledPredicate;
+  actionsSettings?: ActionsSettingsV1 | null;
+  registry?: ResolvedContributionRegistry;
+}>): boolean {
+  const surface = params.surface ?? 'session_agent';
+  const builtInSpec = BUILT_IN_ACTION_SPECS_BY_ID.get(String(params.actionId));
+  if (builtInSpec) {
+    return isActionDirectToolExposedOn(builtInSpec, surface, {
+      settings: params.actionsSettings ?? null,
+      isActionEnabled: params.isActionEnabled ?? null,
+    });
+  }
+
+  return isActionAvailableOnToolSurface({
+    actionId: params.actionId,
+    surface,
+    isActionEnabled: params.isActionEnabled,
+    actionsSettings: params.actionsSettings ?? null,
+    registry: params.registry,
+  });
 }
 
 export function createActionToolNameToIdMap(params?: Readonly<{
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
+  actionsSettings?: ActionsSettingsV1 | null;
   registry?: ResolvedContributionRegistry;
 }>): ReadonlyMap<string, string> {
   const surface = params?.surface ?? 'session_agent';
 
   return new Map(
     listActionToolEntries({ registry: params?.registry })
-      .filter((entry) => isActionAvailableOnToolSurface({
+      .filter((entry) => isActionDirectToolAvailableOnToolSurface({
         actionId: entry.id,
         surface,
         isActionEnabled: params?.isActionEnabled,
+        actionsSettings: params?.actionsSettings ?? null,
         registry: params?.registry,
       }))
       .map((entry) => [entry.toolName, entry.id] as const),
   );
+}
+
+function isDirectManualToolAvailable(params: Readonly<{
+  toolName: string;
+  actionId: ActionId | string;
+  surface?: HappierBuiltInToolSurface;
+  isActionEnabled?: ActionEnabledPredicate;
+  actionsSettings?: ActionsSettingsV1 | null;
+  registry?: ResolvedContributionRegistry;
+}>): boolean {
+  if (!DIRECT_MANUAL_TOOL_NAMES.has(params.toolName)) {
+    return false;
+  }
+
+  return isActionAvailableOnToolSurface({
+    actionId: params.actionId,
+    surface: params.surface,
+    isActionEnabled: params.isActionEnabled,
+    actionsSettings: params.actionsSettings ?? null,
+    registry: params.registry,
+  });
 }
 
 export function filterBuiltInToolsForSurface(
@@ -230,16 +295,28 @@ export function filterBuiltInToolsForSurface(
   params?: Readonly<{
     surface?: HappierBuiltInToolSurface;
     isActionEnabled?: ActionEnabledPredicate;
+    actionsSettings?: ActionsSettingsV1 | null;
     registry?: ResolvedContributionRegistry;
   }>,
 ): readonly HappierBuiltInToolDefinition[] {
   return tools.filter((tool) => {
     const actionId = getEquivalentActionIdForBuiltInTool(tool.name, { registry: params?.registry });
     if (!actionId) return true;
-    return isActionAvailableOnToolSurface({
+    if (isDirectManualToolAvailable({
+      toolName: tool.name,
       actionId,
       surface: params?.surface,
       isActionEnabled: params?.isActionEnabled,
+      actionsSettings: params?.actionsSettings ?? null,
+      registry: params?.registry,
+    })) {
+      return true;
+    }
+    return isActionDirectToolAvailableOnToolSurface({
+      actionId,
+      surface: params?.surface,
+      isActionEnabled: params?.isActionEnabled,
+      actionsSettings: params?.actionsSettings ?? null,
       registry: params?.registry,
     });
   });

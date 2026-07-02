@@ -54,46 +54,42 @@ async function detectKiroAuthStatus(resolvedPath: string, args: ReadonlyArray<st
   };
 }
 
-function parseOpenCodeAuthListAccountLabel(stdout: string): string | null {
-  const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  for (const line of lines) {
-    const tokens = line.split(/\s+/).map((t) => t.trim()).filter(Boolean);
-    for (const token of tokens) {
-      // Heuristic: first email-like token.
-      if (token.includes('@') && token.includes('.')) {
-        return token;
-      }
-    }
-  }
-  return null;
+function resolvePositiveIntegerEnvMs(raw: string | undefined, fallbackMs: number): number {
+  const normalized = typeof raw === 'string' ? raw.replaceAll('_', '').trim() : '';
+  const parsed = normalized.length > 0 ? Number(normalized) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : fallbackMs;
 }
 
-async function detectOpenCodeAuthStatus(resolvedPath: string, args: ReadonlyArray<string>): Promise<CliAuthStatusDraft> {
-  const result = await runCliCommandBestEffort({
-    resolvedPath,
-    args: [...args],
-    timeoutMs: 2_000,
-  });
+async function detectCopilotAuthStatus(config: Readonly<{ envVars?: readonly string[] }>): Promise<CliAuthStatusDraft> {
+  const envStatus = resolveCommonApiKeyStatus(config.envVars ?? []);
+  if (envStatus.state === 'logged_in') {
+    return envStatus;
+  }
 
-  if (!result.ok) {
+  const result = await runCliCommandBestEffort({
+    resolvedPath: 'gh',
+    args: ['auth', 'token'],
+    timeoutMs: resolvePositiveIntegerEnvMs(process.env.HAPPIER_COPILOT_CLI_AUTH_PROBE_TIMEOUT_MS, 1_500),
+  });
+  const token = `${result.stdout}\n${result.stderr}`.trim();
+  if (result.ok && token.length > 0) {
     return {
-      state: result.exitCode === null ? 'unknown' : 'logged_out',
-      reason: result.exitCode === null ? 'probe_failed' : 'missing_credentials',
+      state: 'logged_in',
+      method: 'oauth_cli',
       source: 'command',
     };
   }
-
-  const trimmed = result.stdout.trim();
-  if (!trimmed) {
-    return { state: 'logged_out', reason: 'missing_credentials', source: 'command' };
+  if (typeof result.exitCode === 'number') {
+    return {
+      state: 'logged_out',
+      reason: 'missing_credentials',
+      source: 'command',
+    };
   }
-
-  const accountLabel = parseOpenCodeAuthListAccountLabel(trimmed);
   return {
-    state: 'logged_in',
-    method: 'oauth_cli',
+    state: 'unknown',
+    reason: 'probe_failed',
     source: 'command',
-    ...(accountLabel ? { accountLabel } : {}),
   };
 }
 
@@ -117,12 +113,6 @@ export function createBuiltInCliAuthSpec(agentId: CatalogAgentLookupId): CliAuth
     });
   }
 
-  if (config.parser === 'opencodeAuthList' && config.statusCommand) {
-    return createCatalogCliAuthSpec(agentId, {
-      detectAuthStatus: async ({ resolvedPath }) => detectOpenCodeAuthStatus(resolvedPath, config.statusCommand ?? []),
-    });
-  }
-
   if (config.parser === 'piEnvOnly') {
     return createCatalogCliAuthSpec(agentId, {
       detectAuthStatus: async () => {
@@ -136,6 +126,12 @@ export function createBuiltInCliAuthSpec(agentId: CatalogAgentLookupId): CliAuth
           reason: 'missing_credentials',
         };
       },
+    });
+  }
+
+  if (config.parser === 'copilotGhAuth') {
+    return createCatalogCliAuthSpec(agentId, {
+      detectAuthStatus: async () => detectCopilotAuthStatus(config),
     });
   }
 

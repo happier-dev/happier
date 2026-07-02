@@ -17,6 +17,7 @@ vi.mock('@/plugins/runtime/reload/singleton', () => ({
 }));
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
@@ -118,6 +119,69 @@ describe('listBuiltInHappierTools', () => {
     expect(names).not.toContain('action_options_resolve');
     expect(names).toContain('action_execute');
     expect(names).toContain('review_start');
+  });
+
+  it('applies explicit action settings to manual direct tool equivalents without a separate predicate', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+    const actionsSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'session.title.set': {
+          disabledSurfaces: ['session_agent'],
+        },
+      },
+    });
+
+    const names = listBuiltInHappierTools({
+      surface: 'session_agent',
+      actionsSettings,
+    }).map((tool) => tool.name);
+
+    expect(names).not.toContain('change_title');
+  });
+
+  it('keeps session-agent first-party tools discovery-first by default while preserving trusted plugin direct tools', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+    const names = listBuiltInHappierTools({
+      surface: 'session_agent',
+      registry: createRegistryWithPluginTool(),
+    }).map((tool) => tool.name);
+
+    expect(names).toEqual(expect.arrayContaining([
+      'action_spec_search',
+      'action_spec_get',
+      'action_options_resolve',
+      'action_execute',
+      'change_title',
+      'acme_review_start',
+    ]));
+    expect(names).not.toContain('review_start');
+    expect(names).not.toContain('subagents_plan_start');
+    expect(names).not.toContain('subagents_delegate_start');
+    expect(names).not.toContain('execution_run_start');
+  });
+
+  it('lets settings make an external MCP first-party action discoverable-only without hiding plugin tools', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+    const actionsSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'execution.run.start': {
+          toolExposureModes: {
+            mcp: 'discoverable_only',
+          },
+        },
+      },
+    });
+    const names = listBuiltInHappierTools({
+      surface: 'mcp',
+      registry: createRegistryWithPluginTool(),
+      actionsSettings,
+    }).map((tool) => tool.name);
+
+    expect(names).not.toContain('execution_run_start');
+    expect(names).toContain('subagents_delegate_start');
+    expect(names).toContain('acme_review_start');
   });
 
   it('lists trusted plugin action tools when they explicitly opt into tool exposure', async () => {

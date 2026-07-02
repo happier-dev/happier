@@ -16,11 +16,13 @@ function createSessionFixture(sessionId: string) {
         handlers.set(name, handler);
       },
     },
+    setSessionRuntimeControls: vi.fn(),
     sendAgentMessage: vi.fn(),
     sendSessionEvent: vi.fn(),
     keepAlive: vi.fn(),
     getMetadataSnapshot: () => ({ path: '/tmp/workspace', permissionMode: 'default' }),
     updateMetadata: vi.fn(),
+    enqueueSessionTurnMutation: vi.fn(async () => undefined),
     sendSessionDeath: vi.fn(),
     flush: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
@@ -123,7 +125,7 @@ function createHarness() {
         await runtime.setSessionConfigOption(update.configOption.id, update.configOption.value);
       }
     }),
-    subscribeRuntimeMessages: vi.fn((handler: (message: unknown) => void) => {
+    subscribeRuntimeEvents: vi.fn((handler: (message: unknown) => void) => {
       runtimeMessageSubscribers.add(handler);
       return () => {
         runtimeMessageSubscribers.delete(handler);
@@ -331,6 +333,50 @@ function createTerminalRemoteModeLoopFixture() {
 }
 
 describe('runHostSessionRuntime', () => {
+  it('does not emit idle keepAlive heartbeats at the thinking cadence', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    let releaseLoop!: () => void;
+    let resolveLoopStarted!: () => void;
+    const loopStarted = new Promise<void>((resolve) => {
+      resolveLoopStarted = resolve;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      resolveLoopStarted();
+      await new Promise<void>((resolve) => {
+        releaseLoop = resolve;
+      });
+    };
+
+    const runtimePromise = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    try {
+      await loopStarted;
+      expect(harness.session.keepAlive).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(harness.session.keepAlive).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseLoop?.();
+      await runtimePromise;
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not double-send keepAlive when a thinking update is immediately flushed', async () => {
+    const harness = createHarness();
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      params.setThinking(true);
+      params.keepAlive();
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.keepAlive.mock.calls).toEqual([
+      [false, 'remote'],
+      [true, 'remote'],
+    ]);
+  });
+
   it('delegates the host-owned session lifecycle to the shared session loop scaffold', async () => {
     const harness = createHarness();
     const runSessionLoopLifecycleFn = vi.fn(async (params: unknown) => {
@@ -388,6 +434,89 @@ describe('runHostSessionRuntime', () => {
         writeHappierField: expect.any(Function),
         readProviderField: expect.any(Function),
       }),
+    }));
+  });
+
+  it('publishes usage-limit recovery controls from native runtimes', async () => {
+    const harness = createHarness();
+    harness.runtime.enableUsageLimitWaitResume = vi.fn(async function (
+      this: unknown,
+      request: Readonly<{ sessionId: string }>,
+    ) {
+      expect(this).toBe(harness.runtime);
+      return { ok: true, recovery: { status: 'waiting', sessionId: request.sessionId } };
+    });
+    harness.runtime.cancelUsageLimitWaitResume = vi.fn(async function (
+      this: unknown,
+      request: Readonly<{ sessionId: string }>,
+    ) {
+      expect(this).toBe(harness.runtime);
+      return { ok: true, recovery: { status: 'cancelled', sessionId: request.sessionId } };
+    });
+    harness.runtime.checkUsageLimitRecoveryNow = vi.fn(async function (
+      this: unknown,
+      request: Readonly<{ sessionId: string }>,
+    ) {
+      expect(this).toBe(harness.runtime);
+      return { ok: true, status: 'waiting', sessionId: request.sessionId };
+    });
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    const controls = harness.session.setSessionRuntimeControls.mock.calls[0]?.[0];
+    expect(controls).toMatchObject({
+      enableUsageLimitWaitResume: expect.any(Function),
+      cancelUsageLimitWaitResume: expect.any(Function),
+      checkUsageLimitRecoveryNow: expect.any(Function),
+    });
+
+    await expect(controls.enableUsageLimitWaitResume({ sessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+      recovery: { status: 'waiting', sessionId: 'session-1' },
+    });
+    await expect(controls.cancelUsageLimitWaitResume({ sessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+      recovery: { status: 'cancelled', sessionId: 'session-1' },
+    });
+    await expect(controls.checkUsageLimitRecoveryNow({ sessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+      status: 'waiting',
+      sessionId: 'session-1',
+    });
+  });
+
+  it('routes typed runtime turn events through durable session turn mutations', async () => {
+    const harness = createHarness();
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      harness.runtime.emitRuntimeMessage({
+        kind: 'turn-start',
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        providerTurnId: 'provider-turn-1',
+        emittedAtMs: 123,
+      });
+      harness.runtime.emitRuntimeMessage({
+        kind: 'turn-complete',
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        providerTurnId: 'provider-turn-1',
+        emittedAtMs: 456,
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.enqueueSessionTurnMutation).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'begin',
+      turnId: 'turn-1',
+      providerTurnId: 'provider-turn-1',
+      observedAt: 123,
+    }));
+    expect(harness.session.enqueueSessionTurnMutation).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'complete',
+      turnId: 'turn-1',
+      providerTurnId: 'provider-turn-1',
+      observedAt: 456,
     }));
   });
 
@@ -554,7 +683,7 @@ describe('runHostSessionRuntime', () => {
     const harness = createHarness();
     const runtimeMessageHandlers = new Set<(message: unknown) => void>();
 
-    harness.runtime.subscribeRuntimeMessages.mockImplementation((handler: (message: unknown) => void) => {
+    harness.runtime.subscribeRuntimeEvents.mockImplementation((handler: (message: unknown) => void) => {
       runtimeMessageHandlers.add(handler);
       return () => {
         runtimeMessageHandlers.delete(handler);
@@ -670,11 +799,43 @@ describe('runHostSessionRuntime', () => {
     }));
   });
 
+  it('defers server pending materialization while the primary runtime turn is active', async () => {
+    const harness = createHarness();
+    harness.session.getPendingQueueState = vi.fn(() => ({ known: true, pendingCount: 1, pendingVersion: 1 }));
+
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      beforePendingMaterialize?: () => boolean | Promise<boolean>;
+    }>) => {
+      harness.runtime.emitRuntimeMessage({
+        kind: 'turn-start',
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        providerTurnId: 'provider-turn-1',
+        emittedAtMs: 123,
+      });
+
+      await expect(params.beforePendingMaterialize?.()).resolves.toBe(false);
+
+      harness.runtime.emitRuntimeMessage({
+        kind: 'turn-complete',
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        providerTurnId: 'provider-turn-1',
+        emittedAtMs: 456,
+      });
+
+      await expect(params.beforePendingMaterialize?.()).resolves.toBe(true);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
   it('defers server pending materialization while an exclusive terminal turn is active', async () => {
     const harness = createHarness();
     const publishedStates: Array<Record<string, unknown>> = [];
     const emptyAgentState: Record<string, unknown> = {};
     harness.session.peekPendingMessageQueueV2Count = vi.fn(async () => 2);
+    harness.session.getPendingQueueState = vi.fn(() => ({ known: true, pendingCount: 2, pendingVersion: 1 }));
     harness.session.updateAgentState = vi.fn(async (
       updater: (state: Record<string, unknown>) => Record<string, unknown>,
     ) => {
@@ -736,10 +897,38 @@ describe('runHostSessionRuntime', () => {
     });
   });
 
+  it('does not inspect server pending rows when local pending state is empty', async () => {
+    const harness = createHarness();
+    harness.session.shouldAttemptPendingMaterialization = vi.fn(() => false);
+    harness.session.getPendingQueueState = vi.fn(() => ({ known: true, pendingCount: 0, pendingVersion: 4 }));
+    harness.session.peekPendingMessageQueueV2Count = vi.fn(async () => {
+      throw new Error('server pending queue should not be inspected for empty local state');
+    });
+
+    const modeLoop = {
+      startingMode: 'terminal' as const,
+      remoteExitCode: 0,
+      runTerminal: vi.fn(async () => ({ type: 'exit', code: 0 } as const)),
+      runRemote: vi.fn(async () => 'exit' as const),
+      onModeChange: vi.fn(),
+    };
+    harness.runtime.resolveTerminalRemoteSessionModeLoop = vi.fn(() => modeLoop);
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      beforePendingMaterialize?: () => boolean | Promise<boolean>;
+    }>) => {
+      expect(await params.beforePendingMaterialize?.()).toBe(false);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.peekPendingMessageQueueV2Count).not.toHaveBeenCalled();
+  });
+
   it('does not treat terminal attachment itself as an active terminal turn for pending handoff', async () => {
     const harness = createHarness();
     const requestGracefulRemoteHandoff = vi.fn(async () => ({ ok: true }));
     harness.session.peekPendingMessageQueueV2Count = vi.fn(async () => 1);
+    harness.session.getPendingQueueState = vi.fn(() => ({ known: true, pendingCount: 1, pendingVersion: 1 }));
     harness.runtime.getSessionId = vi.fn(() => 'runtime-session-1');
 
     let terminalIterationStarted: (() => void) | null = null;
@@ -781,6 +970,7 @@ describe('runHostSessionRuntime', () => {
     const harness = createHarness();
     const requestGracefulRemoteHandoff = vi.fn(async () => ({ ok: true }));
     harness.session.peekPendingMessageQueueV2Count = vi.fn(async () => 1);
+    harness.session.getPendingQueueState = vi.fn(() => ({ known: true, pendingCount: 1, pendingVersion: 1 }));
     harness.runtime.getSessionId = vi.fn(() => 'runtime-session-1');
 
     let resolveTerminalBoundary: (() => void) | null = null;
@@ -831,6 +1021,7 @@ describe('runHostSessionRuntime', () => {
     const publishedStates: Array<Record<string, unknown>> = [];
     const emptyAgentState: Record<string, unknown> = {};
     harness.session.peekPendingMessageQueueV2Count = vi.fn(async () => 1);
+    harness.session.getPendingQueueState = vi.fn(() => ({ known: true, pendingCount: 1, pendingVersion: 1 }));
     harness.session.updateAgentState = vi.fn(async (
       updater: (state: Record<string, unknown>) => Record<string, unknown>,
     ) => {
@@ -1139,7 +1330,7 @@ describe('runHostSessionRuntime', () => {
     expect(initialSession.sendAgentMessage).not.toHaveBeenCalled();
     expect(swappedSession.sendAgentMessage).toHaveBeenCalledWith(
       'qwen',
-      expect.objectContaining({ type: 'turn_aborted' }),
+      expect.objectContaining({ type: 'turn_cancelled' }),
     );
   });
 
@@ -1184,16 +1375,25 @@ describe('runHostSessionRuntime', () => {
       ok: true,
       target: { type: 'latest_turn' as const },
     }));
+    const sessionRestore = vi.fn(async () => ({
+      ok: true,
+      status: 'succeeded' as const,
+      source: 'happier_scm' as const,
+      restoredScopes: ['workspace' as const],
+      receipts: [],
+    }));
 
     harness.config.sessionRollbackRpc = {};
     setSessionRuntimeFactory(harness.config, () => ({
       operations: {
         ...harness.runtime,
         rollbackConversation,
+        sessionRestore,
       },
       nativeRuntime: {
         ...harness.runtime,
         rollbackConversation,
+        sessionRestore,
       },
     }));
 
@@ -1213,6 +1413,18 @@ describe('runHostSessionRuntime', () => {
       const rollback = swappedSessionFixture.handlers.get(SESSION_RPC_METHODS.SESSION_ROLLBACK);
       expect(rollback).toBeTypeOf('function');
       await rollback?.({ v: 1, target: { type: 'latest_turn' } });
+      const restore = swappedSessionFixture.handlers.get(SESSION_RPC_METHODS.SESSION_RESTORE);
+      expect(restore).toBeTypeOf('function');
+      await restore?.({
+        v: 1,
+        sessionId: 'session-2',
+        scopes: ['workspace'],
+        candidate: {
+          source: 'happier_scm',
+          checkpointRef: 'refs/happier/checkpoints/scope/turn-final/turn-1',
+        },
+        confirmation: { sourceChoiceConfirmed: true },
+      });
     };
 
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
@@ -1220,6 +1432,16 @@ describe('runHostSessionRuntime', () => {
     expect(rollbackConversation).toHaveBeenCalledWith({
       v: 1,
       target: { type: 'latest_turn' },
+    });
+    expect(sessionRestore).toHaveBeenCalledWith({
+      v: 1,
+      sessionId: 'session-2',
+      scopes: ['workspace'],
+      candidate: {
+        source: 'happier_scm',
+        checkpointRef: 'refs/happier/checkpoints/scope/turn-final/turn-1',
+      },
+      confirmation: { sourceChoiceConfirmed: true },
     });
   });
 
@@ -1665,7 +1887,7 @@ describe('runHostSessionRuntime', () => {
       sendTurnPrompt: vi.fn(async () => undefined),
       steerInFlightTurn: vi.fn(async () => undefined),
       waitForTurnCompletion: vi.fn(async () => undefined),
-      subscribeRuntimeMessages: vi.fn(() => () => undefined),
+      subscribeRuntimeEvents: vi.fn(() => () => undefined),
       respondToPermission: vi.fn(async () => undefined),
       cancelTurn: vi.fn(async () => undefined),
       readSessionIdentity: vi.fn(() => ({ sessionId: null })),
@@ -1697,7 +1919,7 @@ describe('runHostSessionRuntime', () => {
       sendTurnPrompt: vi.fn(async () => undefined),
       steerInFlightTurn: vi.fn(async () => undefined),
       waitForTurnCompletion: vi.fn(async () => undefined),
-      subscribeRuntimeMessages: vi.fn(() => () => undefined),
+      subscribeRuntimeEvents: vi.fn(() => () => undefined),
       respondToPermission: vi.fn(async () => undefined),
       cancelTurn: vi.fn(async () => undefined),
       readSessionIdentity: vi.fn(() => ({ sessionId: null })),

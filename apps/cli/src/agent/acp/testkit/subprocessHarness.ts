@@ -32,6 +32,8 @@ export type AcpTestTransportHandlerOptions = {
   getToolCallTimeout?: TransportHandler['getToolCallTimeout']
   extractToolNameFromId?: TransportHandler['extractToolNameFromId']
   determineToolName?: TransportHandler['determineToolName']
+  shouldIgnorePromptError?: TransportHandler['shouldIgnorePromptError']
+  logTerminalToolUpdate?: TransportHandler['logTerminalToolUpdate']
 }
 
 export function createAcpSubprocessEnvScope(): ReturnType<typeof createEnvKeyScope> {
@@ -92,6 +94,12 @@ export function createAcpTestTransportHandler(
   }
   if (options.determineToolName) {
     transportHandler.determineToolName = options.determineToolName
+  }
+  if (options.shouldIgnorePromptError) {
+    transportHandler.shouldIgnorePromptError = options.shouldIgnorePromptError
+  }
+  if (options.logTerminalToolUpdate) {
+    transportHandler.logTerminalToolUpdate = options.logTerminalToolUpdate
   }
 
   return transportHandler

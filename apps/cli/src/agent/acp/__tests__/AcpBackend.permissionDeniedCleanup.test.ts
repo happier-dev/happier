@@ -4,7 +4,8 @@ import { AcpBackend } from '../AcpBackend';
 import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
-function writeFakePermissionAgentScript(params: { dir: string }): string {
+function writeFakePermissionAgentScript(params: { dir: string; promptResponse?: Record<string, unknown> }): string {
+  const promptResponse = JSON.stringify(params.promptResponse ?? {});
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -44,7 +45,7 @@ function writeFakePermissionAgentScript(params: { dir: string }): string {
         }
 
         if (method === 'session/prompt') {
-          ok(id, {});
+          ok(id, ${promptResponse});
           send({
             jsonrpc: '2.0',
             method: 'session/update',
@@ -102,6 +103,85 @@ function writeFakePermissionAgentScript(params: { dir: string }): string {
 }
 
 describe('AcpBackend permission deny cleanup', () => {
+  it('flushes pending permissions when a turn ends from an ACP stop reason', async () => {
+    await withTempDir('happier-acp-perm-turn-end-', async (dir) => {
+      const scriptPath = writeFakePermissionAgentScript({
+        dir,
+        promptResponse: { stopReason: 'end_turn' },
+      });
+      let backendForCleanup: AcpBackend | undefined;
+      const flushReasons: string[] = [];
+
+      try {
+        const permissionHandler = {
+          handleToolCall: async () => new Promise<never>(() => {}),
+          abortPendingRequestsAndFlush: async (reason: string) => {
+            flushReasons.push(reason);
+          },
+        };
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          permissionHandler,
+          transportHandler: createAcpTestTransportHandler({
+            initTimeoutMs: 1_000,
+            idleTimeoutMs: 1,
+          }),
+        });
+        backendForCleanup = backend;
+
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'please run bash with pending permission');
+        await backend.waitForResponseComplete(250);
+        await Promise.resolve();
+
+        expect(flushReasons).toEqual(['ACP turn ended']);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  });
+
+  it('flushes pending permissions when response wait times out', async () => {
+    await withTempDir('happier-acp-perm-response-timeout-', async (dir) => {
+      const scriptPath = writeFakePermissionAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
+      const flushReasons: string[] = [];
+
+      try {
+        const permissionHandler = {
+          handleToolCall: async () => new Promise<never>(() => {}),
+          abortPendingRequestsAndFlush: async (reason: string) => {
+            flushReasons.push(reason);
+          },
+        };
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          permissionHandler,
+          transportHandler: createAcpTestTransportHandler({
+            initTimeoutMs: 1_000,
+            idleTimeoutMs: 1,
+          }),
+        });
+        backendForCleanup = backend;
+
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'please run bash with pending permission');
+        await expect(backend.waitForResponseComplete(60)).rejects.toThrow(/Timeout waiting for response/i);
+        await Promise.resolve();
+
+        expect(flushReasons).toEqual(['ACP response wait timeout']);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  });
+
   it('aborts the in-flight prompt when permission is denied', async () => {
     await withTempDir('happier-acp-perm-deny-', async (dir) => {
       const scriptPath = writeFakePermissionAgentScript({ dir });

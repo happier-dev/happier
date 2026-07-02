@@ -109,14 +109,14 @@ export class VoiceAgentManager {
       return {
         kind: 'voice_agent_sessions.v1',
         backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: voiceAgent.agentId }),
-        chatVendorSessionId: voiceAgent.chatSessionId,
-        commitVendorSessionId: voiceAgent.commitSessionId,
+        chatProviderSessionId: voiceAgent.chatSessionId,
+        commitProviderSessionId: voiceAgent.commitSessionId,
       };
     }
     return {
-      kind: 'vendor_session.v1',
+      kind: 'provider_session.v1',
       backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: voiceAgent.agentId }),
-      vendorSessionId: voiceAgent.chatSessionId,
+      providerSessionId: voiceAgent.chatSessionId,
     };
   }
 
@@ -188,12 +188,12 @@ export class VoiceAgentManager {
       const resume = (() => {
         const handle = params.resumeHandle ?? null;
         if (!handle) return { chatSessionId: null as string | null, commitSessionId: null as string | null };
-        if (handle.kind === 'vendor_session.v1') {
-          return { chatSessionId: handle.vendorSessionId as string, commitSessionId: null as string | null };
+        if (handle.kind === 'provider_session.v1') {
+          return { chatSessionId: handle.providerSessionId as string, commitSessionId: null as string | null };
         }
         return {
-          chatSessionId: handle.chatVendorSessionId as string,
-          commitSessionId: handle.commitVendorSessionId as string,
+          chatSessionId: handle.chatProviderSessionId as string,
+          commitSessionId: handle.commitProviderSessionId as string,
         };
       })();
 

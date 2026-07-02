@@ -46,6 +46,7 @@ import { executeBoundedBackendRun } from './bounded/loop';
 import { ensureExecutionRun } from './ensureExecutionRun';
 import { finishExecutionRun } from './finishExecutionRun';
 import { startExecutionRun } from './startExecutionRun';
+import type { ExecutionRunSessionStateTarget } from './sessionStateDelivery';
 import { enqueueExecutionRunMarkerWrite, writeExecutionRunActivityMarker } from './activityMarkers';
 import type { ExecutionRunHostBridgeContract } from './executionRunBridgeContract';
 import { matchesExecutionRunLegacyBackendId } from './backendTargets';
@@ -126,6 +127,7 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
   executionRunProfileCatalog?: ExecutionRunProfileContributionCatalog;
   resolveExecutionRunProfileCatalog?: () => Promise<ExecutionRunProfileContributionCatalog> | ExecutionRunProfileContributionCatalog;
   happyHomeDir?: string;
+  parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
 }>;
 
 /**
@@ -151,6 +153,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly maxTurns: number | null;
   private readonly budgetRegistry: ExecutionBudgetRegistry | null;
   private readonly happyHomeDir: string | null;
+  private readonly parentSessionStateTarget: ExecutionRunSessionStateTarget | null;
   private readonly getPermissionRequestStore: ExecutionRunPermissionRequestStoreProvider | null;
   private readonly runs = new Map<string, ExecutionRunState>();
   private readonly controllers = new Map<string, ExecutionRunController>();
@@ -236,6 +239,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     this.happyHomeDir = typeof opts.happyHomeDir === 'string' && opts.happyHomeDir.trim().length > 0
       ? opts.happyHomeDir.trim()
       : configuration.happyHomeDir;
+    this.parentSessionStateTarget = opts.parentSessionStateTarget ?? null;
     this.onPublicStateUpdated = typeof opts.onPublicStateUpdated === 'function' ? opts.onPublicStateUpdated : null;
     this.onVoiceAgentWelcomed = typeof opts.onVoiceAgentWelcomed === 'function' ? opts.onVoiceAgentWelcomed : null;
     this.executionRunProfileCatalog = opts.executionRunProfileCatalog ?? buildExecutionRunProfileCatalog();
@@ -342,6 +346,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       accountSettings: opts.accountSettings ?? null,
       start: opts.start ?? null,
       happyHomeDir: this.happyHomeDir,
+      parentSessionStateTarget: this.parentSessionStateTarget,
     });
   }
 
@@ -619,7 +624,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         runs: this.runs,
         controllers: this.controllers,
         budgetRegistry: this.budgetRegistry,
-        createRuntime: ({ backendId, backendTarget, permissionMode }) => this.createExecutionRunRuntime({ backendId, backendTarget, permissionMode }),
+        createRuntime: ({ runId: resumedRunId, backendId, backendTarget, permissionMode }) =>
+          this.createExecutionRunRuntime({ runId: resumedRunId, backendId, backendTarget, permissionMode }),
         maxTurns: this.maxTurns,
         getNowMs: this.getNowMs,
         finishRun: this.finishRun.bind(this),
@@ -719,7 +725,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       runs: this.runs,
       controllers: this.controllers,
       budgetRegistry: this.budgetRegistry,
-      createRuntime: ({ backendId, backendTarget, permissionMode }) => this.createExecutionRunRuntime({ backendId, backendTarget, permissionMode }),
+      createRuntime: ({ runId: resumedRunId, backendId, backendTarget, permissionMode }) =>
+        this.createExecutionRunRuntime({ runId: resumedRunId, backendId, backendTarget, permissionMode }),
       maxTurns: this.maxTurns,
       getNowMs: this.getNowMs,
       finishRun: this.finishRun.bind(this),
@@ -754,7 +761,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       runs: this.runs,
       controllers: this.controllers,
       budgetRegistry: this.budgetRegistry,
-      createRuntime: ({ backendId, backendTarget, permissionMode }) => this.createExecutionRunRuntime({ backendId, backendTarget, permissionMode }),
+      createRuntime: ({ runId: resumedRunId, backendId, backendTarget, permissionMode }) =>
+        this.createExecutionRunRuntime({ runId: resumedRunId, backendId, backendTarget, permissionMode }),
       sendAcp: this.sendAcp,
       parentProvider: this.parentProvider,
       streamedTranscriptSession: this.streamedTranscriptSession,

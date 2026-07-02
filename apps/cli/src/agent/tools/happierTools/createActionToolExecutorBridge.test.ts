@@ -1,14 +1,55 @@
 import { describe, expect, it } from 'vitest';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
 
 describe('createActionToolExecutorBridge', () => {
-  it('passes approval origin metadata through to action executor context', async () => {
+  it('does not route discoverable-only first-party tools through direct tool names on session agents', async () => {
     const calls: unknown[] = [];
     const bridge = createActionToolExecutorBridge({
       surface: 'session_agent',
+      executor: {
+        execute: async (actionId, input, ctx) => {
+          calls.push({ actionId, input, ctx });
+          return {
+            ok: true,
+            result: { actionId, input, ctx },
+          };
+        },
+      },
+    });
+
+    const res = await bridge.executeActionByToolName('subagents_delegate_start', {
+      sessionId: 'sess-1',
+      backendTargetKeys: ['agent:codex'],
+      instructions: 'Delegate this.',
+    }, 'sess-1');
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'unknown_tool',
+      error: 'Unknown action-backed tool: subagents_delegate_start',
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('passes approval origin metadata through to action executor context', async () => {
+    const calls: unknown[] = [];
+    const actionsSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'session.list': {
+          toolExposureModes: {
+            session_agent: 'direct',
+          },
+        },
+      },
+    });
+    const bridge = createActionToolExecutorBridge({
+      surface: 'session_agent',
+      actionsSettings,
       executor: {
         execute: async (_actionId, _input, ctx) => {
           calls.push(ctx);

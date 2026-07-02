@@ -9,7 +9,7 @@ function firstNonEmptyString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function normalizeEditEntry(raw: unknown): UnknownRecord | null {
+function normalizeEditEntry(raw: unknown, fallbackFilePath: string | null): UnknownRecord | null {
     const record = asRecord(raw);
     if (!record) return null;
 
@@ -17,7 +17,7 @@ function normalizeEditEntry(raw: unknown): UnknownRecord | null {
         firstNonEmptyString(record.file_path) ??
         firstNonEmptyString(record.filePath) ??
         firstNonEmptyString(record.path) ??
-        null;
+        fallbackFilePath;
     const oldString =
         firstNonEmptyString(record.old_string) ??
         firstNonEmptyString(record.oldText) ??
@@ -44,8 +44,13 @@ function normalizeEditEntry(raw: unknown): UnknownRecord | null {
 
 export function normalizeMultiEditInput(rawInput: unknown): UnknownRecord {
     const record = asRecord(rawInput) ?? {};
+    const filePath =
+        firstNonEmptyString(record.file_path) ??
+        firstNonEmptyString(record.filePath) ??
+        firstNonEmptyString(record.path) ??
+        null;
     const rawEdits = Array.isArray((record as any).edits) ? ((record as any).edits as unknown[]) : [];
-    const edits = rawEdits.map(normalizeEditEntry).filter((e): e is UnknownRecord => !!e);
-    return { ...record, edits };
+    const edits = rawEdits.map((edit) => normalizeEditEntry(edit, filePath)).filter((e): e is UnknownRecord => !!e);
+    return { ...record, ...(filePath ? { file_path: filePath } : {}), edits };
 }
 

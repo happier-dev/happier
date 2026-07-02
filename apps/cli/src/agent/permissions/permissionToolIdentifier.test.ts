@@ -14,6 +14,43 @@ describe('permissionToolIdentifier', () => {
     expect(extractShellCommand({ items: ['bash', '-lc', 'echo hello'] })).toBe('echo hello');
   });
 
+  it('extracts command from execute tool titles', () => {
+    expect(
+      extractShellCommand({
+        toolCall: {
+          kind: 'execute',
+          title:
+            "node apps/cli/src/index.ts tools call --source happier --tool change_title --args-json '{\"title\":\"Done\"}' --json",
+        },
+      }),
+    ).toBe(
+      "node apps/cli/src/index.ts tools call --source happier --tool change_title --args-json '{\"title\":\"Done\"}' --json",
+    );
+  });
+
+  it('extracts command from titles when the resolved tool name is shell-like', () => {
+    expect(
+      extractShellCommand({
+        toolCall: {
+          kind: 'other',
+          toolName: 'Bash',
+          title: 'git status --porcelain',
+        },
+      }),
+    ).toBe('git status --porcelain');
+  });
+
+  it('does not extract commands from generic execute titles', () => {
+    expect(
+      extractShellCommand({
+        toolCall: {
+          kind: 'execute',
+          title: 'Run shell command',
+        },
+      }),
+    ).toBeNull();
+  });
+
   it('builds a specific identifier for bash with a command', () => {
     expect(makeToolIdentifier('bash', { command: ['bash', '-lc', 'echo hello'] })).toBe('bash(echo hello)');
   });

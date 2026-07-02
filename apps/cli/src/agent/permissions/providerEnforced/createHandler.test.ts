@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
 import { createProviderEnforcedPermissionHandler } from './createHandler';
 
 class FakeRpcHandlerManager {
@@ -27,7 +29,7 @@ describe('createProviderEnforcedPermissionHandler', () => {
   it('creates a provider-enforced handler with optional safe-tool plugins', async () => {
     const session = new FakeSession();
     const handler = createProviderEnforcedPermissionHandler({
-      session: session as any,
+      session: session as unknown as ApiSessionClient,
       logPrefix: '[TestProvider]',
       alwaysAutoApproveToolNameIncludes: ['geminireasoning'],
     });
@@ -41,5 +43,34 @@ describe('createProviderEnforcedPermissionHandler', () => {
     expect(pendingReq).toBeTruthy();
     pendingReq?.resolve({ decision: 'denied' });
     await expect(pending).resolves.toEqual({ decision: 'denied' });
+  });
+
+  it('exposes typed pending permission abort and flush support', async () => {
+    const session = new FakeSession();
+    let flushCount = 0;
+    (session as unknown as { flush: () => Promise<void> }).flush = async () => {
+      flushCount += 1;
+    };
+
+    const handler = createProviderEnforcedPermissionHandler({
+      session: session as unknown as ApiSessionClient,
+      logPrefix: '[TestProvider]',
+    });
+    const acpHandler: AcpPermissionHandler = handler;
+
+    const pending = acpHandler.handleToolCall('pending-1', 'Edit', {});
+    expect(session.agentState.requests['pending-1']).toBeTruthy();
+
+    expect(acpHandler.abortPendingRequestsAndFlush).toBeTypeOf('function');
+    if (!acpHandler.abortPendingRequestsAndFlush) throw new Error('abortPendingRequestsAndFlush is not exposed');
+    await expect(acpHandler.abortPendingRequestsAndFlush('ACP runtime turn ended')).resolves.toBeUndefined();
+
+    await expect(pending).rejects.toThrow('ACP runtime turn ended');
+    expect(session.agentState.requests['pending-1']).toBeUndefined();
+    expect(session.agentState.completedRequests['pending-1']).toMatchObject({
+      status: 'canceled',
+      reason: 'ACP runtime turn ended',
+    });
+    expect(flushCount).toBe(1);
   });
 });

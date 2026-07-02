@@ -192,6 +192,7 @@ function resolveFinalPluginAcpLaunch(
     };
   }
 
+  if (transport.launch.kind !== 'agent-cli') return null;
   const agentId = readOptionalString(transport.launch.agentId);
   if (!agentId) return null;
   return {

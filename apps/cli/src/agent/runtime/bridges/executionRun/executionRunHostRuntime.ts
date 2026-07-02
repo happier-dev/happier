@@ -12,6 +12,13 @@ export type ExecutionRunSessionProvisionResult = Readonly<{
     sessionId: string;
 }>;
 
+export type ExecutionRunTurnLivenessProbeResult = Readonly<{
+    active: boolean;
+    reason?: string;
+    lastActivityAtMs?: number | null;
+    diagnostics?: Readonly<Record<string, unknown>>;
+}>;
+
 export type ExecutionRunHostRuntime = Readonly<{
     readResumeSupport: (opts?: Readonly<{ captureReplay?: boolean }>) => Promise<boolean>;
     provisionSession: (opts?: ExecutionRunSessionProvisionOptions) => Promise<ExecutionRunSessionProvisionResult>;
@@ -21,6 +28,7 @@ export type ExecutionRunHostRuntime = Readonly<{
     subscribeMessages: (handler: ExecutionRunHostRuntimeMessageHandler) => () => void;
     respondToPermission?: (requestId: string, approved: boolean) => Promise<void>;
     waitForTurnCompletion?: (timeoutMs?: number | null) => Promise<void>;
+    probeTurnLiveness?: (sessionId: string) => Promise<ExecutionRunTurnLivenessProbeResult>;
     dispose: () => Promise<void>;
 }>;
 

@@ -5,7 +5,7 @@ function asRecord(value: unknown): UnknownRecord | null {
     return value as UnknownRecord;
 }
 
-function parseOpencodeFileWrapper(text: string): { content: string; startLine?: number; numLines?: number; totalLines?: number } | null {
+function parseTaggedFileWrapper(text: string): { content: string; startLine?: number; numLines?: number; totalLines?: number } | null {
     const fileMatch = text.match(/<file>([\s\S]*?)<\/file>/i);
     const contentMatch = fileMatch ? null : text.match(/<content>([\s\S]*?)<\/content>/i);
     const body = fileMatch?.[1] ?? contentMatch?.[1] ?? null;
@@ -126,7 +126,7 @@ export function normalizeReadInput(rawInput: unknown): UnknownRecord {
 
 export function normalizeReadResult(rawOutput: unknown): UnknownRecord {
     if (typeof rawOutput === 'string') {
-        const parsed = parseOpencodeFileWrapper(rawOutput);
+        const parsed = parseTaggedFileWrapper(rawOutput);
         if (parsed) {
             const file: UnknownRecord = { content: parsed.content };
             if (typeof parsed.startLine === 'number') file.startLine = parsed.startLine;
@@ -156,7 +156,7 @@ export function normalizeReadResult(rawOutput: unknown): UnknownRecord {
 
     const out: UnknownRecord = { ...record };
 
-    // Kilo/OpenCode-style tool results may wrap the file output under `output` (and sometimes `metadata.output`).
+    // ACP file-read tool results may wrap file output under `output` (and sometimes `metadata.output`).
     // Normalize those to the canonical `{ file: { content } }` shape.
     const wrappedText = (() => {
         if (typeof out.output === 'string' && out.output.trimEnd().length > 0) return out.output;
@@ -165,7 +165,7 @@ export function normalizeReadResult(rawOutput: unknown): UnknownRecord {
         return null;
     })();
     if (wrappedText) {
-        const parsed = parseOpencodeFileWrapper(wrappedText);
+        const parsed = parseTaggedFileWrapper(wrappedText);
         const text = parsed?.content ?? wrappedText.trimEnd();
         if (text.length > 0) {
             out.file = {

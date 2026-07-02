@@ -1,4 +1,8 @@
 import type {
+  TerminalInputReadinessV1,
+  TerminalInputReadinessStatusV1,
+} from '@happier-dev/agents';
+import type {
   TerminalPendingHandoffStateV1,
   TerminalTurnState,
   TerminalTurnTerminalState,
@@ -17,6 +21,11 @@ export type PendingQueueHandoffAction =
   | Readonly<{ type: 'none' }>
   | Readonly<{ type: 'materialize_remote_pending' }>
   | Readonly<{ type: 'wait_for_remote_loop' }>
+  | Readonly<{ type: 'inject_pending_into_active_terminal' }>
+  | Readonly<{ type: 'defer_terminal_input'; reason: TerminalInputReadinessStatusV1 }>
+  | Readonly<{ type: 'relaunch_terminal_with_pending'; reason: TerminalInputReadinessStatusV1 }>
+  | Readonly<{ type: 'surface_runtime_issue'; reason: TerminalInputReadinessStatusV1 }>
+  | Readonly<{ type: 'require_user_action'; reason: TerminalInputReadinessStatusV1 }>
   | Readonly<{ type: 'defer_until_terminal_turn_finishes' }>
   | Readonly<{ type: 'block_waiting_for_resume_identity' }>
   | Readonly<{ type: 'request_graceful_remote_handoff'; reason: 'pending_queue_after_terminal_boundary' | 'switch_now' }>
@@ -40,6 +49,8 @@ export type ResolvePendingQueueHandoffInput = Readonly<{
   resumeReadiness: PendingQueueResumeReadiness;
   intent: PendingQueueHandoffIntent;
   nowMs: number;
+  terminalPromptInjectionAvailable?: boolean;
+  terminalInputReadiness?: TerminalInputReadinessV1 | null;
 }>;
 
 function normalizePendingCount(value: number): number {
@@ -71,6 +82,43 @@ function lastTerminalState(state: TerminalTurnState): TerminalTurnTerminalState 
 
 function isTerminalActive(state: TerminalTurnState): boolean {
   return state.state === 'running' || state.state === 'blocked_on_permission' || state.state === 'unknown';
+}
+
+function createTerminalInputDeferralStatus(
+  status: TerminalInputReadinessStatusV1,
+  pendingCount: number,
+  updatedAtMs: number,
+): TerminalPendingHandoffStateV1 {
+  return createStatus({
+    status: 'deferred_until_terminal_turn_finishes',
+    pendingCount,
+    updatedAtMs,
+    interruptRequired: false,
+    detail: status,
+  });
+}
+
+function resolveTerminalInputAction(
+  readiness: TerminalInputReadinessV1,
+): Exclude<PendingQueueHandoffAction, { type: 'none' | 'materialize_remote_pending' | 'wait_for_remote_loop' | 'defer_until_terminal_turn_finishes' | 'block_waiting_for_resume_identity' | 'request_graceful_remote_handoff' | 'cancel_terminal_turn_then_handoff' }> {
+  switch (readiness.status) {
+    case 'writable':
+      return { type: 'inject_pending_into_active_terminal' };
+    case 'failed_retryable':
+      return { type: 'relaunch_terminal_with_pending', reason: readiness.status };
+    case 'failed_ambiguous':
+      return { type: 'require_user_action', reason: readiness.status };
+    case 'failed_terminal':
+      return { type: 'surface_runtime_issue', reason: readiness.status };
+    case 'defer_finalizing':
+    case 'defer_permission':
+    case 'defer_user_typing':
+    case 'defer_host_not_ready':
+    case 'defer_liveness_uncertain':
+    case 'defer_provider_starting':
+    case 'awaiting_provider_acceptance':
+      return { type: 'defer_terminal_input', reason: readiness.status };
+  }
 }
 
 export function resolvePendingQueueHandoff(input: ResolvePendingQueueHandoffInput): PendingQueueHandoffDecision {
@@ -108,6 +156,47 @@ export function resolvePendingQueueHandoff(input: ResolvePendingQueueHandoffInpu
   }
 
   if (input.terminalTopology === 'shared') {
+    if (input.terminalPromptInjectionAvailable === true && input.terminalInputReadiness) {
+      const action = resolveTerminalInputAction(input.terminalInputReadiness);
+      switch (action.type) {
+        case 'inject_pending_into_active_terminal':
+          return {
+            action,
+            status: createStatus({
+              status: 'none',
+              pendingCount,
+              updatedAtMs: input.nowMs,
+            }),
+          };
+        case 'defer_terminal_input':
+          return {
+            action,
+            status: createTerminalInputDeferralStatus(action.reason, pendingCount, input.nowMs),
+          };
+        case 'relaunch_terminal_with_pending':
+          return {
+            action,
+            status: createStatus({
+              status: 'manual_action_required',
+              pendingCount,
+              updatedAtMs: input.nowMs,
+              detail: action.reason,
+            }),
+          };
+        case 'surface_runtime_issue':
+        case 'require_user_action':
+          return {
+            action,
+            status: createStatus({
+              status: 'manual_action_required',
+              pendingCount,
+              updatedAtMs: input.nowMs,
+              detail: action.reason,
+            }),
+          };
+      }
+    }
+
     return {
       action: { type: 'wait_for_remote_loop' },
       status: createStatus({

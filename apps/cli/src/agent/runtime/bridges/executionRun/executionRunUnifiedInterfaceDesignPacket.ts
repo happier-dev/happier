@@ -84,7 +84,7 @@ export const EXECUTION_RUN_UNIFIED_INTERFACE_DESIGN_PACKET = Object.freeze({
       runtimeForLoop: ['flushTurn'],
       agentBackend: ['waitForResponseComplete'],
     },
-    subscribeRuntimeMessages: {
+    subscribeRuntimeEvents: {
       runtimeForLoop: [],
       agentBackend: ['onMessage', 'offMessage'],
     },

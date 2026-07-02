@@ -46,11 +46,11 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     return { ok: false, errorCode: 'execution_run_budget_exceeded', error: 'Execution run budget exceeded' };
   }
 
-  const vendorSessionId =
-    args.run.resumeHandle?.kind === 'vendor_session.v1' && areExecutionRunBackendTargetsEqual(convertBackendTargetRefV2ToV1(args.run.resumeHandle.backendTarget), args.run.backendTarget)
-      ? args.run.resumeHandle.vendorSessionId
+  const providerSessionId =
+    args.run.resumeHandle?.kind === 'provider_session.v1' && areExecutionRunBackendTargetsEqual(convertBackendTargetRefV2ToV1(args.run.resumeHandle.backendTarget), args.run.backendTarget)
+      ? args.run.resumeHandle.providerSessionId
       : null;
-  if (!vendorSessionId) {
+  if (!providerSessionId) {
     args.budgetRegistry?.releaseExecutionRun(args.runId);
     return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Missing resume handle' };
   }
@@ -142,7 +142,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
 
   try {
     const loaded = await backend.provisionSession({
-      resumeSessionId: vendorSessionId,
+      resumeSessionId: providerSessionId,
       ...(wantsReplayCapture ? { captureReplay: true } : {}),
     });
     resumeCtrl.childSessionId = loaded.sessionId;
@@ -152,7 +152,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
       status: 'running',
       finishedAtMs: undefined,
       error: undefined,
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(args.run.backendTarget), vendorSessionId: loaded.sessionId },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(args.run.backendTarget), providerSessionId: loaded.sessionId },
     });
     args.onPublicStateUpdated?.(args.runId);
     return { ok: true };

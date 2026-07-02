@@ -54,7 +54,7 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
           '    async sendTurnPrompt() {},',
           '    async steerInFlightTurn() {},',
           '    async waitForTurnCompletion() {},',
-          '    subscribeRuntimeMessages() { return () => undefined; },',
+          '    subscribeRuntimeEvents() { return () => undefined; },',
           '    async respondToPermission() {},',
           '    async cancelTurn() {},',
           '    readSessionIdentity() { return { sessionId }; },',
@@ -314,7 +314,7 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
       } as never);
 
       const messages: AgentMessage[] = [];
-      const unsubscribe = created.operations.subscribeRuntimeMessages((message) => {
+      const unsubscribe = created.operations.subscribeRuntimeEvents((message) => {
         if (isAgentMessage(message)) {
           messages.push(message);
         }
@@ -360,7 +360,7 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
       await writeFile(
         join(pluginRoot, 'daemon.mjs'),
         [
-          "export default async function bindTranscript() { return 'integration-bound'; }",
+          "export default async function resolveTranscriptBinding() { return 'integration-bound'; }",
           'function createBackend() {',
           '  return {',
           "    async startSession() { return { sessionId: 'integration-session' }; },",

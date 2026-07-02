@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { EventMessage } from '@/agent/core/AgentMessage';
 import { createAcpRuntime } from '../createAcpRuntime';
@@ -10,6 +10,56 @@ import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBacken
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 
 describe('createAcpRuntime (session modes)', () => {
+  it('rejects compact context requests instead of forwarding raw provider commands when no native hook exists', async () => {
+    const sendPrompt = vi.fn(async () => undefined);
+    const backend = createFakeAcpRuntimeBackend({ sendPrompt });
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({ resumeId: null });
+    const runtimeWithCompaction = runtime as typeof runtime & { compactContext?: (command: string) => Promise<void> };
+    expect(typeof runtimeWithCompaction.compactContext).toBe('function');
+    await expect(runtimeWithCompaction.compactContext?.('/compact keep only current task')).rejects.toThrow(
+      'does not support context compaction',
+    );
+
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it('prefers native ACP backend compact hooks when available', async () => {
+    const sendPrompt = vi.fn(async () => undefined);
+    const compactContext = vi.fn(async () => undefined);
+    const backend = Object.assign(createFakeAcpRuntimeBackend({ sendPrompt }), {
+      compactContext,
+    });
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({ resumeId: null });
+    const runtimeWithCompaction = runtime as typeof runtime & { compactContext?: (command: string) => Promise<void> };
+    expect(typeof runtimeWithCompaction.compactContext).toBe('function');
+    await runtimeWithCompaction.compactContext?.('/compact keep only current task');
+
+    expect(compactContext).toHaveBeenCalledWith('sess_main', '/compact keep only current task');
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
   it('publishes ACP session modes into session metadata', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, metadataUpdates, getMetadata } = createSessionClientWithMetadata({

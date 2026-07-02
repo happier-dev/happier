@@ -87,6 +87,26 @@ export interface PermissionResult {
 }
 
 /**
+ * Outcome of routing an inbound permission/user-action response to a pending request.
+ *
+ * `not_found` means the explicit request id is unknown (never seen / already gone) — the caller must
+ * surface a typed failure instead of a fabricated success (gap 28/29).
+ */
+export type PermissionResponseRoutingResult =
+    | { status: 'resolved' }
+    | { status: 'not_found' };
+
+/**
+ * Typed RPC result for `session.permission.respond` / `session.user_action.answer` / `permission`.
+ *
+ * Resolving a pending request returns `void` (unchanged success contract). An unknown explicit id
+ * returns a typed `permission_request_not_found` so a stale UI tap cannot read as silent success.
+ */
+export type PermissionRespondRpcResult =
+    | void
+    | Readonly<{ ok: false; errorCode: 'permission_request_not_found'; requestId: string }>;
+
+/**
  * Abstract base class for permission handlers.
  *
  * Subclasses must implement:
@@ -356,24 +376,41 @@ export abstract class BasePermissionHandler {
      * Setup RPC handler for permission responses.
      */
     protected setupRpcHandler(): void {
-        const handlePermissionResponse = async (response: PermissionResponse): Promise<void> => {
-            this.handleIncomingPermissionResponse(response);
+        const handlePermissionResponse = async (response: PermissionResponse): Promise<PermissionRespondRpcResult> => {
+            const outcome = this.handleIncomingPermissionResponse(response);
+            if (outcome.status === 'not_found') {
+                return {
+                    ok: false,
+                    errorCode: 'permission_request_not_found',
+                    requestId: typeof response?.id === 'string' ? response.id : '',
+                } as const;
+            }
+            return undefined;
         };
-        this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
+        this.session.rpcHandlerManager.registerHandler<PermissionResponse, PermissionRespondRpcResult>(
             'session.permission.respond',
             handlePermissionResponse,
         );
-        this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
+        this.session.rpcHandlerManager.registerHandler<PermissionResponse, PermissionRespondRpcResult>(
             'session.user_action.answer',
             handlePermissionResponse,
         );
-        this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
+        this.session.rpcHandlerManager.registerHandler<PermissionResponse, PermissionRespondRpcResult>(
             'permission',
             handlePermissionResponse,
         );
     }
 
-    private handleIncomingPermissionResponse(response: PermissionResponse): void {
+    /**
+     * Route a permission/user-action response (e.g. forwarded by a runtime's `respondToPermission`)
+     * to its pending coordinator request. Returns a typed `not_found` for unknown explicit ids so the
+     * caller surfaces a typed failure instead of fabricating a success (gap 28/29).
+     */
+    respondToPendingPermission(response: PermissionResponse): PermissionResponseRoutingResult {
+        return this.handleIncomingPermissionResponse(response);
+    }
+
+    private handleIncomingPermissionResponse(response: PermissionResponse): PermissionResponseRoutingResult {
         const legacyPending = this.pendingRequests.get(response.id);
         const context = this.requestCoordinator.getResponseContext(response.id)
             ?? (legacyPending
@@ -391,7 +428,7 @@ export abstract class BasePermissionHandler {
             logger.debug(
                 `${this.getLogPrefix()} Permission response received without pending request and without agentState request; ignored`,
             );
-            return;
+            return { status: 'not_found' };
         }
 
         this.handlePermissionResponseWithContext({
@@ -399,6 +436,7 @@ export abstract class BasePermissionHandler {
             context,
             legacyPending,
         });
+        return { status: 'resolved' };
     }
 
     private handlePermissionResponseWithContext(params: Readonly<{
@@ -612,6 +650,30 @@ export abstract class BasePermissionHandler {
         return completed;
     }
 
+    private cancelPendingRequests(reason: string): void {
+        const pendingSnapshot = Array.from(this.pendingRequests.values());
+        this.pendingRequests.clear();
+        this.requestCoordinator.cancelAll(reason);
+
+        for (const pending of pendingSnapshot) {
+            if (pending.coordinatorManaged) continue;
+            try {
+                pending.reject(new Error(reason));
+            } catch (err) {
+                logger.debug(`${this.getLogPrefix()} Error rejecting legacy pending request:`, err);
+            }
+        }
+    }
+
+    async abortPendingRequestsAndFlush(reason: string = 'Aborted by user'): Promise<void> {
+        this.cancelPendingRequests(reason);
+        try {
+            await this.session.flush?.();
+        } catch (error) {
+            logger.debug(`${this.getLogPrefix()} Failed to flush session after permission abort (non-fatal)`, error);
+        }
+    }
+
     /**
      * Reset state for new sessions.
      * This method is idempotent - safe to call multiple times.
@@ -625,20 +687,7 @@ export abstract class BasePermissionHandler {
         this.isResetting = true;
 
         try {
-            // Snapshot pending requests to avoid Map mutation during iteration
-            const pendingSnapshot = Array.from(this.pendingRequests.values());
-            this.pendingRequests.clear(); // Clear immediately to prevent new entries being processed
-            this.requestCoordinator.cancelAll('Session reset');
-
-            // Reject all pending requests from snapshot
-            for (const pending of pendingSnapshot) {
-                if (pending.coordinatorManaged) continue;
-                try {
-                    pending.reject(new Error('Session reset'));
-                } catch (err) {
-                    logger.debug(`${this.getLogPrefix()} Error rejecting legacy pending request:`, err);
-                }
-            }
+            this.cancelPendingRequests('Session reset');
 
             this.allowedToolIdentifiers.clear();
             this.requestStore.dispose();

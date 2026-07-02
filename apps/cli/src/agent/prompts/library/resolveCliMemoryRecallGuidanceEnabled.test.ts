@@ -52,10 +52,34 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
           modelsDir: '/tmp/models',
         }),
         stat: async (_path: string) => ({ size: 128 }),
+        hasSearchableContent: () => true,
       },
     });
 
     expect(enabled).toBe(true);
+  });
+
+  it('returns false when the active local memory index exists but has no searchable content', async () => {
+    const enabled = await resolveCliMemoryRecallGuidanceEnabled({
+      surfaces: ['voice'],
+      deps: {
+        isActionEnabledByEnv: (actionId, ctx) =>
+          ctx?.surface === 'voice' && (actionId === 'memory.search' || actionId === 'memory.get_window'),
+        readMemorySettingsFromDisk: async () => buildMemorySettings({
+          enabled: true,
+          indexMode: 'hints',
+        }),
+        resolveMemoryIndexPaths: () => ({
+          tier1DbPath: '/tmp/light.sqlite',
+          deepDbPath: '/tmp/deep.sqlite',
+          memoryDir: '/tmp',
+          modelsDir: '/tmp/models',
+        }),
+        stat: async (_path: string) => ({ size: 4096 }),
+      },
+    });
+
+    expect(enabled).toBe(false);
   });
 
   it('returns false when a required memory action is disabled for the requested surface', async () => {

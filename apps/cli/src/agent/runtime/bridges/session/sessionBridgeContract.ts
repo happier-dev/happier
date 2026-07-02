@@ -66,7 +66,7 @@ export interface SessionHostBridgeContract {
     eventId: BridgeLifecycleHookEventIdV1;
     scope?: HookScopeV1;
     happySessionId?: string;
-    vendorSessionId?: string;
+    providerSessionId?: string;
     providerId?: string;
     backendId?: string;
     backendTarget?: string;

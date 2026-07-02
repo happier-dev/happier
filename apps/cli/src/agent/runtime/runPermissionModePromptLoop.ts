@@ -15,15 +15,19 @@ import {
   resolveProviderPromptWithReplaySeed,
 } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
-import { drainPendingQueueMessages } from '@/agent/runtime/drainPendingQueueMessages';
+import { createSessionProviderPendingDrainAdapter } from '@/agent/runtime/session/input/sessionProviderInputConsumer';
+import type { DrainPendingResult } from '@/agent/runtime/session/input/_types';
+import { PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 import {
   beginAssistantTextSnapshotTurnScope,
   completeAssistantTextSnapshotTurnScope,
   resetAssistantTextSnapshotTurnScope,
   type AssistantTextSnapshotTurnScope,
 } from '@/agent/runtime/turns/assistantTextSnapshotTurnScope';
+import { configuration } from '@/configuration';
 
 export type PermissionModePromptLoopTurnOperations = RuntimeTurnOperations & Readonly<{
+  compactContext?: (command: string) => Promise<void>;
   sendPromptWithMeta?: (params: { text: string; localId?: string | null }) => Promise<void>;
   shouldResumeAfterPermissionModeChange?: () => boolean;
 }>;
@@ -44,7 +48,7 @@ export type PromptLoopPermissionHandler = Readonly<
 
 type QueuedPermissionModeMessage = {
   message: PermissionModeQueuedPrompt;
-  mode: { permissionMode: PermissionMode; appendSystemPrompt?: string | null };
+  mode: { permissionMode: PermissionMode; appendSystemPrompt?: string | null; suppressUserEcho?: boolean };
   hash: string;
 };
 
@@ -83,6 +87,12 @@ type CheckpointRuntimeMessage = Readonly<{
   type?: unknown;
   id?: unknown;
   reason?: unknown;
+}>;
+
+type PromptLoopStatusPublisherOptions = Readonly<{
+  agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
+  messageBuffer: MessageBuffer;
+  session: ApiSessionClient;
 }>;
 
 class StrictInitialResumeError extends Error {
@@ -127,12 +137,56 @@ async function runCheckpointHook(fn: (() => void | Promise<void>) | undefined): 
   }
 }
 
+function normalizePositiveSeq(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.trunc(value)
+    : null;
+}
+
+function readEagerPendingDrainFailureMessage(result: DrainPendingResult): string | null {
+  if (result.stoppedReason === 'auth_failure') {
+    return 'Pending prompts could not be restored after startup because session authentication failed; reconnect and retry.';
+  }
+  if (result.stoppedReason === 'error') {
+    return 'Pending prompts could not be restored after startup; please retry once the session is reachable.';
+  }
+  return null;
+}
+
+function publishPromptLoopStatus(
+  opts: PromptLoopStatusPublisherOptions,
+  message: string,
+): void {
+  opts.messageBuffer.addMessage(message, 'status');
+  opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message });
+}
+
+async function waitForCommittedUserPromptBoundary(
+  session: ApiSessionClient,
+  localId: string | null,
+): Promise<number | null> {
+  const trimmedLocalId = typeof localId === 'string' ? localId.trim() : '';
+  if (!trimmedLocalId) return null;
+
+  const syncSeq = normalizePositiveSeq(session.getCommittedUserMessageSeq?.(trimmedLocalId));
+  if (syncSeq !== null) return syncSeq;
+
+  return normalizePositiveSeq(await session.waitForCommittedUserMessageSeq?.(trimmedLocalId, {
+    timeoutMs: configuration.promptLoopUserMessageSeqWaitTimeoutMs,
+    pollMs: configuration.promptLoopUserMessageSeqWaitPollMs,
+  }));
+}
+
 export async function runPermissionModePromptLoop(opts: {
   providerName: string;
   agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
   explicitPermissionMode: PermissionMode | undefined;
   session: ApiSessionClient;
-  messageQueue: MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
+  messageQueue: MessageQueue2<{
+    permissionMode: PermissionMode;
+    appendSystemPrompt?: string | null;
+    suppressUserEcho?: boolean;
+  }, PermissionModeQueuedPrompt>;
   permissionHandler: PromptLoopPermissionHandler;
   runtime: PermissionModePromptLoopTurnOperations;
   createOverrideSynchronizer: (isStarted: () => boolean) => PromptLoopOverrideSynchronizer;
@@ -154,6 +208,7 @@ export async function runPermissionModePromptLoop(opts: {
   onAfterLoopBoundary?: ((params: { reason: PromptLoopBoundaryReason }) => void | Promise<void>) | null;
   checkpointLifecycle?: PromptLoopCheckpointLifecycle | null;
   beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
+  pendingQueueDrainMaxPopPerWake?: number;
   resolveFreshSessionSystemPrompt?: (args: {
     baseOverride?: string | null;
   }) => Promise<string | null | undefined>;
@@ -163,17 +218,21 @@ export async function runPermissionModePromptLoop(opts: {
   let currentModeHash: string | null = null;
   let pending: QueuedPermissionModeMessage | null = null;
   let storedSessionIdForResume: { value: string; origin: 'initial' | 'restart' } | null = null;
-  let didReplaySeedBootstrap = false;
   let turnInFlight = false;
   let pendingFreshSessionSystemPrompt = false;
   let activeCheckpointMessageId: string | null = null;
   let activeCheckpointTurnId: string | null = null;
   let activeCheckpointFinalStatus: 'completed' | 'aborted' | 'interrupted' | 'unknown' = 'unknown';
+  let snapshotFreshForNextPromptBoundary = false;
+  const pendingQueueDrainMaxPopPerWake = Math.max(
+    1,
+    Math.trunc(opts.pendingQueueDrainMaxPopPerWake ?? PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE),
+  );
 
   const unsubscribeCheckpointRuntimeMessages = (() => {
     if (!opts.checkpointLifecycle) return () => undefined;
     try {
-      return opts.runtime.subscribeRuntimeMessages((rawMessage) => {
+      return opts.runtime.subscribeRuntimeEvents((rawMessage) => {
         const message = readCheckpointRuntimeMessage(rawMessage);
         if (!message || typeof message.type !== 'string') return;
         const messageId = activeCheckpointMessageId;
@@ -197,6 +256,7 @@ export async function runPermissionModePromptLoop(opts: {
   const normalizedResumeId = typeof opts.initialResumeId === 'string' ? opts.initialResumeId.trim() : '';
   if (normalizedResumeId) {
     storedSessionIdForResume = { value: normalizedResumeId, origin: 'initial' };
+    snapshotFreshForNextPromptBoundary = opts.session.getMetadataSnapshot() !== null;
   }
 
   const overrideSync = opts.createOverrideSynchronizer(() => wasStarted);
@@ -223,6 +283,7 @@ export async function runPermissionModePromptLoop(opts: {
     if (typeof opts.session.refreshSessionSnapshotFromServerBestEffort === 'function') {
       try {
         await opts.session.refreshSessionSnapshotFromServerBestEffort({ reason: 'waitForMetadataUpdate' });
+        snapshotFreshForNextPromptBoundary = true;
       } catch {
         // Best-effort only: prompt delivery must not block on snapshot refresh failures.
       }
@@ -231,10 +292,18 @@ export async function runPermissionModePromptLoop(opts: {
     if (typeof opts.session.ensureMetadataSnapshot === 'function') {
       try {
         await opts.session.ensureMetadataSnapshot();
+        snapshotFreshForNextPromptBoundary = true;
       } catch {
         // Best-effort only.
       }
     }
+  };
+
+  const ensureFreshSessionSnapshotBeforeTurnBestEffort = async (): Promise<void> => {
+    if (snapshotFreshForNextPromptBoundary) {
+      return;
+    }
+    await refreshSessionSnapshotBeforeTurnBestEffort();
   };
 
   overrideSync.syncFromMetadata();
@@ -297,7 +366,9 @@ export async function runPermissionModePromptLoop(opts: {
     await opts.onAfterStart?.();
     wasStarted = true;
     await overrideSync.flushPendingAfterStart();
-    await refreshSessionSnapshotBeforeTurnBestEffort();
+    if (!snapshotFreshForNextPromptBoundary) {
+      await refreshSessionSnapshotBeforeTurnBestEffort();
+    }
     syncPermissionModeFromMetadata();
     overrideSync.syncFromMetadata();
     return { startedFreshSessionForTurn, exitRequested: false };
@@ -305,17 +376,34 @@ export async function runPermissionModePromptLoop(opts: {
 
   try {
   if ((opts.startRuntimeBeforeFirstPrompt === true || normalizedResumeId.length > 0) && !wasStarted) {
-    await refreshSessionSnapshotBeforeTurnBestEffort();
+    if (!snapshotFreshForNextPromptBoundary) {
+      await refreshSessionSnapshotBeforeTurnBestEffort();
+    }
     overrideSync.syncFromMetadata();
     const eagerStart = await ensureRuntimeStarted();
     if (eagerStart.exitRequested) return;
-    await drainPendingQueueMessages({
-      pendingQueue: {
-        popPendingMessage: () => opts.session.popPendingMessage(),
-      },
-      beforeDrain: opts.beforePendingMaterialize,
+    const materializeNextPendingMessageSafely = opts.session.materializeNextPendingMessageSafely;
+    const pendingDrainResult = await createSessionProviderPendingDrainAdapter({
+	      waitForMetadataUpdate: async () => false,
+	      getMetadataSnapshot: () => opts.session.getMetadataSnapshot(),
+	      popPendingMessage: () => opts.session.popPendingMessage(),
+      ...(materializeNextPendingMessageSafely
+        ? {
+            materializeNextPendingMessageSafely: (materializeOpts) =>
+              materializeNextPendingMessageSafely.call(opts.session, materializeOpts),
+          }
+        : {}),
+      shouldAttemptPendingMaterialization: () => opts.session.shouldAttemptPendingMaterialization?.() ?? true,
+      reconcilePendingQueueState: (reconcileOpts) => opts.session.reconcilePendingQueueState?.(reconcileOpts),
+    }, { maxPopPerWake: pendingQueueDrainMaxPopPerWake }).drainPending({
+      shouldContinue: async () => (await (opts.beforePendingMaterialize?.() ?? true)) !== false,
       logPrefix: `[${opts.providerName}]`,
+      reason: 'permission-mode-eager-start',
     });
+    const pendingDrainFailureMessage = readEagerPendingDrainFailureMessage(pendingDrainResult);
+    if (pendingDrainFailureMessage) {
+      publishPromptLoopStatus(opts, pendingDrainFailureMessage);
+    }
     pendingFreshSessionSystemPrompt = eagerStart.startedFreshSessionForTurn;
   }
 
@@ -332,14 +420,12 @@ export async function runPermissionModePromptLoop(opts: {
         onMetadataUpdate: async () => {
           await refreshSessionSnapshotBeforeTurnBestEffort();
           syncPermissionModeFromMetadata();
+          overrideSync.syncFromMetadata();
           if (!turnInFlight) {
-            overrideSync.syncFromMetadata();
             await overrideSync.flushPendingAfterStart();
-            await refreshSessionSnapshotBeforeTurnBestEffort();
-            syncPermissionModeFromMetadata();
-            overrideSync.syncFromMetadata();
           }
         },
+        pendingDrainMaxPopPerWake: pendingQueueDrainMaxPopPerWake,
       });
       if (!next) continue;
       message = { message: next.message, mode: next.mode, hash: next.hash };
@@ -378,13 +464,13 @@ export async function runPermissionModePromptLoop(opts: {
     }
 
     currentModeHash = message.hash;
-    await refreshSessionSnapshotBeforeTurnBestEffort();
-    overrideSync.syncFromMetadata();
-    await overrideSync.flushPendingAfterStart();
-    await refreshSessionSnapshotBeforeTurnBestEffort();
+    await ensureFreshSessionSnapshotBeforeTurnBestEffort();
     syncPermissionModeFromMetadata();
     overrideSync.syncFromMetadata();
-    opts.messageBuffer.addMessage(message.message.text, 'user');
+    await overrideSync.flushPendingAfterStart();
+    if (!message.mode.suppressUserEcho) {
+      opts.messageBuffer.addMessage(message.message.text, 'user');
+    }
 
     const special = parseSpecialCommand(message.message.text);
     if (special.type === 'clear') {
@@ -413,6 +499,7 @@ export async function runPermissionModePromptLoop(opts: {
       turnInFlight = true;
       let shouldApplyFreshSessionSystemPrompt = pendingFreshSessionSystemPrompt;
       pendingFreshSessionSystemPrompt = false;
+      const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
       if (!wasStarted) {
         const runtimeStart = await ensureRuntimeStarted();
         if (runtimeStart.exitRequested) {
@@ -422,16 +509,36 @@ export async function runPermissionModePromptLoop(opts: {
         shouldApplyFreshSessionSystemPrompt =
           runtimeStart.startedFreshSessionForTurn || shouldApplyFreshSessionSystemPrompt;
       }
+      await waitForCommittedUserPromptBoundary(opts.session, localId);
+      const special = parseSpecialCommand(message.message.text);
+      if (special.type === 'compact') {
+        try {
+          if (typeof opts.runtime.compactContext === 'function') {
+            await opts.runtime.compactContext(special.originalMessage ?? message.message.text.trim());
+          } else {
+            throw new Error('/compact is not supported by this runtime');
+          }
+        } catch (error) {
+          if (!isAbortLikeError(error)) {
+            opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: opts.formatPromptErrorMessage(error) });
+          }
+        }
+        opts.setThinking(false);
+        opts.keepAlive();
+        await opts.onAfterLoopBoundary?.({ reason: 'turn_completed' });
+        if (shouldSendReady) {
+          opts.sendReady();
+        }
+        continue;
+      }
       assistantTextSnapshotScope = beginAssistantTextSnapshotTurnScope(opts.session);
       opts.runtime.beginTurnLifecycle();
       beganTurn = true;
 
-      const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
       currentCheckpointMessageId = localId ?? message.hash;
       activeCheckpointMessageId = currentCheckpointMessageId;
       activeCheckpointTurnId = null;
       activeCheckpointFinalStatus = 'unknown';
-      const special = parseSpecialCommand(message.message.text);
       const nowMs = Date.now();
       const seedResolution = await resolveProviderPromptWithReplaySeed({
         session: opts.session,
@@ -439,9 +546,9 @@ export async function runPermissionModePromptLoop(opts: {
         allowSeed: special.type === null,
         localId,
         nowMs,
-        refreshMetadataBeforeRead: !didReplaySeedBootstrap,
+        refreshMetadataBeforeRead: false,
       });
-      didReplaySeedBootstrap = true;
+      snapshotFreshForNextPromptBoundary = false;
       const explicitBaseOverride = shouldApplyFreshSessionSystemPrompt
         ? resolveAppendSystemPromptBaseOverride(message.mode)
         : undefined;
@@ -485,7 +592,21 @@ export async function runPermissionModePromptLoop(opts: {
             await opts.runtime.waitForTurnCompletion();
           } catch {}
         } else {
-          await opts.runtime.waitForTurnCompletion();
+          // A turn-completion failure (e.g. a classified terminal injection/acceptance failure
+          // from the Claude unified host) must NOT escape the loop into a process-killing fatal:
+          // surface it to the transcript and let the loop re-enter on the next queued message.
+          // Abort-like errors are the shutdown signal and are re-thrown so teardown proceeds.
+          try {
+            await opts.runtime.waitForTurnCompletion();
+          } catch (completionError) {
+            if (isAbortLikeError(completionError)) {
+              throw completionError;
+            }
+            opts.session.sendAgentMessage(opts.agentMessageType, {
+              type: 'message',
+              message: opts.formatPromptErrorMessage(completionError),
+            });
+          }
         }
         if (currentCheckpointMessageId && !activeCheckpointTurnId) {
           activeCheckpointTurnId = currentCheckpointMessageId;

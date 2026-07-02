@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
     updateAccountSettingsV2WithRetry: vi.fn(),
     resolveMergedContributionRegistry: vi.fn(),
     resolveExecutablePluginRuntimeRegistry: vi.fn(),
-    resolvePluginRuntimeAdapterSurfaces: vi.fn(),
+    resolvePluginBackendSurfaceHandlers: vi.fn(),
     pluginReloadControllerState: vi.fn(),
 }));
 
@@ -40,8 +40,8 @@ vi.mock('../../../plugins/runtime/reload/singleton', () => ({
     },
 }));
 
-vi.mock('./resolvePluginRuntimeAdapterSurfaces', () => ({
-    resolvePluginRuntimeAdapterSurfaces: mocks.resolvePluginRuntimeAdapterSurfaces,
+vi.mock('./resolvePluginBackendSurfaceHandlers', () => ({
+    resolvePluginBackendSurfaceHandlers: mocks.resolvePluginBackendSurfaceHandlers,
 }));
 
 type ObservedPluginContext = Readonly<{
@@ -66,7 +66,7 @@ describe('engineRegistry account settings context', () => {
         mocks.updateAccountSettingsV2WithRetry.mockReset();
         mocks.resolveMergedContributionRegistry.mockReset();
         mocks.resolveExecutablePluginRuntimeRegistry.mockReset();
-        mocks.resolvePluginRuntimeAdapterSurfaces.mockReset();
+        mocks.resolvePluginBackendSurfaceHandlers.mockReset();
         mocks.pluginReloadControllerState.mockReset();
         mocks.pluginReloadControllerState.mockReturnValue({
             generation: 0,
@@ -95,12 +95,14 @@ describe('engineRegistry account settings context', () => {
             const settings = accountSettingsParse(mutate({ schemaVersion: 6 }));
             return { version: 3, settings };
         });
-        mocks.resolvePluginRuntimeAdapterSurfaces.mockResolvedValue({
+        mocks.resolvePluginBackendSurfaceHandlers.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                externalSessions: null,
+                externalSession: null,
                 attach: null,
-                sessionHandoff: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
             },
             diagnostics: [],
         });
@@ -144,11 +146,11 @@ describe('engineRegistry account settings context', () => {
                     providerId: 'acme.sample.provider',
                     runtimeKind: 'native',
                     capabilities: {},
-                    runtimeCoreHooks: [],
+                    surfaceHandlers: [],
                 },
             },
             runtimeKind: 'native',
-            runtimeCoreHooks: [],
+            surfaceHandlers: [],
             pluginId: 'acme.sample',
             daemonEntryPath: '/tmp/acme.sample/daemon.mjs',
         };
@@ -157,7 +159,7 @@ describe('engineRegistry account settings context', () => {
             backends: [backendContribution],
             actions: [],
             hookRegistrations: [],
-            runtimeCoreHooksByBackendId: new Map(),
+            surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
             providerDefinitionsById: new Map([
                 ['acme.sample.provider', providerContribution],

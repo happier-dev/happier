@@ -34,6 +34,7 @@ import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/p
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
+import { resolveSessionPendingQueueMaxPopPerWake } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -57,6 +58,8 @@ import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOpe
 import type { TerminalRemoteSessionMode } from './runTerminalRemoteSessionModeLoop';
 import type { SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 import type { MetadataUpdatePort, SessionStateFacet, SessionStateSyncEngine } from '@happier-dev/agents';
+import type { RuntimeCheckpointToolProtocolV1 } from '@happier-dev/agents/session/controls/checkpoints';
+import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 
 export type HostSessionRuntimeHookRuntime = Readonly<{
   sendPromptWithMeta?: (params: { text: string; localId?: string | null }) => Promise<void>;
@@ -64,8 +67,33 @@ export type HostSessionRuntimeHookRuntime = Readonly<{
   supportsInFlightSteer?: () => boolean;
   isTurnInFlight?: () => boolean;
   canSteerPrompt?: () => boolean;
-  steerPrompt?: (prompt: string) => Promise<void>;
+  steerPrompt?: (prompt: string, options?: Readonly<{ localId?: string | null }>) => Promise<void>;
+  notifyPromptQueuedDuringTurn?: () => void;
+  /**
+   * Lane Q: apply a steered message's permission-mode delta to the RUNNING turn so the message
+   * can steer instead of deferring to turn end. Runtimes without the capability leave it
+   * undefined; their mode-changing messages keep the queue path.
+   */
+  applyConfigDeltaInFlight?: (delta: Readonly<{ permissionMode: string }>) => Promise<
+    Readonly<
+      | { status: 'applied' }
+      | { status: 'scheduled_in_turn' }
+      | { status: 'unsupported'; reason?: string | undefined }
+      | { status: 'failed'; reason?: string | undefined }
+    >
+  >;
   getSessionId?: () => string | null;
+  refreshGoal?: SessionRuntimeControls['refreshGoal'];
+  setGoal?: SessionRuntimeControls['setGoal'];
+  clearGoal?: SessionRuntimeControls['clearGoal'];
+  listVendorPlugins?: SessionRuntimeControls['listVendorPlugins'];
+  listSkills?: SessionRuntimeControls['listSkills'];
+  startInlineReview?: SessionRuntimeControls['startInlineReview'];
+  invalidateConnectedServiceAuthTransports?: SessionRuntimeControls['invalidateConnectedServiceAuthTransports'];
+  enableUsageLimitWaitResume?: SessionRuntimeControls['enableUsageLimitWaitResume'];
+  cancelUsageLimitWaitResume?: SessionRuntimeControls['cancelUsageLimitWaitResume'];
+  checkUsageLimitRecoveryNow?: SessionRuntimeControls['checkUsageLimitRecoveryNow'];
+  handleUserMessage?: SessionRuntimeControls['handleUserMessage'];
 }> & RuntimeTurnOperations;
 
 export type HostSessionRuntimeFactoryParams = Readonly<{
@@ -78,6 +106,7 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   accountSettings?: AccountSettings | null;
+  pendingQueueDrainMaxPopPerWake?: number;
   permissionHandler: ProviderEnforcedPermissionHandler;
   getPermissionMode: () => PermissionMode;
   setThinking: (value: boolean) => void;
@@ -227,6 +256,7 @@ export type HostSessionRuntimeRunOptions = {
   existingSessionId?: string;
   resume?: string;
   accountSettingsContext?: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext | null;
+  environmentVariables?: Record<string, string>;
 };
 
 export type HostSessionRuntimePushSender = Pick<PushNotificationClient, 'sendToAllDevices' | 'sendToAllDevicesAsync'>;
@@ -243,6 +273,7 @@ export type HostSessionRuntimeConfig = {
   providerName: string;
   waitingForCommandLabel: string;
   agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
+  checkpointToolProtocol?: RuntimeCheckpointToolProtocolV1;
   supportsMcpServers?: boolean;
   machineMetadata: MachineMetadata;
   terminalDisplay: React.ComponentType<TerminalDisplayProps>;
@@ -483,12 +514,29 @@ export async function runHostSessionRuntime(
       ?? runtimeForInFlightSteer?.isTurnInFlight?.()
       ?? false
     ) === true,
-    steerText: async (text: string) => {
+    steerText: async (text: string, options?: Readonly<{ localId?: string | null }>) => {
       const runtime = runtimeForInFlightSteer;
       if (!runtime?.steerPrompt) {
         throw new Error('in-flight steer is not available');
       }
-      await runtime.steerPrompt(text);
+      if (options === undefined) {
+        await runtime.steerPrompt(text);
+        return;
+      }
+      await runtime.steerPrompt(text, options);
+    },
+    onPromptQueuedDuringTurn: () => {
+      runtimeForInFlightSteer?.notifyPromptQueuedDuringTurn?.();
+    },
+    // Lane Q: a mode-changing message may steer only when the active runtime can own the delta
+    // mid-turn. The runtime can swap, so the capability resolves at call time; a runtime without
+    // the hook reports `unsupported` and the message keeps the queue path.
+    applyConfigDeltaInFlight: async (delta) => {
+      const apply = runtimeForInFlightSteer?.applyConfigDeltaInFlight;
+      if (typeof apply !== 'function') {
+        return { status: 'unsupported', reason: 'runtime_without_in_flight_config_capability' };
+      }
+      return apply(delta);
     },
   };
 
@@ -554,6 +602,7 @@ export async function runHostSessionRuntime(
     messageBuffer,
     mcpServers,
     accountSettings: runnerMcpAccountSettings,
+    pendingQueueDrainMaxPopPerWake: resolveSessionPendingQueueMaxPopPerWake(runtimeOpts.accountSettingsContext?.settings ?? null),
     permissionHandler,
     getPermissionMode: () => permissionModeState.getCurrentPermissionMode() ?? 'default',
     setThinking: (value) => {
@@ -577,6 +626,21 @@ export async function runHostSessionRuntime(
     runtime,
   });
   if (nativeRuntime) {
+    currentLifecycleSession.setSessionRuntimeControls({
+      ...(typeof nativeRuntime.refreshGoal === 'function' ? { refreshGoal: nativeRuntime.refreshGoal.bind(nativeRuntime) } : {}),
+      ...(typeof nativeRuntime.setGoal === 'function' ? { setGoal: nativeRuntime.setGoal.bind(nativeRuntime) } : {}),
+      ...(typeof nativeRuntime.clearGoal === 'function' ? { clearGoal: nativeRuntime.clearGoal.bind(nativeRuntime) } : {}),
+      ...(typeof nativeRuntime.listVendorPlugins === 'function' ? { listVendorPlugins: nativeRuntime.listVendorPlugins.bind(nativeRuntime) } : {}),
+      ...(typeof nativeRuntime.listSkills === 'function' ? { listSkills: nativeRuntime.listSkills.bind(nativeRuntime) } : {}),
+      ...(typeof nativeRuntime.startInlineReview === 'function' ? { startInlineReview: nativeRuntime.startInlineReview.bind(nativeRuntime) } : {}),
+      ...(typeof nativeRuntime.invalidateConnectedServiceAuthTransports === 'function'
+        ? { invalidateConnectedServiceAuthTransports: nativeRuntime.invalidateConnectedServiceAuthTransports.bind(nativeRuntime) }
+        : {}),
+      ...(typeof nativeRuntime.enableUsageLimitWaitResume === 'function' ? { enableUsageLimitWaitResume: nativeRuntime.enableUsageLimitWaitResume.bind(nativeRuntime) } : {}),
+      ...(typeof nativeRuntime.cancelUsageLimitWaitResume === 'function' ? { cancelUsageLimitWaitResume: nativeRuntime.cancelUsageLimitWaitResume.bind(nativeRuntime) } : {}),
+      ...(typeof nativeRuntime.checkUsageLimitRecoveryNow === 'function' ? { checkUsageLimitRecoveryNow: nativeRuntime.checkUsageLimitRecoveryNow.bind(nativeRuntime) } : {}),
+      ...(typeof nativeRuntime.handleUserMessage === 'function' ? { handleUserMessage: nativeRuntime.handleUserMessage.bind(nativeRuntime) } : {}),
+    });
     await config.lifecycleHooks?.onRuntimeCreated?.({ session, runtime: nativeRuntime });
   }
   const originalOnAfterStart = config.onAfterStart;
@@ -634,6 +698,7 @@ export async function runHostSessionRuntime(
       })(),
     });
   } finally {
+    currentLifecycleSession.setSessionRuntimeControls(null);
     config.onAfterStart = originalOnAfterStart;
     sessionStateMetadataObserver.dispose();
     unsubscribeRuntimePublication();
@@ -670,5 +735,6 @@ function createCanonicalHostSessionRuntimeRunOptions(
     existingSessionId: opts.existingSessionId,
     resume: opts.resume,
     accountSettingsContext: opts.accountSettingsContext ?? null,
+    ...(opts.environmentVariables ? { environmentVariables: { ...opts.environmentVariables } } : {}),
   };
 }

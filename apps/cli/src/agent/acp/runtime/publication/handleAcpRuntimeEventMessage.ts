@@ -2,13 +2,124 @@ import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/ag
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import type { AgentMessage } from '@/agent';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { SendAgentSessionMediaCommittedRequest } from '@/api/session/client/transcript/sessionMediaBridge';
+import type { RuntimeEventV1 } from '@happier-dev/protocol';
 
 type EventAgentMessage = Extract<AgentMessage, { type: 'event' }>;
+type ContextCompactionAcpMessage = Extract<ACPMessageData, { type: 'context-compaction' }>;
+type ContextCompactionRuntimeEvent = Omit<
+    Extract<RuntimeEventV1, { kind: 'context-compaction' }>,
+    'sessionId' | 'emittedAtMs'
+>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeContextCompactionPayload(
+    payloadRecord: Record<string, unknown>,
+    backendIdFallback: string,
+): ContextCompactionAcpMessage | null {
+    if (payloadRecord.type !== 'context-compaction') return null;
+
+    const rawPhase = payloadRecord.phase;
+    const legacyDetected = rawPhase === 'detected';
+    const phase =
+        rawPhase === 'started'
+        || rawPhase === 'progress'
+        || rawPhase === 'completed'
+        || rawPhase === 'failed'
+        || rawPhase === 'cancelled'
+            ? rawPhase
+            : legacyDetected
+                ? 'completed'
+                : null;
+    if (!phase) return null;
+
+    const source =
+        payloadRecord.source === 'provider-event'
+        || payloadRecord.source === 'provider-status'
+        || payloadRecord.source === 'provider-hook'
+        || payloadRecord.source === 'transcript-inference'
+        || payloadRecord.source === 'user-command'
+        || payloadRecord.source === 'runtime'
+            ? payloadRecord.source
+            : legacyDetected
+                ? 'transcript-inference'
+                : undefined;
+    const trigger =
+        payloadRecord.trigger === 'manual'
+        || payloadRecord.trigger === 'auto'
+        || payloadRecord.trigger === 'threshold'
+        || payloadRecord.trigger === 'overflow'
+        || payloadRecord.trigger === 'unknown'
+            ? payloadRecord.trigger
+            : undefined;
+    const tokenCountBefore = readFiniteNumber(payloadRecord.tokenCountBefore) ?? readFiniteNumber(payloadRecord.tokensBefore);
+    const tokenCountAfter = readFiniteNumber(payloadRecord.tokenCountAfter) ?? readFiniteNumber(payloadRecord.tokensAfter);
+    const retryAttempt = readFiniteNumber(payloadRecord.retryAttempt);
+    const sanitizedErrorPreview = readNonEmptyString(payloadRecord.sanitizedErrorPreview);
+    const continuation = payloadRecord.continuation === 'paused' ? 'paused' : undefined;
+    const pauseReason = payloadRecord.pauseReason === 'provider-idle-after-compaction'
+        ? 'provider-idle-after-compaction'
+        : undefined;
+
+    const backendId = readNonEmptyString(payloadRecord.backendId) ?? readNonEmptyString(backendIdFallback);
+
+    return {
+        type: 'context-compaction',
+        phase,
+        ...(readNonEmptyString(payloadRecord.lifecycleId) ? { lifecycleId: readNonEmptyString(payloadRecord.lifecycleId) } : {}),
+        ...(backendId ? { backendId } : {}),
+        ...(readNonEmptyString(payloadRecord.agentId) ? { agentId: readNonEmptyString(payloadRecord.agentId) } : {}),
+        ...(trigger ? { trigger } : {}),
+        ...(source ? { source } : {}),
+        ...(readNonEmptyString(payloadRecord.providerEventId) ? { providerEventId: readNonEmptyString(payloadRecord.providerEventId) } : {}),
+        ...(readNonEmptyString(payloadRecord.providerSessionId) ? { providerSessionId: readNonEmptyString(payloadRecord.providerSessionId) } : {}),
+        ...(readNonEmptyString(payloadRecord.turnId) ? { turnId: readNonEmptyString(payloadRecord.turnId) } : {}),
+        ...(tokenCountBefore !== undefined ? { tokenCountBefore } : {}),
+        ...(tokenCountAfter !== undefined ? { tokenCountAfter } : {}),
+        ...(readNonEmptyString(payloadRecord.tokenCountSource) ? { tokenCountSource: readNonEmptyString(payloadRecord.tokenCountSource) } : {}),
+        ...(retryAttempt !== undefined ? { retryAttempt: Math.max(0, Math.trunc(retryAttempt)) } : {}),
+        ...(readNonEmptyString(payloadRecord.errorCode) ? { errorCode: readNonEmptyString(payloadRecord.errorCode) } : {}),
+        ...(sanitizedErrorPreview ? { sanitizedErrorPreview } : {}),
+        ...(continuation ? { continuation } : {}),
+        ...(pauseReason ? { pauseReason } : {}),
+    };
+}
+
+function buildContextCompactionRuntimeEvent(
+    payload: ContextCompactionAcpMessage,
+): ContextCompactionRuntimeEvent | null {
+    if (!payload.source) return null;
+    return {
+        kind: 'context-compaction',
+        phase: payload.phase,
+        source: payload.source,
+        ...(payload.lifecycleId ? { lifecycleId: payload.lifecycleId } : {}),
+        ...(payload.backendId ? { backendId: payload.backendId } : {}),
+        ...(payload.agentId ? { agentId: payload.agentId } : {}),
+        ...(payload.trigger ? { trigger: payload.trigger } : {}),
+        ...(payload.providerEventId ? { providerEventId: payload.providerEventId } : {}),
+        ...(payload.providerSessionId ? { providerSessionId: payload.providerSessionId } : {}),
+        ...(payload.turnId ? { turnId: payload.turnId } : {}),
+        ...(payload.tokenCountBefore !== undefined ? { tokenCountBefore: payload.tokenCountBefore } : {}),
+        ...(payload.tokenCountAfter !== undefined ? { tokenCountAfter: payload.tokenCountAfter } : {}),
+        ...(payload.tokenCountSource ? { tokenCountSource: payload.tokenCountSource } : {}),
+        ...(payload.retryAttempt !== undefined ? { retryAttempt: payload.retryAttempt } : {}),
+        ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
+        ...(payload.sanitizedErrorPreview ? { sanitizedErrorPreview: payload.sanitizedErrorPreview } : {}),
+    };
 }
 
 function isSessionMediaCommittedRequest(value: unknown): value is SendAgentSessionMediaCommittedRequest {
@@ -121,6 +232,7 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
     streamedTranscriptWriter: Readonly<{
         appendThinkingDelta: (text: string) => void;
     }>;
+    publishRuntimeEvent?: (event: Omit<RuntimeEventV1, 'sessionId' | 'emittedAtMs'>) => void;
     msg: EventAgentMessage;
 }>): void {
     const name = params.msg.name;
@@ -144,6 +256,19 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
                 ? request
                 : { ...request, media },
         );
+        return;
+    }
+
+    if (name === 'context_compaction') {
+        const payloadRecord = asRecord(params.msg.payload);
+        const normalizedPayload = payloadRecord ? normalizeContextCompactionPayload(payloadRecord, params.provider) : null;
+        if (normalizedPayload) {
+            const runtimeEvent = buildContextCompactionRuntimeEvent(normalizedPayload);
+            if (runtimeEvent) {
+                params.publishRuntimeEvent?.(runtimeEvent);
+            }
+            params.session.sendAgentMessage(params.provider, normalizedPayload);
+        }
         return;
     }
 

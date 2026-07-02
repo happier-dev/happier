@@ -10,6 +10,10 @@ import { PermissionRequestPushNotifier } from '@/settings/notifications/permissi
 import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermissionHandler';
 import { logger } from '@/ui/logger';
 import type { AccountSettings } from '@happier-dev/protocol';
+import {
+    getSessionNotificationAgentDisplayName,
+    getSessionNotificationTitle,
+} from '@/agent/runtime/notifications/sessionNotificationContext';
 
 type AgentStateRequestEntry = NonNullable<AgentState['requests']>[string];
 type AgentStateCompletedEntry = NonNullable<AgentState['completedRequests']>[string];
@@ -42,6 +46,7 @@ type SessionLike = Readonly<{
     sessionId: string;
     updateAgentState: (updater: (state: AgentState) => AgentState) => Promise<void> | void;
     getAgentStateSnapshot?: () => AgentState | null | undefined;
+    getMetadataSnapshot?: () => unknown;
 }>;
 
 export class AgentStateRequestStore {
@@ -50,6 +55,8 @@ export class AgentStateRequestStore {
     private readonly getPushSender: () => PermissionRequestPushSender | null;
     private readonly getAccountSettings: () => AccountSettings | null;
     private readonly getAccountSettingsSecretsReadKeys: () => ReadonlyArray<Uint8Array | null | undefined>;
+    private readonly getSessionTitle: () => string | null;
+    private readonly getAgentDisplayName: () => string | null;
     private permissionRequestPushNotifier: PermissionRequestPushNotifier | null = null;
     private readonly responseTargetHandlers = new Map<string, AgentStateResponseTargetHandler>();
 
@@ -60,6 +67,8 @@ export class AgentStateRequestStore {
         getPushSender?: (() => PermissionRequestPushSender | null) | null;
         getAccountSettings?: (() => AccountSettings | null) | null;
         getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
+        getSessionTitle?: (() => string | null) | null;
+        getAgentDisplayName?: (() => string | null) | null;
     }>) {
         this.session = params.session;
         this.logPrefix = params.logPrefix;
@@ -70,6 +79,12 @@ export class AgentStateRequestStore {
         this.getAccountSettings = typeof params.getAccountSettings === 'function' ? params.getAccountSettings : (() => null);
         this.getAccountSettingsSecretsReadKeys =
             typeof params.getAccountSettingsSecretsReadKeys === 'function' ? params.getAccountSettingsSecretsReadKeys : (() => []);
+        this.getSessionTitle = typeof params.getSessionTitle === 'function'
+            ? params.getSessionTitle
+            : (() => getSessionNotificationTitle(() => this.session.getMetadataSnapshot?.() ?? null));
+        this.getAgentDisplayName = typeof params.getAgentDisplayName === 'function'
+            ? params.getAgentDisplayName
+            : (() => getSessionNotificationAgentDisplayName(() => this.session.getMetadataSnapshot?.() ?? null));
     }
 
     updateSession(session: SessionLike): void {
@@ -463,6 +478,8 @@ export class AgentStateRequestStore {
             pushSender,
             getSettings: () => this.getAccountSettings(),
             getSettingsSecretsReadKeys: () => this.getAccountSettingsSecretsReadKeys(),
+            getSessionTitle: () => this.getSessionTitle(),
+            getAgentDisplayName: () => this.getAgentDisplayName(),
             sessionId: this.session.sessionId,
             logPrefix: this.logPrefix,
             onNotifiedAt: (permissionId, notifiedAtMs) => {

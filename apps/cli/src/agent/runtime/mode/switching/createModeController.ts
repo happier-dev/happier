@@ -56,6 +56,7 @@ export function createTerminalRemoteModeController(params: {
             attached: nextMode === 'local',
             topology: 'exclusive',
             canAttach: canSwitchToTerminalFromRemote,
+            remoteWritable: nextMode === 'remote',
           }),
         }),
       '[runtime/mode/switching]',

@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { logger } from '@/ui/logger';
 import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
@@ -7,9 +5,12 @@ import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
-import { createAcpPendingQueuePump } from './createAcpPendingQueuePump';
+import type { AgentState } from '@/api/types';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { createAcpPendingQueuePump, type AcpRuntimePendingQueue } from './createAcpPendingQueuePump';
 import { createBoundedToolCallNameCache } from './createBoundedToolCallNameCache';
 import type { RuntimeTurnConfigUpdate, RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { RuntimeEventV1 } from '@happier-dev/protocol';
 import { createAcpRuntimeLifecycleMethods } from './createAcpRuntimeLifecycleMethods';
 import { attachAcpRuntimeMessageHandler } from './attachAcpRuntimeMessageHandler';
 import type { AcpRuntimeBackend } from './acpRuntimeBackendContract';
@@ -50,6 +51,7 @@ export type AcpRuntime = Readonly<{
    * This should NOT start a new turn and should NOT abort the current turn.
    */
   steerPrompt: (prompt: string) => Promise<void>;
+  compactContext: (command: string) => Promise<void>;
   sendPrompt: (prompt: string) => Promise<void>;
   flushTurn: () => Promise<void>;
 }>;
@@ -107,36 +109,7 @@ export function createAcpRuntime(params: {
    * Optional pending-queue integration used to materialize server-backed pending messages
    * while a steer-capable turn is in-flight.
    */
-  pendingQueue?: {
-    waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
-    popPendingMessage: () => Promise<boolean>;
-    maxPopPerWake?: number;
-    /**
-     * Whether the runtime should pop server-pending messages while a turn is in-flight.
-     *
-     * This is intentionally opt-in because popping pending messages during a running turn
-     * effectively "auto-delivers" them (often via in-flight steer) which can defeat
-     * user-facing "queue for review" / "queue in Pending" semantics.
-     *
-     * The baseline message loop already pops pending messages while idle; this only affects
-     * the extra in-flight pump used to avoid stranding pending messages while sendPrompt() is running.
-     */
-    drainDuringTurn?: boolean;
-    /**
-     * Whether the runtime should pop server-pending messages once after session start/load.
-     *
-     * This covers inactive-session resume: the process is awake again, but no turn has started
-     * until the server-backed pending message is materialized into the normal transcript.
-     */
-    drainAfterStartOrLoad?: boolean;
-    /**
-     * Fallback polling interval used while a steer-capable turn is in-flight.
-     *
-     * Some pending-queue updates may not publish metadata wake signals, so polling avoids
-     * stranding newly enqueued messages mid-turn.
-     */
-    pollIntervalMs?: number;
-  };
+  pendingQueue?: AcpRuntimePendingQueue;
   /**
    * Optional lifecycle hooks for per-provider turn processing.
    *
@@ -149,6 +122,18 @@ export function createAcpRuntime(params: {
     onBeginTurn?: () => void;
     onToolResult?: (params: { toolName: string; callId: string; result: unknown }) => void;
     onPermissionRequest?: (params: { permissionId: string; toolName: string; payload: unknown; reason: string }) => void;
+    classifyRuntimeAuthFailure?: (params: {
+      provider: string;
+      happierSessionId: string | null;
+      activeSessionId: string | null;
+      error: unknown;
+    }) => unknown | null | Promise<unknown | null>;
+    onRuntimeAuthFailure?: (params: {
+      provider: string;
+      happierSessionId: string | null;
+      activeSessionId: string | null;
+      classification: unknown;
+    }) => unknown | Promise<unknown>;
     onBeforeFlushTurn?: (params: {
       /**
        * Send an additional tool-call into the session transcript.
@@ -184,8 +169,56 @@ export function createAcpRuntime(params: {
     turnAborted: false,
     loadingSession: false,
     turnInFlight: false,
+    currentRuntimeTurnId: null as string | null,
+    currentTurnId: null as string | null,
+  };
+  const runtimeEventSubscribers = new Set<(event: RuntimeEventV1) => void>();
+  const readRuntimeSessionId = (): string => {
+    const sessionId = typeof params.session.sessionId === 'string' ? params.session.sessionId.trim() : '';
+    return sessionId || 'local-session';
+  };
+  const publishRuntimeEvent = (event: Omit<RuntimeEventV1, 'sessionId' | 'emittedAtMs'>): void => {
+    if (runtimeEventSubscribers.size === 0) return;
+    const payload = {
+      ...event,
+      sessionId: readRuntimeSessionId(),
+      emittedAtMs: Date.now(),
+    } as RuntimeEventV1;
+    for (const subscriber of runtimeEventSubscribers) {
+      subscriber(payload);
+    }
   };
   const inFlightSteerEnabled = params.inFlightSteer?.enabled === true;
+  const publishInFlightSteerCapabilities = (available: boolean): void => {
+    const sessionWithAgentState = params.session as unknown as {
+      updateAgentState?: (updater: (state: AgentState) => AgentState) => Promise<void> | void;
+    };
+    if (typeof sessionWithAgentState.updateAgentState !== 'function') return;
+    // Seam A: publish WHY steering is unavailable. ACP availability tracks the turn window, so
+    // enabled-but-unavailable is an unsafe window; disabled is backend-unsupported.
+    const unavailableReason = !inFlightSteerEnabled
+      ? 'backend_unsupported'
+      : !available
+        ? 'unsafe_window'
+        : null;
+    updateAgentStateBestEffort(
+      { updateAgentState: sessionWithAgentState.updateAgentState.bind(sessionWithAgentState) },
+      (state) => ({
+        ...state,
+        capabilities: {
+          ...(state.capabilities ?? {}),
+          inFlightSteer: inFlightSteerEnabled,
+          inFlightSteerSupported: inFlightSteerEnabled,
+          inFlightSteerAvailable: inFlightSteerEnabled && available,
+          inFlightSteerUnavailableReason: unavailableReason,
+          inFlightSteerStateAt: Date.now(),
+        },
+      }),
+      `[${params.provider}]`,
+      'in_flight_steer_capabilities',
+    );
+  };
+  publishInFlightSteerCapabilities(false);
   const acpTraceMarkersEnabled = (() => {
     const raw = (
       process.env.HAPPIER_E2E_ACP_TRACE_MARKERS ??
@@ -224,6 +257,7 @@ export function createAcpRuntime(params: {
     attachAcpRuntimeMessageHandler({
       backend: b,
       provider: params.provider,
+      happierSessionId: params.happierSessionId ?? null,
       directory: params.directory,
       session: params.session,
       messageBuffer: params.messageBuffer,
@@ -238,6 +272,7 @@ export function createAcpRuntime(params: {
       clearToolCallCache,
       recordToolCall,
       state,
+      publishRuntimeEvent,
     });
   };
 
@@ -273,6 +308,7 @@ export function createAcpRuntime(params: {
     pendingQueuePump,
     streamedTranscriptWriter,
     onThinkingChange: params.onThinkingChange,
+    publishRuntimeEvent,
   });
 
   const runtime: AcpRuntimeWithTurnOperations = {
@@ -297,8 +333,14 @@ export function createAcpRuntime(params: {
     async waitForTurnCompletion() {
       await runtime.flushTurn();
     },
-    subscribeRuntimeMessages() {
-      return () => {};
+    subscribeRuntimeEvents(handler) {
+      const runtimeEventHandler = (event: RuntimeEventV1): void => {
+        handler(event);
+      };
+      runtimeEventSubscribers.add(runtimeEventHandler);
+      return () => {
+        runtimeEventSubscribers.delete(runtimeEventHandler);
+      };
     },
     async respondToPermission() {},
     async cancelTurn() {
@@ -321,16 +363,38 @@ export function createAcpRuntime(params: {
     async resetOrDisposeRuntime() {
       await runtime.reset();
     },
-    beginTurn: lifecycleMethods.beginTurn,
-    cancel: lifecycleMethods.cancel,
-    reset: lifecycleMethods.reset,
+    beginTurn: () => {
+      publishInFlightSteerCapabilities(true);
+      lifecycleMethods.beginTurn();
+    },
+    cancel: async () => {
+      try {
+        await lifecycleMethods.cancel();
+      } finally {
+        publishInFlightSteerCapabilities(false);
+      }
+    },
+    reset: async () => {
+      try {
+        await lifecycleMethods.reset();
+      } finally {
+        publishInFlightSteerCapabilities(false);
+      }
+    },
     startOrLoad: lifecycleMethods.startOrLoad,
     setSessionMode: lifecycleMethods.setSessionMode,
     setSessionModel: lifecycleMethods.setSessionModel,
     setSessionConfigOption: lifecycleMethods.setSessionConfigOption,
     steerPrompt: lifecycleMethods.steerPrompt,
+    compactContext: lifecycleMethods.compactContext,
     sendPrompt: lifecycleMethods.sendPrompt,
-    flushTurn: lifecycleMethods.flushTurn,
+    flushTurn: async () => {
+      try {
+        await lifecycleMethods.flushTurn();
+      } finally {
+        publishInFlightSteerCapabilities(false);
+      }
+    },
   };
 
   return runtime;

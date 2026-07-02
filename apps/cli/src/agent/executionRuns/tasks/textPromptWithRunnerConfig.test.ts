@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const runEphemeralExecutionRunTextPromptMock = vi.fn();
 
-vi.mock('@/agent/executionRuns/runtime/ephemeralTextPrompt', () => ({
+vi.mock('@/agent/runtime/bridges/executionRun/runtime/textPrompt', () => ({
   runEphemeralExecutionRunTextPrompt: (...args: unknown[]) => runEphemeralExecutionRunTextPromptMock(...args),
 }));
 

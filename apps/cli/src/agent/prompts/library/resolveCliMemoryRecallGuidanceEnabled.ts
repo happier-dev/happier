@@ -1,6 +1,8 @@
 import { isActionEnabledByEnv } from '../../../settings/actionsSettings';
 import { resolveMemoryIndexPaths } from '../../../daemon/memory/memoryIndexPaths';
 import { stat } from 'node:fs/promises';
+import { openDeepIndexDb } from '../../../daemon/memory/deepIndex/deepIndexDb';
+import { openSummaryShardIndexDb } from '../../../daemon/memory/summaryShardIndexDb';
 import {
   isMemoryRecallGuidanceSupported,
   type MemoryRecallGuidanceSurface,
@@ -9,6 +11,24 @@ import {
 
 type MemoryRecallIndexStat = Readonly<Pick<Awaited<ReturnType<typeof stat>>, 'size'>>;
 type MemoryRecallIndexStatReader = (path: string) => Promise<MemoryRecallIndexStat>;
+type MemoryRecallIndexContentReader = (path: string, mode: 'hints' | 'deep') => boolean;
+
+function defaultHasSearchableContent(path: string, mode: 'hints' | 'deep'): boolean {
+  if (mode === 'deep') {
+    const db = openDeepIndexDb({ dbPath: path });
+    try {
+      return db.getDeepIndexStats().deepChunkCount > 0;
+    } finally {
+      db.close();
+    }
+  }
+  const db = openSummaryShardIndexDb({ dbPath: path });
+  try {
+    return db.getSummaryIndexStats().lightShardCount > 0;
+  } finally {
+    db.close();
+  }
+}
 
 export async function resolveCliMemoryRecallGuidanceEnabled(args?: Readonly<{
   surfaces?: readonly MemoryRecallGuidanceSurface[];
@@ -17,6 +37,7 @@ export async function resolveCliMemoryRecallGuidanceEnabled(args?: Readonly<{
     readMemorySettingsFromDisk?: () => Promise<MemorySettingsV1>;
     resolveMemoryIndexPaths?: typeof resolveMemoryIndexPaths;
     stat?: MemoryRecallIndexStatReader;
+    hasSearchableContent?: MemoryRecallIndexContentReader;
   }>;
 }>): Promise<boolean> {
   const readActionEnabled = args?.deps?.isActionEnabledByEnv ?? isActionEnabledByEnv;
@@ -41,7 +62,9 @@ export async function resolveCliMemoryRecallGuidanceEnabled(args?: Readonly<{
 
     const readStat: MemoryRecallIndexStatReader = args?.deps?.stat ?? ((path) => stat(path));
     const info = await readStat(activeDbPath);
-    return typeof info?.size === 'number' && Number.isFinite(info.size) && info.size >= 0;
+    if (!(typeof info?.size === 'number' && Number.isFinite(info.size) && info.size >= 0)) return false;
+    const hasSearchableContent = args?.deps?.hasSearchableContent ?? defaultHasSearchableContent;
+    return hasSearchableContent(activeDbPath, settings.indexMode);
   } catch {
     return false;
   }

@@ -19,6 +19,7 @@ import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import type { AcpRuntimeBackend } from './acpRuntimeBackendContract';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
+import type { RuntimeEventV1 } from '@happier-dev/protocol';
 
 type AcpRuntimeMessageState = {
   sessionId: string | null;
@@ -28,11 +29,26 @@ type AcpRuntimeMessageState = {
   turnAborted: boolean;
   loadingSession: boolean;
   turnInFlight: boolean;
+  currentRuntimeTurnId: string | null;
+  currentTurnId: string | null;
+  hadTurnActivity?: boolean;
 };
 
 type AcpRuntimeHooks = {
   onToolResult?: (params: { toolName: string; callId: string; result: unknown }) => void;
   onPermissionRequest?: (params: { permissionId: string; toolName: string; payload: unknown; reason: string }) => void;
+  classifyRuntimeAuthFailure?: (params: {
+    provider: string;
+    happierSessionId: string | null;
+    activeSessionId: string | null;
+    error: unknown;
+  }) => unknown | null | Promise<unknown | null>;
+  onRuntimeAuthFailure?: (params: {
+    provider: string;
+    happierSessionId: string | null;
+    activeSessionId: string | null;
+    classification: unknown;
+  }) => unknown | Promise<unknown>;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -40,23 +56,61 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function surfaceStatusErrorDetail(params: Readonly<{
-  detailRaw: unknown;
+function ensureCurrentTurnId(state: AcpRuntimeMessageState): string {
+  if (!state.currentTurnId) state.currentTurnId = randomUUID();
+  return state.currentTurnId;
+}
+
+function abortPendingPermissionRequests(params: Readonly<{
+  permissionHandler: AcpPermissionHandler;
+  reason: string;
   provider: string;
-  session: AcpRuntimeSessionClient;
 }>): void {
-  const detail = typeof params.detailRaw === 'string' ? params.detailRaw.trim() : '';
-  if (!detail || isAbortLikeError(detail)) return;
-  const message = /^error[:\\s]/i.test(detail) ? detail : `Error: ${detail}`;
-  params.session.sendAgentMessage(
-    params.provider as Parameters<AcpRuntimeSessionClient['sendAgentMessage']>[0],
-    { type: 'message', message },
-  );
+  try {
+    void params.permissionHandler.abortPendingRequestsAndFlush?.(params.reason).catch((error) => {
+      logger.debug(`[${params.provider}] Failed to abort pending permission requests (non-fatal)`, error);
+    });
+  } catch (error) {
+    logger.debug(`[${params.provider}] Failed to abort pending permission requests (non-fatal)`, error);
+  }
+}
+
+async function readRuntimeAuthStatusError(params: Readonly<{
+  hooks: AcpRuntimeHooks | undefined;
+  provider: string;
+  happierSessionId: string | null;
+  activeSessionId: string | null;
+  detail: unknown;
+}>): Promise<unknown> {
+  const classification = await params.hooks?.classifyRuntimeAuthFailure?.({
+    provider: params.provider,
+    happierSessionId: params.happierSessionId,
+    activeSessionId: params.activeSessionId,
+    error: params.detail,
+  });
+  if (!classification) return params.detail;
+  let runtimeAuthRecoveryResult: unknown;
+  try {
+    runtimeAuthRecoveryResult = await params.hooks?.onRuntimeAuthFailure?.({
+      provider: params.provider,
+      happierSessionId: params.happierSessionId,
+      activeSessionId: params.activeSessionId,
+      classification,
+    });
+  } catch (error) {
+    logger.debug(`[${params.provider}] Runtime auth failure hook failed (non-fatal)`, error);
+  }
+  return {
+    originalError: params.detail,
+    runtimeAuthClassification: classification,
+    ...(runtimeAuthRecoveryResult === undefined ? {} : { runtimeAuthRecoveryResult }),
+  };
 }
 
 export function attachAcpRuntimeMessageHandler(params: Readonly<{
   backend: Pick<AcpRuntimeBackend, 'onMessage'>;
   provider: string;
+  happierSessionId: string | null;
   directory: string;
   session: AcpRuntimeSessionClient;
   messageBuffer: MessageBuffer;
@@ -71,6 +125,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
   clearToolCallCache: () => void;
   recordToolCall: (callId: string, toolName: string) => void;
   state: AcpRuntimeMessageState;
+  publishRuntimeEvent?: (event: Omit<RuntimeEventV1, 'sessionId' | 'emittedAtMs'>) => void;
 }>): void {
   const seenSessionMediaKeys = new Set<string>();
   const forwarder = createAcpAgentMessageForwarder({
@@ -82,18 +137,31 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
   params.backend.onMessage((msg: AgentMessage) => {
     if (params.state.loadingSession) {
       if (msg.type === 'status' && msg.status === 'error') {
-        surfaceStatusErrorDetail({
-          detailRaw: msg.detail,
-          provider: params.provider,
-          session: params.session,
-        });
         params.state.turnAborted = true;
-        void surfacePrimarySessionRuntimeIssue({
+        abortPendingPermissionRequests({
+          permissionHandler: params.permissionHandler,
+          reason: 'ACP runtime status:error',
           provider: params.provider,
-          cause: isAbortLikeError(typeof msg.detail === 'string' ? msg.detail : '') ? 'cancelled' : 'status_error',
-          error: msg.detail,
-          session: params.session,
         });
+        void (async () => {
+          const error = await readRuntimeAuthStatusError({
+            hooks: params.hooks,
+            provider: params.provider,
+            happierSessionId: params.happierSessionId,
+            activeSessionId: params.state.sessionId,
+            detail: msg.detail,
+          });
+          await surfacePrimarySessionRuntimeIssue({
+            provider: params.provider,
+            providerTurnId: params.state.currentTurnId,
+            sessionTurnId: params.state.currentRuntimeTurnId,
+            cause: isAbortLikeError(typeof msg.detail === 'string' ? msg.detail : '') ? 'cancelled' : 'status_error',
+            error,
+            session: params.session,
+            emitAcpLifecycleMarker: true,
+            publishRuntimeEvent: params.publishRuntimeEvent,
+          });
+        })();
       }
       return;
     }
@@ -133,6 +201,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
         });
 
         if (deltaRaw) {
+          params.state.hadTurnActivity = true;
           params.streamedTranscriptWriter.appendAssistantDelta(deltaRaw);
         }
         break;
@@ -140,42 +209,53 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
 
       case 'status': {
         if (msg.status === 'running') {
-          handleAcpStatusRunning({
-            session: params.session,
-            agent: params.provider,
-            getTaskStartedSent: () => params.state.taskStartedSent,
-            setTaskStartedSent: (value) => {
-              params.state.taskStartedSent = value;
-            },
-            makeId: () => randomUUID(),
-          });
-
-          if (params.acpTraceMarkersEnabled && params.state.sessionId) {
-            recordToolTraceEvent({
-              direction: 'inbound',
-              sessionId: params.state.sessionId,
-              protocol: 'acp',
-              provider: params.provider,
-              kind: 'trace-marker',
-              payload: { event: 'acp_status_running' },
+          if (params.state.turnInFlight) {
+            handleAcpStatusRunning({
+              session: params.session,
+              agent: params.provider,
+              getTaskStartedSent: () => params.state.taskStartedSent,
+              setTaskStartedSent: (value) => {
+                params.state.taskStartedSent = value;
+              },
+              makeId: () => ensureCurrentTurnId(params.state),
             });
+
+            if (params.acpTraceMarkersEnabled && params.state.sessionId) {
+              recordToolTraceEvent({
+                direction: 'inbound',
+                sessionId: params.state.sessionId,
+                protocol: 'acp',
+                provider: params.provider,
+                kind: 'trace-marker',
+                payload: { event: 'acp_status_running' },
+              });
+            }
           }
         }
 
         if (msg.status === 'error') {
-          if (!params.state.turnAborted) {
-            surfaceStatusErrorDetail({
-              detailRaw: msg.detail,
+          void params.streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'status-error' }).finally(async () => {
+            abortPendingPermissionRequests({
+              permissionHandler: params.permissionHandler,
+              reason: 'ACP runtime status:error',
               provider: params.provider,
-              session: params.session,
             });
-          }
-          void params.streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'status-error' }).finally(() => {
-            void surfacePrimarySessionRuntimeIssue({
+            const error = await readRuntimeAuthStatusError({
+              hooks: params.hooks,
               provider: params.provider,
+              happierSessionId: params.happierSessionId,
+              activeSessionId: params.state.sessionId,
+              detail: msg.detail,
+            });
+            await surfacePrimarySessionRuntimeIssue({
+              provider: params.provider,
+              providerTurnId: params.state.currentTurnId,
+              sessionTurnId: params.state.currentRuntimeTurnId,
               cause: isAbortLikeError(typeof msg.detail === 'string' ? msg.detail : '') ? 'cancelled' : 'status_error',
-              error: msg.detail,
+              error,
               session: params.session,
+              emitAcpLifecycleMarker: true,
+              publishRuntimeEvent: params.publishRuntimeEvent,
             });
           });
           params.state.turnAborted = true;
@@ -191,6 +271,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
       }
 
       case 'tool-call': {
+        params.state.hadTurnActivity = true;
         if (isThinkingToolName(msg.toolName)) {
           forwarder.forward(msg);
           break;
@@ -204,6 +285,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
       }
 
       case 'tool-result': {
+        params.state.hadTurnActivity = true;
         handleAcpRuntimeToolResultMessage({
           provider: params.provider,
           directory: params.directory,
@@ -221,6 +303,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
       }
 
       case 'fs-edit': {
+        params.state.hadTurnActivity = true;
         params.messageBuffer.addMessage(`File edit: ${msg.description}`, 'tool');
         forwarder.forward(msg);
         break;
@@ -229,6 +312,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
       case 'terminal-output': {
         const data = typeof (msg as any).data === 'string' ? String((msg as any).data) : '';
         if (data) {
+          params.state.hadTurnActivity = true;
           params.messageBuffer.addMessage(data, 'result');
         }
         forwarder.forward(msg);
@@ -241,6 +325,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
       }
 
       case 'permission-request': {
+        params.state.hadTurnActivity = true;
         const payloadRecord = asRecord((msg as any).payload);
         const toolNameRaw = typeof payloadRecord?.toolName === 'string'
           ? payloadRecord.toolName
@@ -264,11 +349,15 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
       }
 
       case 'event': {
+        if (msg.name === 'thinking' || msg.name === 'context_compaction' || msg.name === 'session_media') {
+          params.state.hadTurnActivity = true;
+        }
         handleAcpRuntimeEventMessage({
           provider: params.provider,
           session: params.session,
           seenSessionMediaKeys,
           streamedTranscriptWriter: params.streamedTranscriptWriter,
+          publishRuntimeEvent: params.publishRuntimeEvent,
           msg,
         });
         break;

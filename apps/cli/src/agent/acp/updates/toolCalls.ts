@@ -144,8 +144,12 @@ function armToolCallExecutionTimeout(params: Readonly<{
   const { toolCallId, toolKind, toolKindStr, ctx, source, suffix } = params;
   if (ctx.finalizedToolCalls.has(toolCallId)) return;
 
-  const timeoutMs =
-    ctx.transport.getToolCallTimeout?.(toolCallId, toolKindStr) ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
+  const transportTimeoutMs = ctx.transport.getToolCallTimeout?.(toolCallId, toolKindStr);
+  const rawTimeoutMs = transportTimeoutMs === undefined ? DEFAULT_TOOL_CALL_TIMEOUT_MS : transportTimeoutMs;
+  if (rawTimeoutMs == null || !Number.isFinite(rawTimeoutMs) || rawTimeoutMs <= 0) {
+    return;
+  }
+  const timeoutMs = Math.trunc(rawTimeoutMs);
 
   // "Inactivity watchdog": bump/reset the timeout on every meaningful tool_call_update while
   // the tool is running. This prevents false timeouts for long-running tools that keep emitting
@@ -665,6 +669,9 @@ export function handleToolCallUpdate(
   update: SessionUpdate,
   ctx: HandlerContext,
 ): HandlerResult {
+  // Provider transports may repair payload quirks (e.g. Cursor's diff header noise) before the
+  // generic normalizer reads `content`. No-op for providers without an override.
+  update = ctx.transport.sanitizeToolUpdateContent?.(update) ?? update;
   const toolCallId = update.toolCallId;
 
   if (!toolCallId) {
@@ -767,6 +774,9 @@ export function handleToolCall(
   update: SessionUpdate,
   ctx: HandlerContext,
 ): HandlerResult {
+  // Provider transports may repair payload quirks (e.g. Cursor's diff header noise) before the
+  // generic normalizer reads `content`. No-op for providers without an override.
+  update = ctx.transport.sanitizeToolUpdateContent?.(update) ?? update;
   const toolCallId = update.toolCallId;
   const status = update.status;
 

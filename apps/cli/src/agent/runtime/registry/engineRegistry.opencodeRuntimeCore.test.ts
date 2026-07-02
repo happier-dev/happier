@@ -13,26 +13,24 @@ describe('engineRegistry (opencode runtimeCore)', () => {
     getExecutionRunBackendDescriptorMock.mockClear();
   });
 
-  it('creates an execution-run backend through engine runtimeCore without consulting the legacy execution-run registry', async () => {
+  it('resolves the plugin-owned OpenCode execution-run runtimeCore without consulting the legacy execution-run registry', async () => {
     const { resolveBackendEngineAdapterResolution } = await import('./engineRegistry');
 
     const resolution = await resolveBackendEngineAdapterResolution('opencode');
     expect(resolution?.backendId).toBe('opencode');
 
-    const runtime = resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
+    expect(resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
       cwd: process.cwd(),
       backendId: 'opencode',
       permissionMode: 'read_only',
-    });
-
-    expect(runtime).toEqual(expect.objectContaining({
-      provisionSession: expect.any(Function),
+    })).toEqual(expect.objectContaining({
       readResumeSupport: expect.any(Function),
+      provisionSession: expect.any(Function),
       sendPrompt: expect.any(Function),
-      cancel: expect.any(Function),
-      subscribeMessages: expect.any(Function),
+      waitForTurnCompletion: expect.any(Function),
+      probeTurnLiveness: expect.any(Function),
       dispose: expect.any(Function),
     }));
     expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
-  });
+  }, 60_000);
 });

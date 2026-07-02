@@ -1,5 +1,3 @@
-import axios from 'axios'
-
 import type { SessionClientPort } from '@/api/session/sessionClientPort'
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog'
 import { buildReadyNotificationContent, type AccountSettings } from '@happier-dev/protocol'
@@ -83,11 +81,7 @@ export function sendReadyWithPushNotification(opts: {
           assistantPreviewText: opts.assistantPreviewText,
         },
       }).catch((pushError) => {
-        if (axios.isAxiosError(pushError)) {
-          loggerDebug(`${opts.logPrefix} Failed to send ready push`, serializeAxiosErrorForLog(pushError))
-        } else {
-          loggerDebug(`${opts.logPrefix} Failed to send ready push`, pushError)
-        }
+        loggerDebug(`${opts.logPrefix} Failed to send ready push`, serializeAxiosErrorForLog(pushError))
       })
       return
     }
@@ -109,10 +103,6 @@ export function sendReadyWithPushNotification(opts: {
     )
   } catch (pushError) {
     const loggerDebug = opts.loggerDebug ?? logger.debug.bind(logger)
-    if (axios.isAxiosError(pushError)) {
-      loggerDebug(`${opts.logPrefix} Failed to send ready push`, serializeAxiosErrorForLog(pushError))
-    } else {
-      loggerDebug(`${opts.logPrefix} Failed to send ready push`, pushError)
-    }
+    loggerDebug(`${opts.logPrefix} Failed to send ready push`, serializeAxiosErrorForLog(pushError))
   }
 }

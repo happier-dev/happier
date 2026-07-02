@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AgentBackend, AgentMessageHandler, SessionId, StartSessionResult } from '@/agent/core/AgentBackend';
-import type { RuntimeTurnOperations } from './runtimeTurnOperations';
+import type { RuntimeTurnMessageHandler, RuntimeTurnOperations } from './runtimeTurnOperations';
 import {
   createLegacyAgentBackendFromRuntimeTurnOperations,
   createRuntimeTurnOperationsFromLegacyAgentBackend,
@@ -50,7 +50,7 @@ describe('runtime-turn compatibility adapters', () => {
 
     const operations = createRuntimeTurnOperationsFromLegacyAgentBackend(backend);
     const receivedMessages: unknown[] = [];
-    const unsubscribe = operations.subscribeRuntimeMessages((message) => {
+    const unsubscribe = operations.subscribeRuntimeEvents((message) => {
       receivedMessages.push(message);
     });
 
@@ -62,7 +62,7 @@ describe('runtime-turn compatibility adapters', () => {
     await operations.waitForTurnCompletion({ timeoutMs: 123 });
     await operations.respondToPermission('perm-1', true);
     await operations.cancelTurn();
-    handlers.forEach((handler) => handler({ type: 'status', status: 'running' }));
+    handlers.forEach((handler) => handler({ type: 'status', status: 'running' } as never));
     unsubscribe();
     await operations.resetOrDisposeRuntime();
 
@@ -82,7 +82,7 @@ describe('runtime-turn compatibility adapters', () => {
 
   it('adapts shared runtime-turn operations into the legacy AgentBackend boundary', async () => {
     const calls: string[] = [];
-    const handlers = new Set<(message: unknown) => void>();
+    const handlers = new Set<RuntimeTurnMessageHandler>();
     let sessionId: string | null = null;
     const operations: RuntimeTurnOperations = {
       beginTurnLifecycle() {
@@ -101,11 +101,11 @@ describe('runtime-turn compatibility adapters', () => {
       async waitForTurnCompletion(opts) {
         calls.push(`waitForTurnCompletion:${opts?.timeoutMs ?? 'none'}`);
       },
-      subscribeRuntimeMessages(handler) {
-        calls.push('subscribeRuntimeMessages');
+      subscribeRuntimeEvents(handler) {
+        calls.push('subscribeRuntimeEvents');
         handlers.add(handler);
         return () => {
-          calls.push('unsubscribeRuntimeMessages');
+          calls.push('unsubscribeRuntimeEvents');
           handlers.delete(handler);
         };
       },
@@ -139,13 +139,13 @@ describe('runtime-turn compatibility adapters', () => {
     await backend.waitForResponseComplete?.(234);
     await backend.respondToPermission?.('perm-2', false);
     await backend.cancel('turn-session' as SessionId);
-    handlers.forEach((runtimeHandler) => runtimeHandler({ type: 'status', status: 'idle' }));
+    handlers.forEach((runtimeHandler) => runtimeHandler({ type: 'status', status: 'idle' } as never));
     backend.offMessage?.(handler);
     await backend.dispose();
 
     expect(receivedMessages).toEqual([{ type: 'status', status: 'idle' }]);
     expect(calls).toEqual([
-      'subscribeRuntimeMessages',
+      'subscribeRuntimeEvents',
       'startOrLoadSession:new',
       'beginTurnLifecycle',
       'sendTurnPrompt:hello',
@@ -153,7 +153,7 @@ describe('runtime-turn compatibility adapters', () => {
       'waitForTurnCompletion:234',
       'respondToPermission:perm-2:false',
       'cancelTurn',
-      'unsubscribeRuntimeMessages',
+      'unsubscribeRuntimeEvents',
       'resetOrDisposeRuntime',
     ]);
   });

@@ -251,6 +251,30 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(out).not.toContain('# Session title');
   });
 
+  it('uses start-only shell-bridge title guidance for initial title updates', async () => {
+    const credentials = createCredentials();
+
+    const out = await resolveEffectiveCodingPromptText({
+      credentials,
+      settings: {
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'initial',
+          responseOptions: 'disabled',
+        },
+      },
+      profileId: null,
+      executionRunsFeatureEnabled: false,
+      toolDelivery: 'shell_bridge',
+      toolDeliverySessionId: 's1',
+      toolDeliveryDirectory: '/tmp/worktree',
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    expect(out).toContain('rename the session before replying');
+    expect(out).not.toContain('again if the task changes significantly');
+  });
+
   it('applies prompt personalization settings to the effective coding prompt', async () => {
     const credentials = createCredentials();
 

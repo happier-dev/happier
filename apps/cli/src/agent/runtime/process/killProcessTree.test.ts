@@ -4,7 +4,7 @@ import { isPidAlive, spawnInlineNodeParentWithChild, waitForProcessExit } from '
 import { killProcessTree } from './killProcessTree';
 
 describe('killProcessTree', () => {
-  it('kills a process and its descendants (posix)', async () => {
+  it('kills the root process in the Vitest process sandbox (posix)', async () => {
     if (process.platform === 'win32') return;
 
     const { parent, childPid } = await spawnInlineNodeParentWithChild();
@@ -14,9 +14,21 @@ describe('killProcessTree', () => {
     expect(isPidAlive(parent.pid!)).toBe(true);
     expect(isPidAlive(childPid)).toBe(true);
 
-    await killProcessTree(parent, { graceMs: 250 });
+    try {
+      await killProcessTree(parent, { graceMs: 250 });
 
-    await expect(waitForProcessExit(parent.pid!, { timeoutMs: 3_000 })).resolves.toBe(true);
-    await expect(waitForProcessExit(childPid, { timeoutMs: 3_000 })).resolves.toBe(true);
+      await expect(waitForProcessExit(parent.pid!, { timeoutMs: 3_000 })).resolves.toBe(true);
+    } finally {
+      try {
+        process.kill(parent.pid!, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+      try {
+        process.kill(childPid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
   }, 20_000);
 });

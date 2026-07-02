@@ -1,8 +1,8 @@
 import { HAPPIER_BUILT_IN_TOOLS } from './catalog';
 import { filterBuiltInToolsForSurface, listPluginActionBackedTools } from './actionToolCatalog';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { isActionEnabledByEnv } from '@/settings/actionsSettings';
-import type { ActionId } from '@happier-dev/protocol';
+import { isActionEnabledByEnv, readActionsSettingsFromEnv } from '@/settings/actionsSettings';
+import type { ActionId, ActionsSettingsV1 } from '@happier-dev/protocol';
 
 export type BuiltInHappierToolsSurface = 'mcp' | 'cli' | 'session_agent';
 
@@ -21,16 +21,19 @@ export function listBuiltInHappierTools(params?: Readonly<{
   surface?: BuiltInHappierToolsSurface;
   registry?: ResolvedContributionRegistry;
   isActionEnabled?: (id: ActionId) => boolean;
+  actionsSettings?: ActionsSettingsV1 | null;
 }>) {
   const surface = params?.surface ?? 'session_agent';
+  const shouldReadEnvSettings = !params?.isActionEnabled && !Object.prototype.hasOwnProperty.call(params ?? {}, 'actionsSettings');
+  const actionsSettings = params?.actionsSettings ?? (shouldReadEnvSettings ? readActionsSettingsFromEnv() as ActionsSettingsV1 : null);
   const isActionEnabled = params?.isActionEnabled ?? ((id: ActionId) => isActionEnabledByEnv(id, { surface }));
   return dedupeToolsByName([
     ...filterBuiltInToolsForSurface(
       HAPPIER_BUILT_IN_TOOLS,
-      { surface, isActionEnabled, registry: params?.registry },
+      { surface, isActionEnabled, actionsSettings, registry: params?.registry },
     ),
     ...listPluginActionBackedTools({ registry: params?.registry }).filter(
-      (tool) => filterBuiltInToolsForSurface([tool], { surface, isActionEnabled, registry: params?.registry }).length === 1,
+      (tool) => filterBuiltInToolsForSurface([tool], { surface, isActionEnabled, actionsSettings, registry: params?.registry }).length === 1,
     ),
   ]);
 }

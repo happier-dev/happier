@@ -4,11 +4,28 @@ import type {
     ExternalSessionFollowLease,
     ExternalSessionProviderOps,
 } from '@/session/external/providerOps';
+import type { ExternalSessionRuntimeContextV1 } from '@happier-dev/agents';
 
 import { createPluginExternalSessionsService } from './pluginExternalSessionsService';
 
 const source = Object.freeze({ kind: 'codexHome', home: 'user' } as const);
 type TranscriptUpdateListener = Parameters<NonNullable<ExternalSessionFollowLease['subscribeToTranscriptUpdates']>>[0];
+
+function createRuntimeContext(): ExternalSessionRuntimeContextV1 {
+    return Object.freeze({
+        signal: new AbortController().signal,
+        session: Object.freeze({
+            sessionId: 'session-1',
+            directory: '/repo',
+        }),
+        directories: Object.freeze({
+            activeServerDir: '/repo',
+        }),
+        diagnostics: Object.freeze({
+            issue: vi.fn(),
+        }),
+    });
+}
 
 function createProviderOps(overrides: Partial<ExternalSessionProviderOps> = {}): ExternalSessionProviderOps {
     return {
@@ -45,9 +62,11 @@ function createProviderOps(overrides: Partial<ExternalSessionProviderOps> = {}):
 describe('createPluginExternalSessionsService', () => {
     it('lists candidates through direct-session provider ops with bounded defaults', async () => {
         const ops = createProviderOps();
+        const runtime = createRuntimeContext();
         const service = createPluginExternalSessionsService({
             defaultProviderId: 'codex',
             resolveProviderOps: async () => ops,
+            resolveRuntimeContext: async () => runtime,
         });
 
         await expect(service.listCandidates({ source, searchTerm: 'repo' })).resolves.toEqual({
@@ -55,11 +74,13 @@ describe('createPluginExternalSessionsService', () => {
             nextCursor: 'next',
         });
 
-        expect(ops.validateSource).toHaveBeenCalledWith({ source, env: process.env });
+        expect(ops.validateSource).toHaveBeenCalledWith({ source, runtime });
+        expect(Object.prototype.hasOwnProperty.call(vi.mocked(ops.validateSource).mock.calls[0]?.[0] ?? {}, 'env')).toBe(false);
         expect(ops.listCandidates).toHaveBeenCalledWith({
             source,
             limit: 50,
             searchTerm: 'repo',
+            runtime,
         });
     });
 
@@ -115,6 +136,7 @@ describe('createPluginExternalSessionsService', () => {
     it('follows transcript updates and releases the lease on unsubscribe', async () => {
         const release = vi.fn(async () => undefined);
         const unsubscribe = vi.fn();
+        const runtime = createRuntimeContext();
         const ops = createProviderOps({
             acquireFollowLease: vi.fn(async () => ({
                 release,
@@ -128,6 +150,7 @@ describe('createPluginExternalSessionsService', () => {
         const service = createPluginExternalSessionsService({
             defaultProviderId: 'codex',
             resolveProviderOps: async () => ops,
+            resolveRuntimeContext: async () => runtime,
         });
 
         const subscription = service.followTranscript({
@@ -142,6 +165,8 @@ describe('createPluginExternalSessionsService', () => {
             source,
             remoteSessionId: 'remote-1',
             reason: 'attached_view',
+            linkedSessionId: 'session-1',
+            runtime,
         });
         expect(onEvent).toHaveBeenCalledWith({
             items: [{ id: 'msg-live', createdAtMs: 3, raw: {} }],

@@ -39,8 +39,28 @@ function readRuntimeKindFromDescriptor(payload: unknown): string | null {
   return readNonEmptyString(provider.backendMode);
 }
 
-function readVendorSessionId(payload: unknown): SessionId | null {
+function readProviderSessionId(payload: unknown): SessionId | null {
   return readNonEmptyString(readRecord(payload)?.sessionId) ?? null;
+}
+
+function isExecutionRunActivityMessage(msg: Parameters<AgentMessageHandler>[0]): boolean {
+  switch (msg.type) {
+    case 'model-output':
+    case 'tool-call':
+    case 'tool-result':
+    case 'status':
+    case 'fs-edit':
+    case 'terminal-output':
+    case 'exec-approval-request':
+    case 'patch-apply-begin':
+    case 'patch-apply-end':
+    case 'permission-request':
+      return true;
+    case 'event':
+      return msg.name === 'thinking';
+    default:
+      return false;
+  }
 }
 
 function mergePermissionRequestOptionsForParentPrompt(
@@ -123,20 +143,25 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
       return;
     }
 
-    if (msg.type === 'event' && msg.name === 'vendor_session_id') {
-      const vendorSessionId = readVendorSessionId(msg.payload);
-      if (vendorSessionId) {
-        args.ctrl.childSessionId = vendorSessionId;
+    if (msg.type === 'event' && (msg.name === 'provider_session_id' || msg.name === 'vendor_session_id')) {
+      const providerSessionId = readProviderSessionId(msg.payload);
+      if (providerSessionId) {
+        args.ctrl.childSessionId = providerSessionId;
         const run = args.runs.get(args.runId);
         if (run?.retentionPolicy === 'resumable' && args.backendSupportsResume) {
           args.runs.set(args.runId, {
             ...run,
-            resumeHandle: { kind: 'vendor_session.v1', backendTarget: readBackendTargetRefV2(run.backendTarget), vendorSessionId },
+            resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(run.backendTarget), providerSessionId },
           });
           args.onPublicStateUpdated?.(args.runId);
         }
       }
       return;
+    }
+
+    const shouldWriteActivityMarker = isExecutionRunActivityMessage(msg);
+    if (shouldWriteActivityMarker) {
+      void args.writeActivityMarker(args.runId, args.getNowMs());
     }
 
     if (msg.type === 'permission-request') {
@@ -263,8 +288,6 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
       }
     }
 
-    // Best-effort: reflect activity for machine-wide run listing.
-    void args.writeActivityMarker(args.runId, args.getNowMs());
     args.onModelOutput?.();
   };
 }

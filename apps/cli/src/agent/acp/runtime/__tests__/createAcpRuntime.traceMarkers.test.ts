@@ -62,6 +62,7 @@ describe('createAcpRuntime trace marker capture', () => {
       const runtime = createTraceMarkerRuntime(backend);
 
       await runtime.startOrLoad({ resumeId: null });
+      runtime.beginTurn();
       backend.emit({ type: 'status', status: 'running' } as any);
 
       const raw = existsSync(traceFile) ? readFileSync(traceFile, 'utf8') : '';
@@ -75,6 +76,7 @@ describe('createAcpRuntime trace marker capture', () => {
       const runtime = createTraceMarkerRuntime(backend);
 
       await runtime.startOrLoad({ resumeId: null });
+      runtime.beginTurn();
       backend.emit({ type: 'status', status: 'running' } as any);
 
       const raw = existsSync(traceFile) ? readFileSync(traceFile, 'utf8') : '';

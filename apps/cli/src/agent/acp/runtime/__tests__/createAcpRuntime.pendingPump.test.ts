@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -56,6 +56,51 @@ describe('createAcpRuntime pending queue pump', () => {
     await runtime.reset();
   });
 
+  it('uses the input consumer drain adapter for the post-load drain when available', async () => {
+    const { session } = createSessionClientWithMetadata();
+
+    const drainPending = vi.fn(async () => ({ materialized: 1, stoppedReason: 'no_pending' as const }));
+    const popPendingMessage = vi.fn(async () => {
+      throw new Error('legacy popPendingMessage should not be used when inputConsumer exists');
+    });
+    const backend = {
+      startSession: async () => ({ sessionId: 'fresh-1' }),
+      loadSession: async (sessionId: string) => ({ sessionId }),
+      sendPrompt: async () => {},
+      cancel: async () => {},
+      onMessage: () => {},
+      dispose: async () => {},
+    } satisfies AcpRuntimeBackend;
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      pendingQueue: {
+        drainAfterStartOrLoad: true,
+        waitForMetadataUpdate: async () => false,
+        popPendingMessage,
+        inputConsumer: { drainPending },
+      } as Parameters<typeof createAcpRuntime>[0]['pendingQueue'] & {
+        inputConsumer: { drainPending: typeof drainPending };
+      },
+    });
+
+    await runtime.startOrLoad({ resumeId: 'resume-1', importHistory: false });
+
+    expect(drainPending).toHaveBeenCalledWith(expect.objectContaining({
+      maxPopPerWake: 1,
+      reason: 'acp-start-or-load',
+    }));
+    expect(popPendingMessage).not.toHaveBeenCalled();
+
+    await runtime.reset();
+  });
+
   it('does not drain pending messages by default when a steer-capable turn begins', async () => {
     const { session } = createSessionClientWithMetadata();
 
@@ -89,6 +134,90 @@ describe('createAcpRuntime pending queue pump', () => {
     await nextTick();
 
     expect(popCalls).toBe(0);
+
+    await runtime.reset();
+  });
+
+  it('does not drain when the pending queue is known empty', async () => {
+    const { session } = createSessionClientWithMetadata();
+
+    let popCalls = 0;
+    const reconcilePendingQueueState = vi.fn(async () => {});
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => {
+        throw new Error('backend should not be created for pending pump test');
+      },
+      inFlightSteer: { enabled: true },
+      pendingQueue: {
+        drainDuringTurn: true,
+        shouldAttemptMaterialization: () => false,
+        reconcilePendingQueueState,
+        waitForMetadataUpdate: async (abortSignal?: AbortSignal) =>
+          await new Promise<boolean>((resolve) => {
+            if (abortSignal?.aborted) return resolve(false);
+            abortSignal?.addEventListener('abort', () => resolve(false), { once: true });
+          }),
+        popPendingMessage: async () => {
+          popCalls += 1;
+          return false;
+        },
+      },
+    });
+
+    runtime.beginTurn();
+    await nextTick();
+
+    expect(popCalls).toBe(0);
+    expect(reconcilePendingQueueState).toHaveBeenCalledWith({ force: true });
+
+    await runtime.reset();
+  });
+
+  it('forces pending queue reconciliation before suppressing the post-load drain', async () => {
+    const { session } = createSessionClientWithMetadata();
+
+    let hasPending = false;
+    const reconcilePendingQueueState = vi.fn(async () => {
+      hasPending = true;
+    });
+    const popPendingMessage = vi.fn(async () => false);
+    const backend = {
+      startSession: async () => ({ sessionId: 'fresh-1' }),
+      loadSession: async (sessionId: string) => ({ sessionId }),
+      sendPrompt: async () => {},
+      cancel: async () => {},
+      onMessage: () => {},
+      dispose: async () => {},
+    } satisfies AcpRuntimeBackend;
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      pendingQueue: {
+        drainAfterStartOrLoad: true,
+        shouldAttemptMaterialization: () => hasPending,
+        reconcilePendingQueueState,
+        waitForMetadataUpdate: async () => false,
+        popPendingMessage,
+      },
+    });
+
+    await runtime.startOrLoad({ resumeId: 'resume-1', importHistory: false });
+
+    expect(reconcilePendingQueueState).toHaveBeenCalledWith({ force: true });
+    expect(popPendingMessage).toHaveBeenCalledTimes(1);
 
     await runtime.reset();
   });

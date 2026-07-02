@@ -84,6 +84,8 @@ export async function createConfiguredAcpSessionRuntimePlan(
           setThinking,
           getPermissionMode,
           memoryRecallGuidanceEnabled,
+          accountSettings,
+          pendingQueueDrainMaxPopPerWake,
         }) => createCatalogProviderSessionIdentityRuntime({
           provider: runtimeOwner.providerId,
           loggerLabel: runtimeOwner.loggerLabel,
@@ -97,6 +99,8 @@ export async function createConfiguredAcpSessionRuntimePlan(
           onThinkingChange: setThinking,
           getPermissionMode,
           memoryRecallGuidanceEnabled,
+          accountSettings,
+          pendingQueueDrainMaxPopPerWake,
           createBackend: ({ permissionMode }) => runtimeOwner.createBackend({
             cwd: directory,
             mcpServers,

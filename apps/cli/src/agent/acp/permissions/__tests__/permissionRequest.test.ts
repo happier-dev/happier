@@ -53,13 +53,17 @@ describe('extractPermissionInputWithFallback', () => {
     expect(extractPermissionInputWithFallback({}, 'call_3', new Map())).toEqual({});
   });
 
-  it('extracts command hints from permission option labels when input payload is empty', () => {
+  it('uses execute toolCall titles as command input before permission option labels', () => {
     expect(
       extractPermissionInputWithFallback(
         {
-          toolCall: { kind: 'execute' },
+          toolCall: {
+            kind: 'execute',
+            title:
+              "node apps/cli/src/index.ts tools call --source happier --tool change_title --args-json '{\"title\":\"Done\"}' --json",
+          },
           options: [
-            { optionId: 'proceed_always', kind: 'allow_always', name: 'Always Allow bash, redirection (>)' },
+            { optionId: 'proceed_always', kind: 'allow_always', name: 'Allow for this session' },
             { optionId: 'proceed_once', kind: 'allow_once', name: 'Allow' },
             { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
           ],
@@ -67,39 +71,56 @@ describe('extractPermissionInputWithFallback', () => {
         'call_4',
         new Map(),
       ),
-    ).toEqual({ command: 'bash, redirection (>)' });
+    ).toEqual({
+      command:
+        "node apps/cli/src/index.ts tools call --source happier --tool change_title --args-json '{\"title\":\"Done\"}' --json",
+    });
   });
 
-  it('falls back to option label command hints when provider sends an empty input object', () => {
+  it('strips generic execute prefixes from execute toolCall titles', () => {
     expect(
       extractPermissionInputWithFallback(
         {
           toolCall: {
             kind: 'execute',
-            input: {},
+            title: 'Run terminal command: git status --short',
+          },
+        } as any,
+        'call_4b',
+        new Map(),
+      ),
+    ).toEqual({ command: 'git status --short' });
+  });
+
+  it('does not turn non-execute titles into command input', () => {
+    expect(
+      extractPermissionInputWithFallback(
+        {
+          toolCall: {
+            kind: 'read',
+            title: 'cat package.json',
           },
           options: [
-            { optionId: 'proceed_always', kind: 'allow_always', name: 'Always Allow bash' },
+            { optionId: 'proceed_always', kind: 'allow_always', name: 'Allow for this session' },
             { optionId: 'proceed_once', kind: 'allow_once', name: 'Allow' },
             { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
           ],
         } as any,
         'call_5',
-        new Map(),
+        new Map([['call_5', { path: 'package.json' }]]),
       ),
-    ).toEqual({ command: 'bash' });
+    ).toEqual({ path: 'package.json' });
   });
 
-  it('falls back to option label command hints when provider sends an empty input string', () => {
+  it('does not derive command input from permission option labels', () => {
     expect(
       extractPermissionInputWithFallback(
         {
           toolCall: {
             kind: 'execute',
-            rawInput: '',
           },
           options: [
-            { optionId: 'proceed_always', kind: 'allow_always', name: 'Always Allow bash' },
+            { optionId: 'proceed_always', kind: 'allow_always', name: 'Allow for this session' },
             { optionId: 'proceed_once', kind: 'allow_once', name: 'Allow' },
             { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
           ],
@@ -107,27 +128,26 @@ describe('extractPermissionInputWithFallback', () => {
         'call_6',
         new Map(),
       ),
-    ).toEqual({ command: 'bash' });
+    ).toEqual({});
   });
 
-  it('falls back to option label command hints when provider sends an empty argv array', () => {
+  it('falls back to cached input instead of permission option labels', () => {
     expect(
       extractPermissionInputWithFallback(
         {
           toolCall: {
             kind: 'execute',
-            rawInput: [],
           },
           options: [
-            { optionId: 'proceed_always', kind: 'allow_always', name: 'Always Allow bash' },
+            { optionId: 'proceed_always', kind: 'allow_always', name: 'Allow for this session' },
             { optionId: 'proceed_once', kind: 'allow_once', name: 'Allow' },
             { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
           ],
         } as any,
         'call_7',
-        new Map(),
+        new Map([['call_7', { command: 'git status --porcelain' }]]),
       ),
-    ).toEqual({ command: 'bash' });
+    ).toEqual({ command: 'git status --porcelain' });
   });
 
   it('prefers rich toolCall content when rawInput only contains shell metadata', () => {

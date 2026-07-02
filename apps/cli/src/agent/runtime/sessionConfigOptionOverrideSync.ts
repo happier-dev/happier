@@ -1,7 +1,9 @@
 import type { Metadata } from '@/api/types';
 import {
+  isRuntimeConfigUpdateOutcomeApplied,
   LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
   readAcpConfigOptionIntentFromMetadata,
+  type RuntimeConfigUpdateOutcomeV1,
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents';
 
@@ -87,7 +89,12 @@ function shouldReplacePendingConfigOptionOverrideCandidate(
 
 export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
   session: { getMetadataSnapshot: () => Metadata | null };
-  runtime: { setSessionConfigOption: (configId: string, valueId: ConfigOptionValueId) => Promise<void> };
+  runtime: {
+    setSessionConfigOption: (
+      configId: string,
+      valueId: ConfigOptionValueId,
+    ) => Promise<RuntimeConfigUpdateOutcomeV1 | void>;
+  };
   isStarted: () => boolean;
 }>): {
   syncFromMetadata: () => void;
@@ -113,7 +120,11 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
 
     const promise = params.runtime
       .setSessionConfigOption(candidate.configId, candidate.valueId)
-      .then(() => {
+      .then((outcome) => {
+        // gap 27: only mark the override applied when the runtime confirms it took effect. A
+        // swallowed/deferred/unsupported outcome leaves the candidate pending so a later sync or
+        // flush re-attempts it at the next safe boundary, instead of being marked applied forever.
+        if (!isRuntimeConfigUpdateOutcomeApplied(outcome)) return;
         lastAppliedByConfigId.set(candidate.configId, candidate);
         const currentPending = pendingByConfigId.get(candidate.configId);
         if (currentPending && isSameConfigOptionOverrideCandidate(currentPending, candidate)) {

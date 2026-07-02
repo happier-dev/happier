@@ -34,4 +34,6 @@ export interface AcpPermissionHandler {
     toolName: string,
     input: unknown
   ): Promise<{ decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort'; rationale?: string }>;
+
+  abortPendingRequestsAndFlush?(reason: string): Promise<void>;
 }

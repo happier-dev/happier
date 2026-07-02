@@ -13,11 +13,10 @@ import { createAcpPendingQueuePump } from './createAcpPendingQueuePump';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import type { AcpRuntimeBackend } from './acpRuntimeBackendContract';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
-import {
-  recordPrimaryTurnCompleted,
-  recordPrimaryTurnInProgress,
-  surfacePrimarySessionRuntimeIssue,
-} from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
+import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
+import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
+import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import type { AcpRuntimeTurnOutcome } from './acpRuntimeBackendContract';
 
 type AcpRuntimeLifecycleState = {
   backend: AcpRuntimeBackend | null;
@@ -28,6 +27,10 @@ type AcpRuntimeLifecycleState = {
   turnAborted: boolean;
   loadingSession: boolean;
   turnInFlight: boolean;
+  currentRuntimeTurnId: string | null;
+  currentTurnId: string | null;
+  turnOutcome?: AcpRuntimeTurnOutcome | null;
+  hadTurnActivity?: boolean;
 };
 
 type AcpRuntimeLifecycleHooks = {
@@ -38,11 +41,87 @@ type AcpRuntimeLifecycleHooks = {
   }) => void;
 };
 
+function ensureCurrentTurnId(state: AcpRuntimeLifecycleState): string {
+  if (!state.currentTurnId) state.currentTurnId = randomUUID();
+  return state.currentTurnId;
+}
+
 function resetTurnState(state: AcpRuntimeLifecycleState): void {
   state.accumulatedResponse = '';
   state.isResponseInProgress = false;
   state.taskStartedSent = false;
   state.turnAborted = false;
+  state.currentTurnId = null;
+  state.currentRuntimeTurnId = null;
+  state.turnOutcome = null;
+  state.hadTurnActivity = false;
+}
+
+function isAcpRuntimeTurnOutcome(value: unknown): value is AcpRuntimeTurnOutcome {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const kind = (value as { kind?: unknown }).kind;
+  return kind === 'completed' || kind === 'aborted' || kind === 'refused' || kind === 'failed' || kind === 'timed_out';
+}
+
+function isSuccessfulCompletedOutcome(outcome: AcpRuntimeTurnOutcome | null): boolean {
+  if (!outcome) return true;
+  return outcome.kind === 'completed' && outcome.stopReason !== 'max_turn_requests';
+}
+
+function buildAcpRuntimeTurnOutcomeError(outcome: AcpRuntimeTurnOutcome | null, provider: string): Error {
+  if (!outcome) return new Error(`${provider} turn ended without output`);
+  switch (outcome.kind) {
+    case 'failed':
+      return outcome.error;
+    case 'refused':
+      return new Error(`${provider} refused the turn`);
+    case 'timed_out':
+      return new Error(`${provider} turn timed out after ${outcome.capMs}ms`);
+    case 'completed':
+      return new Error(`${provider} turn ended with stop reason ${outcome.stopReason}`);
+    case 'aborted':
+      return new Error(`${provider} turn was ${outcome.stopReason}`);
+  }
+}
+
+function applyTerminalTurnOutcome(params: Readonly<{
+  state: AcpRuntimeLifecycleState;
+  outcome: AcpRuntimeTurnOutcome | void;
+  onThinkingChange: (thinking: boolean) => void;
+  session: AcpRuntimeSessionClient;
+}>): void {
+  if (!isAcpRuntimeTurnOutcome(params.outcome)) return;
+  params.state.turnOutcome = params.outcome;
+  if (!isSuccessfulCompletedOutcome(params.outcome)) {
+    params.state.turnAborted = true;
+  }
+  params.onThinkingChange(false);
+  params.session.keepAlive(false, 'remote');
+}
+
+function createRuntimeHandledTurnAbortError(cause: unknown, provider: string): Error {
+  const error = new Error(`${provider} ACP runtime turn aborted`);
+  (error as Error & { cause?: unknown }).cause = cause;
+  return error;
+}
+
+function rethrowPromptError(error: unknown, state: AcpRuntimeLifecycleState, provider: string): never {
+  if (state.turnAborted && !isAbortLikeError(error)) {
+    throw createRuntimeHandledTurnAbortError(error, provider);
+  }
+  throw error;
+}
+
+async function abortPendingPermissionRequests(
+  handler: AcpPermissionHandler,
+  reason: string,
+  provider: string,
+): Promise<void> {
+  try {
+    await handler.abortPendingRequestsAndFlush?.(reason);
+  } catch (error) {
+    logger.debug(`[${provider}] Failed to abort pending permission requests (non-fatal)`, error);
+  }
 }
 
 export function createAcpRuntimeLifecycleMethods(params: Readonly<{
@@ -60,6 +139,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
   pendingQueuePump: ReturnType<typeof createAcpPendingQueuePump>;
   streamedTranscriptWriter: ReturnType<typeof createStreamedTranscriptWriter>;
   onThinkingChange: (thinking: boolean) => void;
+  publishRuntimeEvent?: (event: Omit<RuntimeEventV1, 'sessionId' | 'emittedAtMs'>) => void;
 }>): Readonly<{
   beginTurn: () => void;
   cancel: () => Promise<void>;
@@ -69,19 +149,28 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
   setSessionModel: (modelId: string) => Promise<void>;
   setSessionConfigOption: (configId: string, value: string | number | boolean | null) => Promise<void>;
   steerPrompt: (prompt: string) => Promise<void>;
+  compactContext: (command: string) => Promise<void>;
   sendPrompt: (prompt: string) => Promise<void>;
   flushTurn: () => Promise<void>;
 }> {
   return Object.freeze({
     beginTurn(): void {
+      void params.streamedTranscriptWriter.flushAll({ reason: 'turn-end' }).catch((e) => {
+        logger.debug(`[${params.provider}] Failed to flush assistant stream at turn boundary (non-fatal)`, e);
+      });
       params.state.turnInFlight = true;
       params.state.turnAborted = false;
       resetTurnState(params.state);
+      const providerTurnId = ensureCurrentTurnId(params.state);
+      params.state.currentRuntimeTurnId = randomUUID();
+      params.publishRuntimeEvent?.({
+        kind: 'turn-start',
+        turnId: params.state.currentRuntimeTurnId,
+        providerTurnId,
+        startedBy: 'provider',
+      });
       params.pendingQueuePump.start();
       params.onThinkingChange(true);
-      void recordPrimaryTurnInProgress({ session: params.session }).catch((e) => {
-        logger.debug(`[${params.provider}] Failed to record primary turn in-progress (non-fatal)`, e);
-      });
       params.session.keepAlive(true, 'remote');
       try {
         params.hooks?.onBeginTurn?.();
@@ -97,12 +186,25 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
       try {
         await backend.cancel(params.state.sessionId);
       } finally {
+        await abortPendingPermissionRequests(params.permissionHandler, 'ACP runtime cancelled', params.provider);
         await surfacePrimarySessionRuntimeIssue({
           provider: params.provider,
+          providerTurnId: ensureCurrentTurnId(params.state),
           cause: 'cancelled',
           session: params.session,
+          emitAcpLifecycleMarker: true,
         });
+        if (params.state.currentRuntimeTurnId) {
+          params.publishRuntimeEvent?.({
+            kind: 'turn-cancelled',
+            turnId: params.state.currentRuntimeTurnId,
+            providerTurnId: ensureCurrentTurnId(params.state),
+            reason: 'cancelled',
+          });
+        }
         params.state.turnInFlight = false;
+        params.state.currentRuntimeTurnId = null;
+        params.state.currentTurnId = null;
         params.onThinkingChange(false);
         params.session.keepAlive(false, 'remote');
         params.pendingQueuePump.stop();
@@ -135,7 +237,7 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
       const backend = await params.ensureBackend();
 
       const resumeId = typeof opts.resumeId === 'string' ? opts.resumeId.trim() : '';
-      const importHistory = opts.importHistory !== false;
+      const importHistory = opts.importHistory === true;
       if (resumeId) {
         if (!backend.loadSession && !backend.loadSessionWithReplayCapture) {
           throw new Error(`${params.provider} ACP backend does not support loading sessions`);
@@ -250,9 +352,44 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
       }
 
       const backend = await params.ensureBackend();
-      await backend.sendPrompt(params.state.sessionId, prompt);
-      if (backend.waitForResponseComplete) {
-        await backend.waitForResponseComplete(120_000);
+      try {
+        await backend.sendPrompt(params.state.sessionId, prompt);
+        if (backend.waitForResponseComplete) {
+          applyTerminalTurnOutcome({
+            state: params.state,
+            outcome: await backend.waitForResponseComplete(),
+            onThinkingChange: params.onThinkingChange,
+            session: params.session,
+          });
+        }
+      } catch (error) {
+        rethrowPromptError(error, params.state, params.provider);
+      }
+      params.publishSessionId();
+    },
+
+    async compactContext(command: string): Promise<void> {
+      if (!params.state.sessionId) {
+        throw new Error(`${params.provider} ACP session was not started`);
+      }
+
+      const backend = await params.ensureBackend();
+      try {
+        if (backend.compactContext) {
+          await backend.compactContext(params.state.sessionId, command);
+        } else {
+          throw new Error(`${params.provider} ACP backend does not support context compaction`);
+        }
+        if (backend.waitForResponseComplete) {
+          applyTerminalTurnOutcome({
+            state: params.state,
+            outcome: await backend.waitForResponseComplete(),
+            onThinkingChange: params.onThinkingChange,
+            session: params.session,
+          });
+        }
+      } catch (error) {
+        rethrowPromptError(error, params.state, params.provider);
       }
       params.publishSessionId();
     },
@@ -263,11 +400,18 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
           ? { reason: 'abort', interruptedReason: 'turn-aborted' }
           : { reason: 'turn-end' },
       );
+      await abortPendingPermissionRequests(params.permissionHandler, 'ACP runtime turn ended', params.provider);
       params.state.turnInFlight = false;
       params.pendingQueuePump.stop();
       params.onThinkingChange(false);
       params.session.keepAlive(false, 'remote');
-      if (!params.state.turnAborted) {
+      const outcome = params.state.turnOutcome ?? null;
+      const shouldCompleteTurn =
+        !params.state.turnAborted
+        && isSuccessfulCompletedOutcome(outcome)
+        && (!outcome || params.state.hadTurnActivity === true);
+
+      if (shouldCompleteTurn) {
         try {
           params.hooks?.onBeforeFlushTurn?.({
             sendToolCall: ({ toolName, input, callId }) => {
@@ -295,10 +439,36 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
         }
       }
 
-      if (!params.state.turnAborted) {
-        params.session.sendAgentMessage(params.provider, { type: 'task_complete', id: randomUUID() });
-        void recordPrimaryTurnCompleted({ session: params.session }).catch((e) => {
-          logger.debug(`[${params.provider}] Failed to record primary turn completion (non-fatal)`, e);
+      const providerTurnId = ensureCurrentTurnId(params.state);
+      if (shouldCompleteTurn) {
+        params.session.sendAgentMessage(params.provider, { type: 'task_complete', id: providerTurnId });
+        if (params.state.currentRuntimeTurnId) {
+          params.publishRuntimeEvent?.({
+            kind: 'turn-complete',
+            turnId: params.state.currentRuntimeTurnId,
+            providerTurnId,
+          });
+        }
+      } else if (outcome?.kind === 'aborted') {
+        await surfacePrimarySessionRuntimeIssue({
+          provider: params.provider,
+          providerTurnId,
+          sessionTurnId: params.state.currentRuntimeTurnId,
+          session: params.session,
+          cause: 'cancelled',
+          emitAcpLifecycleMarker: true,
+          publishRuntimeEvent: params.publishRuntimeEvent,
+        });
+      } else if (!params.state.turnAborted || outcome) {
+        await surfacePrimarySessionRuntimeIssue({
+          provider: params.provider,
+          providerTurnId,
+          sessionTurnId: params.state.currentRuntimeTurnId,
+          session: params.session,
+          cause: 'status_error',
+          error: buildAcpRuntimeTurnOutcomeError(outcome, params.provider),
+          emitAcpLifecycleMarker: true,
+          publishRuntimeEvent: params.publishRuntimeEvent,
         });
       }
 

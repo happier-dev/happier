@@ -86,6 +86,8 @@ import {
   resolvePostPromptNoUpdatesTimeoutMs,
   resolvePostToolCallIdleTimeoutMs,
   resolvePromptLivenessTimeoutMs,
+  resolveTurnHardCapTimeoutMs,
+  resolveTurnInactivityTimeoutMs,
 } from './timeouts/acpBackendTimeouts';
 import type {
   SessionConfigOption,
@@ -105,6 +107,9 @@ import {
 } from './executionRuns/hostRuntime';
 import { createAcpSdkClient } from './createAcpSdkClient';
 import { handleAcpSessionNotification } from './updates/handleSessionNotification';
+import type { AcpTurnOutcome } from './turn/outcome';
+import { mapStopReasonToAcpTurnOutcome, readPromptStopReason } from './turn/completion';
+import { abortPendingAcpPermissionRequests } from './permissions/permissionFinalization';
 
 export type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
 export { isAcpFsEnabled, buildInitializeRequest, createAcpClientFsMethods } from './fs/acpClientFsMethods';
@@ -129,12 +134,28 @@ const RETRY_CONFIG = {
   maxDelayMs: 5000,
 } as const;
 
+const MAX_RECENT_STDERR_DIAGNOSTICS = 3;
+const MAX_STARTUP_DIAGNOSTIC_CHARS = 1_200;
+
 // SessionNotification payload shape differs across ACP SDK versions (some use `update`, some use `updates[]`).
 // We normalize dynamically in `handleSessionUpdate` and avoid relying on the SDK type here.
+type MutableSessionNotificationEnvelope = Omit<SessionNotification, 'update'> & {
+  update?: unknown;
+  updates?: unknown;
+};
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function isPromptTurnSessionUpdateType(sessionUpdateType: string | undefined): boolean {
+  return sessionUpdateType === 'user_message_chunk'
+    || sessionUpdateType === 'agent_message_chunk'
+    || sessionUpdateType === 'agent_thought_chunk'
+    || sessionUpdateType === 'tool_call'
+    || sessionUpdateType === 'tool_call_update'
+    || sessionUpdateType === 'plan';
 }
 
 function getString(obj: Record<string, unknown>, key: string): string | null {
@@ -145,6 +166,12 @@ function getString(obj: Record<string, unknown>, key: string): string | null {
 function isTruthyEnv(value: string | undefined): boolean {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function truncateStartupDiagnostic(value: string): string {
+  const trimmed = redactBugReportSensitiveText(String(value ?? '').trim());
+  if (trimmed.length <= MAX_STARTUP_DIAGNOSTIC_CHARS) return trimmed;
+  return `${trimmed.slice(0, MAX_STARTUP_DIAGNOSTIC_CHARS)}...`;
 }
 
 /**
@@ -165,6 +192,9 @@ export interface AcpBackendOptions {
 
   /** Environment variables to pass to the agent */
   env?: NodeJS.ProcessEnv;
+
+  /** Environment variable names to remove from the final child environment */
+  unsetEnv?: readonly string[];
 
   /** MCP servers to make available to the agent */
   mcpServers?: Record<string, McpServerConfig>;
@@ -188,6 +218,9 @@ export interface AcpBackendOptions {
    * from environment variables until the `authenticate` method is called.
    */
   authMethodId?: string;
+
+  /** Optional ACP authenticate metadata forwarded as `_meta`. */
+  authMeta?: Record<string, unknown>;
 }
 
 /**
@@ -197,6 +230,8 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
   private listeners: AgentMessageHandler[] = [];
   private process: ChildProcess | null = null;
   private stderrAppender: BoundedTextFileAppender | null = null;
+  private recentStderrDiagnostics: string[] = [];
+  private lastProcessExitDetail: string | null = null;
   private readonly summarizeStderrForLogs = createAcpStderrLogSummarizer();
   private readonly sessionUpdateShapeLogger = createEventShapeLoggerForLog({ logger, scope: 'acp-backend' });
   private connection: ClientSideConnection | null = null;
@@ -244,10 +279,26 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
     return this.sessionConfigOptionsState;
   }
 
+  getLastTurnOutcome(): AcpTurnOutcome | null {
+    return this.lastTurnOutcome;
+  }
+
   /** Track tool calls count since last prompt (to identify first tool call) */
   private toolCallCountSincePrompt = 0;
   /** Timeout for emitting 'idle' status after last message chunk */
   private idleTimeout: NodeJS.Timeout | null = null;
+  private turnGeneration = 0;
+  private closedTurnGeneration: number | null = null;
+  private pendingTurnOutcome: AcpTurnOutcome | null = null;
+  private lastTurnOutcome: AcpTurnOutcome | null = null;
+  private turnHardCapTimeout: NodeJS.Timeout | null = null;
+  private turnInactivityTimeout: NodeJS.Timeout | null = null;
+  private turnInactivityTimeoutMs: number | null = null;
+  private permissionFlushTurnGeneration: number | null = null;
+  private prePromptResponseUpdateGuard: 'none' | 'completed' | 'terminal' = 'none';
+  private dropPromptTurnUpdatesUntilPromptResponse = false;
+  private pendingPromptResponseTurnGeneration: number | null = null;
+  private idleStatusDeferredUntilPromptResponse = false;
 
   /** Transport handler for agent-specific behavior */
   private readonly transport: TransportHandler;
@@ -292,6 +343,36 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
     }
   }
 
+  private recordStderrDiagnostic(summary: string): void {
+    const diagnostic = truncateStartupDiagnostic(summary);
+    if (!diagnostic) return;
+    this.recentStderrDiagnostics = [
+      ...this.recentStderrDiagnostics,
+      diagnostic,
+    ].slice(-MAX_RECENT_STDERR_DIAGNOSTICS);
+  }
+
+  private buildStartupFailureDiagnosticSuffix(): string {
+    const parts: string[] = [];
+    if (this.lastProcessExitDetail) {
+      parts.push(`process exit: ${this.lastProcessExitDetail}`);
+    }
+    if (this.recentStderrDiagnostics.length > 0) {
+      parts.push(`recent stderr: ${this.recentStderrDiagnostics.join(' | ')}`);
+    }
+    if (this.stderrAppender?.path) {
+      parts.push(`stderr artifact: ${this.stderrAppender.path}`);
+    }
+    if (parts.length === 0) return '';
+    return ` (${parts.map(truncateStartupDiagnostic).join('; ')})`;
+  }
+
+  private createStartupTimeoutError(operation: string, timeoutMs: number): Error {
+    return new Error(
+      `${operation} timeout after ${timeoutMs}ms - ${this.transport.agentName} did not respond${this.buildStartupFailureDiagnosticSuffix()}`,
+    );
+  }
+
   private buildAcpMcpServersForSessionRequest(): NewSessionRequest['mcpServers'] {
     if (!this.options.mcpServers) return [] as unknown as NewSessionRequest['mcpServers'];
     const mcpServers = Object.entries(this.options.mcpServers).map(([name, config]) => ({
@@ -303,6 +384,22 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
         : [],
     }));
     return mcpServers as unknown as NewSessionRequest['mcpServers'];
+  }
+
+  private buildSpawnEnv(): NodeJS.ProcessEnv {
+    const unsetNames = this.options.unsetEnv ?? [];
+    const inheritedEnv: NodeJS.ProcessEnv = { ...process.env };
+    if (unsetNames.length === 0) {
+      return { ...inheritedEnv, ...this.options.env };
+    }
+
+    const unsetLower = new Set(unsetNames.map((name) => name.toLowerCase()));
+    for (const key of Object.keys(inheritedEnv)) {
+      if (unsetLower.has(key.toLowerCase())) {
+        delete inheritedEnv[key];
+      }
+    }
+    return { ...inheritedEnv, ...this.options.env };
   }
 
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
@@ -342,8 +439,11 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
         command: this.options.command,
         args: this.options.args || [],
         cwd: this.options.cwd,
-        env: { ...process.env, ...this.options.env },
+        env: this.buildSpawnEnv(),
       });
+
+      this.recentStderrDiagnostics = [];
+      this.lastProcessExitDetail = null;
 
 	    this.process = spawn(spec.command, spec.args, spec.options);
 
@@ -384,6 +484,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
       const stderrResult = this.transport.handleStderr?.(text, context) ?? null;
       const stderrSummary = stderrResult?.suppress ? null : this.summarizeStderrForLogs(text);
       if (stderrSummary) {
+        this.recordStderrDiagnostic(stderrSummary);
         logger.debug(
           hasActiveInvestigation
             ? `[AcpBackend] 🔍 Agent stderr (during investigation): ${stderrSummary}`
@@ -422,6 +523,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
 	      if (!this.disposed && (hasSignal || hasNonZeroCode || hasUnknownExit)) {
 	        logger.debug(`[AcpBackend] Process exited with code ${code}, signal ${signal}`);
 	        const detail = hasSignal ? `Signal: ${signal}` : `Exit code: ${typeof code === 'number' ? code : 1}`;
+	        this.lastProcessExitDetail = detail;
 	        this.failPendingResponseWait(new Error(detail));
 	        this.emit({ type: 'status', status: 'error', detail });
 	      }
@@ -640,7 +742,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
             }),
             new Promise<never>((_, reject) => {
               timeoutHandle = setTimeout(() => {
-                reject(new Error(`Initialize timeout after ${initTimeout}ms - ${this.transport.agentName} did not respond`));
+                reject(this.createStartupTimeoutError('Initialize', initTimeout));
               }, initTimeout);
             }),
           ]);
@@ -679,7 +781,10 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
           let timeoutHandle: NodeJS.Timeout | null = null;
           try {
             const result = await Promise.race([
-              this.connection!.authenticate({ methodId: authMethodId }).then((res) => {
+              this.connection!.authenticate({
+                methodId: authMethodId,
+                ...(this.options.authMeta ? { _meta: this.options.authMeta } : {}),
+              }).then((res) => {
                 if (timeoutHandle) {
                   clearTimeout(timeoutHandle);
                   timeoutHandle = null;
@@ -688,7 +793,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
               }),
               new Promise<never>((_, reject) => {
                 timeoutHandle = setTimeout(() => {
-                  reject(new Error(`Authenticate timeout after ${initTimeout}ms - ${this.transport.agentName} did not respond`));
+                  reject(this.createStartupTimeoutError('Authenticate', initTimeout));
                 }, initTimeout);
               }),
             ]);
@@ -754,7 +859,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
               }),
               new Promise<never>((_, reject) => {
                 timeoutHandle = setTimeout(() => {
-                  reject(new Error(`New session timeout after ${initTimeout}ms - ${this.transport.agentName} did not respond`));
+                  reject(this.createStartupTimeoutError('New session', initTimeout));
                 }, initTimeout);
               }),
             ]);
@@ -847,7 +952,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
               }),
               new Promise<never>((_, reject) => {
                 timeoutHandle = setTimeout(() => {
-                  reject(new Error(`Load session timeout after ${initTimeout}ms - ${this.transport.agentName} did not respond`));
+                  reject(this.createStartupTimeoutError('Load session', initTimeout));
                 }, initTimeout);
               }),
             ]);
@@ -983,17 +1088,83 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
         }
       },
       setIdleTimeout: (callback, ms) => {
+        const turnGeneration = this.turnGeneration;
         this.idleTimeout = setTimeout(() => {
+          if (turnGeneration !== this.turnGeneration) return;
           callback();
           this.idleTimeout = null;
         }, ms);
+        this.idleTimeout.unref?.();
       },
     };
   }
 
   private handleSessionUpdate(params: SessionNotification): void {
+    const raw = asRecord(params) ?? {};
+    const filteredNotification = (() => {
+      const dropClosedTurnUpdates = !this.waitingForResponse && this.isCurrentTurnGenerationClosed();
+      if (!dropClosedTurnUpdates && this.prePromptResponseUpdateGuard === 'none' && !this.dropPromptTurnUpdatesUntilPromptResponse) return params;
+      const sourceUpdates = raw.update !== undefined
+        ? (Array.isArray(raw.update) ? raw.update : [raw.update])
+        : (Array.isArray(raw.updates) ? raw.updates : []);
+      if (sourceUpdates.length === 0) return params;
+
+      const processable: unknown[] = [];
+      for (const update of sourceUpdates) {
+        const record = asRecord(update);
+        const sessionUpdateType = typeof record?.sessionUpdate === 'string' ? record.sessionUpdate : undefined;
+        if (dropClosedTurnUpdates && isPromptTurnSessionUpdateType(sessionUpdateType)) {
+          continue;
+        }
+        if (!isPromptTurnSessionUpdateType(sessionUpdateType)) {
+          processable.push(update);
+          continue;
+        }
+        if (this.prePromptResponseUpdateGuard === 'none' && !this.dropPromptTurnUpdatesUntilPromptResponse) {
+          processable.push(update);
+          continue;
+        }
+
+        const promptResponseStillPending = this.firstSessionUpdateSincePromptResolver !== null;
+        const canAcceptCompletedGuardUpdate =
+          this.prePromptResponseUpdateGuard === 'completed' &&
+          !this.dropPromptTurnUpdatesUntilPromptResponse &&
+          (promptResponseStillPending || sessionUpdateType === 'agent_message_chunk' || sessionUpdateType === 'agent_thought_chunk');
+        const canAcceptTerminalGuardUpdate =
+          this.prePromptResponseUpdateGuard === 'terminal' &&
+          !this.dropPromptTurnUpdatesUntilPromptResponse &&
+          !promptResponseStillPending &&
+          (sessionUpdateType === 'agent_message_chunk' || sessionUpdateType === 'agent_thought_chunk');
+
+        if (canAcceptCompletedGuardUpdate || canAcceptTerminalGuardUpdate) {
+          this.prePromptResponseUpdateGuard = 'none';
+          processable.push(update);
+          continue;
+        }
+
+        if (this.prePromptResponseUpdateGuard !== 'none') {
+          this.dropPromptTurnUpdatesUntilPromptResponse = true;
+        }
+      }
+
+      if (processable.length === 0) {
+        logger.debug('[AcpBackend] Dropping prompt-turn session/update before current prompt response');
+        return null;
+      }
+
+      const notification: MutableSessionNotificationEnvelope = { ...params };
+      if (raw.update !== undefined) {
+        notification.update = Array.isArray(raw.update) ? processable : processable[0];
+      } else {
+        delete notification.update;
+      }
+      notification.updates = raw.update === undefined && Array.isArray(raw.updates) ? processable : raw.updates;
+      return notification;
+    })();
+    if (!filteredNotification) return;
+
     handleAcpSessionNotification({
-      notification: params,
+      notification: filteredNotification as SessionNotification,
       agentName: this.options.agentName,
       transport: this.transport,
       replayCapture: this.replayCapture,
@@ -1015,6 +1186,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
           resolve();
         }
         this.bumpResponseCompletionTimeout();
+        this.bumpTurnInactivityTimeout();
       },
       onAssistantMessageObserved: () => {
         this.sawAssistantMessageSincePrompt = true;
@@ -1112,7 +1284,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
   }
 
   // Promise resolver for waitForIdle - set when waiting for response to complete
-  private idleResolver: (() => void) | null = null;
+  private idleResolver: ((outcome?: AcpTurnOutcome) => void) | null = null;
   private idleRejecter: ((error: Error) => void) | null = null;
   private waitingForResponse = false;
   private responseCompletionError: Error | null = null;
@@ -1132,6 +1304,193 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
     }
     this.responseCompletionTimeoutMs = null;
     this.responseCompletionTimeoutRejecter = null;
+  }
+
+  private clearTurnHardCapTimeout(): void {
+    if (this.turnHardCapTimeout) {
+      clearTimeout(this.turnHardCapTimeout);
+      this.turnHardCapTimeout = null;
+    }
+  }
+
+  private clearTurnInactivityTimeout(): void {
+    if (this.turnInactivityTimeout) {
+      clearTimeout(this.turnInactivityTimeout);
+      this.turnInactivityTimeout = null;
+    }
+  }
+
+  private clearTurnTimers(): void {
+    this.clearTurnHardCapTimeout();
+    this.clearTurnInactivityTimeout();
+    this.turnInactivityTimeoutMs = null;
+  }
+
+  private scheduleTurnHardCapTimeout(turnGeneration: number): void {
+    this.clearTurnHardCapTimeout();
+    const capMs = resolveTurnHardCapTimeoutMs();
+    if (capMs == null) {
+      return;
+    }
+    this.turnHardCapTimeout = setTimeout(() => {
+      this.turnHardCapTimeout = null;
+      if (this.disposed) return;
+      if (turnGeneration !== this.turnGeneration) return;
+      if (!this.waitingForResponse) return;
+
+      logger.debug(`[AcpBackend] Turn hard cap elapsed after ${capMs}ms`);
+      if (this.connection && this.acpSessionId) {
+        void this.connection
+          .cancel({ sessionId: this.acpSessionId })
+          .catch((error) => logger.debug('[AcpBackend] Error cancelling after turn hard cap:', error));
+      }
+      this.emit({
+        type: 'status',
+        status: 'error',
+        detail: `ACP turn timed out after ${capMs}ms`,
+      });
+      this.finalizeTurnOutcome({ kind: 'timed_out', capMs });
+    }, capMs);
+    this.turnHardCapTimeout.unref?.();
+  }
+
+  private bumpTurnInactivityTimeout(): void {
+    if (!this.waitingForResponse) return;
+    const timeoutMs = this.turnInactivityTimeoutMs;
+    if (timeoutMs == null || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
+
+    const turnGeneration = this.turnGeneration;
+    this.clearTurnInactivityTimeout();
+    this.turnInactivityTimeout = setTimeout(() => {
+      this.turnInactivityTimeout = null;
+      if (turnGeneration !== this.turnGeneration) return;
+      if (!this.waitingForResponse) return;
+      this.failPendingResponseWait(
+        new Error(`ACP turn inactivity timeout after ${timeoutMs}ms without session/update traffic`),
+      );
+    }, timeoutMs);
+    this.turnInactivityTimeout.unref?.();
+  }
+
+  private closeCurrentTurnGeneration(): void {
+    this.closedTurnGeneration = this.turnGeneration;
+  }
+
+  private isCurrentTurnGenerationClosed(): boolean {
+    return this.closedTurnGeneration === this.turnGeneration;
+  }
+
+  private clearActiveToolCallStateForTerminalTurn(reason: string): void {
+    for (const toolCallId of this.activeToolCalls) {
+      this.finalizedToolCalls.add(toolCallId);
+    }
+    for (const timeout of this.toolCallTimeouts.values()) {
+      clearTimeout(timeout);
+    }
+    this.activeToolCalls.clear();
+    this.toolCallTimeouts.clear();
+    this.toolCallStartTimes.clear();
+    this.toolCallLifecycleStates.clear();
+    this.toolCallIdToNameMap.clear();
+    this.toolCallIdToInputMap.clear();
+    logger.debug(`[AcpBackend] Cleared active tool state after ${reason}`);
+  }
+
+  private resolvePermissionFlushReasonForOutcome(outcome: AcpTurnOutcome): string {
+    switch (outcome.kind) {
+      case 'completed':
+        return 'ACP turn ended';
+      case 'aborted':
+        return 'ACP turn cancelled';
+      case 'failed':
+        return 'ACP turn failed';
+      case 'refused':
+        return 'ACP turn refused';
+      case 'timed_out':
+        return 'ACP turn timed out';
+    }
+  }
+
+  private abortPendingPermissionsForCurrentTurn(reason: string): void {
+    if (this.permissionFlushTurnGeneration === this.turnGeneration) return;
+    this.permissionFlushTurnGeneration = this.turnGeneration;
+    void abortPendingAcpPermissionRequests(this.options.permissionHandler, reason, (error) => {
+      logger.debug('[AcpBackend] Failed to abort pending permission requests:', error);
+    });
+  }
+
+  private finalizeTurnOutcome(outcome: AcpTurnOutcome): void {
+    this.clearTurnTimers();
+    this.clearResponseCompletionTimeout();
+    if (this.postPromptCompletionIdleTimeout) {
+      clearTimeout(this.postPromptCompletionIdleTimeout);
+      this.postPromptCompletionIdleTimeout = null;
+    }
+    if (this.postIdleWithoutAssistantMessageTimeout) {
+      clearTimeout(this.postIdleWithoutAssistantMessageTimeout);
+      this.postIdleWithoutAssistantMessageTimeout = null;
+    }
+    if (this.idleTimeout) {
+      clearTimeout(this.idleTimeout);
+      this.idleTimeout = null;
+    }
+
+    const reason = this.resolvePermissionFlushReasonForOutcome(outcome);
+    this.lastTurnOutcome = outcome;
+    this.pendingTurnOutcome = outcome;
+    this.prePromptResponseUpdateGuard = 'none';
+    this.dropPromptTurnUpdatesUntilPromptResponse = false;
+    this.pendingPromptResponseTurnGeneration = null;
+    this.idleStatusDeferredUntilPromptResponse = false;
+    this.abortPendingPermissionsForCurrentTurn(reason);
+    this.clearActiveToolCallStateForTerminalTurn(reason);
+    this.closeCurrentTurnGeneration();
+    this.waitingForResponse = false;
+
+    if (outcome.kind !== 'timed_out') {
+      this.emit({ type: 'status', status: 'idle' });
+    }
+
+    if (this.idleResolver) {
+      const resolve = this.idleResolver;
+      this.idleResolver = null;
+      this.idleRejecter = null;
+      this.pendingTurnOutcome = null;
+      resolve(outcome);
+    }
+  }
+
+  private handlePromptResponseForTurn(
+    promptResponse: unknown,
+    turnGeneration: number,
+    emitPromptUsage: (promptResponse: unknown) => void,
+  ): boolean {
+    if (this.disposed) return true;
+    if (turnGeneration !== this.turnGeneration) return true;
+    if (this.closedTurnGeneration === turnGeneration) return true;
+
+    if (this.pendingPromptResponseTurnGeneration === turnGeneration) {
+      this.pendingPromptResponseTurnGeneration = null;
+    }
+    if (this.prePromptResponseUpdateGuard === 'terminal') {
+      this.dropPromptTurnUpdatesUntilPromptResponse = false;
+    }
+    emitPromptUsage(promptResponse);
+    const stopReason = readPromptStopReason(promptResponse);
+    if (!stopReason) {
+      const shouldReplayDeferredIdle =
+        this.idleStatusDeferredUntilPromptResponse &&
+        this.waitingForResponse &&
+        this.activeToolCalls.size === 0;
+      this.idleStatusDeferredUntilPromptResponse = false;
+      if (shouldReplayDeferredIdle) {
+        this.emitIdleStatus();
+      }
+      return false;
+    }
+
+    this.finalizeTurnOutcome(mapStopReasonToAcpTurnOutcome(stopReason));
+    return true;
   }
 
   private bumpResponseCompletionTimeout(): void {
@@ -1180,6 +1539,16 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
     }
     this.responseCompletionError = error;
     this.waitingForResponse = false;
+    this.prePromptResponseUpdateGuard = 'none';
+    this.dropPromptTurnUpdatesUntilPromptResponse = false;
+    this.pendingPromptResponseTurnGeneration = null;
+    this.idleStatusDeferredUntilPromptResponse = false;
+    this.lastTurnOutcome = { kind: 'failed', error };
+    this.closeCurrentTurnGeneration();
+    const reason = error.name === 'AbortError' || error.message === 'Cancelled by user' ? 'Cancelled by user' : 'ACP turn failed';
+    this.abortPendingPermissionsForCurrentTurn(reason);
+    this.clearActiveToolCallStateForTerminalTurn(reason);
+    this.clearTurnTimers();
     this.clearResponseCompletionTimeout();
     if (this.postPromptCompletionIdleTimeout) {
       clearTimeout(this.postPromptCompletionIdleTimeout);
@@ -1216,6 +1585,22 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
     }
 
     this.emit({ type: 'status', status: 'running' });
+    const previousTurnOutcomeKind = this.isCurrentTurnGenerationClosed() ? this.lastTurnOutcome?.kind : undefined;
+    const turnGeneration = this.turnGeneration + 1;
+    this.turnGeneration = turnGeneration;
+    this.closedTurnGeneration = null;
+    this.prePromptResponseUpdateGuard =
+      previousTurnOutcomeKind === 'completed'
+        ? 'completed'
+        : previousTurnOutcomeKind
+          ? 'terminal'
+          : 'none';
+    this.dropPromptTurnUpdatesUntilPromptResponse = this.prePromptResponseUpdateGuard === 'terminal';
+    this.pendingTurnOutcome = null;
+    this.lastTurnOutcome = null;
+    this.permissionFlushTurnGeneration = null;
+    this.pendingPromptResponseTurnGeneration = null;
+    this.idleStatusDeferredUntilPromptResponse = false;
     this.waitingForResponse = true;
     this.responseCompletionError = null;
     this.sawSessionUpdateSincePrompt = false;
@@ -1230,27 +1615,23 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
       clearTimeout(this.postIdleWithoutAssistantMessageTimeout);
       this.postIdleWithoutAssistantMessageTimeout = null;
     }
+    this.turnInactivityTimeoutMs = resolveTurnInactivityTimeoutMs();
+    this.scheduleTurnHardCapTimeout(turnGeneration);
+    this.bumpTurnInactivityTimeout();
 
     const handlePromptError = (error: unknown, params: { shouldThrow: boolean }): void => {
       logger.debug('[AcpBackend] Error sending prompt:', error);
 
-      // Gemini can emit a late internal error after tool output is already complete/idle.
-      // Treat this specific case as non-fatal to avoid false-negative turn failures.
-      const errorRecord = error && typeof error === 'object' ? (error as Record<string, unknown>) : null;
-      const errorCode = typeof errorRecord?.code === 'number' ? errorRecord.code : null;
-      const errorData = errorRecord?.data;
-      const errorDetails =
-        errorData && typeof errorData === 'object' && typeof (errorData as Record<string, unknown>).details === 'string'
-          ? (errorData as Record<string, unknown>).details as string
-          : '';
-      const isGeminiLateEmptyResponse =
-        this.transport.agentName === 'gemini' &&
-        errorCode === -32603 &&
-        errorDetails.includes('Model stream ended with empty response text') &&
-        !this.waitingForResponse &&
-        this.activeToolCalls.size === 0;
-      if (isGeminiLateEmptyResponse) {
-        logger.debug('[AcpBackend] Ignoring late Gemini empty-stream error after response completion');
+      const shouldIgnorePromptError = this.transport.shouldIgnorePromptError?.(error, {
+        activeToolCallCount: this.activeToolCalls.size,
+        sawSessionUpdateSincePrompt: this.sawSessionUpdateSincePrompt,
+        waitingForResponse: this.waitingForResponse,
+      }) === true;
+      if (shouldIgnorePromptError) {
+        logger.debug('[AcpBackend] Ignoring provider prompt error after response completion');
+        if (this.waitingForResponse) {
+          this.emitIdleStatus();
+        }
         return;
       }
 
@@ -1318,15 +1699,21 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
       });
       const promptLivenessTimeoutMs = resolvePromptLivenessTimeoutMs(this.transport);
       let promptLivenessTimeout: ReturnType<typeof setTimeout> | null = null;
-      const promptLivenessTimeoutPromise = new Promise<typeof promptLivenessTimeoutSentinel>((resolve) => {
-        promptLivenessTimeout = setTimeout(() => {
-          promptLivenessTimeout = null;
-          resolve(promptLivenessTimeoutSentinel);
-        }, promptLivenessTimeoutMs);
-        promptLivenessTimeout.unref?.();
-      });
-
       const promptPromise = this.connection.prompt(promptRequest);
+      const promptRaceInputs: Promise<unknown>[] = [
+        promptPromise,
+        firstSessionUpdateSincePrompt,
+      ];
+      if (promptLivenessTimeoutMs !== null) {
+        promptRaceInputs.push(new Promise<typeof promptLivenessTimeoutSentinel>((resolve) => {
+          promptLivenessTimeout = setTimeout(() => {
+            promptLivenessTimeout = null;
+            resolve(promptLivenessTimeoutSentinel);
+          }, promptLivenessTimeoutMs);
+          promptLivenessTimeout.unref?.();
+        }));
+      }
+
       let promptLivenessTimedOut = false;
       void promptPromise.catch((error) => {
         if (!promptLivenessTimedOut || this.disposed) return;
@@ -1335,11 +1722,7 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
 
       let promptResponseOrFirstUpdate: any;
       try {
-        promptResponseOrFirstUpdate = await Promise.race([
-          promptPromise,
-          firstSessionUpdateSincePrompt,
-          promptLivenessTimeoutPromise,
-        ]);
+        promptResponseOrFirstUpdate = await Promise.race(promptRaceInputs);
       } finally {
         if (promptLivenessTimeout) {
           clearTimeout(promptLivenessTimeout);
@@ -1358,13 +1741,17 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
         // ACP agents commonly ACK `session/prompt` immediately, but some will start sending
         // `session/update` traffic before the prompt RPC resolves. Treat the first update as
         // proof of liveness so higher-level runtimes can proceed to waitForResponseComplete().
+        this.pendingPromptResponseTurnGeneration = turnGeneration;
         void promptPromise
           .then((res: any) => {
-            if (this.disposed) return;
-            emitPromptUsage(res);
+            this.handlePromptResponseForTurn(res, turnGeneration, emitPromptUsage);
           })
           .catch((error) => {
-            if (this.disposed) return;
+            if (this.pendingPromptResponseTurnGeneration === turnGeneration) {
+              this.pendingPromptResponseTurnGeneration = null;
+              this.idleStatusDeferredUntilPromptResponse = false;
+            }
+            if (this.disposed || turnGeneration !== this.turnGeneration || this.closedTurnGeneration === turnGeneration) return;
             handlePromptError(error, { shouldThrow: false });
           });
         return;
@@ -1379,7 +1766,8 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
 
       // Best-effort: emit token usage when the ACP agent reports it in the PromptResponse.
       // ACP standardizes per-turn usage under `usage` (RFC: session-usage).
-      emitPromptUsage(promptResponse);
+      const promptResponseCompletedTurn = this.handlePromptResponseForTurn(promptResponse, turnGeneration, emitPromptUsage);
+      if (promptResponseCompletedTurn) return;
       
       // Don't emit 'idle' here - it will be emitted after all message chunks are received
       // The idle timeout in handleSessionUpdate will emit 'idle' after the last chunk
@@ -1397,6 +1785,9 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
         // NOTE: When an ACP agent crashes/exits shortly after responding to session/prompt, the
         // subprocess exit can race with our "no updates" idle fallback. Use a small minimum grace
         // to reduce flakes and avoid incorrectly treating a failed turn as complete.
+        if (noUpdatesTimeoutMs === null) {
+          return;
+        }
         const graceMs = Math.max(100, noUpdatesTimeoutMs);
 
         this.postPromptCompletionIdleTimeout = setTimeout(() => {
@@ -1558,21 +1949,37 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
     }
   }
 
-  async waitForResponseComplete(timeoutMs?: number | null): Promise<void> {
+  async waitForResponseComplete(timeoutMs?: number | null): Promise<void>;
+  async waitForResponseComplete(timeoutMs?: number | null): Promise<AcpTurnOutcome | void> {
     if (this.responseCompletionError) {
       throw this.responseCompletionError;
+    }
+    if (this.pendingTurnOutcome) {
+      const outcome = this.pendingTurnOutcome;
+      this.pendingTurnOutcome = null;
+      return outcome;
     }
     if (!this.waitingForResponse) {
       return; // Already completed or no prompt sent
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise<AcpTurnOutcome | void>((resolve, reject) => {
       const rejectTimeout = () => {
+        const error = new Error('Timeout waiting for response to complete');
         this.idleResolver = null;
         this.idleRejecter = null;
         this.waitingForResponse = false;
+        this.prePromptResponseUpdateGuard = 'none';
+        this.dropPromptTurnUpdatesUntilPromptResponse = false;
+        this.pendingPromptResponseTurnGeneration = null;
+        this.idleStatusDeferredUntilPromptResponse = false;
+        this.closeCurrentTurnGeneration();
+        this.lastTurnOutcome = { kind: 'failed', error };
+        this.abortPendingPermissionsForCurrentTurn('ACP response wait timeout');
+        this.clearActiveToolCallStateForTerminalTurn('response wait timeout');
+        this.clearTurnTimers();
         this.clearResponseCompletionTimeout();
-        reject(new Error('Timeout waiting for response to complete'));
+        reject(error);
       };
 
       // Treat the timeout as a stall budget. While the agent continues emitting session/update
@@ -1591,15 +1998,16 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
         this.responseCompletionTimeoutRejecter = null;
       }
 
-      this.idleResolver = () => {
+      this.idleResolver = (outcome?: AcpTurnOutcome) => {
         this.clearResponseCompletionTimeout();
         this.idleResolver = null;
         this.idleRejecter = null;
         this.waitingForResponse = false;
-        resolve();
+        resolve(outcome);
       };
       this.idleRejecter = (error: Error) => {
         this.clearResponseCompletionTimeout();
+        this.clearTurnTimers();
         this.idleResolver = null;
         this.idleRejecter = null;
         this.waitingForResponse = false;
@@ -1624,8 +2032,11 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
       clearTimeout(this.postIdleWithoutAssistantMessageTimeout);
       this.postIdleWithoutAssistantMessageTimeout = null;
     }
+    this.clearTurnTimers();
     this.clearResponseCompletionTimeout();
     this.emit({ type: 'status', status: 'idle' });
+    this.clearActiveToolCallStateForTerminalTurn('idle finalization');
+    this.closeCurrentTurnGeneration();
     // Avoid races where the idle signal arrives before `waitForResponseComplete()` starts waiting.
     // In that case, `idleResolver` is still null, so we must also clear `waitingForResponse` here.
     this.waitingForResponse = false;
@@ -1637,6 +2048,12 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
   }
 
   private emitIdleStatus(): void {
+    if (this.waitingForResponse && this.pendingPromptResponseTurnGeneration === this.turnGeneration) {
+      this.idleStatusDeferredUntilPromptResponse = true;
+      logger.debug('[AcpBackend] Deferring idle status until prompt response arrives');
+      return;
+    }
+
     const idleWithoutAssistantMessageTimeoutMs = resolveIdleWithoutAssistantMessageTimeoutMs(this.transport);
     const shouldDelayIdleResolution =
       this.waitingForResponse
@@ -1705,6 +2122,11 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
       clearTimeout(this.postIdleWithoutAssistantMessageTimeout);
       this.postIdleWithoutAssistantMessageTimeout = null;
     }
+    this.clearTurnTimers();
+    this.prePromptResponseUpdateGuard = 'none';
+    this.dropPromptTurnUpdatesUntilPromptResponse = false;
+    this.pendingPromptResponseTurnGeneration = null;
+    this.idleStatusDeferredUntilPromptResponse = false;
 
     if (this.idleTimeout) {
       clearTimeout(this.idleTimeout);
@@ -1807,6 +2229,9 @@ export class AcpBackend implements AgentBackend, ExecutionRunHostRuntime {
       clearTimeout(this.idleTimeout);
       this.idleTimeout = null;
     }
+    this.clearTurnTimers();
+    this.pendingPromptResponseTurnGeneration = null;
+    this.idleStatusDeferredUntilPromptResponse = false;
 
     // Clear state
     this.listeners = [];

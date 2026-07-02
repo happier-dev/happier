@@ -1,0 +1,260 @@
+import { createHash } from 'node:crypto';
+import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { isAbsolute } from 'node:path';
+
+import type {
+    TerminalRuntimeAgentCliExecutableResolutionRequestV1,
+    TerminalRuntimeAgentCliExecutableResolutionV1,
+    TerminalRuntimeProcessExecutableV1,
+    TerminalRuntimeProcessExecutableGrantKindV1,
+    TerminalRuntimeProcessHandleV1,
+    TerminalRuntimeProcessLaunchRequestV1,
+    TerminalRuntimeProcessServiceV1,
+    TerminalRuntimeProcessTerminationV1,
+} from '@happier-dev/agents';
+
+import type { CatalogAgentLookupId } from '@/backends/types';
+import {
+    requireProviderCliLaunchSpec,
+    type ProviderCliLaunchSpec,
+} from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
+import type { PluginExecAgentCliGrantRecord } from '@/plugins/runtime/context/exec/system/tools/definitions';
+import { isDeniedPathOnlyRuntimeName } from '@/plugins/runtime/context/exec/system/tools/runtimeDeny';
+import { killProcessTree as defaultKillProcessTree } from '@/agent/runtime/process/killProcessTree';
+import {
+    createManagedChildProcess as defaultCreateManagedChildProcess,
+    type ManagedChildProcess,
+} from '@/subprocess/supervision/managedChildProcess';
+import type { TerminationEvent } from '@/subprocess/supervision/types';
+
+type SpawnLike = (
+    command: string,
+    args: readonly string[],
+    options: SpawnOptions,
+) => ChildProcess;
+
+export type TerminalRuntimeExecutableGrantVerifier = (
+    request: Readonly<{
+        kind: TerminalRuntimeProcessExecutableGrantKindV1;
+        grantId: string;
+        executablePath: string;
+    }>,
+) => boolean;
+
+export type TerminalRuntimeExecutableGrantRegistrar = (grant: PluginExecAgentCliGrantRecord) => void;
+
+export type TerminalRuntimeAgentCliLaunchResolver = (
+    request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
+) => ProviderCliLaunchSpec | Promise<ProviderCliLaunchSpec>;
+
+function mapTerminationEvent(event: TerminationEvent): TerminalRuntimeProcessTerminationV1 {
+    if (event.type === 'signaled') {
+        return { type: 'signaled', signal: event.signal };
+    }
+    return event;
+}
+
+function assertHostGrantedExecutable(
+    executable: TerminalRuntimeProcessExecutableV1,
+    verifyExecutableGrant: TerminalRuntimeExecutableGrantVerifier | undefined,
+): void {
+    if (!isAbsolute(executable.path)) {
+        throw new Error('Terminal runtime process launch requires an absolute executable path');
+    }
+    const hostGrant = executable.hostGrant;
+    if (
+        !hostGrant
+        || (hostGrant.kind !== 'system-tool' && hostGrant.kind !== 'agent-cli')
+        || typeof hostGrant.grantId !== 'string'
+        || hostGrant.grantId.trim().length === 0
+    ) {
+        throw new Error('Terminal runtime process launch requires a host-issued executable grant');
+    }
+    if (hostGrant.kind === 'system-tool' && isDeniedPathOnlyRuntimeName(executable.path)) {
+        throw new Error('Terminal runtime process launch denied managed runtime or package-manager executable');
+    }
+    if (!verifyExecutableGrant?.({
+        kind: hostGrant.kind,
+        grantId: hostGrant.grantId,
+        executablePath: executable.path,
+    })) {
+        throw new Error('Terminal runtime process launch requires a trusted host-issued executable grant');
+    }
+}
+
+function bufferChildStderr(child: ChildProcess): () => string {
+    const chunks: string[] = [];
+    const stderr = child.stderr;
+    if (!stderr) {
+        return () => '';
+    }
+    stderr.setEncoding('utf8');
+    stderr.on('data', (chunk) => {
+        chunks.push(String(chunk));
+    });
+    return () => chunks.join('');
+}
+
+function createAbortError(): Error {
+    const error = new Error('Terminal runtime process launch was aborted before spawn');
+    error.name = 'AbortError';
+    return error;
+}
+
+function assertNotAborted(signal: AbortSignal | undefined): void {
+    if (signal?.aborted) {
+        throw createAbortError();
+    }
+}
+
+function buildAgentCliProcessEnv(
+    request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
+): NodeJS.ProcessEnv {
+    const processEnv: NodeJS.ProcessEnv = { ...process.env };
+    for (const [key, value] of Object.entries(request.env ?? {})) {
+        if (typeof value === 'string') {
+            processEnv[key] = value;
+        }
+    }
+    return processEnv;
+}
+
+function resolveDefaultAgentCliLaunch(
+    request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
+): ProviderCliLaunchSpec {
+    return requireProviderCliLaunchSpec(request.agentId as CatalogAgentLookupId, {
+        processEnv: buildAgentCliProcessEnv(request),
+    });
+}
+
+function createAgentCliGrantId(params: Readonly<{
+    agentId: string;
+    executablePath: string;
+    resolvedPath: string;
+    issuedAt: number;
+}>): string {
+    const digest = createHash('sha256')
+        .update(params.agentId)
+        .update('\0')
+        .update(params.executablePath)
+        .update('\0')
+        .update(params.resolvedPath)
+        .update('\0')
+        .update(String(params.issuedAt))
+        .digest('hex')
+        .slice(0, 16);
+    return `agent-cli:${digest}`;
+}
+
+export function createTerminalRuntimeProcessService(deps?: Readonly<{
+    spawn?: SpawnLike;
+    createManagedChildProcess?: (child: ChildProcess) => ManagedChildProcess;
+    killProcessTree?: (child: ChildProcess, options?: Readonly<{ graceMs?: number }>) => Promise<void>;
+    verifyExecutableGrant?: TerminalRuntimeExecutableGrantVerifier;
+    registerExecutableGrant?: TerminalRuntimeExecutableGrantRegistrar;
+    resolveAgentCliLaunch?: TerminalRuntimeAgentCliLaunchResolver;
+    now?: () => number;
+}>): TerminalRuntimeProcessServiceV1 {
+    const spawn = deps?.spawn ?? nodeSpawn;
+    const createManagedChildProcess = deps?.createManagedChildProcess ?? defaultCreateManagedChildProcess;
+    const killProcessTree = deps?.killProcessTree ?? defaultKillProcessTree;
+    const verifyExecutableGrant = deps?.verifyExecutableGrant;
+    const registerExecutableGrant = deps?.registerExecutableGrant;
+    const resolveAgentCliLaunch = deps?.resolveAgentCliLaunch ?? resolveDefaultAgentCliLaunch;
+    const now = (): number => deps?.now?.() ?? Date.now();
+
+    return Object.freeze({
+        async resolveAgentCliExecutable(
+            request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
+        ): Promise<TerminalRuntimeAgentCliExecutableResolutionV1> {
+            assertNotAborted(request.signal);
+            if (!registerExecutableGrant) {
+                throw new Error('Terminal runtime agent CLI executable resolution requires a host grant registry');
+            }
+            const launch = await resolveAgentCliLaunch(request);
+            assertNotAborted(request.signal);
+            if (!isAbsolute(launch.command)) {
+                throw new Error('Terminal runtime agent CLI executable resolution requires an absolute host-resolved command');
+            }
+            const issuedAt = now();
+            const grant: PluginExecAgentCliGrantRecord = Object.freeze({
+                kind: 'agent-cli',
+                grantId: createAgentCliGrantId({
+                    agentId: request.agentId,
+                    executablePath: launch.command,
+                    resolvedPath: launch.resolvedPath,
+                    issuedAt,
+                }),
+                agentId: request.agentId,
+                source: launch.source,
+                resolvedPath: launch.resolvedPath,
+                executablePath: launch.command,
+                expiresAt: null,
+            });
+            registerExecutableGrant(grant);
+            return Object.freeze({
+                executable: Object.freeze({
+                    path: launch.command,
+                    hostGrant: Object.freeze({
+                        kind: 'agent-cli' as const,
+                        grantId: grant.grantId,
+                    }),
+                }),
+                args: Object.freeze([...launch.args]),
+                source: launch.source,
+                resolvedPath: launch.resolvedPath,
+            });
+        },
+        async launch(request: TerminalRuntimeProcessLaunchRequestV1): Promise<TerminalRuntimeProcessHandleV1> {
+            assertHostGrantedExecutable(request.executable, verifyExecutableGrant);
+            assertNotAborted(request.signal);
+
+            const child = spawn(request.executable.path, [...(request.args ?? [])], {
+                cwd: request.cwd,
+                env: request.env ? { ...process.env, ...request.env } : process.env,
+                stdio: request.stdio ?? 'pipe',
+                windowsHide: request.windowsHide,
+                windowsVerbatimArguments: request.windowsVerbatimArguments,
+            });
+            let managed: ManagedChildProcess;
+            let readBufferedStderr: () => string;
+            try {
+                managed = createManagedChildProcess(child);
+                readBufferedStderr = bufferChildStderr(child);
+            } catch (error) {
+                await killProcessTree(child).catch(() => undefined);
+                throw error;
+            }
+            let stopped = false;
+            const removeAbortListener = (): void => {
+                request.signal?.removeEventListener('abort', abortListener);
+            };
+
+            const stop = async (options?: Readonly<{ graceMs?: number }>): Promise<void> => {
+                if (stopped) {
+                    return;
+                }
+                stopped = true;
+                removeAbortListener();
+                await killProcessTree(child, options);
+            };
+            const abortListener = (): void => {
+                void stop();
+            };
+            request.signal?.addEventListener('abort', abortListener, { once: true });
+
+            return Object.freeze({
+                pid: managed.pid,
+                waitForTermination: async () => {
+                    try {
+                        return mapTerminationEvent(await managed.waitForTermination());
+                    } finally {
+                        removeAbortListener();
+                    }
+                },
+                stop,
+                readBufferedStderr,
+            });
+        },
+    });
+}

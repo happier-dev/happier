@@ -10,7 +10,7 @@ import {
 } from '@/agent/runtime/identity';
 import type {
   ExternalSessionLinkIdentity,
-  ExternalSessionProviderOps,
+  ExternalSessionExecutionSurface,
 } from '@/session/external/providerOps';
 import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 
@@ -23,13 +23,13 @@ export type CanonicalizedExternalSessionSourceResult = Readonly<{
 type ExternalSessionCanonicalizationDeps = Readonly<{
   resolveExternalSessionProviderOps?: (
     providerId: ExternalSessionsProviderId,
-  ) => Promise<ExternalSessionProviderOps | null>;
+  ) => Promise<ExternalSessionExecutionSurface | null>;
 }>;
 
 async function resolveExternalSessionProviderOps(
   providerId: ExternalSessionsProviderId,
-): Promise<ExternalSessionProviderOps | null> {
-  return (await resolveBackendExecutionSurfaces(providerId)).externalSessions;
+): Promise<ExternalSessionExecutionSurface | null> {
+  return (await resolveBackendExecutionSurfaces(providerId)).externalSession;
 }
 
 export async function resolveExternalSessionLinkIdentity(params: Readonly<{

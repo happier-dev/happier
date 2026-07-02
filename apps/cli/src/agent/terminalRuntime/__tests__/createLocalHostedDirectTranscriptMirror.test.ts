@@ -1,11 +1,106 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionsProviderId, ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
+import type { ExternalSessionExecutionSurface, ExternalSessionProviderOps } from '@/session/external/providerOps';
 import { createLocalHostedDirectTranscriptMirror } from '../createLocalHostedDirectTranscriptMirror';
 
+const { resolveBackendExecutionSurfaces } = vi.hoisted(() => ({
+    resolveBackendExecutionSurfaces: vi.fn(),
+}));
+
+vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
+    resolveBackendExecutionSurfaces,
+}));
+
+afterEach(() => {
+    resolveBackendExecutionSurfaces.mockReset();
+});
+
 describe('createLocalHostedDirectTranscriptMirror', () => {
+    it('resolves provider ops through backend execution surfaces when no explicit ops are provided', async () => {
+        const replaySources: Array<Record<string, unknown>> = [];
+        const providerId = 'bridge-provider' as ExternalSessionsProviderId;
+        const providerOps: ExternalSessionProviderOps = {
+            validateSource: ({ source }) => ({ ok: true, source }),
+            listCandidates: async () => ({ candidates: [], nextCursor: null }),
+            getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),
+            pageTranscript: async ({ source }) => {
+                replaySources.push(source as Record<string, unknown>);
+                return { items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false };
+            },
+            readAfterTranscript: async () => ({ items: [], nextCursor: null, truncated: false }),
+            resolveTakeoverSpawnOptions: async () => null,
+        };
+        resolveBackendExecutionSurfaces.mockResolvedValue({
+            terminalRuntime: null,
+            externalSession: providerOps,
+            attach: null,
+            handoff: null,
+            fork: null,
+            checkpoint: null,
+        });
+
+        const mirror = createLocalHostedDirectTranscriptMirror({
+            binding: {
+                providerId,
+                source: { kind: 'opencodeServer', directory: '/repo/requested' },
+                remoteSessionId: 'session-1',
+            },
+            onItems: async () => {},
+        });
+
+        await mirror.start();
+        await mirror.stop();
+
+        expect(resolveBackendExecutionSurfaces).toHaveBeenCalledWith(providerId);
+        expect(replaySources).toEqual([{ kind: 'opencodeServer', directory: '/repo/requested' }]);
+    });
+
+    it('fails closed when the bridge-resolved external session surface is missing', async () => {
+        const providerId = 'bridge-provider' as ExternalSessionsProviderId;
+        resolveBackendExecutionSurfaces.mockResolvedValue({
+            terminalRuntime: null,
+            externalSession: null,
+            attach: null,
+            handoff: null,
+            fork: null,
+            checkpoint: null,
+        });
+
+        const mirror = createLocalHostedDirectTranscriptMirror({
+            binding: {
+                providerId,
+                source: { kind: 'opencodeServer', directory: '/repo/requested' },
+                remoteSessionId: 'session-1',
+            },
+            onItems: async () => {},
+        });
+
+        await expect(mirror.start()).rejects.toThrow(`Unsupported external-session provider: ${providerId}`);
+        await mirror.stop();
+    });
+
+    it('fails closed when the bridge-resolved external session surface lacks required transcript operations', async () => {
+        const providerOps: ExternalSessionExecutionSurface = {
+            validateSource: ({ source }) => ({ ok: true, source }),
+            pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+        };
+
+        const mirror = createLocalHostedDirectTranscriptMirror({
+            binding: {
+                providerId: 'bridge-provider' as ExternalSessionsProviderId,
+                source: { kind: 'opencodeServer', directory: '/repo/requested' },
+                remoteSessionId: 'session-1',
+            },
+            getProviderOps: async () => providerOps,
+            onItems: async () => {},
+        });
+
+        await expect(mirror.start()).rejects.toThrow('missing readAfterTranscript');
+        await mirror.stop();
+    });
+
     it('uses the canonicalized validation source for replay and follow operations', async () => {
         const replaySources: Array<Record<string, unknown>> = [];
         const followSources: Array<Record<string, unknown>> = [];
@@ -125,50 +220,42 @@ describe('createLocalHostedDirectTranscriptMirror', () => {
         expect(release).toHaveBeenCalledTimes(1);
     });
 
-    it('acquires the follow lease before replay so startup updates are not dropped', async () => {
+    it('bridges startup updates captured by the follow lease before subscription attaches', async () => {
         const observedIds: string[] = [];
-        let followListener:
-            | ((update: Readonly<{
-                items: ExternalSessionTranscriptRawMessageV1[];
-                nextCursor: string | null;
-                truncated: boolean;
-            }>) => void | Promise<void>)
-            | null = null;
-        let emittedDuringStartup = false;
         const olderItem: ExternalSessionTranscriptRawMessageV1 = { id: 'older', createdAtMs: 1, raw: { id: 'older' } };
         const liveItem: ExternalSessionTranscriptRawMessageV1 = { id: 'live', createdAtMs: 2, raw: { id: 'live' } };
+        let followTailCursor: string | null = 'tail-before-live';
+        const readAfterCalls: string[] = [];
 
         const providerOps: ExternalSessionProviderOps = {
             validateSource: () => ({ ok: true, source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/omp' } }),
             listCandidates: async () => ({ candidates: [], nextCursor: null }),
             getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),
             pageTranscript: async () => {
-                queueMicrotask(() => {
-                    if (!followListener) {
-                        return;
-                    }
-                    emittedDuringStartup = true;
-                    void followListener({
-                        items: [liveItem],
-                        nextCursor: 'tail',
-                        truncated: false,
-                    });
-                });
+                followTailCursor = 'tail-after-live';
                 return {
                     items: [olderItem],
                     nextCursor: null,
-                    tailCursor: 'tail',
+                    tailCursor: 'tail-before-live',
                     hasMore: false,
                     truncated: false,
                 };
             },
-            readAfterTranscript: async () => ({ items: [], nextCursor: null, truncated: false }),
+            readAfterTranscript: async ({ cursor }) => {
+                readAfterCalls.push(cursor);
+                return { items: [liveItem], nextCursor: 'tail-after-live', truncated: false };
+            },
             acquireFollowLease: async () => ({
                 release: async () => {},
+                getTailCursor: () => followTailCursor,
                 subscribeToTranscriptUpdates: (listener) => {
-                    followListener = listener;
+                    void listener({
+                        items: [],
+                        nextCursor: followTailCursor,
+                        truncated: false,
+                    });
                     return () => {
-                        followListener = null;
+                        // Detached by the mirror on stop.
                     };
                 },
             }),
@@ -188,10 +275,9 @@ describe('createLocalHostedDirectTranscriptMirror', () => {
         });
 
         await mirror.start();
-        await Promise.resolve();
         await mirror.stop();
 
-        expect(emittedDuringStartup).toBe(true);
+        expect(readAfterCalls).toEqual(['tail-before-live']);
         expect(observedIds).toEqual(['older', 'live']);
     });
 

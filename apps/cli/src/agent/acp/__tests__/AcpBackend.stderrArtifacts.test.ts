@@ -80,6 +80,18 @@ function writeFakeAcpAgentScript(params: { dir: string; stderrAfterPromptText: s
   });
 }
 
+function writeFakeNeverInitializeAgentScript(params: { dir: string; stderrText: string }): string {
+  const stderrText = JSON.stringify(params.stderrText);
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent-never-initialize.mjs',
+    source: `
+      process.stderr.write(String(${stderrText}) + '\\n');
+      process.stdin.resume();
+    `,
+  });
+}
+
 describe('AcpBackend subprocess stderr artifacts', () => {
   it('writes stderr to a bounded artifacts file', async () => {
     await withTempDir('happier-acp-stderr-artifacts-', async (dir) => {
@@ -107,6 +119,38 @@ describe('AcpBackend subprocess stderr artifacts', () => {
           const expectedDir = join(artifactsRoot, 'subprocess', 'test');
           const filePath = await waitForAcpArtifactsFile(expectedDir, { timeoutMs: 2_000 });
           await waitForFileToContain(filePath, 'boom on stderr', { timeoutMs: 2_000 });
+        } finally {
+          envScope.restore();
+          await backend.dispose().catch(() => {});
+        }
+      });
+    });
+  }, 20_000);
+
+  it('includes recent startup stderr in initialize timeout errors', async () => {
+    await withTempDir('happier-acp-stderr-timeout-', async (dir) => {
+      await withTempDir('happier-debug-artifacts-', async (artifactsRoot) => {
+        const envScope = createAcpSubprocessEnvScope();
+        envScope.patch({
+          HAPPIER_DEBUG_ARTIFACTS_DIR: artifactsRoot,
+          HAPPIER_SUBPROCESS_STDERR_MAX_BYTES: '10000',
+        });
+
+        const scriptPath = writeFakeNeverInitializeAgentScript({
+          dir,
+          stderrText: 'PermissionError: [Errno 1] Operation not permitted on fd 0',
+        });
+
+        const backend = new AcpBackend({
+          agentName: 'kimi',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ agentName: 'kimi', initTimeoutMs: 10 }),
+        });
+
+        try {
+          await expect(backend.startSession()).rejects.toThrow(/PermissionError: \[Errno 1\]/);
         } finally {
           envScope.restore();
           await backend.dispose().catch(() => {});

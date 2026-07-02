@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   findActionInputFieldHint,
   getActionSpecForCatalogSurface,
+  isActionDiscoverableOnToolSurface,
   listActionSpecsForCatalogSurface,
   searchSerializedActionSpecs,
   serializeActionFieldOptions,
@@ -85,11 +86,6 @@ type GetActionSpecPayload = Readonly<{
   actionSpec: ReturnType<typeof serializeActionSpec>;
 }>;
 
-function isActionSpecDiscoverableAsTool(spec: Readonly<{ bindings?: { mcpToolName?: string } | null }>): boolean {
-  const toolName = typeof spec.bindings?.mcpToolName === 'string' ? spec.bindings.mcpToolName.trim() : '';
-  return toolName.length > 0;
-}
-
 export async function searchActionSpecsForSurface(
   args: unknown,
   surface: 'mcp' | 'cli' | 'session_agent',
@@ -101,7 +97,7 @@ export async function searchActionSpecsForSurface(
   const discoverableSpecs = listActionSpecsForCatalogSurface({
     surface,
     isActionEnabled,
-  }).filter(isActionSpecDiscoverableAsTool);
+  }).filter((spec) => isActionDiscoverableOnToolSurface(spec, surface, { isActionEnabled }));
 
   return {
     ok: true,
@@ -128,7 +124,7 @@ export async function getActionSpecForSurface(
       surface,
       isActionEnabled,
     });
-    if (!spec || !isActionSpecDiscoverableAsTool(spec)) {
+    if (!spec || !isActionDiscoverableOnToolSurface(spec, surface, { isActionEnabled })) {
       return { ok: false, errorCode: 'action_disabled', error: 'Action is disabled' };
     }
     return { ok: true, result: { actionSpec: serializeActionSpec(spec) } };

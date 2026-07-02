@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
@@ -15,7 +16,7 @@ function unsupported(): HappierBuiltInToolDispatchResult {
 }
 
 describe('built-in Happier tools', () => {
-  it('lists manual and action-backed tools from the shared catalog', () => {
+  it('lists the default session-agent direct bootstrap tools from the shared catalog', () => {
     const names = listBuiltInHappierTools().map((tool) => tool.name);
 
     expect(names).toContain('change_title');
@@ -24,9 +25,9 @@ describe('built-in Happier tools', () => {
     expect(names).toContain('action_options_resolve');
     expect(names).toContain('action_execute');
     expect(names).toContain('plugins_reload');
-    expect(names).toContain('review_start');
-    expect(names).toContain('subagents_plan_start');
-    expect(names).toContain('subagents_delegate_start');
+    expect(names).not.toContain('review_start');
+    expect(names).not.toContain('subagents_plan_start');
+    expect(names).not.toContain('subagents_delegate_start');
   });
 
   it('dispatches change_title through the injected title updater', async () => {
@@ -251,7 +252,7 @@ describe('built-in Happier tools', () => {
     });
   });
 
-  it('dispatches action-backed tools through the shared action executor hook', async () => {
+  it('dispatches action-backed tools through the shared action executor hook on external MCP', async () => {
     const executeActionByToolName = vi.fn(
       async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
         ok({ toolName, args, defaultSessionId }),
@@ -261,6 +262,7 @@ describe('built-in Happier tools', () => {
       toolName: 'review_start',
       args: { instructions: 'Check this' },
       sessionId: 'sess-1',
+      surface: 'mcp',
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,
@@ -362,6 +364,39 @@ describe('built-in Happier tools', () => {
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
+  it('rejects action_execute when explicit action settings disable the target action', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+    const actionsSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'subagents.plan.start': {
+          disabledSurfaces: ['session_agent'],
+        },
+      },
+    });
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'action_execute',
+      args: {
+        actionId: 'subagents.plan.start',
+        input: { backendTargetKeys: ['agent:codex'], instructions: 'Plan.' },
+      },
+      sessionId: 'sess-1',
+      actionsSettings,
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        executeActionByToolName,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(executeActionByToolName).not.toHaveBeenCalled();
+  });
+
   it('dispatches action_execute through the shared action executor hook', async () => {
     const executeActionByToolName = vi.fn(
       async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
@@ -426,7 +461,33 @@ describe('built-in Happier tools', () => {
     });
   });
 
-  it('dispatches execution_run_start through the shared action executor hook', async () => {
+  it('rejects discoverable-only first-party direct tool calls on the session-agent surface', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'execution_run_start',
+      args: {
+        intent: 'review',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        instructions: 'Review.',
+      },
+      sessionId: 'sess-1',
+      surface: 'session_agent',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        executeActionByToolName,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'unknown_tool',
+      error: 'Unknown built-in Happier tool: execution_run_start',
+    });
+    expect(executeActionByToolName).not.toHaveBeenCalled();
+  });
+
+  it('dispatches execution_run_start through the shared action executor hook on external MCP', async () => {
     const executeActionByToolName = vi.fn(
       async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
         ok({ toolName, args, defaultSessionId }),
@@ -440,6 +501,7 @@ describe('built-in Happier tools', () => {
         instructions: 'Review.',
       },
       sessionId: 'sess-1',
+      surface: 'mcp',
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,
@@ -473,7 +535,7 @@ describe('built-in Happier tools', () => {
     });
   });
 
-  it('routes delegate execution_run_start through the shared action executor', async () => {
+  it('routes delegate execution_run_start through the shared action executor on external MCP', async () => {
     const executeActionByToolName = vi.fn(
       async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
         ok({ toolName, args, defaultSessionId }),
@@ -487,6 +549,7 @@ describe('built-in Happier tools', () => {
         instructions: 'Delegate.',
       },
       sessionId: 'sess-1',
+      surface: 'mcp',
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,
@@ -508,7 +571,7 @@ describe('built-in Happier tools', () => {
     });
   });
 
-  it('routes voice_agent execution_run_start through the shared action executor', async () => {
+  it('routes voice_agent execution_run_start through the shared action executor on external MCP', async () => {
     const executeActionByToolName = vi.fn(
       async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
         ok({ toolName, args, defaultSessionId }),
@@ -522,6 +585,7 @@ describe('built-in Happier tools', () => {
         instructions: 'Start voice agent.',
       },
       sessionId: 'sess-1',
+      surface: 'mcp',
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,
@@ -543,7 +607,7 @@ describe('built-in Happier tools', () => {
     });
   });
 
-  it('routes plan execution_run_start through the shared action executor', async () => {
+  it('routes plan execution_run_start through the shared action executor on external MCP', async () => {
     const executeActionByToolName = vi.fn(
       async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
         ok({ toolName, args, defaultSessionId }),
@@ -557,6 +621,7 @@ describe('built-in Happier tools', () => {
         instructions: 'Plan.',
       },
       sessionId: 'sess-1',
+      surface: 'mcp',
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,
@@ -589,6 +654,7 @@ describe('built-in Happier tools', () => {
         instructions: 'Review this task.',
       },
       sessionId: 'sess-1',
+      surface: 'mcp',
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,
@@ -604,14 +670,60 @@ describe('built-in Happier tools', () => {
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
+  it('rejects execution_run_start when explicit action settings disable the equivalent action', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+    const actionsSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'review.start': {
+          disabledSurfaces: ['mcp'],
+        },
+      },
+    });
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'execution_run_start',
+      args: {
+        intent: 'review',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        instructions: 'Review this task.',
+      },
+      sessionId: 'sess-1',
+      surface: 'mcp',
+      actionsSettings,
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        executeActionByToolName,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(executeActionByToolName).not.toHaveBeenCalled();
+  });
+
   it('dispatches action-backed tools that are only surfaced on the session_agent surface', async () => {
     const executeActionByToolName = vi.fn(async () => ok({ ok: true }));
+    const actionsSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'session.list': {
+          toolExposureModes: {
+            session_agent: 'direct',
+          },
+        },
+      },
+    });
 
     const result = await dispatchBuiltInHappierTool({
       toolName: 'session_list',
       args: { limit: 10 },
       sessionId: 'sess-1',
       surface: 'session_agent',
+      actionsSettings,
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,
@@ -628,6 +740,16 @@ describe('built-in Happier tools', () => {
 
   it('passes approval origin metadata to action-backed tool execution', async () => {
     const executeActionByToolName = vi.fn(async () => ok({ ok: true }));
+    const actionsSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'session.list': {
+          toolExposureModes: {
+            session_agent: 'direct',
+          },
+        },
+      },
+    });
     const approvalOrigin = {
       kind: 'transcript_tool_call' as const,
       sessionId: 'sess-1',
@@ -642,6 +764,7 @@ describe('built-in Happier tools', () => {
       sessionId: 'sess-1',
       surface: 'session_agent',
       approvalOrigin,
+      actionsSettings,
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,

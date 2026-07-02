@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canonicalizeToolNameV2 } from './index';
+import { canonicalizeToolNameV2, normalizeToolCallV2 } from './index';
 
 describe('canonicalizeToolNameV2', () => {
   it('keeps Delete inference for write tool names', () => {
@@ -75,5 +75,38 @@ describe('canonicalizeToolNameV2', () => {
         },
       }),
     ).toBe('Read');
+  });
+});
+
+describe('normalizeToolCallV2', () => {
+  it('keeps edit entries non-empty when file path is provided at the tool-call level', () => {
+    const normalized = normalizeToolCallV2({
+      protocol: 'acp',
+      provider: 'example-provider',
+      toolName: 'edit',
+      callId: 'tool-1',
+      rawInput: {
+        path: 'src/example.ts',
+        edits: [{ oldText: 'before', newText: 'after' }],
+      },
+    });
+
+    expect(normalized.canonicalToolName).toBe('MultiEdit');
+    expect(normalized.input).toMatchObject({
+      file_path: 'src/example.ts',
+      edits: [
+        {
+          file_path: 'src/example.ts',
+          old_string: 'before',
+          new_string: 'after',
+        },
+      ],
+      _happier: expect.objectContaining({
+        protocol: 'acp',
+        provider: 'example-provider',
+        rawToolName: 'edit',
+        canonicalToolName: 'MultiEdit',
+      }),
+    });
   });
 });

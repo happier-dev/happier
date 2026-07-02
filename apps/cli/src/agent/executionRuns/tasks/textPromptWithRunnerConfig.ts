@@ -1,4 +1,4 @@
-import { runEphemeralExecutionRunTextPrompt, type EphemeralExecutionRunTextPromptRuntimeFactory } from '../runtime/ephemeralTextPrompt';
+import { runEphemeralExecutionRunTextPrompt, type EphemeralExecutionRunTextPromptRuntimeFactory } from '@/agent/runtime/bridges/executionRun/runtime/textPrompt';
 import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import { createExecutionRunTextPromptBackendForTarget } from './textPromptBackend';
 

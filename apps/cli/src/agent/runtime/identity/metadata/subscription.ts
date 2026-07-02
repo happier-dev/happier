@@ -3,17 +3,12 @@ import { isDeepStrictEqual } from 'node:util';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata } from '@/api/types';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { RuntimePublicationEvent } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
   readRuntimeDescriptorV1,
   readAgentRuntimeFacetsV1,
 } from '@happier-dev/protocol';
 import type { SessionStateSyncEngine } from '@happier-dev/agents';
-
-type RuntimePublicationEvent = Readonly<{
-  type: 'event';
-  name: 'runtime.descriptor' | 'runtime.capabilities' | 'runtime.facets';
-  payload?: unknown;
-}>;
 
 function isRuntimePublicationEvent(message: unknown): message is RuntimePublicationEvent {
   if (!message || typeof message !== 'object') return false;
@@ -48,7 +43,7 @@ export function subscribeSessionRuntimePublicationToMetadata(params: Readonly<{
   let lastPublishedCapabilities: unknown = undefined;
   let lastPublishedFacets: unknown = undefined;
 
-  return params.runtime.subscribeRuntimeMessages((message) => {
+  return params.runtime.subscribeRuntimeEvents((message) => {
     if (!isRuntimePublicationEvent(message)) {
       return;
     }

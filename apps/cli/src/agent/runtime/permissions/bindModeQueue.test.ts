@@ -169,6 +169,47 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     ]);
   });
 
+  it('passes the user message local id when steering an in-flight turn', async () => {
+    const sessionHarness = createSessionHarness();
+    const queueCalls: PermissionModeQueuedPrompt[] = [];
+    const steerCalls: Array<Readonly<{ text: string; localId: string | null | undefined }>> = [];
+
+    registerPermissionModeMessageQueueBinding({
+      session: sessionHarness.session,
+      queue: {
+        push: (message: PermissionModeQueuedPrompt) => {
+          queueCalls.push(message);
+        },
+        pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => {
+          queueCalls.push(message);
+        },
+      },
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => undefined,
+      inFlightSteer: {
+        supportsInFlightSteer: () => true,
+        isTurnInFlight: () => true,
+        steerText: async (text, options) => {
+          steerCalls.push({ text, localId: options?.localId });
+        },
+      },
+    });
+
+    sessionHarness.emit({
+      role: 'user',
+      content: { type: 'text', text: 'nudge active turn' },
+      localId: 'local-steer-1',
+      meta: {},
+    } as UserMessage);
+
+    await Promise.resolve();
+
+    expect(queueCalls).toEqual([]);
+    expect(steerCalls).toEqual([
+      { text: 'nudge active turn', localId: 'local-steer-1' },
+    ]);
+  });
+
   it('reads appendSystemPrompt from prototype-less metadata objects', () => {
     const harness = createHarness();
     const meta = Object.assign(Object.create(null) as Record<string, unknown>, {

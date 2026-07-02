@@ -50,7 +50,7 @@ export type SessionRuntimeIdentitySourceTier =
 
 export type SessionRuntimeIdentityFallbackResult = Readonly<{
   providerId: string | null;
-  vendorSessionId: string | null;
+  providerSessionId: string | null;
   runtimeDescriptorV1: RuntimeDescriptorV1 | null;
   externalSessionSource: ExternalSessionsSource | null;
   externalSessionRemoteSessionId: string | null;
@@ -62,7 +62,7 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
   metadata: unknown;
   providerDefaults?: Readonly<{
     providerId?: string | null;
-    vendorSessionId?: string | null;
+    providerSessionId?: string | null;
     runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     externalSessionSource?: ExternalSessionsSource | null;
     externalSessionRemoteSessionId?: string | null;
@@ -83,7 +83,7 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
     ?? null;
 
   const providerIdFromLegacy = resolveAgentIdFromSessionMetadata(metadataRecord);
-  const vendorSessionIdFromLegacy = providerIdFromLegacy
+  const providerSessionIdFromLegacy = providerIdFromLegacy
     ? resolveVendorResumeIdFromSessionMetadata(providerIdFromLegacy, metadataRecord)
     : null;
   const externalSessionRemoteSessionId = readExternalSessionRemoteSessionId(externalSessionRecord)
@@ -101,10 +101,10 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
     ?? externalSessionProviderId
     ?? normalizeString(params.providerDefaults?.providerId)
     ?? null;
-  const vendorSessionId = normalizedRuntimeDescriptor?.vendorSessionId
-    ?? vendorSessionIdFromLegacy
+  const providerSessionId = normalizedRuntimeDescriptor?.providerSessionId
+    ?? providerSessionIdFromLegacy
     ?? externalSessionRemoteSessionId
-    ?? normalizeString(params.providerDefaults?.vendorSessionId)
+    ?? normalizeString(params.providerDefaults?.providerSessionId)
     ?? null;
 
   const runtimeIdentityPublication = publishRuntimeIdentity({
@@ -114,7 +114,7 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
 
   const hasLegacyIdentity =
     providerIdFromLegacy !== null
-    || vendorSessionIdFromLegacy !== null
+    || providerSessionIdFromLegacy !== null
     || readExternalSessionRemoteSessionId(externalSessionRecord) !== null
     || externalSessionProviderId !== null
     || readExternalSessionSource(externalSessionRecord) !== null
@@ -129,7 +129,7 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
 
   return {
     providerId,
-    vendorSessionId,
+    providerSessionId,
     runtimeDescriptorV1,
     externalSessionSource,
     externalSessionRemoteSessionId,

@@ -131,6 +131,31 @@ describe('replaySeedV1', () => {
     expect(res.providerPrompt).toBe('SEED\n\nhello');
   });
 
+  it('uses a non-empty local metadata snapshot without refreshing before reading replay seed', async () => {
+    const calls: Array<{ kind: string }> = [];
+    const session = {
+      getMetadataSnapshot: () => ({ flavor: 'claude', claudeSessionId: 'resume-1' }),
+      refreshSessionSnapshotFromServerBestEffort: async () => {
+        calls.push({ kind: 'refresh' });
+      },
+      updateMetadata: async () => {
+        calls.push({ kind: 'consume' });
+      },
+    };
+
+    const res = await resolveProviderPromptWithReplaySeed({
+      session,
+      userText: 'hello',
+      allowSeed: true,
+      localId: 'local-1',
+      nowMs: 999,
+      refreshMetadataBeforeRead: true,
+    });
+
+    expect(calls).toEqual([]);
+    expect(res.providerPrompt).toBe('hello');
+  });
+
   it('resolveProviderPromptWithReplaySeed can ensure a metadata snapshot before applying the seed', async () => {
     const calls: Array<{ kind: string }> = [];
     let metadata: any = {};

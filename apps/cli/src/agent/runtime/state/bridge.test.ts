@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SessionStateFacet } from '@happier-dev/agents';
+import type { SessionStateFacet, SessionStateFieldWriteValue } from '@happier-dev/agents';
 
 const { updateSessionMetadataForTargetMock } = vi.hoisted(() => ({
   updateSessionMetadataForTargetMock: vi.fn(),
@@ -78,5 +78,55 @@ describe('createCliRuntimeSessionStateBridge', () => {
       credentials: { token: 'token' },
     }));
     expect(applied).toEqual(['display.title:New title']);
+  });
+
+  it('routes durable runtime session-state fields through the registered-field outbox', async () => {
+    const enqueueRegisteredSessionStateFieldMutation = vi.fn(async () => undefined);
+    const metadataPortUpdate = vi.fn(async () => ({ ok: true as const, version: 9 }));
+    const { createCliRuntimeSessionStateBridge } = await import('./bridge');
+    const bridge = createCliRuntimeSessionStateBridge({
+      credentials: { token: 'token' } as never,
+      session: {
+        sessionId: 'session-1',
+        enqueueRegisteredSessionStateFieldMutation,
+      },
+      capabilities: {
+        runtime: {
+          workState: {
+            supported: true,
+            happierToProvider: { supported: false },
+            providerToHappier: { supported: false },
+          },
+        },
+      },
+      metadataPort: {
+        update: metadataPortUpdate,
+      },
+    });
+
+    const workState: SessionStateFieldWriteValue<'runtime.workState'> = {
+      v: 1,
+      backendId: 'codex-app-server',
+      updatedAt: 123,
+      items: [],
+    };
+
+    await expect(bridge.writeHappierField({
+      fieldId: 'runtime.workState',
+      value: workState,
+      reason: 'reconciliation',
+      metadataReason: 'work-state',
+    })).resolves.toEqual({ ok: true, version: 0 });
+
+    expect(metadataPortUpdate).not.toHaveBeenCalled();
+    expect(enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
+      fieldId: 'runtime.workState',
+      deliveryClass: 'durable_required',
+      source: 'runtime',
+      op: {
+        kind: 'set',
+        value: workState,
+      },
+    }));
   });
 });

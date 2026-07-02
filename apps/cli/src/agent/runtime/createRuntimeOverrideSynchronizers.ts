@@ -1,10 +1,15 @@
+import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
+
 import { createSessionConfigOptionOverrideSynchronizer } from './sessionConfigOptionOverrideSync';
 import { createSessionModeOverrideSynchronizer } from './sessionModeOverrideSync';
 import { createModelOverrideSynchronizer } from './modelOverrideSync';
 
 export type RuntimeOverrideTarget = Readonly<{
   setSessionMode: (modeId: string) => Promise<void>;
-  setSessionConfigOption: (configId: string, valueId: string | number | boolean | null) => Promise<void>;
+  setSessionConfigOption: (
+    configId: string,
+    valueId: string | number | boolean | null,
+  ) => Promise<RuntimeConfigUpdateOutcomeV1 | void>;
   setSessionModel: (modelId: string) => Promise<void>;
 }>;
 

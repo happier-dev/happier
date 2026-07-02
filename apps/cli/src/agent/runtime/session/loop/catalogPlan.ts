@@ -48,6 +48,7 @@ export function createCatalogHostSessionRuntimeConfig<TRuntime extends RuntimeTu
     providerName = displayName,
     waitingForCommandLabel = displayName,
     agentMessageType = params.providerId,
+    checkpointToolProtocol = 'acp',
     attachMetadataLogLabel = params.providerId,
     ...config
   } = params.config;
@@ -59,6 +60,7 @@ export function createCatalogHostSessionRuntimeConfig<TRuntime extends RuntimeTu
     providerName,
     waitingForCommandLabel,
     agentMessageType,
+    checkpointToolProtocol,
     machineMetadata: initialMachineMetadata,
     onAttachMetadataSnapshotMissing: (error) => {
       logger.debug(

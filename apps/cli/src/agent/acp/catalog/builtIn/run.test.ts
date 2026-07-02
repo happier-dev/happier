@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   createCatalogProviderAcpRuntimeMock,
-  getProviderCliRuntimeSpecMock,
+  getAgentCliRuntimeSpecMock,
   runHostSessionRuntimePlanMock,
 } = vi.hoisted(() => ({
   createCatalogProviderAcpRuntimeMock: vi.fn(),
-  getProviderCliRuntimeSpecMock: vi.fn(),
+  getAgentCliRuntimeSpecMock: vi.fn(),
   runHostSessionRuntimePlanMock: vi.fn(),
 }));
 
@@ -14,7 +14,7 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@happier-dev/agents')>();
   return {
     ...actual,
-    getProviderCliRuntimeSpec: getProviderCliRuntimeSpecMock,
+    getAgentCliRuntimeSpec: getAgentCliRuntimeSpecMock,
   };
 });
 
@@ -57,9 +57,9 @@ import { runBuiltInAgent } from './run';
 describe('runBuiltInAgent', () => {
   beforeEach(() => {
     createCatalogProviderAcpRuntimeMock.mockReset();
-    getProviderCliRuntimeSpecMock.mockReset();
+    getAgentCliRuntimeSpecMock.mockReset();
     runHostSessionRuntimePlanMock.mockReset();
-    getProviderCliRuntimeSpecMock.mockReturnValue({
+    getAgentCliRuntimeSpecMock.mockReturnValue({
       title: 'Kiro CLI',
       binaryName: 'kiro',
     });

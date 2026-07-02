@@ -4,6 +4,7 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 import { logger } from '@/ui/logger';
 import type {
   PrimaryTurnStatusV1,
+  RuntimeEventV1,
   SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
 
@@ -15,43 +16,90 @@ import {
 type PrimarySessionRuntimeIssueRecord = Readonly<{
   latestTurnStatus: PrimaryTurnStatusV1;
   lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
+  provider?: string;
+  providerTurnId?: string | null;
 }>;
 
+type RuntimeIssueTurnEvent = Extract<RuntimeEventV1, { kind: 'turn-failed' | 'turn-cancelled' }>;
+
 type RuntimeIssueSession = Readonly<{
+  sessionId?: string;
   sendAgentMessage?: (provider: ACPProvider, body: ACPMessageData) => void;
-  updatePrimaryTurnRuntimeState?: (record: PrimarySessionRuntimeIssueRecord) => void | Promise<void>;
 }>;
 
 export type SurfacePrimarySessionRuntimeIssueInput = Omit<ClassifyPrimarySessionRuntimeIssueInput, 'cause'> & Readonly<{
   cause?: ClassifyPrimarySessionRuntimeIssueInput['cause'] | 'cancelled' | null;
   session?: RuntimeIssueSession | null;
+  sessionTurnId?: string | null;
+  emitAcpLifecycleMarker?: boolean;
+  publishRuntimeEvent?: (event: RuntimeIssueTurnEvent) => void | Promise<void>;
   recordIssue?: (record: PrimarySessionRuntimeIssueRecord) => void | Promise<void>;
 }>;
+
+function normalizeProviderFact(value: string | null | undefined): string | undefined {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function buildProviderRuntimeFacts(
+  input: Readonly<{ provider?: string | null; providerTurnId?: string | null }>,
+): Pick<PrimarySessionRuntimeIssueRecord, 'provider' | 'providerTurnId'> {
+  const provider = normalizeProviderFact(input.provider);
+  const providerTurnId = normalizeProviderFact(input.providerTurnId);
+  return {
+    ...(provider ? { provider } : {}),
+    ...(providerTurnId ? { providerTurnId } : {}),
+  };
+}
+
+function normalizeNonNegativeTimestamp(value: number | null | undefined): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const normalized = Math.trunc(value);
+    if (normalized >= 0) return normalized;
+  }
+  return Date.now();
+}
+
+function buildRuntimeEventBase(
+  input: SurfacePrimarySessionRuntimeIssueInput,
+): Pick<RuntimeEventV1, 'sessionId' | 'emittedAtMs'> & Readonly<{ turnId: string }> | null {
+  const sessionId = normalizeProviderFact(input.session?.sessionId);
+  const turnId = normalizeProviderFact(input.sessionTurnId);
+  if (!sessionId || !turnId) return null;
+  return {
+    sessionId,
+    emittedAtMs: normalizeNonNegativeTimestamp(input.occurredAt),
+    turnId,
+  };
+}
+
+async function publishRuntimeTurnEventBestEffort(
+  input: SurfacePrimarySessionRuntimeIssueInput,
+  event: RuntimeIssueTurnEvent | null,
+): Promise<void> {
+  if (!event || !input.publishRuntimeEvent) return;
+  try {
+    await input.publishRuntimeEvent(event);
+  } catch (error) {
+    logger.debug('[API] Failed to publish runtime turn event (non-fatal)', {
+      kind: event.kind,
+      error,
+    });
+  }
+}
 
 function sendTurnLifecycleMessage(
   session: RuntimeIssueSession | null | undefined,
   provider: string | null | undefined,
   type: 'turn_failed' | 'turn_cancelled',
+  providerTurnId: string | null | undefined,
 ): void {
-  const normalizedProvider = typeof provider === 'string' && provider.trim() ? provider.trim() : 'agent';
+  const normalizedProvider = normalizeProviderFact(provider) ?? 'agent';
+  const id = normalizeProviderFact(providerTurnId) ?? randomUUID();
   session?.sendAgentMessage?.(
     normalizedProvider as ACPProvider,
-    { type, id: randomUUID() } as unknown as ACPMessageData,
+    { type, id } as unknown as ACPMessageData,
   );
-}
-
-async function updatePrimaryTurnRuntimeStateBestEffort(
-  session: RuntimeIssueSession | null | undefined,
-  record: PrimarySessionRuntimeIssueRecord,
-): Promise<void> {
-  try {
-    await session?.updatePrimaryTurnRuntimeState?.(record);
-  } catch (error) {
-    logger.debug('[API] Failed to update primary turn runtime state (non-fatal)', {
-      latestTurnStatus: record.latestTurnStatus,
-      error,
-    });
-  }
 }
 
 export { classifyPrimarySessionRuntimeIssue };
@@ -60,37 +108,47 @@ export async function surfacePrimarySessionRuntimeIssue(
   input: SurfacePrimarySessionRuntimeIssueInput,
 ): Promise<SessionRuntimeIssueV1 | null> {
   if (input.cause === 'cancelled') {
-    sendTurnLifecycleMessage(input.session, input.provider, 'turn_cancelled');
-    await updatePrimaryTurnRuntimeStateBestEffort(input.session, {
+    if (input.emitAcpLifecycleMarker === true) {
+      sendTurnLifecycleMessage(input.session, input.provider, 'turn_cancelled', input.providerTurnId);
+    }
+    const record = {
+      ...buildProviderRuntimeFacts(input),
       latestTurnStatus: 'cancelled',
       lastRuntimeIssue: null,
-    });
+    } satisfies PrimarySessionRuntimeIssueRecord;
+    const runtimeEventBase = buildRuntimeEventBase(input);
+    await publishRuntimeTurnEventBestEffort(input, runtimeEventBase
+      ? {
+          ...runtimeEventBase,
+          kind: 'turn-cancelled',
+          ...(record.providerTurnId ? { providerTurnId: record.providerTurnId } : {}),
+          reason: 'cancelled',
+        } satisfies RuntimeIssueTurnEvent
+      : null);
     return null;
   }
 
   const issue = classifyPrimarySessionRuntimeIssue(input as ClassifyPrimarySessionRuntimeIssueInput);
-  sendTurnLifecycleMessage(input.session, input.provider, 'turn_failed');
+  if (input.emitAcpLifecycleMarker === true) {
+    sendTurnLifecycleMessage(input.session, input.provider, 'turn_failed', issue.providerTurnId ?? input.providerTurnId);
+  }
   const record = {
+    ...buildProviderRuntimeFacts({
+      provider: issue.provider ?? input.provider,
+      providerTurnId: issue.providerTurnId ?? input.providerTurnId,
+    }),
     latestTurnStatus: 'failed',
     lastRuntimeIssue: issue,
   } satisfies PrimarySessionRuntimeIssueRecord;
-  await updatePrimaryTurnRuntimeStateBestEffort(input.session, record);
+  const runtimeEventBase = buildRuntimeEventBase(input);
+  await publishRuntimeTurnEventBestEffort(input, runtimeEventBase
+    ? {
+        ...runtimeEventBase,
+        kind: 'turn-failed',
+        ...(record.providerTurnId ? { providerTurnId: record.providerTurnId } : {}),
+        issue,
+      } satisfies RuntimeIssueTurnEvent
+    : null);
   await input.recordIssue?.(record);
   return issue;
-}
-
-export async function recordPrimaryTurnInProgress(
-  input: Readonly<{ session?: RuntimeIssueSession | null }>,
-): Promise<void> {
-  await updatePrimaryTurnRuntimeStateBestEffort(input.session, {
-    latestTurnStatus: 'in_progress',
-  });
-}
-
-export async function recordPrimaryTurnCompleted(
-  input: Readonly<{ session?: RuntimeIssueSession | null }>,
-): Promise<void> {
-  await updatePrimaryTurnRuntimeStateBestEffort(input.session, {
-    latestTurnStatus: 'completed',
-  });
 }

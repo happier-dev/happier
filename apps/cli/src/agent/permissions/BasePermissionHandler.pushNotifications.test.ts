@@ -20,9 +20,17 @@ class FakeSession {
   sessionId = 'session-test';
   rpcHandlerManager = new FakeRpcHandlerManager();
   agentState: any = { requests: {}, completedRequests: {} };
+  metadata: unknown = {
+    summary: { text: 'Fix prod issue' },
+    agentDisplayName: 'Codex',
+  };
 
   getAgentStateSnapshot() {
     return this.agentState;
+  }
+
+  getMetadataSnapshot() {
+    return this.metadata;
   }
 
   updateAgentState(updater: any) {
@@ -97,8 +105,8 @@ describe('BasePermissionHandler push notifications', () => {
 
     expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
     expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
-      'Permission Request',
-      expect.stringContaining('Write'),
+      'Fix prod issue',
+      'Codex asks permission to use Write\nFile: /tmp/x',
       expect.objectContaining({ sessionId: 'session-test', requestId: 'perm-1' }),
       { sound: 'happier_urgent.wav', priority: 'high', androidSoundId: 'urgent' },
     );
