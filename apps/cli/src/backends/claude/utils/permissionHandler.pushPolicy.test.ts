@@ -8,6 +8,9 @@ import { PermissionHandler } from './permissionHandler';
 function createSessionStub(sendToAllDevicesAsync: ReturnType<typeof vi.fn>): Session {
   const client: any = {
     sessionId: 's1',
+    getMetadataSnapshot: () => ({
+      summary: { text: 'Fix prod issue' },
+    }),
     updateAgentState: vi.fn((updater: any) => updater({ requests: {}, completedRequests: {}, capabilities: {} })),
   };
   return {
@@ -69,9 +72,10 @@ describe('Claude PermissionHandler push policy', () => {
     await Promise.resolve();
     expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
     expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
-      'Permission Request',
-      expect.stringContaining('Read'),
+      'Fix prod issue',
+      'Claude asks permission to use Read File\nFile: a',
       expect.objectContaining({ sessionId: 's1', requestId: 'tool1' }),
+      { sound: 'happier_urgent.wav', priority: 'high', androidSoundId: 'urgent' },
     );
   });
 });

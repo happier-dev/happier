@@ -1,9 +1,13 @@
-import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
+import {
+  extractAgentIdFromTaskResultText,
+  isClaudePromptRootSidechainUserMessage,
+  markClaudeRecordAsSidechain,
+  parseTaskOutputJsonlText,
+  type RawJSONLines,
+} from '@happier-dev/plugins-claude/agent';
 import { configuration } from '@/configuration';
 
-import { extractAgentIdFromTaskResultText } from './extractAgentIdFromTaskResult';
-import { parseTaskOutputJsonlText } from './parseTaskOutputJsonl';
-import { isPromptRootUserMessage, markRecordAsSidechain, markUuidSeenAndReturnIsDuplicate, LruSet, setBoundedMap } from './_shared';
+import { markUuidSeenAndReturnIsDuplicate, LruSet, setBoundedMap } from './_shared';
 
 type ClaudeTaskOutputSidechainImporterLimits = {
   maxPendingRecordsPerAgent: number;
@@ -186,7 +190,7 @@ export class ClaudeTaskOutputSidechainImporter {
       });
       if (isDuplicate) continue;
 
-      if (isPromptRootUserMessage(record)) {
+      if (isClaudePromptRootSidechainUserMessage(record)) {
         continue;
       }
 
@@ -197,7 +201,7 @@ export class ClaudeTaskOutputSidechainImporter {
       const taskId = this.taskIdByToolUseId.get(pending.taskOutputToolUseId) ?? null;
 
       imported.push({
-        body: markRecordAsSidechain(record, sidechainId),
+        body: markClaudeRecordAsSidechain(record, sidechainId),
         meta: buildImportedMeta({
           taskOutputToolUseId: pending.taskOutputToolUseId,
           taskId,

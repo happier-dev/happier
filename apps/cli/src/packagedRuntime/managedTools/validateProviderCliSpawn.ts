@@ -2,7 +2,7 @@ import type { CatalogAgentLookupId } from '@/backends/types';
 
 import {
   buildMissingProviderCliCommandErrorMessage,
-  resolveProviderCliRuntimeSpecForLookupId,
+  resolveAgentCliRuntimeSpecForLookupId,
 } from './requireProviderCliCommand';
 import { resolveProviderCliCommandForRuntime } from './providerCliResolution';
 
@@ -10,7 +10,7 @@ export async function validateProviderCliSpawn(params: Readonly<{ agentId: Catal
   | { ok: true }
   | { ok: false; errorMessage: string }
 > {
-  const resolved = resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(params.agentId));
+  const resolved = resolveProviderCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(params.agentId));
   if (resolved) return { ok: true };
 
   return {

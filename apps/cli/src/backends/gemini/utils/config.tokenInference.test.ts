@@ -4,7 +4,11 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { readGeminiLocalConfig } from './config';
+import {
+  determineGeminiModel,
+  getInitialGeminiModelFromEnv,
+  readGeminiLocalConfig,
+} from './config';
 
 function withTempHome<T>(fn: (homeDir: string) => T): T {
   const prevHome = process.env.HOME;
@@ -60,5 +64,29 @@ describe('readGeminiLocalConfig token inference', () => {
       rmSync(homeDir, { recursive: true, force: true });
       rmSync(cliHomeDir, { recursive: true, force: true });
     }
+  });
+
+  it('reads upstream settings.json model.name before legacy config model', () => {
+    withTempHome((homeDir) => {
+      const geminiDir = join(homeDir, '.gemini');
+      mkdirSync(geminiDir, { recursive: true });
+      writeFileSync(join(geminiDir, 'config.json'), JSON.stringify({ model: 'legacy-model' }), 'utf8');
+      writeFileSync(join(geminiDir, 'settings.json'), JSON.stringify({ model: { name: 'settings-model' } }), 'utf8');
+
+      const cfg = readGeminiLocalConfig();
+      expect(cfg.model).toBe('settings-model');
+    });
+  });
+
+  it('ignores inherited GEMINI_MODEL when deriving the displayed Gemini model', () => {
+    const localConfig = {
+      token: null,
+      model: null,
+      googleCloudProject: null,
+      googleCloudProjectEmail: null,
+    };
+
+    expect(determineGeminiModel(undefined, localConfig, { GEMINI_MODEL: 'host-model' })).not.toBe('host-model');
+    expect(getInitialGeminiModelFromEnv({ GEMINI_MODEL: 'host-model' })).not.toBe('host-model');
   });
 });

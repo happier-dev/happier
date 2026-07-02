@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,6 +26,18 @@ afterEach(async () => {
 });
 
 describe('createClaudeJsonlSessionStore', () => {
+    it('keeps projected transcript reads on the plugin external-session surface', () => {
+        const operationsDir = new URL('./operations/', import.meta.url);
+        const legacyUtilsDir = new URL('../../utils/', import.meta.url);
+        expect(existsSync(new URL('pageClaudeJsonlSessionTranscript.ts', operationsDir))).toBe(false);
+        expect(existsSync(new URL('readAfterClaudeJsonlSessionTranscript.ts', operationsDir))).toBe(false);
+        expect(existsSync(new URL('claudeJsonlTranscriptForwardCursor.ts', operationsDir))).toBe(false);
+        expect(existsSync(new URL('readClaudeJsonlSessionActivity.ts', operationsDir))).toBe(false);
+        expect(existsSync(new URL('readClaudeJsonlSessionTitle.ts', operationsDir))).toBe(false);
+        expect(existsSync(new URL('readClaudeJsonlSessionWorkingDirectory.ts', operationsDir))).toBe(false);
+        expect(existsSync(new URL('readClaudeSessionJsonlMessages.ts', legacyUtilsDir))).toBe(false);
+    });
+
     it('resolves the session title through the shared store contract', async () => {
         const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-claude-store-title-')));
         const configDir = join(root, '.claude');

@@ -1,6 +1,7 @@
-import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
+import { createClaudeTeamInboxCollector, type RawJSONLines } from '@happier-dev/plugins-claude/agent';
 
-import { createClaudeTeamInboxCollector } from '@/backends/claude/utils/teamInbox/claudeTeamInboxCollector';
+import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
+import { logger } from '@/ui/logger';
 
 export function createClaudeRemoteTeamInboxBridge(params: Readonly<{
   claudeConfigDir: string | null;
@@ -17,6 +18,8 @@ export function createClaudeRemoteTeamInboxBridge(params: Readonly<{
       void collector.syncAll();
     },
     emit: (message) => params.enqueue(message),
+    watchFile: (filePath, onChange) => startFileWatcher(filePath, () => onChange()),
+    logDebug: (message, metadata) => logger.debug(message, metadata),
   });
 
   return collector;

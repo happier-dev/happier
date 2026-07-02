@@ -2,8 +2,8 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
-import { homeEntries as resolveCodexHomeEntriesForExternalSessionsSource } from '@/backends/codex/externalSessions/homeEntries';
-import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
+import { homeEntries as resolveCodexHomeEntriesForExternalSessionsSource } from '@happier-dev/plugins-codex/agent/rollout/discovery/homeEntries';
+import { resolveConfiguredCodexHomePath } from '@happier-dev/plugins-codex/agent/rollout/discovery/homeEntries';
 import type { PetDiscoveryDiagnosticV1 } from '@happier-dev/protocol';
 
 import { createPetSourceKey } from './createPetSourceKey';
@@ -65,7 +65,7 @@ export async function resolveCodexPetRootsWithDiagnostics(input: Readonly<{
   let partial = false;
 
   if (input.includeUserCodexHome !== false) {
-    const codexHome = resolveConfiguredCodexHome(env);
+    const codexHome = resolveConfiguredCodexHomePath(env);
     roots.push({
       kind: 'detectedCodexHome',
       homeKind: 'user',

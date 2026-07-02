@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { logger } from '@/ui/logger';
-import { GEMINI_MODEL_ENV, DEFAULT_GEMINI_MODEL } from '../constants';
+import { DEFAULT_GEMINI_MODEL } from '../constants';
 import { resolveGeminiConfigPaths } from './resolveGeminiConfigPaths';
 
 /**
@@ -19,6 +19,19 @@ export interface GeminiLocalConfig {
   googleCloudProject: string | null;
   /** Email associated with the stored Google Cloud Project (for per-account projects) */
   googleCloudProjectEmail: string | null;
+}
+
+function readStringField(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function readSettingsModelName(record: Record<string, unknown>): string | null {
+  const model = record.model;
+  if (typeof model === 'string' && model.trim().length > 0) return model;
+  if (!model || typeof model !== 'object' || Array.isArray(model)) return null;
+  const name = (model as Record<string, unknown>).name;
+  return typeof name === 'string' && name.trim().length > 0 ? name : null;
 }
 
 /**
@@ -38,6 +51,7 @@ export function readGeminiLocalConfigFromEnv(env: Readonly<Record<string, string
   const paths = resolveGeminiConfigPaths(env);
   const possiblePaths = [
     paths.userOauthCredsPath,
+    paths.userSettingsPath,
     paths.userConfigPath,
     paths.xdgConfigPath,
     paths.userAuthPath,
@@ -57,8 +71,8 @@ export function readGeminiLocalConfigFromEnv(env: Readonly<Record<string, string
         }
 
         if (!model) {
-          const foundModel = config.model || config.GEMINI_MODEL;
-          if (foundModel && typeof foundModel === 'string') {
+          const foundModel = readSettingsModelName(config) ?? readStringField(config, 'GEMINI_MODEL');
+          if (foundModel) {
             model = foundModel;
             logger.debug(`[Gemini] Found model in ${configPath}: ${model}`);
           }
@@ -97,9 +111,8 @@ export function readGeminiLocalConfigFromEnv(env: Readonly<Record<string, string
 /**
  * Determine the model to use based on priority:
  * 1. Explicit model parameter (if provided)
- * 2. Environment variable (GEMINI_MODEL)
- * 3. Local config file
- * 4. Default model
+ * 2. Local config file
+ * 3. Default model
  * 
  * @param explicitModel - Model explicitly provided (undefined = check sources, null = skip config)
  * @param localConfig - Local config result from readGeminiLocalConfig()
@@ -108,22 +121,20 @@ export function readGeminiLocalConfigFromEnv(env: Readonly<Record<string, string
 export function determineGeminiModel(
   explicitModel: string | null | undefined,
   localConfig: GeminiLocalConfig,
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  _env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
   if (explicitModel !== undefined) {
     if (explicitModel === null) {
-      // Explicitly null - use env or default, skip local config
-      return env[GEMINI_MODEL_ENV] || DEFAULT_GEMINI_MODEL;
+      // Explicitly null - skip local config and inherited model env.
+      return DEFAULT_GEMINI_MODEL;
     } else {
       // Model explicitly provided - use it
       return explicitModel;
     }
   } else {
-    // No explicit model - check env var first (user override), then local config, then default
-    // This allows users to override config via environment variable
-    const envModel = env[GEMINI_MODEL_ENV];
-    logger.debug(`[Gemini] Model selection: env[GEMINI_MODEL_ENV]=${envModel}, localConfig.model=${localConfig.model}, DEFAULT=${DEFAULT_GEMINI_MODEL}`);
-    const model = envModel || localConfig.model || DEFAULT_GEMINI_MODEL;
+    // No explicit model - defer to Gemini CLI settings/auto routing instead of inherited env.
+    logger.debug(`[Gemini] Model selection: localConfig.model=${localConfig.model}, DEFAULT=${DEFAULT_GEMINI_MODEL}`);
+    const model = localConfig.model || DEFAULT_GEMINI_MODEL;
     logger.debug(`[Gemini] Selected model: ${model}`);
     return model;
   }
@@ -210,7 +221,7 @@ export function saveGoogleCloudProjectToConfig(projectId: string, email?: string
 
 /**
  * Get the initial model value for UI display
- * Priority: env var > local config > default
+ * Priority: local config > default
  * 
  * @returns The initial model string
  */
@@ -222,7 +233,7 @@ export function getInitialGeminiModelFromEnv(
   env: Readonly<Record<string, string | undefined>>,
 ): string {
   const localConfig = readGeminiLocalConfig(env);
-  return env[GEMINI_MODEL_ENV] || localConfig.model || DEFAULT_GEMINI_MODEL;
+  return localConfig.model || DEFAULT_GEMINI_MODEL;
 }
 
 /**
@@ -230,17 +241,15 @@ export function getInitialGeminiModelFromEnv(
  * 
  * @param explicitModel - Model explicitly provided (undefined = check sources, null = skip config)
  * @param localConfig - Local config result from readGeminiLocalConfig()
- * @returns Source identifier: 'explicit' | 'env-var' | 'local-config' | 'default'
+ * @returns Source identifier: 'explicit' | 'local-config' | 'default'
  */
 export function getGeminiModelSource(
   explicitModel: string | null | undefined,
   localConfig: GeminiLocalConfig,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): 'explicit' | 'env-var' | 'local-config' | 'default' {
+  _env: Readonly<Record<string, string | undefined>> = process.env,
+): 'explicit' | 'local-config' | 'default' {
   if (explicitModel !== undefined && explicitModel !== null) {
     return 'explicit';
-  } else if (env[GEMINI_MODEL_ENV]) {
-    return 'env-var';
   } else if (localConfig.model) {
     return 'local-config';
   } else {

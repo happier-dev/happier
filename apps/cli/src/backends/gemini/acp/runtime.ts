@@ -4,6 +4,7 @@ import { createCatalogProviderSessionIdentityRuntime } from '@/agent/acp/runtime
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { PermissionMode } from '@/api/types';
+import type { AccountSettings } from '@happier-dev/protocol';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { GeminiDiffProcessor } from '@/backends/gemini/utils/diffProcessor';
@@ -30,6 +31,8 @@ export function createGeminiAcpRuntime(params: {
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
   memoryRecallGuidanceEnabled?: boolean;
+  accountSettings?: AccountSettings | null;
+  pendingQueueDrainMaxPopPerWake?: number;
   getPermissionMode?: () => PermissionMode | null | undefined;
   backendOptions?: {
     currentUserEmail?: string;
@@ -54,6 +57,8 @@ export function createGeminiAcpRuntime(params: {
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
     memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
+    accountSettings: params.accountSettings,
+    pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     getPermissionMode: params.getPermissionMode,
     backendOptions: params.backendOptions,
     hooks: {

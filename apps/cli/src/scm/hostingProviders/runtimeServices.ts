@@ -1,4 +1,5 @@
 import {
+    AsyncTtlCache,
     ConnectedServiceCredentialRecordV1Schema,
     openConnectedServiceCredentialCiphertext,
     type ConnectedServiceCredentialRecordV1,
@@ -40,7 +41,6 @@ type ScmHostingProviderRuntimeRegistryInput = Readonly<{
         connectedAccountDescriptors?: readonly ResolvedConnectedAccountDescriptorContribution[];
     }>;
     scmHostingProvidersById: ResolvedExecutablePluginRuntimeRegistry['scmHostingProvidersById'];
-    hookHandlersByHookId: ResolvedExecutablePluginRuntimeRegistry['hookHandlersByHookId'];
 }>;
 
 type ScmHostingProviderRuntimeTokenMaterializationRequest = Parameters<
@@ -69,6 +69,20 @@ type ConnectedServicesCredentialApi = Pick<
 >;
 
 const DEFAULT_CONNECTED_SERVICE_PROFILE_ID = 'default';
+const DEFAULT_SCM_HOSTING_CREDENTIAL_RECORDS_SUCCESS_TTL_MS = 10_000;
+const DEFAULT_SCM_HOSTING_CREDENTIAL_RECORDS_ERROR_TTL_MS = 1_000;
+
+type ScmHostingCredentialRecordsCache = AsyncTtlCache<readonly ConnectedServiceCredentialRecordV1[]>;
+
+function buildCredentialRecordsCacheKey(input: Readonly<{
+    serviceId: ConnectedServiceId;
+    profileId?: string | null;
+}>): string {
+    return JSON.stringify({
+        serviceId: input.serviceId,
+        profileId: input.profileId?.trim() || null,
+    });
+}
 
 function normalizeUrlSafety(
     provider: Readonly<{
@@ -135,7 +149,36 @@ async function listProfileIds(input: Readonly<{
 async function readConnectedServiceCredentialRecords(input: Readonly<{
     serviceId: ConnectedServiceId;
     profileId?: string | null;
+    cache?: ScmHostingCredentialRecordsCache;
 }>): Promise<readonly ConnectedServiceCredentialRecordV1[]> {
+    const cacheKey = buildCredentialRecordsCacheKey(input);
+    const cached = input.cache?.get(cacheKey) ?? null;
+    if (cached && input.cache?.isFresh(cached)) {
+        return cached.kind === 'success' ? cached.value : [];
+    }
+
+    const cache = input.cache;
+    if (cache) {
+        return await cache.runDedupe(cacheKey, async () => {
+            const cachedAfterDedupe = cache.get(cacheKey) ?? null;
+            if (cachedAfterDedupe && cache.isFresh(cachedAfterDedupe)) {
+                return cachedAfterDedupe.kind === 'success' ? cachedAfterDedupe.value : [];
+            }
+
+            try {
+                const records = await readConnectedServiceCredentialRecords({
+                    serviceId: input.serviceId,
+                    profileId: input.profileId,
+                });
+                cache.setSuccess(cacheKey, records);
+                return records;
+            } catch {
+                cache.setError(cacheKey);
+                return [];
+            }
+        });
+    }
+
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) return [];
     const api = await ApiClient.create(credentials);
@@ -233,9 +276,12 @@ export function createHostScmHostingProviderRuntimeServices(
         return providerRegistry;
     };
     const authMaterializationRegistry: ScmHostingAuthMaterializationRegistry = {
-        connectedAccountDescriptors: input.contributes.connectedAccountDescriptors ?? [],
-        hookHandlersByHookId: input.hookHandlersByHookId,
+        scmHostingProvidersById: input.scmHostingProvidersById,
     };
+    const connectedServiceCredentialRecordsCache: ScmHostingCredentialRecordsCache = new AsyncTtlCache({
+        successTtlMs: DEFAULT_SCM_HOSTING_CREDENTIAL_RECORDS_SUCCESS_TTL_MS,
+        errorTtlMs: DEFAULT_SCM_HOSTING_CREDENTIAL_RECORDS_ERROR_TTL_MS,
+    });
 
     const services: ScmHostingProviderRuntimeServices = {
         async resolveScmHostingTokenMaterialization(
@@ -248,6 +294,7 @@ export function createHostScmHostingProviderRuntimeServices(
             const records = await readConnectedServiceCredentialRecords({
                 serviceId,
                 profileId: request.profileId,
+                cache: connectedServiceCredentialRecordsCache,
             });
             const result = await resolveScmHostingTokenMaterialization({
                 kind: request.kind,
@@ -273,6 +320,7 @@ export function createHostScmHostingProviderRuntimeServices(
             const records = await readConnectedServiceCredentialRecords({
                 serviceId,
                 profileId: request.profileId,
+                cache: connectedServiceCredentialRecordsCache,
             });
             const result = await resolveScmHostingBasicAuthMaterialization({
                 kind: request.kind,

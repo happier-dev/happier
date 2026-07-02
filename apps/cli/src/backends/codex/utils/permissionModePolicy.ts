@@ -1,10 +1,10 @@
 import type { PermissionMode } from '@/api/types';
 
-import type { CodexSessionConfig } from '../mcp/types';
+import type { CodexStartSessionConfig } from './startSessionConfig';
 
 export type CodexMcpPolicy = {
-  approvalPolicy: NonNullable<CodexSessionConfig['approval-policy']>;
-  sandbox: NonNullable<CodexSessionConfig['sandbox']>;
+  approvalPolicy: NonNullable<CodexStartSessionConfig['approval-policy']>;
+  sandbox: NonNullable<CodexStartSessionConfig['sandbox']>;
 };
 
 export type CodexAppServerApprovalPolicy =

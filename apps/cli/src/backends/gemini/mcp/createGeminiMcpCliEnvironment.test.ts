@@ -8,7 +8,7 @@ import { withTempDirSync } from '@/testkit/fs/tempDir';
 import { createGeminiMcpCliEnvironment } from './createGeminiMcpCliEnvironment';
 
 describe('createGeminiMcpCliEnvironment', () => {
-  it('copies Gemini auth files and merges MCP servers into a temporary CLI home without persisting MCP env secrets', () => {
+  it('copies Gemini auth files and scrubs MCP servers from the temporary CLI home', () => {
     withTempDirSync('happier-gemini-source-home-', (sourceHome) => {
       const geminiDir = join(sourceHome, '.gemini');
       mkdirSync(geminiDir, { recursive: true });
@@ -32,23 +32,37 @@ describe('createGeminiMcpCliEnvironment', () => {
         expect(prepared.env.HOME).toBe(prepared.cliHomeDir);
         expect(prepared.env.XDG_CONFIG_HOME).toBe(join(prepared.cliHomeDir, '.config'));
         expect(readFileSync(join(prepared.cliHomeDir, '.gemini', 'oauth_creds.json'), 'utf8')).toContain('oauth-token');
-        expect(prepared.env.HAPPIER_GEMINI_MCP_ENV_QA_STDIO_QA_TOKEN).toBe('secret');
-
         const settings = JSON.parse(readFileSync(join(prepared.cliHomeDir, '.gemini', 'settings.json'), 'utf8')) as {
           theme?: string;
           mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }>;
         };
         expect(settings.theme).toBe('dark');
-        expect(settings.mcpServers?.qa_stdio).toEqual({
-          command: 'node',
-          args: ['server.js'],
-          env: { QA_TOKEN: '$HAPPIER_GEMINI_MCP_ENV_QA_STDIO_QA_TOKEN' },
-          cwd: '/tmp/workspace',
-        });
+        expect(settings).not.toHaveProperty('mcpServers');
         expect(JSON.stringify(settings)).not.toContain('secret');
 
         prepared.cleanup();
         expect(() => readFileSync(join(prepared.cliHomeDir, '.gemini', 'settings.json'), 'utf8')).toThrow();
+      } finally {
+        prepared.cleanup();
+      }
+    });
+  });
+
+  it('fails closed by replacing malformed copied settings with an empty object', () => {
+    withTempDirSync('happier-gemini-source-home-', (sourceHome) => {
+      const geminiDir = join(sourceHome, '.gemini');
+      mkdirSync(geminiDir, { recursive: true });
+      writeFileSync(join(geminiDir, 'settings.json'), '{"theme":"dark","mcpServers":{"leak":', 'utf8');
+
+      const prepared = createGeminiMcpCliEnvironment({
+        cwd: '/tmp/workspace',
+        processEnv: { HOME: sourceHome },
+        mcpServers: {},
+      });
+
+      try {
+        const settings = JSON.parse(readFileSync(join(prepared.cliHomeDir, '.gemini', 'settings.json'), 'utf8'));
+        expect(settings).toEqual({});
       } finally {
         prepared.cleanup();
       }

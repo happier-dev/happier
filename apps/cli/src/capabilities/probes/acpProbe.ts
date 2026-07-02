@@ -47,15 +47,20 @@ function buildAcpProbeCacheKey(params: {
 }
 
 async function terminateProcess(child: ChildProcess): Promise<void> {
-    if (child.killed) return;
+    const hasExited = () => child.exitCode !== null || child.signalCode !== null;
+    if (hasExited()) return;
 
     if (process.platform === 'win32') {
         await killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
         return;
     }
 
+    let exited = false;
     const waitForExit = new Promise<void>((resolve) => {
-        child.once('exit', () => resolve());
+        child.once('exit', () => {
+            exited = true;
+            resolve();
+        });
     });
 
     try {
@@ -69,7 +74,7 @@ async function terminateProcess(child: ChildProcess): Promise<void> {
         new Promise<void>((resolve) => setTimeout(resolve, 250)),
     ]);
 
-    if (!child.killed) {
+    if (!exited && !hasExited()) {
         try {
             child.kill('SIGKILL');
         } catch {

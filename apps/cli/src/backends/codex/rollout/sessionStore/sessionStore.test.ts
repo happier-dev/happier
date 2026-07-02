@@ -583,6 +583,131 @@ describe('createCodexRolloutSessionStore', () => {
         expect(JSON.stringify(events[0]?.items ?? [])).toContain('known child live follow');
     });
 
+    it('does not reopen completed known sidechain rollouts when live follow starts after paging history', async () => {
+        const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-completed-sidechain-follow-')));
+        const codexHome = join(root, 'codex-home');
+        const sessionsDir = join(codexHome, 'sessions');
+        await mkdir(sessionsDir, { recursive: true });
+
+        const sessionId = '51515151-5151-5151-5151-515151515151';
+        const completedChildThreadId = '61616161-6161-6161-6161-616161616161';
+        const activeChildThreadId = '71717171-7171-7171-7171-717171717171';
+        const parentFilePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+        const completedChildFilePath = join(sessionsDir, `rollout-2026-01-02T00-00-01-${completedChildThreadId}.jsonl`);
+        const activeChildFilePath = join(sessionsDir, `rollout-2026-01-02T00-00-02-${activeChildThreadId}.jsonl`);
+        await writeFile(
+            parentFilePath,
+            sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/completed-sidechain' })
+            + `${JSON.stringify({
+                type: 'event_msg',
+                timestamp: '2026-01-02T00:00:01.000Z',
+                payload: {
+                    type: 'collab_agent_spawn_end',
+                    sender_thread_id: sessionId,
+                    new_thread_id: completedChildThreadId,
+                    new_agent_nickname: 'Curie',
+                    new_agent_role: 'explorer',
+                    prompt: 'completed child',
+                },
+            })}\n`
+            + `${JSON.stringify({
+                type: 'event_msg',
+                timestamp: '2026-01-02T00:00:02.000Z',
+                payload: {
+                    type: 'collab_agent_spawn_end',
+                    sender_thread_id: sessionId,
+                    new_thread_id: activeChildThreadId,
+                    new_agent_nickname: 'Noether',
+                    new_agent_role: 'explorer',
+                    prompt: 'active child',
+                },
+            })}\n`
+            + `${JSON.stringify({
+                type: 'event_msg',
+                timestamp: '2026-01-02T00:00:03.000Z',
+                payload: {
+                    type: 'collab_waiting_end',
+                    sender_thread_id: sessionId,
+                    agent_statuses: [{
+                        thread_id: completedChildThreadId,
+                        name: 'Curie',
+                        status: { completed: 'done' },
+                    }],
+                },
+            })}\n`,
+            'utf8',
+        );
+        await writeFile(
+            completedChildFilePath,
+            responseItemLine({
+                timestamp: '2026-01-02T00:00:04.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'completed child history' }] },
+            }),
+            'utf8',
+        );
+        await writeFile(
+            activeChildFilePath,
+            responseItemLine({
+                timestamp: '2026-01-02T00:00:05.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'active child history' }] },
+            }),
+            'utf8',
+        );
+
+        const store = createCodexRolloutSessionStore({
+            key: {
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                remoteSessionId: sessionId,
+            },
+            activeServerDir: join(root, 'servers', 'cloud'),
+            env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        });
+
+        const initialPage = await store.pageOlder({ direction: 'older', maxBytes: 1024 * 1024, maxItems: 30 });
+        expect(JSON.stringify(initialPage.items)).toContain('completed child history');
+        expect(JSON.stringify(initialPage.items)).toContain('active child history');
+
+        const events: Array<{ items: readonly unknown[]; nextCursor: string | null; truncated: boolean }> = [];
+        const unsubscribe = store.subscribe((event) => {
+            events.push(event);
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(events).toHaveLength(0);
+
+        await appendFile(
+            completedChildFilePath,
+            responseItemLine({
+                timestamp: '2026-01-02T00:00:06.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'completed child late append' }] },
+            }),
+            'utf8',
+        );
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(events).toHaveLength(0);
+
+        await appendFile(
+            activeChildFilePath,
+            responseItemLine({
+                timestamp: '2026-01-02T00:00:07.000Z',
+                payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'active child live follow remains open' }] },
+            }),
+            'utf8',
+        );
+
+        const deadline = Date.now() + 5_000;
+        while (events.length === 0 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+
+        unsubscribe();
+
+        expect(events.length).toBeGreaterThanOrEqual(1);
+        const serializedEvents = JSON.stringify(events.flatMap((event) => event.items));
+        expect(serializedEvents).toContain('active child live follow remains open');
+    });
+
     it('refreshes cached metadata when a rollout appears after app-server fallback warmed the store', async () => {
         const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-codex-rollout-store-refresh-')));
         const codexHome = join(root, 'codex-home');

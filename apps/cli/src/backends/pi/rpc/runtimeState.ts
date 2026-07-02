@@ -99,11 +99,11 @@ export async function publishPiRuntimeState(params: Readonly<{
         if (!name) return null;
         const description = asNonEmptyString(item?.description) ?? undefined;
         return {
-          command: name.startsWith('/') ? name : `/${name}`,
+          name: name.startsWith('/') ? name : `/${name}`,
           ...(description ? { description } : {}),
         };
       })
-      .filter((entry): entry is { command: string; description?: string } => entry !== null);
+      .filter((entry): entry is { name: string; description?: string } => entry !== null);
 
     params.emitMessage({
       type: 'event',

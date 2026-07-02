@@ -4,8 +4,9 @@ import { logger } from '@/ui/logger';
 import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
 import { mapToClaudeMode } from '@/backends/claude/utils/permissionMode';
 import { getProjectPath } from '@/backends/claude/utils/path';
-import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
+import type { SessionHookData } from '@happier-dev/plugins-claude/agent/hooks/protocol';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
+import type { ClaudeCompletionEvent } from '@/backends/claude/contextCompactionEvents';
 
 import type { RuntimeSettingsSnapshot } from './agentSdk/claudeAgentSdkLaunchConfig';
 import type { RunClaudeRemoteAgentSdkCanCallToolOptions } from './runAgentSdkTypes';
@@ -17,7 +18,7 @@ type SessionControllerParams = {
     workDir: string;
     getClaudeConfigDir: () => string | null | undefined;
     onSessionFound: (id: string, data?: SessionHookData) => void;
-    onCompletionEvent?: ((message: string) => void) | undefined;
+    onCompletionEvent?: ((message: ClaudeCompletionEvent) => void) | undefined;
     canCallTool: (
         toolName: string,
         input: unknown,

@@ -55,6 +55,23 @@ export function asError(value: unknown): Error {
   return new Error(String(value));
 }
 
+export class PiRpcCommandResponseTimeoutError extends Error {
+  readonly commandType: PiRpcCommandWithoutId['type'];
+
+  constructor(commandType: PiRpcCommandWithoutId['type']) {
+    super(`Timed out waiting for Pi RPC response (${commandType})`);
+    this.name = 'PiRpcCommandResponseTimeoutError';
+    this.commandType = commandType;
+  }
+}
+
+export function isPromptResponseTimeoutError(error: Error): boolean {
+  if (error instanceof PiRpcCommandResponseTimeoutError) {
+    return error.commandType === 'prompt';
+  }
+  return error.message.toLowerCase() === 'timed out waiting for pi rpc response (prompt)';
+}
+
 export function asFiniteNonNegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }

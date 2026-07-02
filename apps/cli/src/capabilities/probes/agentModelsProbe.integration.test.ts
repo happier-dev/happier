@@ -85,6 +85,44 @@ describe('probeModelsFromAcpBackend', () => {
     }
   }, 20_000);
 
+  it('extracts Kimi-style modelId values from ACP session/new available models', async () => {
+    const fixture = await createProbeTempDir('happier-acp-model-probe-kimi');
+    const sdkEntry = resolveAcpSdkEntryFromCwd(process.cwd());
+
+    const agentPath = await writeFakeAcpAgentScript({
+      dir: fixture.dir,
+      sdkEntry,
+      sessionPayloadSource: `{
+      sessionId: randomUUID(),
+      models: {
+        currentModelId: "kimi-code/kimi-for-coding",
+        availableModels: [
+          { modelId: "kimi-code/kimi-for-coding", name: "Kimi for Coding" },
+          { modelId: "kimi-code/kimi-for-coding,thinking", name: "Kimi for Coding Thinking" },
+        ],
+      },
+    }`,
+    });
+
+    const backend = new AcpBackend(
+      createProbeBackendOptions({
+        cwd: fixture.dir,
+        agentPath,
+      }),
+    );
+    try {
+      const models = await probeModelsFromAcpBackend({ backend, timeoutMs: 10_000 });
+      expect(models).not.toBeNull();
+      expect(models).toEqual(expect.arrayContaining([
+        { id: 'kimi-code/kimi-for-coding', name: 'Kimi for Coding' },
+        { id: 'kimi-code/kimi-for-coding,thinking', name: 'Kimi for Coding Thinking' },
+      ]));
+    } finally {
+      await backend.dispose().catch(() => {});
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
   it('extracts available models from ACP session/new configOptions when models are absent', async () => {
     const fixture = await createProbeTempDir('happier-acp-model-probe-config');
     const sdkEntry = resolveAcpSdkEntryFromCwd(process.cwd());
@@ -283,6 +321,63 @@ describe('probeAgentModelsBestEffort', () => {
       } else {
         delete process.env.HAPPIER_OPENCODE_PATH;
       }
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
+  it('wraps OpenCode JavaScript model probe entrypoints with the managed JavaScript runtime', async () => {
+    const fixture = await createProbeTempDir('happier-cli-model-probe-opencode-js');
+    const binDir = resolve(join(fixture.dir, 'bin'));
+    await mkdir(binDir, { recursive: true });
+
+    const opencodePath = resolve(join(binDir, 'opencode.js'));
+    await writeExecutableScript(
+      opencodePath,
+      `
+const args = process.argv.slice(2);
+if (args[0] === "models" && args.includes("--verbose")) {
+  process.stdout.write(
+    "openai/gpt-4.1-js\\n"
+    + "{\\n"
+    + "  \\"id\\": \\"gpt-4.1-js\\",\\n"
+    + "  \\"providerID\\": \\"openai\\",\\n"
+    + "  \\"name\\": \\"GPT-4.1 JS\\",\\n"
+    + "  \\"family\\": \\"gpt-4.1\\",\\n"
+    + "  \\"status\\": \\"active\\",\\n"
+    + "  \\"capabilities\\": { \\"toolcall\\": true, \\"reasoning\\": true, \\"input\\": { \\"text\\": true } },\\n"
+    + "  \\"variants\\": { \\"medium\\": { \\"reasoningEffort\\": \\"medium\\" } }\\n"
+    + "}\\n"
+  );
+  process.exit(0);
+}
+process.exit(1);
+`,
+    );
+
+    const prevPath = process.env.PATH;
+    const prevOverride = process.env.HAPPIER_OPENCODE_PATH;
+    const prevRuntime = process.env.HAPPIER_JS_RUNTIME_PATH;
+    process.env.PATH = binDir;
+    process.env.HAPPIER_OPENCODE_PATH = opencodePath;
+    process.env.HAPPIER_JS_RUNTIME_PATH = process.execPath;
+    try {
+      const res = await probeAgentModelsBestEffort({
+        agentId: 'opencode',
+        cwd: fixture.dir,
+        timeoutMs: CLI_MODELS_PROBE_TEST_TIMEOUT_MS,
+      });
+      expect(res.source).toBe('dynamic');
+      expect(res.availableModels).toContainEqual(expect.objectContaining({
+        id: 'openai/gpt-4.1-js',
+        name: 'GPT-4.1 JS',
+        modelOptions: [expect.objectContaining({ id: 'reasoning_effort' })],
+      }));
+    } finally {
+      process.env.PATH = prevPath;
+      if (typeof prevOverride === 'string') process.env.HAPPIER_OPENCODE_PATH = prevOverride;
+      else delete process.env.HAPPIER_OPENCODE_PATH;
+      if (typeof prevRuntime === 'string') process.env.HAPPIER_JS_RUNTIME_PATH = prevRuntime;
+      else delete process.env.HAPPIER_JS_RUNTIME_PATH;
       await fixture.cleanup();
     }
   }, 20_000);

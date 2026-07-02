@@ -7,7 +7,7 @@ vi.mock('@/agent/prompting/coding/resolveEffectiveCodingPrompt', () => ({
 }));
 
 describe('resolveGeminiSystemPromptText', () => {
-  it('includes the shell-bridge tool delivery context (session id + directory)', async () => {
+  it('derives Gemini tool delivery from the canonical manifest', async () => {
     const { resolveGeminiSystemPromptText } = await import('./resolveGeminiSystemPromptText');
 
     const out = await resolveGeminiSystemPromptText({
@@ -27,11 +27,10 @@ describe('resolveGeminiSystemPromptText', () => {
     expect(out).toBe('PROMPT');
     expect(resolveEffectiveCodingPromptText).toHaveBeenCalledWith(expect.objectContaining({
       providerId: 'gemini',
-      toolDelivery: 'shell_bridge',
+      toolDelivery: 'native_mcp',
       toolDeliverySessionId: 'sess_1',
       toolDeliveryDirectory: '/tmp/worktree',
       memoryMachineId: 'machine_1',
     }));
   });
 });
-

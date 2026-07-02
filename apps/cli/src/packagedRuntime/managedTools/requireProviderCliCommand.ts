@@ -1,5 +1,5 @@
 import {
-  getProviderCliRuntimeSpec,
+  getAgentCliRuntimeSpec,
   isAgentId,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
@@ -7,12 +7,12 @@ import type { CatalogAgentLookupId } from '@/backends/types';
 
 import { readProviderCliOverrideForRuntime, resolveProviderCliCommandForRuntime } from './providerCliResolution';
 
-export function resolveProviderCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
+export function resolveAgentCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
   if (isAgentId(agentId)) {
-    return getProviderCliRuntimeSpec(agentId);
+    return getAgentCliRuntimeSpec(agentId);
   }
   if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
-    return legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
+    return legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
   }
   throw new Error(`Unsupported provider CLI runtime lookup id '${agentId}'`);
 }
@@ -22,7 +22,7 @@ export function buildMissingProviderCliCommandErrorMessage(
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
   const processEnv = opts.processEnv ?? process.env;
-  const runtimeSpec = resolveProviderCliRuntimeSpecForLookupId(agentId);
+  const runtimeSpec = resolveAgentCliRuntimeSpecForLookupId(agentId);
   const envKey = `HAPPIER_${agentId.toUpperCase()}_PATH`;
   if (readProviderCliOverrideForRuntime(runtimeSpec, processEnv)) {
     return (
@@ -40,7 +40,7 @@ export function requireProviderCliCommand(
   agentId: CatalogAgentLookupId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
-  const resolved = resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(agentId), {
+  const resolved = resolveProviderCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(agentId), {
     processEnv: opts.processEnv,
   });
   if (resolved) return resolved.command;

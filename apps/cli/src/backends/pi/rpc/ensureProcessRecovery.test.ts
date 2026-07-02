@@ -58,6 +58,7 @@ rl.on('line', (line) => {
       promptCount += 1;
       out({ id: command.id, type: 'response', command: 'prompt', success: true });
       out({ type: 'turn_end' });
+      out({ type: 'agent_end' });
       if (promptCount === 1) {
         const mode = process.env.CRASH_MODE || 'timeout';
         if (mode === 'immediate') {
@@ -175,5 +176,38 @@ describe('PiRpcBackend ensureProcess recovery', () => {
     expect(boots.length).toBe(2);
     expect(boots[1]!.argv).toContain('--session');
     expect(boots[1]!.argv).toContain(sessionPath);
+  });
+
+  it('falls back to Pi native bare id when recovering without a session file', async () => {
+    workDir = makeTempDir('happier-pi-recovery-bare-id-');
+    const piDir = join(workDir, 'pi-agent');
+    const bootLogPath = join(workDir, 'boot.log');
+    const authPath = join(piDir, 'auth.json');
+
+    mkdirSync(piDir, { recursive: true, mode: 0o700 });
+    writeFileSync(authPath, JSON.stringify({ 'openai-codex': { type: 'oauth', access: 'a', refresh: 'r', expires: 999999999 } }) + '\n');
+
+    const fake = makeFakePiRpcCrashAfterFirstTurnScript(workDir);
+    backend = new PiRpcBackend({
+      cwd: workDir,
+      command: process.execPath,
+      args: [fake],
+      env: {
+        BOOT_LOG_PATH: bootLogPath,
+        PI_CODING_AGENT_DIR: piDir,
+      },
+    });
+
+    const started = await backend.startSession();
+    await backend.sendPrompt(started.sessionId, 'first');
+
+    await new Promise((r) => setTimeout(r, 30));
+
+    await backend.sendPrompt(started.sessionId, 'second');
+
+    const boots = parseBootLog(await readFile(bootLogPath, 'utf8'));
+    expect(boots.length).toBe(2);
+    expect(boots[1]!.argv).toContain('--session');
+    expect(boots[1]!.argv).toContain('pi-session-1');
   });
 });

@@ -9,6 +9,8 @@ describe('backends/ohMyPi/index', () => {
     expect(agent.vendorResumeSupport).toBe('supported');
     expect(agent.getExternalSessionProviderOps).toBeTypeOf('function');
     expect(agent.getConnectedServicesMaterializer).toBeTypeOf('function');
+    expect(agent.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
+    expect(agent.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
     expect(agent.getTerminalRuntimeOps).toBeTypeOf('function');
     expect(agent.getRuntimeCore).toBeTypeOf('function');
   });

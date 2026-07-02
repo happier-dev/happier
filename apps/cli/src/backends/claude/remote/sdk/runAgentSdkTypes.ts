@@ -3,7 +3,9 @@ import type { JsRuntime } from '@/backends/claude/runtime/claudeSessionRuntimeOp
 import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
 import type { SDKMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
-import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
+import type { SessionHookData } from '@happier-dev/plugins-claude/agent/hooks/protocol';
+import type { ClaudeCompletionEvent } from '@/backends/claude/contextCompactionEvents';
+import type { NormalizedClaudeUsageLimitDetails } from '@happier-dev/plugins-claude/agent/auth/services/runtime';
 
 import type { Query as AgentSdkQueryType } from '@anthropic-ai/claude-agent-sdk';
 
@@ -45,11 +47,13 @@ export type RunClaudeRemoteAgentSdkOptions = {
     onThinkingChange?: (thinking: boolean) => void;
     onMessage: (message: SDKMessage) => void;
     streamedTranscriptWriter?: StreamedTranscriptWriter | null;
-    onCompletionEvent?: (message: string) => void;
+    onCompletionEvent?: (message: ClaudeCompletionEvent) => void;
     onSessionReset?: () => void;
     setUserMessageSender?: (sender: ((message: SDKUserMessage) => void) | null) => void;
     setTurnInterrupt?: ((handler: (() => Promise<void>) | null) => void) | null;
     onCheckpointCaptured?: (checkpointId: string) => void;
+    onRateLimitEvent?: (details: NormalizedClaudeUsageLimitDetails) => void | Promise<void>;
+    onRuntimeAuthFailureEvent?: (error: unknown) => boolean | void | Promise<boolean | void>;
     onCapabilities?: (caps: {
         slashCommands?: string[];
         slashCommandDetails?: Array<{ command: string; description?: string }>;

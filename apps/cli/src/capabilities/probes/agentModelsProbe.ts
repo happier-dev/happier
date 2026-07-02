@@ -1,16 +1,16 @@
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
+import { hasCatalogAcpBackendOwner } from '@/agent/acp/catalog/owner';
 import { resolveCliPathOverride } from '@/agent/runtime/cli/resolveCliPathOverride';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentLookupId } from '@/backends/types';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
-import { resolveProviderCliCommandForRuntime } from '@/packagedRuntime/managedTools/providerCliResolution';
+import { resolveProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import {
   getAgentModelConfig,
   getAgentStaticModels,
-  getProviderCliRuntimeSpec,
   isAgentId,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
@@ -44,6 +44,7 @@ export type ProbedAgentModel = Readonly<{
   id: string;
   name: string;
   description?: string;
+  contextWindowTokens?: number;
   modelOptions?: ReadonlyArray<ProbedAgentModelOption>;
 }>;
 
@@ -79,7 +80,8 @@ const ProbeModelOptionInputSchema = z.object({
   options: z.array(z.unknown()).optional(),
 });
 const ProbeDynamicModelInputSchema = z.object({
-  id: ProbeNonEmptyStringSchema,
+  id: ProbeNonEmptyStringSchema.optional(),
+  modelId: ProbeNonEmptyStringSchema.optional(),
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
   modelOptions: z.array(z.unknown()).optional(),
@@ -118,16 +120,6 @@ function resolveAgentStaticModelsForLookupId(agentId: CatalogAgentLookupId) {
   throw new Error(`Unsupported agent static model lookup id '${agentId}'`);
 }
 
-function resolveProviderCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
-  if (isAgentId(agentId)) {
-    return getProviderCliRuntimeSpec(agentId);
-  }
-  if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
-    return legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
-  }
-  throw new Error(`Unsupported provider CLI runtime lookup id '${agentId}'`);
-}
-
 function buildStatic(agentId: CatalogAgentLookupId): ProbedAgentModelsResult {
   const cfg = resolveAgentModelConfigForLookupId(agentId);
   const supportsFreeform = cfg.supportsSelection === true && cfg.supportsFreeform === true;
@@ -139,6 +131,7 @@ function buildStatic(agentId: CatalogAgentLookupId): ProbedAgentModelsResult {
         id: model.id,
         name: model.name,
         ...(typeof model.description === 'string' ? { description: model.description } : {}),
+        ...(typeof model.contextWindowTokens === 'number' ? { contextWindowTokens: model.contextWindowTokens } : {}),
         ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0 ? { modelOptions: model.modelOptions } : {}),
       })),
     ]
@@ -195,12 +188,15 @@ function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {
   const parsed = ProbeDynamicModelInputSchema.safeParse(modelRaw);
   if (!parsed.success) return null;
 
+  const id = parsed.data.id ?? parsed.data.modelId;
+  if (!id) return null;
+
   const normalizedOptions = parsed.data.modelOptions
     ?.map((option) => normalizeProbeModelOption(option))
     .filter((option): option is NonNullable<typeof option> => option !== null);
 
   return {
-    id: parsed.data.id,
+    id,
     name: parsed.data.name,
     ...(parsed.data.description ? { description: parsed.data.description } : {}),
     ...(normalizedOptions && normalizedOptions.length > 0 ? { modelOptions: normalizedOptions } : {}),
@@ -544,6 +540,7 @@ export async function probeAgentModelsBestEffort(params: {
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
   const probeVariant = await resolveAgentProbeVariant({
     agentId: params.agentId,
+    probeKind: 'models',
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
   });
@@ -597,6 +594,7 @@ export async function probeAgentModelsBestEffort(params: {
         const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
           const modelsRaw = await probeModelsRaw({
             backendTarget: params.backendTarget,
+            probeKind: 'models',
             cwd,
             timeoutMs,
             accountSettings: params.accountSettings ?? null,
@@ -625,11 +623,15 @@ export async function probeAgentModelsBestEffort(params: {
       // This avoids needing to start a full ACP session just to populate a menu.
       const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs;
       if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
-        const command =
-          resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(params.agentId))?.command
-          ?? resolveCliPathOverride({ agentId: params.agentId })
-          ?? params.agentId;
-        const models = await probeModelsFromCliModelsCommand({ command, args: cliProbeArgs, cwd, timeoutMs }).catch(() => null);
+        const launch = resolveProviderCliLaunchSpec(params.agentId);
+        const models = launch
+          ? await probeModelsFromCliModelsCommand({
+            command: launch.command,
+            args: [...launch.args, ...cliProbeArgs],
+            cwd,
+            timeoutMs,
+          }).catch(() => null)
+          : null;
         if (models) {
           const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
           agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
@@ -637,7 +639,7 @@ export async function probeAgentModelsBestEffort(params: {
         }
       }
 
-      if (!entry?.getAcpBackendFactory) {
+      if (!hasCatalogAcpBackendOwner(entry)) {
         agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
         return fallback;
       }
@@ -654,12 +656,17 @@ export async function probeAgentModelsBestEffort(params: {
 
       let backend: AcpProbeBackend | null = null;
       try {
+        const probeBackendOptions = entry.resolveModelsProbeBackendOptions?.({
+          backendTarget: params.backendTarget,
+          accountSettings: params.accountSettings,
+        }) ?? {};
         const created = await createCatalogAcpBackend<any>(params.agentId, {
           cwd,
           env: {},
           mcpServers: {},
           permissionHandler,
           permissionMode: 'default',
+          ...probeBackendOptions,
         });
         backend = created.backend;
         if (!backend) {

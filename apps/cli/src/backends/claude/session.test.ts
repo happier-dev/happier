@@ -34,6 +34,7 @@ function createSessionClientStub(overrides?: Partial<SessionClientPort>): Sessio
     getMetadataSnapshot: () => null,
     waitForMetadataUpdate: vi.fn(async () => false),
     popPendingMessage: vi.fn(async () => false),
+    shouldAttemptPendingMaterialization: vi.fn(() => true),
     peekPendingMessageQueueV2Count: vi.fn(async () => 0),
     discardPendingMessageQueueV2All: vi.fn(async () => 0),
     discardCommittedMessageLocalIds: vi.fn(async () => 0),
@@ -191,6 +192,52 @@ describe('Session', () => {
       expect(metadata.claudeSessionId).toBe('sess_1');
       expect(metadata.claudeTranscriptPath).toBe('/tmp/sess_1.jsonl');
       expect(events).toEqual([{ sessionId: 'sess_1', transcriptPath: '/tmp/sess_1.jsonl' }]);
+    } finally {
+      session.cleanup();
+    }
+  });
+
+  it('reports discovered Claude session metadata back to the daemon tracker', async () => {
+    let metadata: Metadata = createMetadataStub({ startedBy: 'daemon' });
+    const reportSessionMetadataToDaemon = vi.fn(async () => {});
+
+    const client = createSessionClientStub({
+      sessionId: 'happy-session-1',
+      updateMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
+    });
+
+    const session = new Session({
+      client,
+      path: '/tmp',
+      logPath: '/tmp/log',
+      sessionId: null,
+      messageQueue: new MessageQueue2<EnhancedMode>(() => 'mode'),
+      onModeChange: () => {},
+      hookSettingsPath: '/tmp/hooks.json',
+      startedBy: 'daemon',
+      reportSessionMetadataToDaemon,
+    });
+
+    try {
+      session.onSessionFound('claude-session-1', hookWithTranscript('/tmp/claude-session-1.jsonl'));
+
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+
+      expect(metadata).toMatchObject({
+        startedBy: 'daemon',
+        claudeSessionId: 'claude-session-1',
+        claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
+      });
+      expect(reportSessionMetadataToDaemon).toHaveBeenCalledWith({
+        sessionId: 'happy-session-1',
+        metadata: expect.objectContaining({
+          startedBy: 'daemon',
+          claudeSessionId: 'claude-session-1',
+          claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
+        }),
+      });
     } finally {
       session.cleanup();
     }
@@ -374,32 +421,21 @@ describe('Session', () => {
     }
   });
 
-  it('emits ACP task lifecycle events when thinking toggles', () => {
+  it('does not author ACP task lifecycle events when legacy thinking toggles', () => {
     const sendAgentMessage = vi.fn();
-    const updatePrimaryTurnRuntimeState = vi.fn();
-    const client = createSessionClientStub({ sendAgentMessage, updatePrimaryTurnRuntimeState } as any);
+    const client = createSessionClientStub({ sendAgentMessage });
 
     const session = createSession(client);
 
     try {
       session.onThinkingChange(true);
-      expect(sendAgentMessage).toHaveBeenCalledTimes(1);
-      const [provider1, payload1] = sendAgentMessage.mock.calls[0] ?? [];
-      expect(provider1).toBe('claude');
-      expect(payload1?.type).toBe('task_started');
-      expect(typeof payload1?.id).toBe('string');
-      expect(updatePrimaryTurnRuntimeState).toHaveBeenCalledWith({
-        latestTurnStatus: 'in_progress',
-      });
+      expect(sendAgentMessage).not.toHaveBeenCalled();
 
       session.onThinkingChange(true);
-      expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+      expect(sendAgentMessage).not.toHaveBeenCalled();
 
       session.onThinkingChange(false);
-      expect(sendAgentMessage).toHaveBeenCalledTimes(2);
-      const [provider2, payload2] = sendAgentMessage.mock.calls[1] ?? [];
-      expect(provider2).toBe('claude');
-      expect(payload2).toEqual({ type: 'task_complete', id: payload1.id });
+      expect(sendAgentMessage).not.toHaveBeenCalled();
     } finally {
       session.cleanup();
     }

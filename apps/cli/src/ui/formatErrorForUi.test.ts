@@ -26,6 +26,25 @@ describe('formatErrorForUi', () => {
     expect(out).not.toBe('[object Object]');
   });
 
+  it('redacts sensitive provider error details', () => {
+    const out = formatErrorForUi({
+      message: 'Authorization: Bearer provider-secret-token',
+      response: {
+        data: {
+          access_token: 'provider-access-token',
+          refresh_token: 'provider-refresh-token',
+          client_secret: 'provider-client-secret',
+        },
+      },
+    });
+
+    expect(out).not.toContain('provider-secret-token');
+    expect(out).not.toContain('provider-access-token');
+    expect(out).not.toContain('provider-refresh-token');
+    expect(out).not.toContain('provider-client-secret');
+    expect(out).toContain('[REDACTED]');
+  });
+
   it('truncates long output with a suffix', () => {
     const input = 'x'.repeat(1201);
     const out = formatErrorForUi(input, { maxChars: 1000 });

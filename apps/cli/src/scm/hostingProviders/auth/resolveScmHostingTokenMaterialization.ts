@@ -2,7 +2,7 @@ import type {
   ConnectedServiceId,
 } from '@happier-dev/protocol';
 import {
-  collectScmHostingAuthMaterializerCandidates,
+  collectScmHostingTokenMaterializerCandidates,
   type ScmHostingAuthMaterializationRegistry,
 } from './materializationRegistry';
 import type {
@@ -51,15 +51,13 @@ export async function resolveScmHostingTokenMaterialization(
   request: ScmHostingTokenMaterializationRequest,
   registry?: ScmHostingAuthMaterializationRegistry,
 ): Promise<ScmHostingTokenMaterializationResult> {
-  for (const candidate of collectScmHostingAuthMaterializerCandidates(request.kind, registry)) {
-    for (const hookHandler of candidate.handlers) {
-      const result = await hookHandler.handler(request);
-      if (!isTokenMaterializationResult(result)) {
-        continue;
-      }
-      if (result.kind === 'available' || result.reason !== 'unsupported_provider') {
-        return result;
-      }
+  for (const candidate of collectScmHostingTokenMaterializerCandidates(registry)) {
+    const result = await candidate.materializer.materialize(request);
+    if (!isTokenMaterializationResult(result)) {
+      continue;
+    }
+    if (result.kind === 'available' || result.reason !== 'unsupported_provider') {
+      return result;
     }
   }
   return { kind: 'missing', reason: 'unsupported_provider' };
@@ -69,18 +67,16 @@ export async function resolveScmHostingTokenServiceId(
   request: Omit<ScmHostingTokenMaterializationRequest, 'records'>,
   registry?: ScmHostingAuthMaterializationRegistry,
 ): Promise<ConnectedServiceId | null> {
-  for (const candidate of collectScmHostingAuthMaterializerCandidates(request.kind, registry)) {
-    for (const hookHandler of candidate.handlers) {
-      const result = await hookHandler.handler({ ...request, records: [] });
-      if (!isTokenMaterializationResult(result)) {
-        continue;
-      }
-      if (result.kind === 'available' || result.reason === 'credential_unavailable') {
-        return candidate.serviceId;
-      }
-      if (result.reason !== 'unsupported_provider') {
-        return null;
-      }
+  for (const candidate of collectScmHostingTokenMaterializerCandidates(registry)) {
+    const result = await candidate.materializer.materialize({ ...request, records: [] });
+    if (!isTokenMaterializationResult(result)) {
+      continue;
+    }
+    if (result.kind === 'available' || result.reason === 'credential_unavailable') {
+      return candidate.materializer.serviceId;
+    }
+    if (result.reason !== 'unsupported_provider') {
+      return null;
     }
   }
   return null;

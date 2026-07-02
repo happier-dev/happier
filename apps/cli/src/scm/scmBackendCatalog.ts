@@ -17,7 +17,6 @@ export type ScmBackendPluginRuntimeRegistry = Readonly<{
         scmHostingProviders?: ResolvedExecutablePluginRuntimeRegistry['contributes']['scmHostingProviders'];
         connectedAccountDescriptors?: ResolvedExecutablePluginRuntimeRegistry['contributes']['connectedAccountDescriptors'];
     }>;
-    hookHandlersByHookId?: ResolvedExecutablePluginRuntimeRegistry['hookHandlersByHookId'];
     scmHostingProvidersById?: ResolvedExecutablePluginRuntimeRegistry['scmHostingProvidersById'];
     scmBackendsById?: ResolvedExecutablePluginRuntimeRegistry['scmBackendsById'];
     scmBackendRegistrations?: ResolvedExecutablePluginRuntimeRegistry['scmBackendRegistrations'];
@@ -61,7 +60,6 @@ export function createPluginScmBackendRegistryFromRuntimeRegistry(
         hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({
             contributes: runtimeRegistry.contributes,
             scmHostingProvidersById: runtimeRegistry.scmHostingProvidersById ?? new Map(),
-            hookHandlersByHookId: runtimeRegistry.hookHandlersByHookId ?? new Map(),
         }),
     });
 }

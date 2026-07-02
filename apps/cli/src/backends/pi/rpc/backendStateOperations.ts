@@ -9,7 +9,7 @@ export function createPiRpcStateOperations(params: Readonly<{
   isDisposed: () => boolean;
   hasProcess: () => boolean;
 }>): Readonly<{
-  getState: () => Promise<PiRpcStateData>;
+  getState: (timeoutMs?: number) => Promise<PiRpcStateData>;
   getAvailableModels: () => Promise<PiRpcModelsData>;
   getSessionStats: () => Promise<PiRpcSessionStatsData>;
   getCommands: () => Promise<PiRpcCommandsData>;
@@ -17,8 +17,8 @@ export function createPiRpcStateOperations(params: Readonly<{
   resolveModelSelection: (modelIdRaw: string) => Promise<{ provider: string; modelId: string }>;
   publishUsageStatsBestEffort: () => Promise<void>;
 }> {
-  const getState = async (): Promise<PiRpcStateData> => {
-    const response = await params.sendCommand({ type: 'get_state' }, 30_000);
+  const getState = async (timeoutMs = 30_000): Promise<PiRpcStateData> => {
+    const response = await params.sendCommand({ type: 'get_state' }, timeoutMs);
     return (asRecord(response.data) ?? {}) as PiRpcStateData;
   };
 

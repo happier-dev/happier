@@ -1,9 +1,8 @@
 import type { ClaudeEnhancedModeMessageQueue, EnhancedMode } from "../claudeEnhancedMode";
 import { logger } from "@/ui/logger";
 import type { JsRuntime } from '../claudeSessionRuntimeOptions';
-import type { SessionHookData } from "../../utils/startHookServer";
+import type { SessionHookData } from '@happier-dev/plugins-claude/agent';
 import type { PermissionMode } from "@/api/types";
-import { randomUUID } from "node:crypto";
 import { join, relative, sep } from 'node:path';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
 import { configuration } from '@/configuration';
@@ -13,17 +12,13 @@ import {
     writeSessionStateFieldWithMetadataPort,
     writeSessionStateFieldWithMetadataPortBestEffort,
 } from '@/agent/runtime/state/writeSessionStateFieldWithMetadataPort';
-import {
-    recordPrimaryTurnCompleted,
-    recordPrimaryTurnInProgress,
-} from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 import type { Metadata } from '@/api/types';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { PushNotificationClient } from '@/api/pushNotifications';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import type { McpServerConfig } from '@/agent';
 import type { AccountSettings } from '@happier-dev/protocol';
-import { resolveConfiguredClaudeConfigDir } from '../../externalSessions/resolveClaudeConfigDir';
+import { resolveConfiguredClaudeConfigDir } from '@happier-dev/plugins-claude/agent';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { resolveSessionCriticalMetadataDrainTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 
@@ -33,6 +28,11 @@ export type SessionFoundInfo = {
 };
 
 export type SessionPushSender = Pick<PushNotificationClient, 'sendToAllDevices' | 'sendToAllDevicesAsync'>;
+
+type SessionMetadataDaemonReporter = (input: Readonly<{
+    sessionId: string;
+    metadata: Metadata;
+}>) => Promise<void> | void;
 
 function resolveClaudeProjectIdFromTranscriptPath(params: Readonly<{
     transcriptPath: string | null;
@@ -118,7 +118,6 @@ export class Session {
     transcriptPath: string | null = null;
     mode: 'local' | 'remote' = 'local';
     thinking: boolean = false;
-    private currentTaskId: string | null = null;
     private permissionRpcRouter: ClaudePermissionRpcRouter | null = null;
     private happierMcpBridge:
         | {
@@ -155,6 +154,7 @@ export class Session {
     /** Callbacks to be notified when session ID is found/changed */
     private sessionFoundCallbacks: ((info: SessionFoundInfo) => void)[] = [];
     private readonly criticalMetadataWrites = new Set<Promise<void>>();
+    private readonly reportSessionMetadataToDaemon: SessionMetadataDaemonReporter | null;
 
     /** Keep alive interval reference for cleanup */
     private keepAliveTimer: NodeJS.Timeout | null = null;
@@ -182,6 +182,7 @@ export class Session {
         terminalRuntime?: TerminalRuntimeFlags | null,
         defaultSystemPromptText?: string,
         precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null,
+        reportSessionMetadataToDaemon?: SessionMetadataDaemonReporter | null,
     }) {
         this.path = opts.path;
         this.client = opts.client;
@@ -202,6 +203,7 @@ export class Session {
             typeof opts.defaultSystemPromptText === 'string' && opts.defaultSystemPromptText.trim().length > 0
                 ? opts.defaultSystemPromptText.trim()
                 : undefined;
+        this.reportSessionMetadataToDaemon = opts.reportSessionMetadataToDaemon ?? null;
 
         this.keepAliveIdleMs = configuration.sessionKeepAliveIdleMs;
         this.keepAliveThinkingMs = configuration.sessionKeepAliveThinkingMs;
@@ -407,26 +409,8 @@ export class Session {
             return;
         }
 
-        if (thinking) {
-            const id = randomUUID();
-            this.currentTaskId = id;
-            this.client.sendAgentMessage('claude', { type: 'task_started', id });
-            void recordPrimaryTurnInProgress({ session: this.client }).catch((error) => {
-                logger.debug('[claude] Failed to record primary turn in-progress (non-fatal)', error);
-            });
-            return;
-        }
-
-        if (!this.currentTaskId) {
-            return;
-        }
-
-        const id = this.currentTaskId;
-        this.currentTaskId = null;
-        this.client.sendAgentMessage('claude', { type: 'task_complete', id });
-        void recordPrimaryTurnCompleted({ session: this.client }).catch((error) => {
-            logger.debug('[claude] Failed to record primary turn completion (non-fatal)', error);
-        });
+        // Legacy ClaudeSession keep-alive updates remain compatibility-only. Primary turn status
+        // is authored by the runtime-core typed RuntimeEventV1 path.
     }
 
     onModeChange = (mode: 'local' | 'remote') => {
@@ -473,14 +457,19 @@ export class Session {
         if (didSessionIdChange) {
             this.trackCriticalMetadataWrite(
                 async () => {
-                    await writeSessionStateFieldWithMetadataPort({
+                    let updatedMetadata: Metadata | null = null;
+                    const didWrite = await writeSessionStateFieldWithMetadataPort({
                         sessionId: this.client.sessionId,
-                        fieldId: 'identity.vendorSessionId',
+                        fieldId: 'identity.providerSessionId',
                         value: {
                             metadataKey: 'claudeSessionId',
                             value: sessionId,
                         },
-                        updateMetadata: (updater) => this.client.updateMetadata(updater),
+                        updateMetadata: (updater) => this.client.updateMetadata((metadata) => {
+                            const updated = updater(metadata);
+                            updatedMetadata = updated;
+                            return updated;
+                        }),
                         reason: 'reconciliation',
                         metadataReason: 'claude_session_found',
                         postprocess: (metadata) => buildClaudeExternalSessionMetadata({
@@ -492,6 +481,12 @@ export class Session {
                             transcriptPath: this.transcriptPath,
                         }),
                     });
+                    if (didWrite && updatedMetadata) {
+                        await this.reportSessionMetadataToDaemon?.({
+                            sessionId: this.client.sessionId,
+                            metadata: updatedMetadata,
+                        });
+                    }
                 },
                 'claude_session_found',
             );

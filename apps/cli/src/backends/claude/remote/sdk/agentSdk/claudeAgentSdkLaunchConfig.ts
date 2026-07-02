@@ -1,13 +1,22 @@
 import { getClaudeRemoteSystemPrompt } from '@/backends/claude/utils/remoteSystemPrompt';
 import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
+import type { ClaudeCompletionEvent } from '@/backends/claude/contextCompactionEvents';
 import { mapToClaudeMode, resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
-import { resolveClaudeEffortForModel } from '@/backends/claude/utils/claudeEffort';
 import { resolveClaudeConfigDirEnvOverlay } from '@/backends/claude/utils/resolveClaudeConfigDirEnvOverlay';
-import { resolveClaudeCodeExperimentalEnvOverlay } from '@/backends/claude/spawn/resolveClaudeCodeExperimentalEnvOverlay';
+import { isolateClaudeRuntimeAuthEnv } from '@happier-dev/plugins-claude/agent/auth/services/runtime';
+import { resolveClaudeCodeExperimentalEnvOverlay } from '@happier-dev/plugins-claude/agent/runtime/remote/sdk';
 import { resolveClaudeCodeXdgIsolation } from '@/backends/claude/utils/resolveClaudeCodeXdgIsolation';
+import { resolveClaudeEffortForModel } from '@happier-dev/plugins-claude/agent/runtime/reasoningEffort';
 import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
-
-import { parseExplicitSpawnEnvKeysFromProcessEnv } from './explicitSpawnEnvKeysMarker';
+import { createAllowedEnvKeySet, isAllowedEnvKey } from '@/utils/env/envKeyAllowlist';
+import {
+    HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY,
+    HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
+} from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import {
+    HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR,
+    parseExplicitSpawnEnvKeysFromProcessEnv,
+} from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 
 export type ClaudeSdkFlagOverrides = Readonly<{
     model?: string;
@@ -46,7 +55,7 @@ export function resolveClaudeRemoteSdkLaunchSettings(params: Readonly<{
     argOverrides: ClaudeSdkFlagOverrides;
     sessionId: string | null;
     resumeSessionAt?: string | null;
-    onCompletionEvent?: (message: string) => void;
+    onCompletionEvent?: (message: ClaudeCompletionEvent) => void;
 }>): ClaudeRemoteSdkLaunchSettings {
     const { mode, argOverrides } = params;
     const customSystemPrompt = argOverrides.customSystemPrompt ?? mode.customSystemPrompt;
@@ -198,10 +207,12 @@ export function buildClaudeAgentSdkSubprocessEnv(params: Readonly<{
     xdgIsolationEnv: Record<string, string>;
     experimentalEnvOverlay: Record<string, string>;
     env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
 }>): Record<string, string> {
     const env = params.env ?? process.env;
+    const platform = params.platform ?? process.platform;
     const explicitSpawnEnvKeys = new Set(parseExplicitSpawnEnvKeysFromProcessEnv(env));
-    const allowExact = new Set<string>([
+    const allowExact = [
         'PATH',
         'HOME',
         'USER',
@@ -225,12 +236,13 @@ export function buildClaudeAgentSdkSubprocessEnv(params: Readonly<{
         'HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID',
         'HAPPY_E2E_FAKE_CLAUDE_LOG',
         'HAPPY_E2E_FAKE_CLAUDE_SESSION_ID',
-    ]);
-    if (process.platform === 'win32') {
+    ];
+    if (platform === 'win32') {
         for (const key of ['USERPROFILE', 'USERNAME', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec', 'PATHEXT', 'WINDIR']) {
-            allowExact.add(key);
+            allowExact.push(key);
         }
     }
+    const allowExactKeys = createAllowedEnvKeySet(allowExact, platform);
     const allowPrefixes = [
         'XDG_',
         'CLAUDE_',
@@ -247,70 +259,28 @@ export function buildClaudeAgentSdkSubprocessEnv(params: Readonly<{
     for (const [key, value] of Object.entries(env)) {
         if (!isValidEnvVarKey(key)) continue;
         if (typeof value !== 'string') continue;
-        if (explicitSpawnEnvKeys.has(key) || allowExact.has(key) || allowPrefixes.some((prefix) => key.startsWith(prefix))) {
+        if (explicitSpawnEnvKeys.has(key) || isAllowedEnvKey(key, allowExactKeys, platform) || allowPrefixes.some((prefix) => key.startsWith(prefix))) {
             out[key] = value;
         }
     }
 
-    delete out.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
-    return {
+    const connectedServiceSelections = env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
+    if (typeof connectedServiceSelections === 'string') {
+        out[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] = connectedServiceSelections;
+    }
+
+    const materializedEnvKeys = env[HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY];
+    if (typeof materializedEnvKeys === 'string') {
+        out[HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY] = materializedEnvKeys;
+    }
+
+    delete out[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR];
+    return isolateClaudeRuntimeAuthEnv({
         ...params.xdgIsolationEnv,
         ...out,
         ...resolveClaudeConfigDirEnvOverlay(params.claudeConfigDir ? { ...env, CLAUDE_CONFIG_DIR: params.claudeConfigDir } : env),
         ...params.experimentalEnvOverlay,
-    };
-}
-
-export function resolveClaudeAgentSdkExtraArgs(params: Readonly<{
-    enableFileCheckpointing: boolean;
-    debugEnabled: boolean;
-    verboseEnabled: boolean;
-    debugCategories: readonly string[];
-}>): Record<string, string | null> | undefined {
-    const out: Record<string, string | null> = Object.create(null);
-    if (params.enableFileCheckpointing) out['replay-user-messages'] = null;
-    if (params.debugEnabled) out.debug = params.debugCategories.length > 0 ? params.debugCategories.join(',') : null;
-    if (params.verboseEnabled) out.verbose = null;
-    return Object.keys(out).length > 0 ? out : undefined;
-}
-
-export function applyClaudeAgentSdkAdvancedOptions(params: Readonly<{
-    queryOptions: Record<string, unknown>;
-    advancedOptions: Record<string, unknown> | null;
-}>): void {
-    if (!params.advancedOptions) return;
-
-    const allowlistedKeys = [
-        'plugins',
-        'betas',
-        'maxBudgetUsd',
-        'sandbox',
-        'additionalDirectories',
-        'permissionPromptToolName',
-        'tools',
-        'systemPrompt',
-        'debug',
-        'debugFile',
-        'stderr',
-    ] as const;
-
-    for (const key of allowlistedKeys) {
-        if (!Object.prototype.hasOwnProperty.call(params.advancedOptions, key)) continue;
-        const value = params.advancedOptions[key];
-        if (key === 'stderr') {
-            if (typeof value === 'function') params.queryOptions[key] = value;
-            continue;
-        }
-        if (key === 'debugFile') {
-            if (typeof value === 'string') params.queryOptions[key] = value;
-            continue;
-        }
-        if (key === 'debug') {
-            if (typeof value === 'boolean') params.queryOptions[key] = value;
-            continue;
-        }
-        params.queryOptions[key] = value;
-    }
+    });
 }
 
 export function getClaudeRemoteSystemPromptText(params: Readonly<{ mode: EnhancedMode }>): string {

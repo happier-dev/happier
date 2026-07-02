@@ -22,6 +22,7 @@ function makeDetectCliSnapshot(): DetectCliSnapshot {
       customAcp: makeUnavailableCliEntry(),
       ohMyPi: makeUnavailableCliEntry(),
       pi: makeUnavailableCliEntry(),
+      cursor: makeUnavailableCliEntry(),
       copilot: makeUnavailableCliEntry(),
     },
     tmux: { available: false },

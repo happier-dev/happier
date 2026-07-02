@@ -1,4 +1,4 @@
-import type { CodexSessionConfig } from '../mcp/types';
+import type { CodexStartSessionConfig } from './startSessionConfig';
 import { buildCodexMcpStartConfig } from './buildCodexMcpStartConfig';
 
 export function buildCodexMcpStartConfigForMessage(opts: Readonly<{
@@ -6,13 +6,13 @@ export function buildCodexMcpStartConfigForMessage(opts: Readonly<{
   first: boolean;
   // When `sandbox` / `approvalPolicy` are undefined, the fields are OMITTED from the start
   // request so the Codex MCP subprocess honors `~/.codex/config.toml`.
-  sandbox?: NonNullable<CodexSessionConfig['sandbox']> | null;
-  approvalPolicy?: NonNullable<CodexSessionConfig['approval-policy']> | null;
+  sandbox?: NonNullable<CodexStartSessionConfig['sandbox']> | null;
+  approvalPolicy?: NonNullable<CodexStartSessionConfig['approval-policy']> | null;
   mcpServers: unknown;
   mode: { model?: string | null | undefined };
   systemPromptText?: string | null | undefined;
   cwd?: string | null | undefined;
-}>): CodexSessionConfig {
+}>): CodexStartSessionConfig {
   const systemPromptText = typeof opts.systemPromptText === 'string' ? opts.systemPromptText.trim() : '';
 
   const baseInstructions = opts.first

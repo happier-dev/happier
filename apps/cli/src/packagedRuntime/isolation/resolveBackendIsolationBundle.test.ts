@@ -10,6 +10,8 @@ describe('resolveBackendIsolationBundle', () => {
       process.env.HAPPIER_HOME_DIR = homeDir;
       process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
       process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+      process.env.HAPPIER_OPENCODE_SERVER_TURN_INACTIVITY_TIMEOUT_MS = '250';
+      process.env.XDG_CONFIG_HOME = join(homeDir, 'config');
 
       const { reloadConfiguration } = await import('@/configuration');
       reloadConfiguration();
@@ -29,14 +31,16 @@ describe('resolveBackendIsolationBundle', () => {
       expect(bundle.env.XDG_STATE_HOME).toBe(join(root, 'xdg', 'state'));
       expect(bundle.env.XDG_CACHE_HOME).toBe(join(root, 'xdg', 'cache'));
       expect(bundle.env.XDG_DATA_HOME).toBe(join(root, 'xdg', 'data'));
-      expect(bundle.env.HOME).toBeUndefined();
-      expect(bundle.env.XDG_CONFIG_HOME).toBeUndefined();
+      expect(bundle.env.HAPPIER_OPENCODE_SERVER_TURN_INACTIVITY_TIMEOUT_MS).toBe('250');
+      expect(bundle.env.XDG_CONFIG_HOME).toBe(join(homeDir, 'config'));
     } finally {
       vi.resetModules();
       await rm(homeDir, { recursive: true, force: true });
       delete process.env.HAPPIER_HOME_DIR;
       delete process.env.HAPPIER_SERVER_URL;
       delete process.env.HAPPIER_WEBAPP_URL;
+      delete process.env.HAPPIER_OPENCODE_SERVER_TURN_INACTIVITY_TIMEOUT_MS;
+      delete process.env.XDG_CONFIG_HOME;
     }
   });
 });

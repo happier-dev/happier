@@ -3,12 +3,13 @@ import type {
     FileBackedTranscriptSessionStoreLifecycleState,
     FileBackedTranscriptSubscriptionListener,
 } from '@/api/session/fileBackedTranscripts/store';
+import { DEFAULT_JSONL_FOLLOW_POLICY } from '@/api/session/fileBackedTranscripts/jsonl/followPolicy';
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { createCodexRolloutSemanticTracker } from '../createCodexRolloutSemanticTracker';
-import { mapCodexRolloutEventToActions } from '../projection/mapCodexRolloutEventToActions';
+import { createCodexRolloutSemanticTracker } from '@happier-dev/plugins-codex/agent/rollout/semanticTracker';
+import { mapCodexRolloutEventToActions } from '@happier-dev/plugins-codex/agent/rollout/projection/actions';
 import { CodexRolloutFollowerRuntime } from '../runtime/CodexRolloutFollowerRuntime';
-import { resolveCodexRolloutSessionStoreMaxRetainedItems } from './codexRolloutSessionStoreCachePolicy';
+import { resolveCodexRolloutSessionStoreMaxRetainedItems } from '@happier-dev/plugins-codex/agent/rollout/session/cachePolicy';
 
 import type {
     CodexRolloutSessionStoreOptions,
@@ -17,18 +18,18 @@ import type {
     CodexRolloutSessionStoreReadAfterParams,
     CodexRolloutSessionStoreReadAfterResult,
 } from './codexRolloutSessionStoreTypes';
-import { encodeCodexDirectForwardCursor } from '../../externalSessions/codexDirectForwardCursor';
+import { encodeCodexExternalForwardCursor } from '@happier-dev/plugins-codex/agent/surfaces/sessions/external/transcript';
 import {
-    pageCodexRolloutDirectTranscriptHistory,
-    readAfterCodexRolloutDirectTranscriptHistory,
-    resolveCodexRolloutDirectTranscriptSnapshot,
+    pageCodexRolloutExternalTranscriptHistory,
+    readAfterCodexRolloutExternalTranscriptHistory,
+    resolveCodexRolloutExternalTranscriptSnapshot,
 } from './transcriptHistory';
 
 type CodexRolloutStoreActivity = Readonly<{ lastActivityAtMs: number | null }>;
 
 class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<ExternalSessionTranscriptRawMessageV1, CodexRolloutStoreActivity, string | null> {
     private lifecycleState: FileBackedTranscriptSessionStoreLifecycleState = 'warm_detached';
-    private readonly discoveryPollIntervalMs = 250;
+    private readonly discoveryRetryIntervalMs = DEFAULT_JSONL_FOLLOW_POLICY.missingFileRetryIntervalMs;
     private readonly subscriptionDrainMaxBytes = 8 * 1024 * 1024;
     private readonly subscriptionDrainMaxItems = 100;
     private tailCursor: string | null = null;
@@ -42,8 +43,8 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
     private replayDiscoveredHistoryOnNextDrain = false;
     private subscriptionDrainPromise: Promise<void> | null = null;
     private subscriptionDrainQueued = false;
-    private transcriptSnapshotPromise: Promise<Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>> | null = null;
-    private transcriptSnapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>> | null = null;
+    private transcriptSnapshotPromise: Promise<Awaited<ReturnType<typeof resolveCodexRolloutExternalTranscriptSnapshot>>> | null = null;
+    private transcriptSnapshot: Awaited<ReturnType<typeof resolveCodexRolloutExternalTranscriptSnapshot>> | null = null;
     private readonly maxRetainedItems: number;
 
     constructor(private readonly options: CodexRolloutSessionStoreOptions) {
@@ -61,7 +62,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
     async setLifecycleState(state: FileBackedTranscriptSessionStoreLifecycleState): Promise<void> {
         this.lifecycleState = state;
         if (state === 'hot_attached') {
-            await this.ensureSubscriptionRuntime().catch(() => undefined);
+            void this.ensureSubscriptionRuntime().catch(() => undefined);
             return;
         }
         if (this.subscriptionListeners.size === 0) {
@@ -72,7 +73,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
 
     async pageOlder(params?: unknown): Promise<CodexRolloutSessionStorePageResult> {
         const pageParams = params as CodexRolloutSessionStorePageParams | undefined;
-        const result = await pageCodexRolloutDirectTranscriptHistory({
+        const result = await pageCodexRolloutExternalTranscriptHistory({
             source: this.options.key.source,
             activeServerDir: this.options.activeServerDir,
             env: this.options.env,
@@ -81,6 +82,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
             cursor: pageParams?.cursor,
             maxBytes: pageParams?.maxBytes ?? 1024 * 1024,
             maxItems: pageParams?.maxItems ?? 100,
+            allowProviderFallback: pageParams?.allowProviderFallback,
         });
         this.tailCursor = result.tailCursor ?? this.tailCursor;
         return result;
@@ -88,7 +90,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
 
     async readAfter(params?: unknown): Promise<CodexRolloutSessionStoreReadAfterResult> {
         const readParams = params as CodexRolloutSessionStoreReadAfterParams | undefined;
-        const result = await readAfterCodexRolloutDirectTranscriptHistory({
+        const result = await readAfterCodexRolloutExternalTranscriptHistory({
             source: this.options.key.source,
             activeServerDir: this.options.activeServerDir,
             env: this.options.env,
@@ -96,6 +98,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
             cursor: readParams?.cursor ?? 'tail',
             maxBytes: readParams?.maxBytes ?? 1024 * 1024,
             maxItems: readParams?.maxItems ?? 100,
+            allowProviderFallback: readParams?.allowProviderFallback,
         });
         this.tailCursor = result.nextCursor ?? this.tailCursor;
         return result;
@@ -138,7 +141,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
     async getActivity(): Promise<CodexRolloutStoreActivity | null> {
         return this.withTranscriptSnapshot(
             (snapshot) => ({ lastActivityAtMs: snapshot.lastActivityAtMs }),
-            { allowRolloutCwdAppServerFallback: false, resolveTitle: false },
+            { resolveTitle: false },
         );
     }
 
@@ -148,7 +151,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
 
     private async withTranscriptSnapshot<TResult>(
         readSnapshot: (
-            snapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>,
+            snapshot: Awaited<ReturnType<typeof resolveCodexRolloutExternalTranscriptSnapshot>>,
         ) => TResult | Promise<TResult>,
         options?: Readonly<{ allowRolloutCwdAppServerFallback?: boolean; resolveTitle?: boolean }>,
     ): Promise<TResult> {
@@ -161,7 +164,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
     }
 
     private maybeInvalidateOversizedSnapshot(
-        snapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>,
+        snapshot: Awaited<ReturnType<typeof resolveCodexRolloutExternalTranscriptSnapshot>>,
     ): void {
         if (snapshot.rolloutHome === null) return;
         if (snapshot.mergedRecords.length <= this.maxRetainedItems) return;
@@ -170,7 +173,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
 
     private async resolveTranscriptSnapshot(
         options?: Readonly<{ allowRolloutCwdAppServerFallback?: boolean; resolveTitle?: boolean }>,
-    ): Promise<Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>> {
+    ): Promise<Awaited<ReturnType<typeof resolveCodexRolloutExternalTranscriptSnapshot>>> {
         const allowRolloutCwdAppServerFallback = options?.allowRolloutCwdAppServerFallback !== false;
         const resolveTitle = options?.resolveTitle !== false;
         const existingSnapshotNeedsCwdFallback =
@@ -185,7 +188,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
         if (this.transcriptSnapshotPromise && !existingSnapshotNeedsCwdFallback && !existingSnapshotNeedsTitle) {
             return this.transcriptSnapshotPromise;
         }
-        this.transcriptSnapshotPromise = resolveCodexRolloutDirectTranscriptSnapshot({
+        this.transcriptSnapshotPromise = resolveCodexRolloutExternalTranscriptSnapshot({
             source: this.options.key.source,
             activeServerDir: this.options.activeServerDir,
             env: this.options.env,
@@ -215,7 +218,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
                 return;
             }
             if (!primaryRolloutFilePath) {
-                if (this.subscriptionCursor === null && this.tailCursor === null) {
+                if (this.subscriptionCursor === null) {
                     this.replayDiscoveredHistoryOnNextDrain = true;
                 }
                 // Avoid pinning an empty snapshot forever while discovery waits for a late rollout file.
@@ -255,11 +258,14 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
                 await runtime.stop();
                 return;
             }
-            for (const threadId of new Set(
+            const completedThreadIds = new Set(snapshot.streamStates.flatMap((state) => state.completedChildThreadIds));
+            const knownSidechainThreadIds = new Set(
                 snapshot.streamStates
                     .filter((state) => state.stream.sidechainId !== null)
                     .map((state) => state.stream.threadId),
-            )) {
+            );
+            for (const threadId of knownSidechainThreadIds) {
+                if (completedThreadIds.has(threadId)) continue;
                 await runtime.ensureSubagentFollower(threadId);
             }
             await this.queueSubscriptionDrain();
@@ -304,6 +310,8 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
             for (const normalizedAction of this.subscriptionSemanticTracker.consume(action)) {
                 if (normalizedAction.type === 'subagent-spawn') {
                     await runtime.ensureSubagentFollower(normalizedAction.threadId);
+                } else if (normalizedAction.type === 'subagent-complete') {
+                    await runtime.closeSubagentFollower(normalizedAction.threadId);
                 }
             }
         }
@@ -391,15 +399,16 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
         if (this.subscriptionDiscoveryTimer || !this.shouldKeepSubscriptionRuntime()) {
             return;
         }
-        this.subscriptionDiscoveryTimer = setInterval(() => {
+        this.subscriptionDiscoveryTimer = setTimeout(() => {
+            this.subscriptionDiscoveryTimer = null;
             void this.ensureSubscriptionRuntime().catch(() => undefined);
-        }, this.discoveryPollIntervalMs);
+        }, this.discoveryRetryIntervalMs);
         this.subscriptionDiscoveryTimer.unref?.();
     }
 
     private clearSubscriptionDiscoveryTimer(): void {
         if (this.subscriptionDiscoveryTimer) {
-            clearInterval(this.subscriptionDiscoveryTimer);
+            clearTimeout(this.subscriptionDiscoveryTimer);
             this.subscriptionDiscoveryTimer = null;
         }
     }
@@ -417,10 +426,10 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
     }
 }
 
-function buildTailCursorFromSnapshot(snapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>): string | null {
+function buildTailCursorFromSnapshot(snapshot: Awaited<ReturnType<typeof resolveCodexRolloutExternalTranscriptSnapshot>>): string | null {
     if (snapshot.rolloutHome === null) {
         return snapshot.appServerMetadata
-            ? encodeCodexDirectForwardCursor({
+            ? encodeCodexExternalForwardCursor({
                 v: 2,
                 kind: 'codexForwardAppServer',
                 updatedAtMs: snapshot.appServerMetadata.updatedAtMs,
@@ -428,7 +437,7 @@ function buildTailCursorFromSnapshot(snapshot: Awaited<ReturnType<typeof resolve
             })
             : null;
     }
-    return encodeCodexDirectForwardCursor({
+    return encodeCodexExternalForwardCursor({
         v: 4,
         kind: 'codexForwardStreamVector',
         streams: snapshot.streamStates
@@ -441,11 +450,11 @@ function buildTailCursorFromSnapshot(snapshot: Awaited<ReturnType<typeof resolve
     });
 }
 
-function buildStartCursorFromSnapshot(snapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>): string | null {
+function buildStartCursorFromSnapshot(snapshot: Awaited<ReturnType<typeof resolveCodexRolloutExternalTranscriptSnapshot>>): string | null {
     if (snapshot.rolloutHome === null) {
         return null;
     }
-    return encodeCodexDirectForwardCursor({
+    return encodeCodexExternalForwardCursor({
         v: 4,
         kind: 'codexForwardStreamVector',
         streams: snapshot.streamStates

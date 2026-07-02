@@ -1,13 +1,14 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import type readline from 'node:readline';
+
+import type { PiRpcStreamReader } from './streamReaders';
 
 export type PiRpcBackendMutableState = Readonly<{
   getProcess: () => ChildProcessWithoutNullStreams | null;
   setProcess: (process: ChildProcessWithoutNullStreams | null) => void;
-  getStdoutLineReader: () => readline.Interface | null;
-  setStdoutLineReader: (reader: readline.Interface | null) => void;
-  getStderrLineReader: () => readline.Interface | null;
-  setStderrLineReader: (reader: readline.Interface | null) => void;
+  getStdoutLineReader: () => PiRpcStreamReader | null;
+  setStdoutLineReader: (reader: PiRpcStreamReader | null) => void;
+  getStderrLineReader: () => PiRpcStreamReader | null;
+  setStderrLineReader: (reader: PiRpcStreamReader | null) => void;
   getSessionId: () => string | null;
   setSessionId: (sessionId: string | null) => void;
   getSessionFile: () => string | null;
@@ -22,8 +23,8 @@ export type PiRpcBackendMutableState = Readonly<{
 
 export function createPiRpcBackendMutableState(): PiRpcBackendMutableState {
   let process: ChildProcessWithoutNullStreams | null = null;
-  let stdoutLineReader: readline.Interface | null = null;
-  let stderrLineReader: readline.Interface | null = null;
+  let stdoutLineReader: PiRpcStreamReader | null = null;
+  let stderrLineReader: PiRpcStreamReader | null = null;
   let sessionId: string | null = null;
   let sessionFile: string | null = null;
   let lastAuthJsonMtimeMs: number | null = null;

@@ -3,11 +3,9 @@ import { access } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { LocalHostedDirectTranscriptBinding } from '@/agent/terminalRuntime/directTranscriptBinding';
+import type { ResolveOhMyPiTerminalRuntimeBreadcrumbParams } from '@happier-dev/plugins-ohmypi/agent/terminalRuntime/breadcrumb';
 
-import {
-    runtimeBreadcrumb,
-    type ResolveOhMyPiTerminalRuntimeBreadcrumbParams,
-} from './runtimeBreadcrumb';
+import { runtimeBreadcrumb } from './runtimeBreadcrumb';
 
 type WaitForOhMyPiTerminalTranscriptBindingParams = ResolveOhMyPiTerminalRuntimeBreadcrumbParams & Readonly<{
     timeoutMs?: number;

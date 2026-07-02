@@ -25,6 +25,10 @@ export class PiRuntimeStateTracker {
     return this.sessionModelState;
   }
 
+  getCurrentModelProvider(): string | null {
+    return this.currentModelProvider;
+  }
+
   rememberCurrentModelProvider(provider: string): void {
     this.currentModelProvider = provider;
   }

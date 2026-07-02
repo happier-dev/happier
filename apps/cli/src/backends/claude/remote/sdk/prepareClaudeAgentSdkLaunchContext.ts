@@ -6,17 +6,20 @@ import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode'
 import type { PermissionResult } from '@/backends/claude/sdk/types';
 import type { SDKUserMessage } from '@/backends/claude/sdk';
 import { getDefaultClaudeCodePathForAgentSdk } from '@/backends/claude/sdk/utils';
-import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
+import type { SessionHookData } from '@happier-dev/plugins-claude/agent/hooks/protocol';
+import {
+    applyClaudeAgentSdkAdvancedOptions,
+    resolveClaudeAgentSdkExtraArgs,
+} from '@happier-dev/plugins-claude/agent/runtime/remote/sdk';
 import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { parseClaudeSdkFlagOverridesFromArgs } from '@/backends/claude/remote/sdkFlagOverrides';
 import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/sessionStartPlan';
+import { logClaudeRuntimeAuthEnvDiagnostic } from '@/backends/claude/spawn/logClaudeRuntimeAuthEnvDiagnostic';
 import {
-    applyClaudeAgentSdkAdvancedOptions,
     buildClaudeAgentSdkSubprocessEnv,
     getClaudeRemoteSystemPromptText,
-    resolveClaudeAgentSdkExtraArgs,
     resolveClaudeRemoteSdkLaunchSettings,
     resolveDesiredRuntimeSettingsSnapshot,
 } from './agentSdk/claudeAgentSdkLaunchConfig';
@@ -172,6 +175,18 @@ export async function prepareClaudeAgentSdkLaunchContext(params: {
         verboseEnabled: launchSettings.verboseEnabled,
         debugCategories: launchSettings.debugCategories,
     });
+    const childEnv = buildClaudeAgentSdkSubprocessEnv({
+        claudeConfigDir,
+        xdgIsolationEnv: launchSettings.xdgIsolationEnv,
+        experimentalEnvOverlay: launchSettings.experimentalEnvOverlay,
+    });
+    logClaudeRuntimeAuthEnvDiagnostic({
+        logPrefix: 'claudeRemoteAgentSdk',
+        sessionId: normalizedOpts.sessionId ?? null,
+        startFrom,
+        runnerEnv: process.env,
+        childEnv,
+    });
 
     const queryOptions: Record<string, unknown> = {
         abortController,
@@ -196,11 +211,7 @@ export async function prepareClaudeAgentSdkLaunchContext(params: {
         strictMcpConfig: params.initialMode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
         canUseTool: builtHooks.canUseTool,
         ...(normalizedOpts.happierMcpServers ? { mcpServers: normalizedOpts.happierMcpServers } : {}),
-        env: buildClaudeAgentSdkSubprocessEnv({
-            claudeConfigDir,
-            xdgIsolationEnv: launchSettings.xdgIsolationEnv,
-            experimentalEnvOverlay: launchSettings.experimentalEnvOverlay,
-        }),
+        env: childEnv,
         executable: runtimeExecutable,
         pathToClaudeCodeExecutable: normalizedOpts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
         enableFileCheckpointing: enableFileCheckpointing || undefined,

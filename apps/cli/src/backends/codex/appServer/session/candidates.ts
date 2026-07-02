@@ -4,7 +4,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { deriveExternalSessionActivityFromTimestamp } from '../../../../api/session/external/activity/deriveExternalSessionActivityFromTimestamp';
-import type { CodexAppServerClient } from '../client/createCodexAppServerClient';
+import type { CodexAppServerClient } from '@happier-dev/plugins-codex/agent/runtime/appServer/client';
 import { withCodexAppServerClient } from '../client/withCodexAppServerClient';
 
 type CodexAppServerThread = Readonly<{
@@ -97,7 +97,7 @@ export async function listCodexExternalSessionCandidatesViaExistingAppServerClie
                 : undefined;
         const runtimeDescriptorV1 = buildCodexAgentRuntimeDescriptor({
             backendMode: 'appServer',
-            vendorSessionId: thread.id,
+            providerSessionId: thread.id,
         });
         return {
             remoteSessionId: thread.id,

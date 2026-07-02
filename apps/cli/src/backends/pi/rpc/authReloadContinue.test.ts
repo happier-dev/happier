@@ -72,7 +72,10 @@ rl.on('line', (line) => {
       return;
     case 'prompt':
       out({ id: command.id, type: 'response', command: 'prompt', success: true });
-      setTimeout(() => out({ type: 'turn_end' }), 100);
+      setTimeout(() => {
+        out({ type: 'turn_end' });
+        out({ type: 'agent_end' });
+      }, 100);
       return;
     case 'steer':
       out({ id: command.id, type: 'response', command: 'steer', success: true });

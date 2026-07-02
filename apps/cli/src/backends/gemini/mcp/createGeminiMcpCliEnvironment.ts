@@ -2,7 +2,6 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import type { McpServerConfig } from '@/agent/core';
 import { resolveGeminiConfigPaths } from '@/backends/gemini/utils/resolveGeminiConfigPaths';
 import { logger } from '@/ui/logger';
 
@@ -84,87 +83,24 @@ function stripJsonComments(input: string): string {
   return result;
 }
 
-function readJsonObjectWithComments(path: string): JsonObject {
-  if (!existsSync(path)) return {};
+type JsonObjectReadResult =
+  | { ok: true; value: JsonObject }
+  | { ok: false };
+
+function readJsonObjectWithComments(path: string): JsonObjectReadResult {
+  if (!existsSync(path)) return { ok: true, value: {} };
 
   try {
     const raw = readFileSync(path, 'utf8');
     const parsed = JSON.parse(stripJsonComments(raw)) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonObject : {};
-  } catch (error) {
-    logger.debug(`[Gemini] Failed to parse copied settings at ${path}; continuing with MCP-only settings`, error);
-    return {};
-  }
-}
-
-function sanitizeEnvTokenSegment(value: string): string {
-  const sanitized = value
-    .trim()
-    .replace(/[^A-Za-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .toUpperCase();
-  return sanitized.length > 0 ? sanitized : 'VALUE';
-}
-
-function createGeminiMcpEnvVarName(params: {
-  serverName: string;
-  envName: string;
-  usedNames: Set<string>;
-}): string {
-  const serverSegment = sanitizeEnvTokenSegment(params.serverName);
-  const envSegment = sanitizeEnvTokenSegment(params.envName);
-  const baseName = `HAPPIER_GEMINI_MCP_ENV_${serverSegment}_${envSegment}`;
-
-  if (!params.usedNames.has(baseName)) {
-    params.usedNames.add(baseName);
-    return baseName;
-  }
-
-  let suffix = 2;
-  while (params.usedNames.has(`${baseName}_${suffix}`)) {
-    suffix += 1;
-  }
-
-  const uniqueName = `${baseName}_${suffix}`;
-  params.usedNames.add(uniqueName);
-  return uniqueName;
-}
-
-function buildGeminiSettingsMcpServers(
-  mcpServers: Readonly<Record<string, McpServerConfig>>,
-  cwd: string,
-): {
-  entries: Record<string, { command: string; args: string[]; env: Record<string, string>; cwd: string }>;
-  launchEnv: Record<string, string>;
-} {
-  const entries: Record<string, { command: string; args: string[]; env: Record<string, string>; cwd: string }> = {};
-  const launchEnv: Record<string, string> = {};
-  const usedNames = new Set<string>();
-
-  for (const [name, server] of Object.entries(mcpServers)) {
-    const serverEnv: Record<string, string> = {};
-    for (const [envName, envValue] of Object.entries(server.env ?? {})) {
-      const launchEnvName = createGeminiMcpEnvVarName({
-        serverName: name,
-        envName,
-        usedNames,
-      });
-      launchEnv[launchEnvName] = envValue;
-      serverEnv[envName] = `$${launchEnvName}`;
-    }
-
-    entries[name] = {
-      command: server.command,
-      args: Array.isArray(server.args) ? [...server.args] : [],
-      env: serverEnv,
-      cwd,
+    return {
+      ok: true,
+      value: parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonObject : {},
     };
+  } catch (error) {
+    logger.debug(`[Gemini] Failed to parse copied settings at ${path}; continuing with copied settings scrub`, error);
+    return { ok: false };
   }
-
-  return {
-    entries,
-    launchEnv,
-  };
 }
 
 function copyKnownGeminiConfigFiles(params: {
@@ -183,10 +119,28 @@ function copyKnownGeminiConfigFiles(params: {
   }
 }
 
+function scrubCopiedGeminiSettingsMcpServers(targetEnv: EnvLike): void {
+  const targetPaths = resolveGeminiConfigPaths(targetEnv);
+  if (!existsSync(targetPaths.userSettingsPath)) return;
+
+  const readResult = readJsonObjectWithComments(targetPaths.userSettingsPath);
+  if (!readResult.ok) {
+    writeFileSync(targetPaths.userSettingsPath, JSON.stringify({}, null, 2), 'utf8');
+    return;
+  }
+
+  const existingSettings = readResult.value;
+  if (!Object.prototype.hasOwnProperty.call(existingSettings, 'mcpServers')) return;
+
+  const nextSettings = { ...existingSettings };
+  delete nextSettings.mcpServers;
+  writeFileSync(targetPaths.userSettingsPath, JSON.stringify(nextSettings, null, 2), 'utf8');
+}
+
 export function createGeminiMcpCliEnvironment(params: {
   cwd: string;
   processEnv?: EnvLike;
-  mcpServers: Readonly<Record<string, McpServerConfig>>;
+  mcpServers: Readonly<Record<string, unknown>>;
 }): Readonly<{
   cliHomeDir: string;
   env: Readonly<Record<string, string>>;
@@ -203,26 +157,10 @@ export function createGeminiMcpCliEnvironment(params: {
     sourceEnv: params.processEnv ?? process.env,
     targetEnv: baseEnv,
   });
-
-  const targetPaths = resolveGeminiConfigPaths(baseEnv);
-  const mcpSettings = buildGeminiSettingsMcpServers(params.mcpServers, params.cwd);
-  const existingSettings = readJsonObjectWithComments(targetPaths.userSettingsPath);
-  const nextSettings = {
-    ...existingSettings,
-    mcpServers: {
-      ...(existingSettings.mcpServers && typeof existingSettings.mcpServers === 'object' && !Array.isArray(existingSettings.mcpServers)
-        ? existingSettings.mcpServers as JsonObject
-        : {}),
-      ...mcpSettings.entries,
-    },
-  };
-
-  ensureParentDir(targetPaths.userSettingsPath);
-  writeFileSync(targetPaths.userSettingsPath, JSON.stringify(nextSettings, null, 2), 'utf8');
+  scrubCopiedGeminiSettingsMcpServers(baseEnv);
 
   const env = {
     ...baseEnv,
-    ...mcpSettings.launchEnv,
   };
 
   return {

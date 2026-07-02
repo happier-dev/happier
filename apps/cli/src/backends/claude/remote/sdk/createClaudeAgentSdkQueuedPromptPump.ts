@@ -1,6 +1,7 @@
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { logger } from '@/ui/logger';
 import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
+import type { ClaudeCompletionEvent } from '@/backends/claude/contextCompactionEvents';
 
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
 
@@ -17,12 +18,12 @@ export function createClaudeAgentSdkQueuedPromptPump(params: {
     pushUserTextMessage: (message: string) => void;
     enableFileCheckpointing: boolean;
     checkpointLedger: CheckpointLedger;
-    onCompletionEvent?: ((message: string) => void) | undefined;
+    onCompletionEvent?: ((message: ClaudeCompletionEvent) => void) | undefined;
     onSessionReset?: (() => void) | undefined;
     getResponse: () => any;
     emitCheckpointRewindMessage: (checkpointId: string) => void;
     recordTraceMarker: (params: { kind: string; payload: Record<string, unknown> }) => void;
-    setCompactCommandActive: (active: boolean) => void;
+    startCompactCommand: () => void;
     setMode: (mode: EnhancedMode) => void;
     updateRuntimeSettingsForMode: (mode: EnhancedMode) => Promise<void>;
     resetTurnOutputState: () => void;
@@ -151,8 +152,7 @@ export function createClaudeAgentSdkQueuedPromptPump(params: {
                         }
 
                         if (nextSpecial.type === 'compact') {
-                            params.setCompactCommandActive(true);
-                            params.onCompletionEvent?.('Compaction started');
+                            params.startCompactCommand();
                         }
 
                         params.setMode(next.mode);

@@ -4,6 +4,173 @@ import { runClaudeRemoteAgentSdk as claudeRemoteAgentSdk } from './runAgentSdk';
 import { makeMode } from './testkit';
 
 describe('runAgentSdk stream events', () => {
+    it('consumes rate_limit_event before transcript conversion drops it', async () => {
+        const onMessage = vi.fn();
+        const onRateLimitEvent = vi.fn();
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'rate_limit_event',
+                        rate_limit_info: {
+                            status: 'rejected',
+                            rate_limit_type: 'weekly',
+                            resets_at: '2026-05-17T12:00:00.000Z',
+                            utilization: 1,
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            onRateLimitEvent,
+            createQuery,
+        } as any);
+
+        expect(onRateLimitEvent).toHaveBeenCalledWith(expect.objectContaining({
+            quotaScope: 'account',
+            providerLimitId: 'weekly',
+            resetAtMs: Date.parse('2026-05-17T12:00:00.000Z'),
+            utilization: 1,
+        }));
+        expect(onMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'rate_limit_event' }));
+    });
+
+    it('does not surface allowed rate_limit_event telemetry as a runtime limit', async () => {
+        const onMessage = vi.fn();
+        const onRateLimitEvent = vi.fn();
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'rate_limit_event',
+                        rate_limit_info: {
+                            status: 'allowed',
+                            resetsAt: 1_779_097_200,
+                            rateLimitType: 'five_hour',
+                            overageStatus: 'rejected',
+                            overageDisabledReason: 'org_level_disabled',
+                            isUsingOverage: false,
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            onRateLimitEvent,
+            createQuery,
+        } as any);
+
+        expect(onRateLimitEvent).not.toHaveBeenCalled();
+        expect(onMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'rate_limit_event' }));
+    });
+
+    it('stops processing provider messages after a connected auth failure', async () => {
+        const onMessage = vi.fn();
+        const onRateLimitEvent = vi.fn();
+        const onRuntimeAuthFailureEvent = vi.fn();
+        const authError = {
+            type: 'assistant',
+            uuid: 'api-error-auth-1',
+            isApiErrorMessage: true,
+            api_error_status: 401,
+            error: {
+                type: 'authentication_error',
+                message: 'Invalid authentication credentials',
+            },
+        };
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield authError as any;
+                    yield {
+                        type: 'rate_limit_event',
+                        rate_limit_info: {
+                            status: 'rejected',
+                            rate_limit_type: 'weekly',
+                            utilization: 1,
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true, model: 'claude-3' } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            onRateLimitEvent,
+            onRuntimeAuthFailureEvent,
+            createQuery,
+        } as any);
+
+        expect(onRuntimeAuthFailureEvent).toHaveBeenCalledWith(authError);
+        expect(onRateLimitEvent).not.toHaveBeenCalled();
+        expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'assistant',
+            isApiErrorMessage: true,
+        }));
+    });
+
     it('streams Agent SDK stream_event text deltas through StreamedTranscriptWriter (no synthetic partial messages)', async () => {
         const onMessage = vi.fn();
         const streamedTranscriptWriter = {
@@ -1544,7 +1711,7 @@ describe('runAgentSdk stream events', () => {
         ]));
     });
 
-    it('treats compact-session init as a turn boundary so queued prompts keep flowing without waiting for stop', async () => {
+    it('allows standalone /compact session init to finish so queued prompts keep flowing without waiting for stop', async () => {
         const onReady = vi.fn();
         const onSessionFound = vi.fn();
 
@@ -1618,6 +1785,120 @@ describe('runAgentSdk stream events', () => {
         }
     });
 
+    it('keeps AskUserQuestion work active after provider compact_boundary', async () => {
+        const onReady = vi.fn();
+        const onSessionFound = vi.fn();
+        const onThinkingChange = vi.fn();
+        const onCompletionEvent = vi.fn();
+        const onMessage = vi.fn();
+
+        let releaseStream!: () => void;
+        const streamClosed = new Promise<void>((resolve) => {
+            releaseStream = resolve;
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'system',
+                        subtype: 'compact_boundary',
+                        session_id: 'sess_auto_compacted_boundary',
+                        compact_metadata: {
+                            trigger: 'auto',
+                            pre_tokens: 175_000,
+                        },
+                    } as any;
+                    yield {
+                        type: 'assistant',
+                        parent_tool_use_id: null,
+                        session_id: 'sess_auto_compacted_boundary',
+                        uuid: 'assistant_after_compact_question',
+                        message: {
+                            id: 'msg_after_compact_question',
+                            type: 'message',
+                            role: 'assistant',
+                            model: 'fake-claude',
+                            content: [{
+                                type: 'tool_use',
+                                id: 'toolu_question_after_compact',
+                                name: 'AskUserQuestion',
+                                input: { questions: [{ question: 'Continue?', options: [] }] },
+                            }],
+                            stop_reason: null,
+                            stop_sequence: null,
+                            usage: { input_tokens: 1, output_tokens: 1 },
+                        },
+                    } as any;
+                    await streamClosed;
+                },
+                close: vi.fn(() => {
+                    releaseStream();
+                }),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        const nextMessage = vi.fn(async () => ({
+            message: 'long-running prompt that auto-compacts',
+            mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
+        }));
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady,
+            onSessionFound,
+            onMessage,
+            onThinkingChange,
+            onCompletionEvent,
+            createQuery,
+        } as any);
+
+        try {
+            await vi.waitFor(() => {
+                expect(onSessionFound).toHaveBeenCalledWith('sess_auto_compacted_boundary', expect.anything());
+            });
+            expect(onReady).not.toHaveBeenCalled();
+            expect(nextMessage).toHaveBeenCalledTimes(1);
+            expect(onThinkingChange.mock.calls.map((call) => call[0])).toEqual([true]);
+            expect(onCompletionEvent).toHaveBeenCalledWith(expect.objectContaining({
+                type: 'context-compaction',
+                phase: 'completed',
+                provider: 'claude',
+                source: 'provider-event',
+                trigger: 'auto',
+                providerSessionId: 'sess_auto_compacted_boundary',
+                tokenCountBefore: 175_000,
+                tokenCountSource: 'claude-compact-metadata.pre_tokens',
+                lifecycleId: expect.any(String),
+            }));
+            expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+                type: 'assistant',
+                message: expect.objectContaining({
+                    content: expect.arrayContaining([
+                        expect.objectContaining({
+                            type: 'tool_use',
+                            name: 'AskUserQuestion',
+                        }),
+                    ]),
+                }),
+            }));
+        } finally {
+            releaseStream();
+            await runnerPromise.catch(() => {});
+        }
+    });
+
     it('does not let stream_event-only next-turn output keep the result-finalize guard stuck after compaction (queued prompts keep flowing)', async () => {
         const onReady = vi.fn();
 
@@ -1629,8 +1910,8 @@ describe('runAgentSdk stream events', () => {
         const createQuery = vi.fn((_params: any) => {
             return {
                 async *[Symbol.asyncIterator]() {
-                    // Compaction forks the session; we treat this init as a turn boundary so we can
-                    // immediately send the next queued prompt.
+                    // Standalone /compact can finish without a normal result, then the next queued
+                    // prompt may emit stream_event output before an assembled assistant message.
                     yield {
                         type: 'system',
                         subtype: 'init',

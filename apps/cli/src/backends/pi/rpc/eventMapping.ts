@@ -1,5 +1,6 @@
 import type { AgentMessage } from '@/agent/core';
 import { extractAcpMediaContentBlocks } from '@/agent/acp/media/extractAcpMediaContentBlocks';
+import { buildPiContextCompactionPayload } from '@happier-dev/plugins-pi/agent/runtime/rpc/events';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -105,11 +106,31 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
   const type = asNonEmptyString(record.type);
   if (!type) return [];
 
-  if (type === 'agent_start' || type === 'turn_start') {
+  if (type === 'agent_start') {
     return [{ type: 'status', status: 'running' }];
   }
-  if (type === 'agent_end' || type === 'turn_end') {
-    return [{ type: 'status', status: 'idle' }];
+  if (type === 'agent_end') {
+    return [];
+  }
+
+  if (type === 'compaction_start') {
+    const payload = buildPiContextCompactionPayload(record);
+    if (!payload) return [];
+    return [{
+      type: 'event',
+      name: 'context_compaction',
+      payload,
+    }];
+  }
+
+  if (type === 'compaction_end') {
+    const payload = buildPiContextCompactionPayload(record);
+    if (!payload) return [];
+    return [{
+      type: 'event',
+      name: 'context_compaction',
+      payload,
+    }];
   }
 
   if (type === 'message_update') {

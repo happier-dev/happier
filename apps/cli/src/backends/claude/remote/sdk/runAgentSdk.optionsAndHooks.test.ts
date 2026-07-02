@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
+import { logger } from '@/ui/logger';
+import {
+    HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
+} from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { runClaudeRemoteAgentSdk as claudeRemoteAgentSdk } from './runAgentSdk';
 import { makeMode } from './testkit';
 import { resolveClaudeProjectId } from '../../utils/path';
@@ -295,6 +299,75 @@ describe('runAgentSdk options and hooks', () => {
 
         await (capturedTurnInterrupt as unknown as () => Promise<void>)();
         expect(stopTask).toHaveBeenCalledWith('task_1');
+        (resolveFinish as unknown as (() => void) | null)?.();
+        await runnerPromise;
+    });
+
+    it('keeps the active turn interrupt target when a different task reports terminal progress', async () => {
+        const stopTask = vi.fn(async (_taskId: string) => {});
+        let capturedTurnInterrupt: null | (() => Promise<void>) = null;
+        let resolveFinish: (() => void) | null = null;
+        const finish = new Promise<void>((resolve) => {
+            resolveFinish = () => resolve();
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'system', subtype: 'task_started', task_id: 'task_1' } as any;
+                    yield { type: 'system', subtype: 'task_started', task_id: 'task_2' } as any;
+                    yield {
+                        type: 'system',
+                        subtype: 'task_progress',
+                        task_id: 'task_1',
+                        patch: { status: 'succeeded' },
+                    } as any;
+                    await finish;
+                    yield { type: 'result' } as any;
+                },
+                stopTask,
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            setTurnInterrupt: (next: (() => Promise<void>) | null) => {
+                if (next) capturedTurnInterrupt = next;
+            },
+            createQuery,
+        } as any);
+
+        for (let i = 0; i < 50 && !capturedTurnInterrupt; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((r) => setTimeout(r, 5));
+        }
+        if (!capturedTurnInterrupt) throw new Error('Expected claudeRemoteAgentSdk to register a turn interrupt handler');
+
+        await (capturedTurnInterrupt as unknown as () => Promise<void>)();
+        expect(stopTask).toHaveBeenCalledWith('task_2');
         (resolveFinish as unknown as (() => void) | null)?.();
         await runnerPromise;
     });
@@ -1343,6 +1416,102 @@ describe('runAgentSdk options and hooks', () => {
             else process.env.HAPPIER_CLAUDE_CONFIG_DIR = originalHappierClaudeConfigDir;
             if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
             else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+        }
+    });
+
+    it('logs redacted Claude runtime auth diagnostics for the runner and child env', async () => {
+        const originals = {
+            apiKey: process.env.ANTHROPIC_API_KEY,
+            oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+            configDir: process.env.CLAUDE_CONFIG_DIR,
+            selection: process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY],
+        };
+        const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-secret';
+        process.env.CLAUDE_CODE_OAUTH_TOKEN = 'claude-oauth-secret';
+        process.env.CLAUDE_CONFIG_DIR = '/Users/test/.claude';
+        process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] = JSON.stringify([{
+            kind: 'group',
+            serviceId: 'claude-subscription',
+            groupId: 'claude',
+            activeProfileId: 'batiplus',
+            fallbackProfileId: 'leeroy_batiplus',
+            generation: 4,
+        }]);
+
+        try {
+            const createQuery = vi.fn((_params: any) => {
+                return {
+                    async *[Symbol.asyncIterator]() {
+                        yield { type: 'result' } as any;
+                    },
+                    close: vi.fn(),
+                    setPermissionMode: vi.fn(),
+                    setModel: vi.fn(),
+                    setMaxThinkingTokens: vi.fn(),
+                    supportedCommands: vi.fn(async () => []),
+                    supportedModels: vi.fn(async () => []),
+                } as any;
+            });
+
+            let didSendFirst = false;
+            const nextMessage = vi.fn(async () => {
+                if (didSendFirst) return null;
+                didSendFirst = true;
+                return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+            });
+
+            await claudeRemoteAgentSdk({
+                sessionId: 'session-1',
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
+                onReady: () => {},
+                onSessionFound: () => {},
+                onMessage: () => {},
+                createQuery,
+            } as any);
+
+            const diagnosticCall = debugSpy.mock.calls.find((call) => call[0] === '[claudeRemoteAgentSdk] Claude runtime auth diagnostic');
+            expect(diagnosticCall?.[1]).toMatchObject({
+                sessionId: 'session-1',
+                connectedServiceSelection: {
+                    kind: 'group',
+                    serviceId: 'claude-subscription',
+                    groupId: 'claude',
+                    activeProfileId: 'batiplus',
+                    fallbackProfileId: 'leeroy_batiplus',
+                    generation: 4,
+                },
+                runnerEnv: {
+                    hasAnthropicApiKey: true,
+                    hasClaudeCodeOauthToken: true,
+                    hasClaudeConfigDir: true,
+                    hasHappierConnectedServiceSelections: true,
+                },
+                childEnv: {
+                    hasAnthropicApiKey: false,
+                    hasClaudeCodeOauthToken: true,
+                    hasClaudeConfigDir: true,
+                    hasHappierConnectedServiceSelections: false,
+                },
+            });
+            expect(JSON.stringify(diagnosticCall)).not.toContain('secret');
+            expect(JSON.stringify(diagnosticCall)).not.toContain('/Users/test/.claude');
+        } finally {
+            debugSpy.mockRestore();
+            if (originals.apiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+            else process.env.ANTHROPIC_API_KEY = originals.apiKey;
+            if (originals.oauthToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+            else process.env.CLAUDE_CODE_OAUTH_TOKEN = originals.oauthToken;
+            if (originals.configDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+            else process.env.CLAUDE_CONFIG_DIR = originals.configDir;
+            if (originals.selection === undefined) delete process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
+            else process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] = originals.selection;
         }
     });
 

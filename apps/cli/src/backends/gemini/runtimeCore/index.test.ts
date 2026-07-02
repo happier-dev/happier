@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Credentials } from '@/persistence';
 import { isRuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const createGeminiBackend = vi.fn();
 const createGeminiAcpRuntime = vi.fn();
@@ -25,7 +26,7 @@ vi.mock('@/packagedRuntime/isolation/resolveBackendIsolationBundle', () => ({
   resolveBackendIsolationBundle: (opts: unknown) => resolveBackendIsolationBundle(opts),
 }));
 
-vi.mock('@/agent/executionRuns/runtime/backend.testkit', () => ({
+vi.mock('@/agent/runtime/bridges/executionRun/testkit', () => ({
   createExecutionRunHostRuntimeFromAgentBackend,
 }));
 
@@ -36,6 +37,31 @@ describe('gemini runtimeCore', () => {
 
     expect(runtimeCore.runtimeCore.createSessionRuntime).toBeTypeOf('function');
     expect(runtimeCore.runtimeCore.createExecutionRunBackend).toBeTypeOf('function');
+  });
+
+  it('does not seed the initial displayed model from inherited GEMINI_MODEL', async () => {
+    const envScope = createEnvKeyScope(['GEMINI_MODEL']);
+    envScope.patch({ GEMINI_MODEL: 'host-model' });
+    try {
+      const { createGeminiSessionRuntimePlan } = await import('../runtimeCore/session');
+      const credentials: Credentials = {
+        token: 't',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+      };
+
+      const plan = createGeminiSessionRuntimePlan({ credentials });
+      const lifecycleHooks = plan.config.lifecycleHooks;
+      expect(lifecycleHooks).toBeDefined();
+
+      const selection = lifecycleHooks?.resolveInitialModelSelection?.({
+        opts: { credentials },
+        accountSettings: null,
+        nowMs: 1,
+      });
+      expect(selection).not.toMatchObject({ modelId: 'host-model' });
+    } finally {
+      envScope.restore();
+    }
   });
 
   it('creates execution-run backend with isolation env + normalized permission mode', async () => {
@@ -94,7 +120,7 @@ describe('gemini runtimeCore', () => {
       beginTurnLifecycle: vi.fn(),
       startOrLoadSession: vi.fn(async () => undefined),
       sendTurnPrompt: vi.fn(async () => undefined),
-      subscribeRuntimeMessages: vi.fn(() => () => undefined),
+      subscribeRuntimeEvents: vi.fn(() => () => undefined),
       readSessionIdentity: vi.fn(() => ({ sessionId: 'gemini-session' })),
       respondToPermission: vi.fn(async () => undefined),
       waitForTurnCompletion: vi.fn(async () => undefined),

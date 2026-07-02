@@ -1,13 +1,16 @@
 import type { FileBackedTranscriptSessionLease, FileBackedTranscriptSessionStore } from '../../../../api/session/fileBackedTranscripts/store';
 import { FileBackedTranscriptSessionRegistry } from '../../../../api/session/fileBackedTranscripts/store';
 
-import { resolveCodexRolloutSessionStoreColdIdleMs, resolveCodexRolloutSessionStoreDetachedGraceMs } from './codexRolloutSessionStoreCachePolicy';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import { resolveCodexRolloutSessionStoreColdIdleMs, resolveCodexRolloutSessionStoreDetachedGraceMs } from '@happier-dev/plugins-codex/agent/rollout/session/cachePolicy';
 import { createCodexRolloutSessionStore } from './createCodexRolloutSessionStore';
 import type { CodexRolloutSessionStoreOptions } from './codexRolloutSessionStoreTypes';
 
-const registriesByActiveServerDir = new Map<string, FileBackedTranscriptSessionRegistry<FileBackedTranscriptSessionStore>>();
+type CodexRolloutTranscriptSessionStore = FileBackedTranscriptSessionStore<ExternalSessionTranscriptRawMessageV1, unknown, string | null>;
 
-function getRegistry(activeServerDir: string, env: NodeJS.ProcessEnv): FileBackedTranscriptSessionRegistry<FileBackedTranscriptSessionStore> {
+const registriesByActiveServerDir = new Map<string, FileBackedTranscriptSessionRegistry<CodexRolloutTranscriptSessionStore>>();
+
+function getRegistry(activeServerDir: string, env: NodeJS.ProcessEnv): FileBackedTranscriptSessionRegistry<CodexRolloutTranscriptSessionStore> {
     const existing = registriesByActiveServerDir.get(activeServerDir);
     if (existing) return existing;
 
@@ -31,18 +34,24 @@ function getRegistry(activeServerDir: string, env: NodeJS.ProcessEnv): FileBacke
 export async function acquireCodexRolloutSessionStore(params: Readonly<{
     activeServerDir: string;
     env?: NodeJS.ProcessEnv;
+    hotAttach?: boolean;
     key: CodexRolloutSessionStoreOptions['key'];
-}>): Promise<FileBackedTranscriptSessionLease<FileBackedTranscriptSessionStore>> {
+}>): Promise<FileBackedTranscriptSessionLease<CodexRolloutTranscriptSessionStore>> {
     const env = params.env ?? process.env;
-    return getRegistry(params.activeServerDir, env).acquire(params.key);
+    return getRegistry(params.activeServerDir, env).acquire(params.key, {
+        hotAttach: params.hotAttach !== false,
+    });
 }
 
 export async function withCodexRolloutSessionStore<T>(params: Readonly<{
     activeServerDir: string;
     env?: NodeJS.ProcessEnv;
     key: CodexRolloutSessionStoreOptions['key'];
-}>, handler: (store: FileBackedTranscriptSessionStore) => Promise<T>): Promise<T> {
-    const lease = await acquireCodexRolloutSessionStore(params);
+}>, handler: (store: CodexRolloutTranscriptSessionStore) => Promise<T>): Promise<T> {
+    const lease = await acquireCodexRolloutSessionStore({
+        ...params,
+        hotAttach: false,
+    });
     try {
         return await handler(lease.store);
     } finally {

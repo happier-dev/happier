@@ -73,7 +73,7 @@ describe('Gemini ACP backend permissions', () => {
     'maps permissionMode=$mode to --approval-mode $approvalMode and sandbox=$sandbox',
     ({ mode, approvalMode, sandbox }) => {
       const args = getBackendArgsForMode({ permissionMode: mode as PermissionMode });
-      expect(args[0]).toBe('--experimental-acp');
+      expect(args[0]).toBe('--acp');
       expect(readFlagValue(args, '--approval-mode')).toBe(approvalMode);
       expect(args.includes('--sandbox')).toBe(sandbox);
     },
@@ -87,7 +87,7 @@ describe('Gemini ACP backend permissions', () => {
     'omits --approval-mode for permissionMode=$mode so the Gemini CLI honors settings.json tools.approvalMode',
     ({ mode }) => {
       const args = getBackendArgsForMode({ permissionMode: mode as PermissionMode });
-      expect(args[0]).toBe('--experimental-acp');
+      expect(args[0]).toBe('--acp');
       expect(args).not.toContain('--approval-mode');
     },
   );

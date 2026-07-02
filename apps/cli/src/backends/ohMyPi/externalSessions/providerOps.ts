@@ -1,19 +1,88 @@
 import {
-  createExternalSessionTranscriptProviderOps,
   mergeExternalSessionEnvironmentVariables,
   type ExternalSessionProviderOps,
 } from '@/session/external/providerOps';
+import { ohMyPiExternalSessionSurface } from '@happier-dev/plugins-ohmypi/agent/surfaces/sessions/external/provider';
 
-import { listOhMyPiSessionCandidates } from './listOhMyPiSessionCandidates';
 import { resolveConfiguredOhMyPiAgentDir, resolveOhMyPiAgentDir } from './resolveOhMyPiAgentDir';
 import { sourceValidation } from './sourceValidation';
-import { acquireOhMyPiJsonlSessionStore, withOhMyPiJsonlSessionStore } from '../transcripts/sessionStore';
+import { withOhMyPiJsonlSessionStore } from '../transcripts/sessionStore';
+
+type OhMyPiSurfaceResult<TValue> =
+  | Readonly<{ ok: true; value: TValue }>
+  | Readonly<{ ok: false; code?: string; message?: string }>;
+
+type OhMyPiHostTranscriptPage = Awaited<ReturnType<ExternalSessionProviderOps['pageTranscript']>>;
+type OhMyPiHostTranscriptReadAfter = Awaited<ReturnType<ExternalSessionProviderOps['readAfterTranscript']>>;
+type OhMyPiHostTranscriptItem = OhMyPiHostTranscriptPage['items'][number];
+type OhMyPiPluginTranscriptPage = Readonly<{
+  items: readonly OhMyPiHostTranscriptItem[];
+  nextCursor: string | null;
+  tailCursor?: string | null;
+  hasMore?: boolean;
+  truncated?: boolean;
+}>;
+type OhMyPiPluginTranscriptReadAfter = Readonly<{
+  items: readonly OhMyPiHostTranscriptItem[];
+  nextCursor: string | null;
+  truncated?: boolean;
+}>;
+
+async function unwrapOhMyPiSurfaceResult<TValue>(
+  operation: string,
+  result: OhMyPiSurfaceResult<TValue> | Promise<OhMyPiSurfaceResult<TValue>>,
+): Promise<TValue> {
+  const settled = await result;
+  if (settled.ok) return settled.value;
+  throw new Error(`OhMyPi external-session ${operation} failed: ${settled.message ?? settled.code ?? 'unavailable'}`);
+}
+
+async function unwrapOhMyPiOptionalFollowLease<TValue>(
+  result: OhMyPiSurfaceResult<TValue> | Promise<OhMyPiSurfaceResult<TValue>>,
+): Promise<TValue | null> {
+  const settled = await result;
+  if (settled.ok) return settled.value;
+  if (settled.code === 'follow_not_supported') return null;
+  throw new Error(`OhMyPi external-session acquireFollowLease failed: ${settled.message ?? settled.code ?? 'unavailable'}`);
+}
+
+function normalizeOhMyPiTranscriptPage(page: OhMyPiPluginTranscriptPage): OhMyPiHostTranscriptPage {
+  return {
+    items: [...page.items],
+    nextCursor: page.nextCursor,
+    tailCursor: page.tailCursor ?? null,
+    hasMore: page.hasMore === true,
+    truncated: page.truncated === true,
+  };
+}
+
+function normalizeOhMyPiTranscriptReadAfter(page: OhMyPiPluginTranscriptReadAfter): OhMyPiHostTranscriptReadAfter {
+  return {
+    items: [...page.items],
+    nextCursor: page.nextCursor,
+    truncated: page.truncated === true,
+  };
+}
 
 export const ohMyPiExternalSessionProviderOps: ExternalSessionProviderOps = {
-  validateSource: ({ source, env }) => sourceValidation({ source, env }),
-  listCandidates: async ({ source, cursor, limit, searchTerm }) => {
-    const res = await listOhMyPiSessionCandidates({ source, cursor, limit, searchTerm });
-    return { candidates: res.candidates, nextCursor: res.nextCursor ?? null };
+  validateSource: ({ source, env }) => sourceValidation({ source, env: env ?? process.env }),
+  listCandidates: async ({ source, cursor, limit, searchTerm, searchMode, runtime }) => {
+    const res = await unwrapOhMyPiSurfaceResult(
+      'listCandidates',
+      ohMyPiExternalSessionSurface.listCandidates({
+        source,
+        cursor,
+        limit,
+        searchTerm,
+        searchMode,
+        runtime,
+      }),
+    );
+    return {
+      candidates: res.candidates,
+      nextCursor: res.nextCursor ?? null,
+      ...(res.searchIncomplete === true ? { searchIncomplete: true } : {}),
+    };
   },
   getActivity: async ({ source, remoteSessionId }) => {
     return withOhMyPiJsonlSessionStore({
@@ -30,71 +99,62 @@ export const ohMyPiExternalSessionProviderOps: ExternalSessionProviderOps = {
       };
     });
   },
-  ...createExternalSessionTranscriptProviderOps({
-    pageOlder: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems }) => {
-      if (direction !== 'older') {
-        return {
-          items: [],
-          nextCursor: null,
-          tailCursor: null,
-          hasMore: false,
-          truncated: false,
-        };
-      }
-      return withOhMyPiJsonlSessionStore({
-        key: {
-          providerId: 'ohMyPi',
-          source,
-          remoteSessionId,
-        },
-      }, async (store) => {
-        const res = await store.pageOlder({ cursor, maxBytes, maxItems });
-        return {
-          items: Array.from(res.items),
-          nextCursor: res.nextCursor ?? null,
-          tailCursor: res.tailCursor ?? null,
-          hasMore: res.hasMore,
-          truncated: res.truncated === true,
-        };
-      });
-    },
-    readAfter: async ({ source, remoteSessionId, cursor, maxBytes, maxItems }) => {
-      return withOhMyPiJsonlSessionStore({
-        key: {
-          providerId: 'ohMyPi',
-          source,
-          remoteSessionId,
-        },
-      }, async (store) => {
-        const res = await store.readAfter({ cursor, maxBytes, maxItems });
-        return {
-          items: Array.from(res.items),
-          nextCursor: res.nextCursor ?? null,
-          truncated: res.truncated === true,
-        };
-      });
-    },
-    acquireFollowLease: async ({ source, remoteSessionId }) => {
-      const lease = await acquireOhMyPiJsonlSessionStore({
-        key: {
-          providerId: 'ohMyPi',
-          source,
-          remoteSessionId,
-        },
-      });
-      return {
-        release: lease.release,
-        getTailCursor: () => lease.store.getTailCursor(),
-        subscribeToTranscriptUpdates: (listener) => lease.store.subscribe(async (event) => {
-          await listener({
-            items: Array.from(event.items),
-            nextCursor: event.nextCursor,
-            truncated: event.truncated,
-          });
-        }),
-      };
-    },
-  }),
+  pageTranscript: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems, runtime }) => {
+    const page = await unwrapOhMyPiSurfaceResult(
+      'pageTranscript',
+      ohMyPiExternalSessionSurface.pageTranscript({
+        source,
+        providerSessionId: remoteSessionId,
+        direction,
+        cursor,
+        maxBytes,
+        maxItems,
+        runtime,
+      }),
+    );
+    return normalizeOhMyPiTranscriptPage(page);
+  },
+  readAfterTranscript: async ({ source, remoteSessionId, cursor, maxBytes, maxItems, runtime }) => {
+    const readAfterTranscript = ohMyPiExternalSessionSurface.readAfterTranscript;
+    if (!readAfterTranscript) {
+      throw new Error('OhMyPi external-session readAfterTranscript failed: unavailable');
+    }
+    const page = await unwrapOhMyPiSurfaceResult(
+      'readAfterTranscript',
+      readAfterTranscript({
+        source,
+        providerSessionId: remoteSessionId,
+        cursor,
+        maxBytes,
+        maxItems,
+        runtime,
+      }),
+    );
+    return normalizeOhMyPiTranscriptReadAfter(page);
+  },
+  resolveFollowTranscriptPath: async ({ source, remoteSessionId, reason, linkedSessionId, runtime }) => {
+    return await unwrapOhMyPiSurfaceResult(
+      'resolveFollowTranscriptPath',
+      ohMyPiExternalSessionSurface.resolveFollowTranscriptPath!({
+        source,
+        providerSessionId: remoteSessionId,
+        reason,
+        linkedSessionId,
+        runtime,
+      }),
+    );
+  },
+  acquireFollowLease: async ({ source, remoteSessionId, reason, linkedSessionId, runtime }) => {
+    return await unwrapOhMyPiOptionalFollowLease(
+      ohMyPiExternalSessionSurface.acquireFollowLease!({
+        source,
+        providerSessionId: remoteSessionId,
+        reason,
+        linkedSessionId,
+        runtime,
+      }),
+    );
+  },
   canonicalizeLinkedSession: async ({ remoteSessionId, source }) => {
     if (source.kind !== 'ohMyPiAgentDir') {
       return { remoteSessionId, source };

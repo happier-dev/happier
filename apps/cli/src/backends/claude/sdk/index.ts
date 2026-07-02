@@ -3,7 +3,6 @@
  * Provides clean TypeScript implementation without Bun support
  */
 
-export { query } from './query'
 export { AbortError } from './types'
 export type {
     QueryOptions,

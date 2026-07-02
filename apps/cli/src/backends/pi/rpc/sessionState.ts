@@ -1,8 +1,25 @@
 import type { SessionId, StartSessionResult } from '@/agent/core';
+import { stat } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
+import {
+  isBarePiSessionId,
+  resolvePiSessionIdFromResumeReference,
+} from '@happier-dev/plugins-pi/agent/sessionFiles';
 
-import { resolvePiSessionFileForSessionId } from './sessionRecovery';
+import {
+  createPiSessionNotMaterializedError,
+  resolvePiSessionFileForSessionId,
+} from './sessionRecovery';
 import { asNonEmptyString } from './rpcSupport';
 import type { PiRpcStateData } from './types';
+
+async function pathIsFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
+}
 
 export type PiRpcSessionStateContext = Readonly<{
   options: Readonly<{
@@ -68,9 +85,17 @@ export async function loadPiRpcSession(
     throw new Error('Pi backend is disposed');
   }
 
-  const expectedSessionId = String(sessionId ?? '').trim();
-  if (!expectedSessionId) {
+  const requestedResumeReference = String(sessionId ?? '').trim();
+  if (!requestedResumeReference) {
     throw new Error('Pi loadSession requires a session id');
+  }
+  const requestedAbsoluteSessionFile = isAbsolute(requestedResumeReference) ? requestedResumeReference : null;
+  if (!requestedAbsoluteSessionFile && !isBarePiSessionId(requestedResumeReference)) {
+    throw new Error('Pi loadSession requires a bare Pi session id');
+  }
+  const expectedSessionId = resolvePiSessionIdFromResumeReference(requestedResumeReference);
+  if (!expectedSessionId) {
+    throw new Error('Pi loadSession requires a bare Pi session id');
   }
 
   const currentSessionId = context.getSessionId();
@@ -88,20 +113,21 @@ export async function loadPiRpcSession(
   context.emitStartingStatus();
   try {
     await context.stopRpcProcessForRestart();
-    const sessionFile = await resolvePiSessionFileForSessionId({
+    const preferredSessionFile = requestedAbsoluteSessionFile && await pathIsFile(requestedAbsoluteSessionFile)
+      ? requestedAbsoluteSessionFile
+      : null;
+    const sessionFile = preferredSessionFile ?? await resolvePiSessionFileForSessionId({
       expectedSessionId,
       env: context.options.env,
       sessionFile: context.getSessionFile(),
     });
-    if (!sessionFile) {
-      throw new Error(`Unable to resolve Pi session file for session id '${expectedSessionId}'`);
-    }
-    context.spawnRpcProcess({ args: [...context.options.args, '--session', sessionFile] });
+    const sessionArg = sessionFile ?? expectedSessionId;
+    context.spawnRpcProcess({ args: [...context.options.args, '--session', sessionArg] });
 
     const state = await context.getState();
     const resumedSessionId = asNonEmptyString(state.sessionId);
     if (!resumedSessionId) {
-      throw new Error('Pi did not return a session id after --session');
+      throw createPiSessionNotMaterializedError(expectedSessionId);
     }
     if (resumedSessionId !== expectedSessionId) {
       throw new Error(`Pi session mismatch after --session (expected ${expectedSessionId}, got ${resumedSessionId})`);

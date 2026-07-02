@@ -21,49 +21,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function rewriteBackendAttachRuntimeAdaptersToPluginTargets(manifest: unknown): unknown {
-    if (!isRecord(manifest) || !Array.isArray(manifest.contributions)) {
+function rewriteBackendSurfaceHandlersToPluginTargets(manifest: unknown): unknown {
+    if (!isRecord(manifest) || !isRecord(manifest.contributes) || !Array.isArray(manifest.contributes.backends)) {
         return manifest;
     }
 
     return {
         ...manifest,
-        contributions: manifest.contributions.map((contribution) => {
-            if (
-                !isRecord(contribution)
-                || contribution.kind !== 'backend'
-                || !Array.isArray(contribution.runtimeAdapters)
-            ) {
-                return contribution;
-            }
+        contributes: {
+            ...manifest.contributes,
+            hooks: [],
+            backends: manifest.contributes.backends.map((contribution) => {
+                if (
+                    !isRecord(contribution)
+                    || !Array.isArray(contribution.surfaceHandlers)
+                ) {
+                    return contribution;
+                }
 
-            return {
-                ...contribution,
-                runtimeAdapters: contribution.runtimeAdapters.map((runtimeAdapter) => {
-                    if (
-                        !isRecord(runtimeAdapter)
-                        || typeof runtimeAdapter.id !== 'string'
-                        || !runtimeAdapter.id.startsWith('backend.attach.')
-                    ) {
-                        return runtimeAdapter;
-                    }
+                return {
+                    ...contribution,
+                    surfaceHandlers: contribution.surfaceHandlers.map((surfaceHandler) => {
+                        if (
+                            !isRecord(surfaceHandler)
+                            || !isRecord(surfaceHandler.handler)
+                        ) {
+                            return surfaceHandler;
+                        }
 
-                    const handler = isRecord(runtimeAdapter.handler) ? runtimeAdapter.handler : {};
-                    return {
-                        ...runtimeAdapter,
-                        handler: {
-                            ...handler,
-                            target: 'plugin',
-                        },
-                    };
-                }),
-            };
-        }),
+                        return {
+                            ...surfaceHandler,
+                            handler: {
+                                ...surfaceHandler.handler,
+                                target: 'plugin',
+                            },
+                        };
+                    }),
+                };
+            }),
+        },
     };
 }
 
 describe('resolveBackendExecutionSurfaces', () => {
-    it('maps plugin backend runtime-adapter descriptors into executable backend catalog surfaces', async () => {
+    it('maps plugin backend surface handler descriptors into executable backend catalog surfaces', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-backend-runtime-adapters-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-backend-runtime-adapters-plugin-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -105,8 +106,9 @@ describe('resolveBackendExecutionSurfaces', () => {
             terminalRuntime: {
                 launch: expect.any(Function),
                 discoverIdentity: expect.any(Function),
+                resolveTranscriptBinding: expect.any(Function),
             },
-            externalSessions: {
+            externalSession: {
                 validateSource: expect.any(Function),
                 listCandidates: expect.any(Function),
                 getActivity: expect.any(Function),
@@ -115,11 +117,10 @@ describe('resolveBackendExecutionSurfaces', () => {
                 resolveTakeoverSpawnOptions: expect.any(Function),
             },
             attach: {
-                evaluateEligibility: expect.any(Function),
-                probeReachability: expect.any(Function),
-                runAttach: expect.any(Function),
+                evaluateAvailability: expect.any(Function),
+                attach: expect.any(Function),
             },
-            sessionHandoff: {
+            handoff: {
                 exportBundle: expect.any(Function),
                 importBundle: expect.any(Function),
             },
@@ -142,7 +143,7 @@ describe('resolveBackendExecutionSurfaces', () => {
                 sendTurnPrompt: expect.any(Function),
                 steerInFlightTurn: expect.any(Function),
                 waitForTurnCompletion: expect.any(Function),
-                subscribeRuntimeMessages: expect.any(Function),
+                subscribeRuntimeEvents: expect.any(Function),
                 respondToPermission: expect.any(Function),
                 cancelTurn: expect.any(Function),
                 readSessionIdentity: expect.any(Function),
@@ -155,16 +156,16 @@ describe('resolveBackendExecutionSurfaces', () => {
             identity: 'integration-identity',
         });
         await expect(
-            surfaces?.externalSessions?.validateSource?.({ source: 'codex', env: {} as NodeJS.ProcessEnv } as never),
+            surfaces?.externalSession?.validateSource?.({ source: 'codex', env: {} as NodeJS.ProcessEnv } as never),
         ).resolves.toEqual({ ok: true, source: 'codex' });
         await expect(
-            surfaces?.externalSessions?.listCandidates?.({ source: 'codex', limit: 1 } as never),
+            surfaces?.externalSession?.listCandidates?.({ source: 'codex', limit: 1 } as never),
         ).resolves.toEqual({ candidates: [], nextCursor: null });
         await expect(
-            surfaces?.externalSessions?.getActivity?.({ source: 'codex', remoteSessionId: 'remote-1' } as never),
+            surfaces?.externalSession?.getActivity?.({ source: 'codex', remoteSessionId: 'remote-1' } as never),
         ).resolves.toEqual({ lastActivityAtMs: null, isRunning: false });
         await expect(
-            surfaces?.externalSessions?.pageTranscript?.({
+            surfaces?.externalSession?.pageTranscript?.({
                 source: 'codex',
                 remoteSessionId: 'remote-1',
                 direction: 'older',
@@ -179,7 +180,7 @@ describe('resolveBackendExecutionSurfaces', () => {
             truncated: false,
         });
         await expect(
-            surfaces?.externalSessions?.readAfterTranscript?.({
+            surfaces?.externalSession?.readAfterTranscript?.({
                 source: 'codex',
                 remoteSessionId: 'remote-1',
                 cursor: 'cursor-1',
@@ -188,13 +189,13 @@ describe('resolveBackendExecutionSurfaces', () => {
             } as never),
         ).resolves.toEqual({ items: [], nextCursor: null, truncated: false });
         await expect(
-            surfaces?.externalSessions?.resolveTakeoverSpawnOptions?.({
+            surfaces?.externalSession?.resolveTakeoverSpawnOptions?.({
                 linked: { providerId: 'codex' } as never,
                 sessionId: 'session-1',
             } as never),
         ).resolves.toBeNull();
         await expect(
-            surfaces?.attach?.evaluateEligibility?.({
+            surfaces?.attach?.evaluateAvailability?.({
                 metadata: {},
                 currentMachineId: 'machine-a',
                 sessionMachineId: 'machine-a',
@@ -206,16 +207,13 @@ describe('resolveBackendExecutionSurfaces', () => {
             metadata: { source: 'integration' },
         });
         await expect(
-            surfaces?.attach?.probeReachability?.({ metadata: {} } as never),
-        ).resolves.toEqual({ reachable: true });
-        await expect(
-            surfaces?.attach?.runAttach?.({
+            surfaces?.attach?.attach?.({
                 sessionId: 'session-1',
                 metadata: {},
             } as never),
         ).resolves.toBe(0);
         await expect(
-            surfaces?.sessionHandoff?.exportBundle?.({
+            surfaces?.handoff?.exportBundle?.({
                 metadata: {},
                 remoteSessionId: 'remote-1',
                 activeServerDir: '/tmp/integration',
@@ -226,7 +224,7 @@ describe('resolveBackendExecutionSurfaces', () => {
             files: [],
         });
         await expect(
-            surfaces?.sessionHandoff?.importBundle?.({
+            surfaces?.handoff?.importBundle?.({
                 bundle: {
                     providerId: 'codex',
                     remoteSessionId: 'remote-1',
@@ -248,14 +246,14 @@ describe('resolveBackendExecutionSurfaces', () => {
         });
     });
 
-    it('fails closed when plugin-target runtime adapters are present on a backend', async () => {
+    it('fails closed when backend surface handlers target plugin activation', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-backend-runtime-adapters-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-backend-runtime-adapters-plugin-'));
         const store = createPluginStateStore({ happyHomeDir });
 
         await materializeSamplePluginFixture(pluginRoot);
         const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
-        const manifest = rewriteBackendAttachRuntimeAdaptersToPluginTargets(
+        const manifest = rewriteBackendSurfaceHandlersToPluginTargets(
             JSON.parse(await readFile(manifestPath, 'utf8')) as unknown,
         );
         await writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
@@ -293,9 +291,11 @@ describe('resolveBackendExecutionSurfaces', () => {
         const surfaces = await resolveBackendExecutionSurfaces(SAMPLE_PLUGIN_BACKEND_ID, { happyHomeDir });
         expect(surfaces).toEqual({
             terminalRuntime: null,
-            externalSessions: null,
+            externalSession: null,
             attach: null,
-            sessionHandoff: null,
+            handoff: null,
+            fork: null,
+            checkpoint: null,
         });
     });
 
@@ -349,24 +349,21 @@ describe('resolveBackendExecutionSurfaces', () => {
                 id: SAMPLE_PLUGIN_PROVIDER_ID,
                 pluginId: SAMPLE_PLUGIN_ID,
             },
-            diagnostics: expect.arrayContaining([
-                expect.objectContaining({
-                    code: 'engine_plugin_runtime_adapter_handler_missing',
-                }),
-            ]),
+            diagnostics: [],
             executionSurfaces: {
                 terminalRuntime: {
                     launch: expect.any(Function),
                     discoverIdentity: expect.any(Function),
+                    resolveTranscriptBinding: expect.any(Function),
                 },
-                externalSessions: {
+                externalSession: {
                     validateSource: expect.any(Function),
                 },
                 attach: {
-                    evaluateEligibility: expect.any(Function),
-                    runAttach: expect.any(Function),
+                    evaluateAvailability: expect.any(Function),
+                    attach: expect.any(Function),
                 },
-                sessionHandoff: {
+                handoff: {
                     exportBundle: expect.any(Function),
                     importBundle: expect.any(Function),
                 },

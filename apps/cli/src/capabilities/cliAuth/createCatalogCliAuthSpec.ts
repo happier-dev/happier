@@ -1,5 +1,5 @@
 import {
-  getProviderCliRuntimeSpec,
+  getAgentCliRuntimeSpec,
   isAgentId,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
@@ -7,12 +7,12 @@ import type { CatalogAgentLookupId } from '@/backends/types';
 
 import type { CliAuthSpec } from './types';
 
-function resolveProviderCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
+function resolveAgentCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
   if (isAgentId(agentId)) {
-    return getProviderCliRuntimeSpec(agentId);
+    return getAgentCliRuntimeSpec(agentId);
   }
   if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
-    return legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
+    return legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
   }
   throw new Error(`Unsupported provider CLI runtime lookup id '${agentId}'`);
 }
@@ -22,7 +22,7 @@ export function createCatalogCliAuthSpec(
   spec: Omit<CliAuthSpec, 'binaryNames'>,
 ): CliAuthSpec {
   return {
-    binaryNames: [resolveProviderCliRuntimeSpecForLookupId(agentId).binaryName],
+    binaryNames: [resolveAgentCliRuntimeSpecForLookupId(agentId).binaryName],
     ...spec,
   };
 }

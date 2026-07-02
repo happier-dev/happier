@@ -1,4 +1,3 @@
-export { createClaudeJsonlSessionStoreFactory } from './createClaudeJsonlSessionAdapter';
 export {
     acquireClaudeJsonlSessionStore,
     clearClaudeJsonlSessionStoreRegistriesForTests,
@@ -16,7 +15,6 @@ export {
 } from './claudeJsonlSessionStoreCachePolicy';
 export { createClaudeJsonlSessionStore } from './createClaudeJsonlSessionStore';
 export { createClaudeRawJsonlSessionStore } from './createClaudeRawJsonlSessionStore';
-export * from './operations';
 export type {
     ClaudeJsonlSessionStoreActivity,
     ClaudeJsonlSessionStorePageOlderParams,

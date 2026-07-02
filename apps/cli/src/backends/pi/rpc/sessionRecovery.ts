@@ -1,9 +1,20 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { Interface as ReadlineInterface } from 'node:readline';
+import {
+  doesPiSessionFileNameMatchSessionId,
+  isBarePiSessionId,
+} from '@happier-dev/plugins-pi/agent/sessionFiles';
 
 import { asNonEmptyString } from './rpcSupport';
+import type { PiRpcStreamReader } from './streamReaders';
+
+export function createPiSessionNotMaterializedError(expectedSessionId: string): Error {
+  return Object.assign(
+    new Error(`Pi session '${expectedSessionId}' was not found or has not materialized in Pi's session store yet`),
+    { code: 'PI_SESSION_NOT_MATERIALIZED' as const },
+  );
+}
 
 export async function resolvePiSessionFileForSessionId(params: Readonly<{
   expectedSessionId: string;
@@ -11,6 +22,10 @@ export async function resolvePiSessionFileForSessionId(params: Readonly<{
   sessionFile: string | null;
 }>): Promise<string | null> {
   const candidateDirs = new Set<string>();
+  const fromSessionEnv = asNonEmptyString(params.env.PI_CODING_AGENT_SESSION_DIR);
+  if (fromSessionEnv) {
+    candidateDirs.add(fromSessionEnv);
+  }
   const fromEnv = asNonEmptyString(params.env.PI_CODING_AGENT_DIR);
   if (fromEnv) {
     candidateDirs.add(fromEnv);
@@ -41,7 +56,7 @@ export async function resolvePiSessionFileForSessionId(params: Readonly<{
           continue;
         }
         if (!entry.isFile()) continue;
-        if (!entry.name.includes(params.expectedSessionId) || !entry.name.endsWith('.jsonl')) continue;
+        if (!doesPiSessionFileNameMatchSessionId(entry.name, params.expectedSessionId)) continue;
         const path = join(next.dir, entry.name);
         try {
           const result = await stat(path);
@@ -76,8 +91,8 @@ export async function readPiAuthJsonMtimeMs(authPath: string): Promise<number | 
 
 export async function stopPiRpcProcess(params: Readonly<{
   process: ChildProcessWithoutNullStreams | null;
-  stdoutLineReader: ReadlineInterface | null;
-  stderrLineReader: ReadlineInterface | null;
+  stdoutLineReader: PiRpcStreamReader | null;
+  stderrLineReader: PiRpcStreamReader | null;
 }>): Promise<void> {
   params.stdoutLineReader?.close();
   params.stderrLineReader?.close();

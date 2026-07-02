@@ -1,15 +1,20 @@
+import type { BackendSurfaceResultV1 } from '@happier-dev/agents';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import {
+    createClaudeExternalSessionSurface,
+    readClaudeExternalSessionTitle,
+    readClaudeExternalSessionWorkingDirectory,
+    resolveClaudeExternalSessionJsonlFile,
+} from '@happier-dev/plugins-claude/agent/surfaces/sessions/external/providerOps';
+
 import { createProjectedJsonlSessionStore } from '../../../../api/session/fileBackedTranscripts/jsonl/createProjectedJsonlSessionStore';
+import { DEFAULT_JSONL_FOLLOW_POLICY } from '../../../../api/session/fileBackedTranscripts/jsonl/followPolicy';
 import type {
   FileBackedTranscriptPageResult,
   FileBackedTranscriptReadAfterResult,
   FileBackedTranscriptSessionStore,
   FileBackedTranscriptSessionStoreKey,
 } from '../../../../api/session/fileBackedTranscripts/store';
-
-import { readClaudeJsonlSessionActivity } from './operations/readClaudeJsonlSessionActivity';
-import { readClaudeJsonlSessionTitle } from './operations/readClaudeJsonlSessionTitle';
-import { readClaudeJsonlSessionWorkingDirectory } from './operations/readClaudeJsonlSessionWorkingDirectory';
-import { resolveClaudeJsonlSessionFile } from './operations/resolveClaudeJsonlSessionFile';
 
 type ClaudeProjectedJsonlSessionStoreOperations<TItem, TPageParams, TReadAfterParams> = Readonly<{
     pageOlder: (
@@ -23,40 +28,68 @@ type ClaudeProjectedJsonlSessionStoreOperations<TItem, TPageParams, TReadAfterPa
     ) => Promise<FileBackedTranscriptReadAfterResult<TItem>>;
 }>;
 
+type ClaudeExternalSessionActivity = Readonly<{
+    lastActivityAtMs: number | null;
+    isRunning: boolean;
+}>;
+
+function unwrapClaudeExternalSessionResult<T>(result: BackendSurfaceResultV1<T, string>): T {
+    if (result.ok) return result.value;
+    throw new Error(result.message ?? `Claude external-session operation failed: ${result.code}`);
+}
+
+function createClaudeExternalSessionEnv(source: ExternalSessionsSource): NodeJS.ProcessEnv {
+    const configDir = source.kind === 'claudeConfig' && typeof source.configDir === 'string'
+        ? source.configDir.trim()
+        : '';
+    return configDir
+        ? { ...process.env, HAPPIER_CLAUDE_CONFIG_DIR: configDir }
+        : process.env;
+}
+
 export function createClaudeProjectedJsonlSessionStore<TItem, TActivity, TPageParams, TReadAfterParams>(params: Readonly<{
     key: FileBackedTranscriptSessionStoreKey;
     operations: ClaudeProjectedJsonlSessionStoreOperations<TItem, TPageParams, TReadAfterParams>;
-    mapActivity: (value: Awaited<ReturnType<typeof readClaudeJsonlSessionActivity>>) => TActivity;
+    mapActivity: (value: ClaudeExternalSessionActivity) => TActivity;
 }>): FileBackedTranscriptSessionStore<TItem, TActivity, string | null> {
     return createProjectedJsonlSessionStore({
         key: params.key,
         operations: {
-            resolveFile: async (key) => resolveClaudeJsonlSessionFile({
+            resolveFile: async (key) => resolveClaudeExternalSessionJsonlFile({
                 source: key.source,
+                env: createClaudeExternalSessionEnv(key.source),
                 remoteSessionId: key.remoteSessionId,
             }),
             pageOlder: params.operations.pageOlder,
             readAfter: params.operations.readAfter,
             getTitle: async (key) => {
-                const resolved = await resolveClaudeJsonlSessionFile({
+                const resolved = await resolveClaudeExternalSessionJsonlFile({
                     source: key.source,
+                    env: createClaudeExternalSessionEnv(key.source),
                     remoteSessionId: key.remoteSessionId,
                 });
                 if (!resolved) return null;
-                return readClaudeJsonlSessionTitle(resolved.filePath);
+                return readClaudeExternalSessionTitle(resolved.filePath);
             },
-            getWorkingDirectory: async (key) => readClaudeJsonlSessionWorkingDirectory({
+            getWorkingDirectory: async (key) => readClaudeExternalSessionWorkingDirectory({
                 source: key.source,
+                env: createClaudeExternalSessionEnv(key.source),
                 remoteSessionId: key.remoteSessionId,
             }),
             getActivity: async (key) => {
-                const activity = await readClaudeJsonlSessionActivity({
-                    source: key.source,
-                    remoteSessionId: key.remoteSessionId,
+                const surface = createClaudeExternalSessionSurface({
+                    env: createClaudeExternalSessionEnv(key.source),
                 });
+                if (!surface.getActivity) {
+                    throw new Error('Claude external-session activity surface is unavailable');
+                }
+                const activity = unwrapClaudeExternalSessionResult(await surface.getActivity({
+                    source: key.source,
+                    providerSessionId: key.remoteSessionId,
+                }));
                 return params.mapActivity(activity);
             },
-            followPollIntervalMs: 250,
+            followPollIntervalMs: DEFAULT_JSONL_FOLLOW_POLICY.activeBurstPollIntervalMs,
         },
     });
 }

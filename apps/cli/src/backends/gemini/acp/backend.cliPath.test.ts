@@ -100,7 +100,7 @@ describe('Gemini ACP backend CLI path resolution', () => {
     const backend = result.backend as unknown as { options: { command: string; args: readonly string[] } };
     expect(backend.options.command).toBe(runtimePath);
     expect(backend.options.args[0]).toBe(fake);
-    expect(backend.options.args).toContain('--experimental-acp');
+    expect(backend.options.args).toContain('--acp');
   });
 
   it('uses managed install path when available', async () => {

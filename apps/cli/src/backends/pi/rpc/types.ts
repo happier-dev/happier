@@ -1,6 +1,8 @@
 export type PiRpcCommand =
-  | { id: string; type: 'prompt'; message: string }
+  | { id: string; type: 'prompt'; message: string; streamingBehavior?: 'steer' | 'followUp' }
+  | { id: string; type: 'compact'; customInstructions?: string }
   | { id: string; type: 'steer'; message: string }
+  | { id: string; type: 'follow_up'; message: string }
   | { id: string; type: 'abort' }
   | { id: string; type: 'new_session' }
   | { id: string; type: 'get_state' }
@@ -30,6 +32,7 @@ export type PiRpcStateData = Readonly<{
   sessionId?: string;
   sessionFile?: string;
   isStreaming?: boolean;
+  isCompacting?: boolean;
   thinkingLevel?: string;
   model?: Readonly<{ id?: string; provider?: string; name?: string }> | null;
 }>;

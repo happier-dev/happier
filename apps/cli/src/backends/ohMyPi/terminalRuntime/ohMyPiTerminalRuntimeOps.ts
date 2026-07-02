@@ -15,7 +15,7 @@ export const ohMyPiTerminalRuntimeOps: TerminalRuntimeOps<
     never,
     OhMyPiTerminalRuntimeBindTranscriptParams
 > = {
-    bindTranscript: (params) =>
+    resolveTranscriptBinding: (params) =>
         waitForOhMyPiTerminalTranscriptBinding({
             cwd: params.cwd,
             env: params.env,

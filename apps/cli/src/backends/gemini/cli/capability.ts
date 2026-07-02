@@ -4,6 +4,6 @@ import { geminiTransport } from '@/backends/gemini/acp/transport';
 export const cliCapability = createAcpCliCapability({
   agentId: 'gemini',
   title: 'Gemini CLI',
-  acpArgs: ['--experimental-acp'],
+  acpArgs: ['--acp'],
   transport: geminiTransport,
 });

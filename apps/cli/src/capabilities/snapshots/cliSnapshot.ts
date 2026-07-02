@@ -10,7 +10,7 @@ import { resolveCliAuthHomeDir } from '@/capabilities/cliAuth/shared';
 import type { CliAuthSpec, CliAuthStatus } from '@/backends/types';
 import { resolveProviderCliCommandForRuntime } from '@/packagedRuntime/managedTools/providerCliResolution';
 import { AsyncTtlCache } from '@happier-dev/protocol';
-import { getProviderCliRuntimeSpec, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
 import {
     isProviderCliPathRunnable,
     providerCliPathRequiresJavaScriptRuntime,
@@ -103,12 +103,12 @@ const DEFAULT_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = process.env.CI ? 3_000 : 1_500;
 const DEFAULT_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = process.env.CI ? 7_000 : 6_500;
 const CLI_SNAPSHOT_PROBE_TIMEOUT = Symbol('CLI_SNAPSHOT_PROBE_TIMEOUT');
 
-function resolveProviderCliRuntimeSpecForLookupId(name: DetectCliName) {
+function resolveAgentCliRuntimeSpecForLookupId(name: DetectCliName) {
     if (isAgentId(name)) {
-        return getProviderCliRuntimeSpec(name);
+        return getAgentCliRuntimeSpec(name);
     }
     if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(name)) {
-        return legacyCustomAcpCompat.getLegacyCustomAcpProviderCliRuntimeSpec();
+        return legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
     }
     throw new Error(`Unsupported CLI snapshot lookup id '${name}'`);
 }
@@ -254,7 +254,7 @@ async function resolveCliOverridePath(name: DetectCliName): Promise<string | nul
         await access(override, accessMode);
         return override;
     } catch {
-        const runtimeSpec = resolveProviderCliRuntimeSpecForLookupId(name);
+        const runtimeSpec = resolveAgentCliRuntimeSpecForLookupId(name);
         if (!runtimeSpec.acceptsJavaScriptFileOverride || isWindows) return null;
         if (!/\.(?:js|cjs|mjs)$/i.test(override)) return null;
         try {
@@ -593,7 +593,7 @@ async function resolveCliPathForName(
         return { resolvedPath: override, resolutionSource: 'override' };
     }
 
-    const managedResolution = resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(name));
+    const managedResolution = resolveProviderCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(name));
     if (managedResolution) {
         if (!await isCliPathRunnable(managedResolution.command)) return null;
         return {

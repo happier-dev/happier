@@ -16,6 +16,26 @@ class FakeChildProcess extends EventEmitter {
   }
 }
 
+class StubbornFakeChildProcess extends EventEmitter {
+  killed = false;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  stdin: null = null;
+  stdout: null = null;
+  stderr: null = null;
+  readonly signals: string[] = [];
+
+  kill(signal?: string) {
+    this.killed = true;
+    this.signals.push(signal ?? 'SIGTERM');
+    if (signal === 'SIGKILL') {
+      this.signalCode = 'SIGKILL';
+      this.emit('exit', null, 'SIGKILL');
+    }
+    return true;
+  }
+}
+
 describe('probeAcpAgentCapabilities spawn error handling', () => {
   it('does not leak uncaughtException when ACP command is missing', async () => {
     const uncaught: unknown[] = [];
@@ -88,6 +108,43 @@ describe('probeAcpAgentCapabilities spawn error handling', () => {
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
+      vi.unmock('node:child_process');
+    }
+  });
+
+  it('sends SIGKILL when a Unix ACP probe process accepts SIGTERM without exiting', async () => {
+    vi.resetModules();
+
+    const spawned: { child?: StubbornFakeChildProcess } = {};
+    vi.doMock('node:child_process', async (importOriginal) => {
+      const original = await importOriginal<typeof import('node:child_process')>();
+      return {
+        ...original,
+        spawn: vi.fn(() => {
+          const child = new StubbornFakeChildProcess();
+          spawned.child = child;
+          return child as unknown as import('node:child_process').ChildProcess;
+        }),
+      };
+    });
+
+    try {
+      const { probeAcpAgentCapabilities } = await import('./acpProbe');
+      const result = await probeAcpAgentCapabilities({
+        command: 'fake-acp-probe',
+        args: [],
+        cwd: process.cwd(),
+        env: {},
+        transport: new DefaultTransport('codex'),
+        timeoutMs: 50,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!spawned.child) {
+        throw new Error('Expected fake ACP probe child to be spawned');
+      }
+      expect(spawned.child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    } finally {
       vi.unmock('node:child_process');
     }
   });

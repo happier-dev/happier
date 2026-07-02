@@ -8,20 +8,21 @@ import { readJsonlFileForwardLines } from '../../../../api/session/fileBackedTra
 import { readJsonlFileBackwardPage } from '../../../../api/session/fileBackedTranscripts/jsonl/pageJsonlBackward';
 
 import {
-    decodeCodexDirectForwardCursor,
-    encodeCodexDirectForwardCursor,
-    type CodexDirectForwardCursor,
-} from '../../externalSessions/codexDirectForwardCursor';
-import {
+    decodeCodexExternalForwardCursor,
+    encodeCodexExternalForwardCursor,
     mapCodexExternalSessionAppServerPreviewToMessage,
-    resolveCodexExternalSessionAppServerMetadata,
-} from '../resolveCodexExternalSessionAppServerMetadata';
+    type CodexExternalForwardCursor,
+} from '@happier-dev/plugins-codex/agent/surfaces/sessions/external/transcript';
+import { resolveCodexExternalSessionAppServerMetadata } from '../resolveCodexExternalSessionAppServerMetadata';
 import { CODEX_SESSION_STATE_CAPABILITIES, codexSessionStateFacet } from '../../sessionState';
-import { homeEntries as resolveHomeEntries } from '../../externalSessions/homeEntries';
-import { mapCodexRolloutLineToDirectMessages } from '../mapCodexRolloutLineToDirectMessages';
-import { createCodexRolloutSemanticTracker } from '../createCodexRolloutSemanticTracker';
-import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from '../discovery/collectCodexSessionRolloutFiles';
-import { mapCodexRolloutEventToActions } from '../projection/mapCodexRolloutEventToActions';
+import { homeEntries as resolveHomeEntries } from '@happier-dev/plugins-codex/agent/rollout/discovery/homeEntries';
+import { createCodexRolloutSemanticTracker } from '@happier-dev/plugins-codex/agent/rollout/semanticTracker';
+import { mapCodexRolloutLineToExternalMessages } from '@happier-dev/plugins-codex/agent/rollout/projection/transcript';
+import {
+  collectCodexSessionRolloutFiles,
+  type CodexRolloutFile,
+} from '@happier-dev/plugins-codex/agent/rollout/discovery/sessionsForHome';
+import { mapCodexRolloutEventToActions } from '@happier-dev/plugins-codex/agent/rollout/projection/actions';
 
 type CodexBackwardMergedCursorV2 = Readonly<{
     v: 2;
@@ -46,7 +47,7 @@ type CodexBackwardStreamVectorCursorV4 = Readonly<{
 
 type CodexBackwardCursor = CodexBackwardMergedCursorV2 | CodexBackwardMergedCursorV3 | CodexBackwardStreamVectorCursorV4;
 
-type CodexDirectTranscriptRolloutStream = CodexRolloutFile & Readonly<{
+type CodexExternalTranscriptRolloutStream = CodexRolloutFile & Readonly<{
     threadId: string;
     sidechainId: string | null;
 }>;
@@ -71,18 +72,19 @@ type CodexRolloutReadProgressEntry = Readonly<{
     subIndex: number;
 }>;
 
-type CodexRolloutDirectTranscriptStreamState = Readonly<{
-    stream: CodexDirectTranscriptRolloutStream;
+type CodexRolloutExternalTranscriptStreamState = Readonly<{
+    stream: CodexExternalTranscriptRolloutStream;
     nextOffsetBytes: number;
     fileSizeBytes: number;
     records: readonly CodexProjectedTranscriptRecord[];
     discoveredChildThreadIds: readonly string[];
+    completedChildThreadIds: readonly string[];
     sessionMetaCwd: string | null;
     sessionMetaTimestampMs: number | null;
     semanticTracker: ReturnType<typeof createCodexRolloutSemanticTracker>;
 }>;
 
-type CodexRolloutDirectTranscriptSnapshot = Readonly<{
+type CodexRolloutExternalTranscriptSnapshot = Readonly<{
     remoteSessionId: string;
     mergedRecords: readonly CodexProjectedTranscriptRecord[];
     rolloutHome: string | null;
@@ -94,16 +96,16 @@ type CodexRolloutDirectTranscriptSnapshot = Readonly<{
     lastActivityAtMs: number | null;
     createdAtMs: number | null;
     primaryRolloutFilePath: string | null;
-    streamStates: readonly CodexRolloutDirectTranscriptStreamState[];
+    streamStates: readonly CodexRolloutExternalTranscriptStreamState[];
 }>;
 
-type CodexRolloutDirectTranscriptSnapshotOptions = Readonly<{
+type CodexRolloutExternalTranscriptSnapshotOptions = Readonly<{
     allowRolloutCwdAppServerFallback: boolean;
     resolveTitle: boolean;
 }>;
 
 type CodexResolvedStreamState = Readonly<{
-    state: CodexRolloutDirectTranscriptStreamState;
+    state: CodexRolloutExternalTranscriptStreamState;
     appendedRecords: readonly CodexProjectedTranscriptRecord[];
     replacedExistingRecords: boolean;
 }>;
@@ -113,6 +115,7 @@ export type CodexRolloutExternalSessionTranscriptPageParams = Readonly<{
     cursor?: string;
     maxBytes: number;
     maxItems: number;
+    allowProviderFallback?: boolean;
 }>;
 
 export type CodexRolloutExternalSessionTranscriptPageResult = Readonly<{
@@ -127,6 +130,7 @@ export type CodexRolloutExternalSessionTranscriptReadAfterParams = Readonly<{
     cursor: string;
     maxBytes: number;
     maxItems: number;
+    allowProviderFallback?: boolean;
 }>;
 
 export type CodexRolloutExternalSessionTranscriptReadAfterResult = Readonly<{
@@ -197,8 +201,8 @@ function compareProjectedRecordsOldestFirst(left: CodexProjectedTranscriptRecord
     return compareDirectTranscriptItemsOldestFirst(left.item, right.item);
 }
 
-function buildAppServerPreviewCursor(metadata: NonNullable<CodexRolloutDirectTranscriptSnapshot['appServerMetadata']>): string {
-    return encodeCodexDirectForwardCursor({
+function buildAppServerPreviewCursor(metadata: NonNullable<CodexRolloutExternalTranscriptSnapshot['appServerMetadata']>): string {
+    return encodeCodexExternalForwardCursor({
         v: 2,
         kind: 'codexForwardAppServer',
         updatedAtMs: metadata.updatedAtMs,
@@ -220,7 +224,7 @@ function buildStreamVectorCursorFromEntries(
             subIndex: entry.subIndex,
         }))
         .sort((left, right) => left.fileRelPath.localeCompare(right.fileRelPath));
-    return encodeCodexDirectForwardCursor({
+    return encodeCodexExternalForwardCursor({
         v: 4,
         kind: 'codexForwardStreamVector',
         streams,
@@ -228,7 +232,7 @@ function buildStreamVectorCursorFromEntries(
 }
 
 function buildStreamVectorCursor(
-    streamStates: readonly CodexRolloutDirectTranscriptStreamState[],
+    streamStates: readonly CodexRolloutExternalTranscriptStreamState[],
     allowEmpty: boolean,
 ): string | null {
     return buildStreamVectorCursorFromEntries(
@@ -242,7 +246,7 @@ function buildStreamVectorCursor(
 }
 
 async function buildStreamVectorTailCursorFromStreams(
-    streams: readonly CodexDirectTranscriptRolloutStream[],
+    streams: readonly CodexExternalTranscriptRolloutStream[],
 ): Promise<string | null> {
     const entries = await Promise.all(
         streams.map(async (stream): Promise<CodexRolloutStreamVectorEntry> => ({
@@ -255,7 +259,7 @@ async function buildStreamVectorTailCursorFromStreams(
 }
 
 function decodeStreamVectorCursor(
-    cursor: CodexDirectForwardCursor | null,
+    cursor: CodexExternalForwardCursor | null,
 ): ReadonlyMap<string, CodexRolloutReadProgressEntry> | null {
     if (!cursor || cursor.kind !== 'codexForwardStreamVector') return null;
     return new Map(
@@ -270,7 +274,7 @@ function decodeStreamVectorCursor(
 }
 
 function buildReadAfterCursorFromProgress(params: Readonly<{
-    snapshot: CodexRolloutDirectTranscriptSnapshot;
+    snapshot: CodexRolloutExternalTranscriptSnapshot;
     progressByStreamId: ReadonlyMap<string, CodexRolloutReadProgressEntry>;
 }>): string | null {
     return buildStreamVectorCursorFromEntries(
@@ -310,7 +314,7 @@ function parseSessionMeta(value: unknown): Readonly<{ cwd: string | null; timest
 }
 
 function buildInvalidJsonRecord(params: Readonly<{
-    stream: CodexDirectTranscriptRolloutStream;
+    stream: CodexExternalTranscriptRolloutStream;
     lineStartOffsetBytes: number;
     lineEndOffsetBytes: number;
     rawLine: string;
@@ -371,7 +375,7 @@ async function statFileSize(filePath: string): Promise<number | null> {
 }
 
 async function readCodexStreamRecords(params: Readonly<{
-    stream: CodexDirectTranscriptRolloutStream;
+    stream: CodexExternalTranscriptRolloutStream;
     offsetBytes: number;
     semanticTracker: ReturnType<typeof createCodexRolloutSemanticTracker>;
 }>): Promise<Readonly<{
@@ -379,12 +383,14 @@ async function readCodexStreamRecords(params: Readonly<{
     fileSizeBytes: number;
     records: readonly CodexProjectedTranscriptRecord[];
     discoveredChildThreadIds: readonly string[];
+    completedChildThreadIds: readonly string[];
     sessionMetaCwd: string | null;
     sessionMetaTimestampMs: number | null;
 }>> {
     const fileSizeBytes = (await statFileSize(params.stream.filePath)) ?? 0;
     const records: CodexProjectedTranscriptRecord[] = [];
     const discoveredChildThreadIds = new Set<string>();
+    const completedChildThreadIds = new Set<string>();
     let nextOffsetBytes = normalizeOffsetBytes(params.offsetBytes);
     let sessionMetaCwd: string | null = null;
     let sessionMetaTimestampMs: number | null = null;
@@ -402,6 +408,7 @@ async function readCodexStreamRecords(params: Readonly<{
                 fileSizeBytes: 0,
                 records,
                 discoveredChildThreadIds: [...discoveredChildThreadIds],
+                completedChildThreadIds: [...completedChildThreadIds],
                 sessionMetaCwd,
                 sessionMetaTimestampMs,
             };
@@ -431,10 +438,12 @@ async function readCodexStreamRecords(params: Readonly<{
             for (const action of normalizedActions) {
                 if (action.type === 'subagent-spawn') {
                     discoveredChildThreadIds.add(action.threadId);
+                } else if (action.type === 'subagent-complete') {
+                    completedChildThreadIds.add(action.threadId);
                 }
             }
 
-            const mappedItems = mapCodexRolloutLineToDirectMessages({
+            const mappedItems = mapCodexRolloutLineToExternalMessages({
                 fileRelPath: params.stream.fileRelPath,
                 lineStartOffsetBytes: line.startOffsetBytes,
                 lineValue: line.value,
@@ -467,6 +476,7 @@ async function readCodexStreamRecords(params: Readonly<{
         fileSizeBytes,
         records,
         discoveredChildThreadIds: [...discoveredChildThreadIds],
+        completedChildThreadIds: [...completedChildThreadIds],
         sessionMetaCwd,
         sessionMetaTimestampMs,
     };
@@ -507,14 +517,14 @@ async function discoverSpawnedThreadIdsFromFilesBounded(files: readonly CodexRol
     return [...discovered];
 }
 
-async function collectCodexDirectTranscriptRolloutStreams(params: Readonly<{
+async function collectCodexExternalTranscriptRolloutStreams(params: Readonly<{
     codexHome: string;
     remoteSessionId: string;
     initialRolloutFiles?: readonly CodexRolloutFile[];
-}>): Promise<readonly CodexDirectTranscriptRolloutStream[]> {
+}>): Promise<readonly CodexExternalTranscriptRolloutStream[]> {
     const queue = [{ threadId: params.remoteSessionId, sidechainId: null as string | null }];
     const seenThreadIds = new Set<string>();
-    const streams: CodexDirectTranscriptRolloutStream[] = [];
+    const streams: CodexExternalTranscriptRolloutStream[] = [];
 
     while (queue.length > 0) {
         const current = queue.shift()!;
@@ -552,7 +562,7 @@ async function collectCodexDirectTranscriptRolloutStreams(params: Readonly<{
 }
 
 function projectCodexRolloutParsedLine(params: Readonly<{
-    stream: CodexDirectTranscriptRolloutStream;
+    stream: CodexExternalTranscriptRolloutStream;
     lineStartOffsetBytes: number;
     lineEndOffsetBytes: number;
     lineValue: unknown;
@@ -560,13 +570,17 @@ function projectCodexRolloutParsedLine(params: Readonly<{
 }>): Readonly<{
     records: readonly CodexProjectedTranscriptRecord[];
     discoveredChildThreadIds: readonly string[];
+    completedChildThreadIds: readonly string[];
 }> {
     const actions = mapCodexRolloutEventToActions(params.lineValue, { debug: true });
     const normalizedActions = actions.flatMap((action) => params.semanticTracker.consume(action));
     const discoveredChildThreadIds = normalizedActions
         .filter((action) => action.type === 'subagent-spawn')
         .map((action) => action.threadId);
-    const mappedItems = mapCodexRolloutLineToDirectMessages({
+    const completedChildThreadIds = normalizedActions
+        .filter((action) => action.type === 'subagent-complete')
+        .map((action) => action.threadId);
+    const mappedItems = mapCodexRolloutLineToExternalMessages({
         fileRelPath: params.stream.fileRelPath,
         lineStartOffsetBytes: params.lineStartOffsetBytes,
         lineValue: params.lineValue,
@@ -583,12 +597,13 @@ function projectCodexRolloutParsedLine(params: Readonly<{
             lineRecordCount: mappedItems.length,
         })),
         discoveredChildThreadIds,
+        completedChildThreadIds,
     };
 }
 
 async function resolveStreamState(
-    stream: CodexDirectTranscriptRolloutStream,
-    previousState: CodexRolloutDirectTranscriptStreamState | null,
+    stream: CodexExternalTranscriptRolloutStream,
+    previousState: CodexRolloutExternalTranscriptStreamState | null,
 ): Promise<CodexResolvedStreamState> {
     const currentFileSizeBytes = await statFileSize(stream.filePath);
     if (currentFileSizeBytes == null) {
@@ -602,6 +617,7 @@ async function resolveStreamState(
                 fileSizeBytes: 0,
                 records: [],
                 discoveredChildThreadIds: [],
+                completedChildThreadIds: [],
                 sessionMetaCwd: null,
                 sessionMetaTimestampMs: null,
                 semanticTracker: createCodexRolloutSemanticTracker(),
@@ -631,6 +647,7 @@ async function resolveStreamState(
                 fileSizeBytes: Math.max(currentFileSizeBytes, read.fileSizeBytes),
                 records: read.records,
                 discoveredChildThreadIds: read.discoveredChildThreadIds,
+                completedChildThreadIds: read.completedChildThreadIds,
                 sessionMetaCwd: read.sessionMetaCwd,
                 sessionMetaTimestampMs: read.sessionMetaTimestampMs,
                 semanticTracker,
@@ -667,6 +684,10 @@ async function resolveStreamState(
                 ...previousState.discoveredChildThreadIds,
                 ...read.discoveredChildThreadIds,
             ])),
+            completedChildThreadIds: Array.from(new Set([
+                ...previousState.completedChildThreadIds,
+                ...read.completedChildThreadIds,
+            ])),
             sessionMetaCwd: read.sessionMetaCwd ?? previousState.sessionMetaCwd,
             sessionMetaTimestampMs: read.sessionMetaTimestampMs ?? previousState.sessionMetaTimestampMs,
             semanticTracker: previousState.semanticTracker,
@@ -676,7 +697,7 @@ async function resolveStreamState(
     };
 }
 
-function buildRolloutSignature(streams: readonly CodexDirectTranscriptRolloutStream[]): string | null {
+function buildRolloutSignature(streams: readonly CodexExternalTranscriptRolloutStream[]): string | null {
     if (streams.length === 0) return null;
     return streams
         .map((stream) => `${stream.fileRelPath}:${stream.sortMs}:${stream.mtimeMs}:${stream.threadId}:${stream.sidechainId ?? ''}`)
@@ -704,10 +725,10 @@ function selectBestCodexHomeWithFiles<TEntry extends Readonly<{ codexHome: strin
     return bestEntry ? { entry: bestEntry, files: bestFiles } : null;
 }
 
-async function collectCodexDirectTranscriptStreamStates(params: Readonly<{
+async function collectCodexExternalTranscriptStreamStates(params: Readonly<{
     codexHome: string;
     remoteSessionId: string;
-    previousSnapshot?: CodexRolloutDirectTranscriptSnapshot | null;
+    previousSnapshot?: CodexRolloutExternalTranscriptSnapshot | null;
     initialRolloutFiles?: readonly CodexRolloutFile[];
 }>): Promise<readonly CodexResolvedStreamState[]> {
     const previousStateByStreamId = new Map(
@@ -731,7 +752,7 @@ async function collectCodexDirectTranscriptStreamStates(params: Readonly<{
         if (files.length === 0) continue;
 
         const sortedStreams = files
-            .map((file): CodexDirectTranscriptRolloutStream => ({
+            .map((file): CodexExternalTranscriptRolloutStream => ({
                 ...file,
                 threadId: current.threadId,
                 sidechainId: current.sidechainId,
@@ -761,7 +782,7 @@ async function collectCodexDirectTranscriptStreamStates(params: Readonly<{
 }
 
 function buildMergedRecords(params: Readonly<{
-    previousSnapshot?: CodexRolloutDirectTranscriptSnapshot | null;
+    previousSnapshot?: CodexRolloutExternalTranscriptSnapshot | null;
     resolvedStates: readonly CodexResolvedStreamState[];
     rolloutHome: string | null;
 }>): readonly CodexProjectedTranscriptRecord[] {
@@ -802,7 +823,7 @@ function buildMergedRecords(params: Readonly<{
 }
 
 async function resolveSnapshotTitle(
-    streamStates: readonly CodexRolloutDirectTranscriptStreamState[],
+    streamStates: readonly CodexRolloutExternalTranscriptStreamState[],
 ): Promise<string | null> {
     const primaryRootStream = [...streamStates]
         .filter((state) => state.stream.sidechainId === null)
@@ -826,7 +847,7 @@ async function resolveSnapshotTitle(
 }
 
 function resolveSnapshotWorkingDirectory(
-    streamStates: readonly CodexRolloutDirectTranscriptStreamState[],
+    streamStates: readonly CodexRolloutExternalTranscriptStreamState[],
 ): string | null {
     const rootStates = streamStates.filter((state) => state.stream.sidechainId === null);
     const orderedStates = (rootStates.length > 0 ? rootStates : streamStates)
@@ -845,7 +866,7 @@ function resolveSnapshotWorkingDirectory(
 }
 
 function resolveSnapshotCreatedAtMs(
-    streamStates: readonly CodexRolloutDirectTranscriptStreamState[],
+    streamStates: readonly CodexRolloutExternalTranscriptStreamState[],
 ): number | null {
     const rootStates = streamStates.filter((state) => state.stream.sidechainId === null);
     const orderedStates = (rootStates.length > 0 ? rootStates : streamStates)
@@ -864,13 +885,13 @@ function resolveSnapshotCreatedAtMs(
     return first ? Math.max(0, Math.trunc(first.stream.mtimeMs)) : null;
 }
 
-function resolveSnapshotActivity(streamStates: readonly CodexRolloutDirectTranscriptStreamState[]): number | null {
+function resolveSnapshotActivity(streamStates: readonly CodexRolloutExternalTranscriptStreamState[]): number | null {
     if (streamStates.length === 0) return null;
     return Math.max(...streamStates.map((state) => Math.max(0, Math.trunc(state.stream.mtimeMs))));
 }
 
 function resolvePrimaryRolloutFilePath(
-    streamStates: readonly CodexRolloutDirectTranscriptStreamState[],
+    streamStates: readonly CodexRolloutExternalTranscriptStreamState[],
 ): string | null {
     const rootStates = streamStates.filter((state) => state.stream.sidechainId === null);
     const orderedStates = (rootStates.length > 0 ? rootStates : streamStates)
@@ -883,7 +904,7 @@ function resolvePrimaryRolloutFilePath(
     return orderedStates.at(-1)?.stream.filePath ?? null;
 }
 
-function resolveRolloutChronologyMs(stream: CodexDirectTranscriptRolloutStream): number {
+function resolveRolloutChronologyMs(stream: CodexExternalTranscriptRolloutStream): number {
     const name = stream.filePath.split(/[/\\]/).pop() ?? '';
     const match = /^rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/.exec(name);
     if (!match) {
@@ -894,16 +915,16 @@ function resolveRolloutChronologyMs(stream: CodexDirectTranscriptRolloutStream):
     return Number.isFinite(parsed) ? Math.trunc(parsed) : Math.max(0, Math.trunc(stream.sortMs));
 }
 
-export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readonly<{
+export async function resolveCodexRolloutExternalTranscriptSnapshot(params: Readonly<{
     source: ExternalSessionsSource;
     activeServerDir: string;
     env?: NodeJS.ProcessEnv;
     remoteSessionId: string;
-    previousSnapshot?: CodexRolloutDirectTranscriptSnapshot | null;
-    options?: Partial<CodexRolloutDirectTranscriptSnapshotOptions>;
-}>): Promise<CodexRolloutDirectTranscriptSnapshot> {
+    previousSnapshot?: CodexRolloutExternalTranscriptSnapshot | null;
+    options?: Partial<CodexRolloutExternalTranscriptSnapshotOptions>;
+}>): Promise<CodexRolloutExternalTranscriptSnapshot> {
     const env = params.env ?? process.env;
-    const options: CodexRolloutDirectTranscriptSnapshotOptions = {
+    const options: CodexRolloutExternalTranscriptSnapshotOptions = {
         allowRolloutCwdAppServerFallback: params.options?.allowRolloutCwdAppServerFallback !== false,
         resolveTitle: params.options?.resolveTitle !== false,
     };
@@ -921,12 +942,14 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
         if (params.previousSnapshot?.rolloutHome) {
             return params.previousSnapshot;
         }
-        const appServerMetadata = await resolveCodexExternalSessionAppServerMetadata({
-            source: params.source,
-            activeServerDir: params.activeServerDir,
-            remoteSessionId: params.remoteSessionId,
-            env,
-        });
+        const appServerMetadata = options.allowRolloutCwdAppServerFallback
+            ? await resolveCodexExternalSessionAppServerMetadata({
+                source: params.source,
+                activeServerDir: params.activeServerDir,
+                remoteSessionId: params.remoteSessionId,
+                env,
+            })
+            : null;
         return {
             remoteSessionId: params.remoteSessionId,
             mergedRecords: [],
@@ -943,7 +966,7 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
         };
     }
 
-    const resolvedStates = await collectCodexDirectTranscriptStreamStates({
+    const resolvedStates = await collectCodexExternalTranscriptStreamStates({
         codexHome: bestEntry.entry.codexHome,
         remoteSessionId: params.remoteSessionId,
         previousSnapshot:
@@ -1012,13 +1035,14 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
     };
 }
 
-export async function pageCodexRolloutDirectTranscriptHistory(params: Readonly<{
+export async function pageCodexRolloutExternalTranscriptHistory(params: Readonly<{
     source: ExternalSessionsSource;
     activeServerDir: string;
     env?: NodeJS.ProcessEnv;
     remoteSessionId: string;
 } & CodexRolloutExternalSessionTranscriptPageParams>): Promise<CodexRolloutExternalSessionTranscriptPageResult> {
     const env = params.env ?? process.env;
+    const allowProviderFallback = params.allowProviderFallback !== false;
     const homeEntries = await resolveHomeEntries({
         source: params.source,
         activeServerDir: params.activeServerDir,
@@ -1030,12 +1054,14 @@ export async function pageCodexRolloutDirectTranscriptHistory(params: Readonly<{
     const bestEntry = selectBestCodexHomeWithFiles(homeEntries, perHomeFiles);
 
     if (bestEntry === null) {
-        const appServerMetadata = await resolveCodexExternalSessionAppServerMetadata({
-            source: params.source,
-            activeServerDir: params.activeServerDir,
-            remoteSessionId: params.remoteSessionId,
-            env,
-        });
+        const appServerMetadata = allowProviderFallback
+            ? await resolveCodexExternalSessionAppServerMetadata({
+                source: params.source,
+                activeServerDir: params.activeServerDir,
+                remoteSessionId: params.remoteSessionId,
+                env,
+            })
+            : null;
         const previewItem = appServerMetadata
             ? mapCodexExternalSessionAppServerPreviewToMessage({
                 remoteSessionId: params.remoteSessionId,
@@ -1051,7 +1077,7 @@ export async function pageCodexRolloutDirectTranscriptHistory(params: Readonly<{
         };
     }
 
-    const streams = await collectCodexDirectTranscriptRolloutStreams({
+    const streams = await collectCodexExternalTranscriptRolloutStreams({
         codexHome: bestEntry.entry.codexHome,
         remoteSessionId: params.remoteSessionId,
         initialRolloutFiles: bestEntry.files,
@@ -1185,13 +1211,14 @@ export async function pageCodexRolloutDirectTranscriptHistory(params: Readonly<{
     };
 }
 
-export async function readAfterCodexRolloutDirectTranscriptHistory(params: Readonly<{
+export async function readAfterCodexRolloutExternalTranscriptHistory(params: Readonly<{
     source: ExternalSessionsSource;
     activeServerDir: string;
     env?: NodeJS.ProcessEnv;
     remoteSessionId: string;
 } & CodexRolloutExternalSessionTranscriptReadAfterParams>): Promise<CodexRolloutExternalSessionTranscriptReadAfterResult> {
     const env = params.env ?? process.env;
+    const allowProviderFallback = params.allowProviderFallback !== false;
     const homeEntries = await resolveHomeEntries({
         source: params.source,
         activeServerDir: params.activeServerDir,
@@ -1203,17 +1230,19 @@ export async function readAfterCodexRolloutDirectTranscriptHistory(params: Reado
     const bestEntry = selectBestCodexHomeWithFiles(homeEntries, perHomeFiles);
 
     if (bestEntry === null) {
-        const appServerMetadata = await resolveCodexExternalSessionAppServerMetadata({
-            source: params.source,
-            activeServerDir: params.activeServerDir,
-            remoteSessionId: params.remoteSessionId,
-            env,
-        });
+        const appServerMetadata = allowProviderFallback
+            ? await resolveCodexExternalSessionAppServerMetadata({
+                source: params.source,
+                activeServerDir: params.activeServerDir,
+                remoteSessionId: params.remoteSessionId,
+                env,
+            })
+            : null;
         if (params.cursor === 'tail' && appServerMetadata) {
             return { items: [], nextCursor: buildAppServerPreviewCursor(appServerMetadata), truncated: false };
         }
 
-        const decodedEmpty = params.cursor === 'tail' ? null : decodeCodexDirectForwardCursor(params.cursor);
+        const decodedEmpty = params.cursor === 'tail' ? null : decodeCodexExternalForwardCursor(params.cursor);
         if (decodedEmpty?.kind === 'codexForwardAppServer') {
             const changed = appServerMetadata
                 ? appServerMetadata.updatedAtMs !== decodedEmpty.updatedAtMs || appServerMetadata.previewText !== decodedEmpty.previewText
@@ -1226,7 +1255,7 @@ export async function readAfterCodexRolloutDirectTranscriptHistory(params: Reado
                 : null;
             return {
                 items: previewItem ? [previewItem] : [],
-                nextCursor: encodeCodexDirectForwardCursor({
+                nextCursor: encodeCodexExternalForwardCursor({
                     v: 2,
                     kind: 'codexForwardAppServer',
                     updatedAtMs: appServerMetadata?.updatedAtMs ?? decodedEmpty.updatedAtMs,
@@ -1239,7 +1268,7 @@ export async function readAfterCodexRolloutDirectTranscriptHistory(params: Reado
         return { items: [], nextCursor: null, truncated: false };
     }
 
-    const streams = await collectCodexDirectTranscriptRolloutStreams({
+    const streams = await collectCodexExternalTranscriptRolloutStreams({
         codexHome: bestEntry.entry.codexHome,
         remoteSessionId: params.remoteSessionId,
         initialRolloutFiles: bestEntry.files,
@@ -1252,7 +1281,7 @@ export async function readAfterCodexRolloutDirectTranscriptHistory(params: Reado
         };
     }
 
-    const decoded = decodeCodexDirectForwardCursor(params.cursor);
+    const decoded = decodeCodexExternalForwardCursor(params.cursor);
     const cursorProgressByStreamId = decodeStreamVectorCursor(decoded);
     if (!cursorProgressByStreamId) {
         return {
@@ -1310,7 +1339,7 @@ export async function readAfterCodexRolloutDirectTranscriptHistory(params: Reado
                 seenThreadIds.add(threadId);
                 const childFiles = await collectCodexSessionRolloutFiles({ codexHome: bestEntry.entry.codexHome, remoteSessionId: threadId });
                 for (const file of childFiles) {
-                    const childStream: CodexDirectTranscriptRolloutStream = { ...file, threadId, sidechainId: threadId };
+                    const childStream: CodexExternalTranscriptRolloutStream = { ...file, threadId, sidechainId: threadId };
                     if (streamsById.has(childStream.fileRelPath)) continue;
                     streamsById.set(childStream.fileRelPath, childStream);
                     streamQueue.push(childStream);
@@ -1368,8 +1397,8 @@ export async function readAfterCodexRolloutDirectTranscriptHistory(params: Reado
     };
 }
 
-export function pageCodexRolloutDirectTranscriptSnapshot(
-    snapshot: CodexRolloutDirectTranscriptSnapshot,
+export function pageCodexRolloutExternalTranscriptSnapshot(
+    snapshot: CodexRolloutExternalTranscriptSnapshot,
     params: CodexRolloutExternalSessionTranscriptPageParams,
 ): CodexRolloutExternalSessionTranscriptPageResult {
     if (snapshot.rolloutHome === null) {
@@ -1445,8 +1474,8 @@ export function pageCodexRolloutDirectTranscriptSnapshot(
     };
 }
 
-export function readAfterCodexRolloutDirectTranscriptSnapshot(
-    snapshot: CodexRolloutDirectTranscriptSnapshot,
+export function readAfterCodexRolloutExternalTranscriptSnapshot(
+    snapshot: CodexRolloutExternalTranscriptSnapshot,
     params: CodexRolloutExternalSessionTranscriptReadAfterParams,
 ): CodexRolloutExternalSessionTranscriptReadAfterResult {
     if (snapshot.rolloutHome === null) {
@@ -1458,9 +1487,9 @@ export function readAfterCodexRolloutDirectTranscriptSnapshot(
             };
         }
 
-        const decodedEmpty = params.cursor === 'tail' ? null : decodeCodexDirectForwardCursor(params.cursor);
+        const decodedEmpty = params.cursor === 'tail' ? null : decodeCodexExternalForwardCursor(params.cursor);
         if (decodedEmpty?.kind === 'codexForwardAppServer') {
-            const previousCursor = encodeCodexDirectForwardCursor(decodedEmpty);
+            const previousCursor = encodeCodexExternalForwardCursor(decodedEmpty);
             const nextCursor = snapshot.appServerMetadata ? buildAppServerPreviewCursor(snapshot.appServerMetadata) : previousCursor;
             const changed = snapshot.appServerMetadata ? nextCursor !== previousCursor : false;
             const previewItem = changed && snapshot.appServerMetadata
@@ -1483,7 +1512,7 @@ export function readAfterCodexRolloutDirectTranscriptSnapshot(
         };
     }
 
-    const decoded = decodeCodexDirectForwardCursor(params.cursor);
+    const decoded = decodeCodexExternalForwardCursor(params.cursor);
     const cursorOffsets = decodeStreamVectorCursor(decoded);
     if (!cursorOffsets) {
         return {

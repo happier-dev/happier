@@ -4,28 +4,55 @@ import type { Capability } from '@/capabilities/service';
 import type { CommandHandler } from '@/cli/commandRegistry';
 import type { CloudConnectTarget } from '@/cloud/connectTypes';
 import type { DaemonSpawnHooks } from '../daemon/spawnHooks';
-import type { ExternalSessionsProviderId } from '@happier-dev/protocol';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type {
+  BackendTargetRefV1,
+  ConnectedServiceBindingsV1,
+  ConnectedServiceId,
+  ConnectedServiceMaterializationIdentityV1,
+  ConnectedServicesProviderConfigSharingModeV1,
+  ConnectedServicesProviderStateSharingModeV1,
+  ExternalSessionsProviderId,
+} from '@happier-dev/protocol';
 import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
-import type { AcpForkContinuationHandler } from '@/session/fork/acpForkContinuationHandler';
-import type { ProviderNativeForkHandler } from '@/session/fork/providerNativeForkHandler';
-import type { ReplayForkContinuationHandler } from '@/session/fork/replayForkContinuationHandler';
+import type { ExternalSessionCandidateHostAdapter } from '@/session/external/candidates/host';
+import type { ExternalSessionTranscriptStoreAdapter } from '@/session/external/transcripts/store';
 import type { AnyTerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
-import type { ImportedSessionHandoffBundle, SessionHandoffProviderBundle } from '@/session/handoff/types';
 import type { ProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
+import type { SessionCatalogControlAdapter } from '@/session/catalogControls/sessionCatalogControlTypes';
+import type { SessionGoalControlAdapter } from '@/session/goalControls/sessionGoalControlTypes';
+import type { SessionUsageLimitRecoveryControlAdapter } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlTypes';
+import type { Metadata } from '@/api/types';
+import type { TrackedSession } from '@/daemon/types';
 
 export { AGENT_IDS as CATALOG_AGENT_IDS, DEFAULT_AGENT_ID as DEFAULT_CATALOG_AGENT_ID } from '@happier-dev/agents';
-import type { AgentId as CatalogAgentId, VendorResumeSupportLevel } from '@happier-dev/agents';
+import type {
+  AgentId as CatalogAgentId,
+  ForkSurfaceV1,
+  HandoffSurfaceV1,
+  VendorResumeSupportLevel,
+} from '@happier-dev/agents';
 import { LEGACY_CUSTOM_ACP_COMPAT_AGENT_ID } from '@/agent/acp/catalog/compat/customAcp';
 export type CatalogAgentLookupId = CatalogAgentId | typeof LEGACY_CUSTOM_ACP_COMPAT_AGENT_ID;
 export type { CatalogAgentId, VendorResumeSupportLevel };
 export type { ProviderCliLaunchSpec };
 import type { CodexBackendMode } from '@happier-dev/agents';
-import type { InstallableKey } from '@happier-dev/protocol';
-import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
+import type {
+  PreflightSessionControlsProbeAdapter,
+  PreflightSessionControlsProbeKind,
+} from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import type { ConnectedServicesMaterializer } from '@/daemon/connectedServices/materialization/materializer';
+import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
+import type {
+  ConnectedServiceRuntimeAuthSelectionMaterializer,
+  ConnectedServiceRuntimeAuthSelectionMaterializerParams,
+} from '@/daemon/connectedServices/sessionAuthSwitch/runtimeAuthSelectionMaterializerTypes';
+import type {
+  VerifyResumeReachableInput,
+  VerifyResumeReachableResult,
+} from '@/backends/connectedServices/verifyResumeReachableTypes';
 import type { CliRuntimeCoreGetter } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { CatalogAcpBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
+import type { AcpRuntimeDefinitionBridgeV1 } from '@/agent/acp/runtime/definition/_types';
 import type {
   CliAuthMethod,
   CliAuthReason,
@@ -45,10 +72,32 @@ export type {
   CliAuthStatusDraft,
 };
 export type { ConnectedServicesMaterializer };
+export type { ConnectedServiceProviderRuntimeAuthAdapter };
+export type {
+  ConnectedServiceRuntimeAuthSelectionMaterializer,
+  ConnectedServiceRuntimeAuthSelectionMaterializerParams,
+};
+export type { SessionUsageLimitRecoveryControlAdapter };
 
 export type CatalogAcpBackendCreateResult = Readonly<{ backend: CatalogAcpBackend }>;
-export type CatalogAcpBackendFactory = (opts: AgentFactoryOptions) => CatalogAcpBackendCreateResult;
+export type ExternalSessionRuntimeHostAdapterParams = Readonly<{
+  activeServerDir: string;
+  env: NodeJS.ProcessEnv;
+}>;
+export type ExternalSessionRuntimeHostAdapters = Readonly<{
+  transcriptStores?: readonly ExternalSessionTranscriptStoreAdapter[];
+  candidateHosts?: readonly ExternalSessionCandidateHostAdapter[];
+}>;
+export type CatalogAcpBackendFactory = (
+  opts: AgentFactoryOptions,
+) => CatalogAcpBackendCreateResult | Promise<CatalogAcpBackendCreateResult>;
 export type ManagedServerShutdownCleanup = () => Promise<void>;
+
+export type ManagedServerClaimDescriptor = Readonly<{
+  agentId: CatalogAgentLookupId;
+  statePathEnvKey: string;
+  isExpectedProcessCommand: (command: string) => boolean;
+}>;
 
 export type VendorResumeSupportParams = Readonly<{
   experimentalCodexAcp?: boolean;
@@ -58,6 +107,28 @@ export type VendorResumeSupportParams = Readonly<{
 export type VendorResumeSupportFn = (params: VendorResumeSupportParams) => boolean;
 
 export type HeadlessTmuxArgvTransform = (argv: string[]) => string[];
+
+export type ProviderSessionRuntimePreferences = Readonly<Record<string, unknown>>;
+
+export type ProviderSessionRuntimePreferencesParams = Readonly<{
+  settings: Readonly<Record<string, unknown>>;
+  processEnv: NodeJS.ProcessEnv;
+  startedBy: 'terminal' | 'daemon' | undefined;
+}>;
+
+export type ProviderSessionRuntimePreferencesResolver = (
+  params: ProviderSessionRuntimePreferencesParams,
+) => ProviderSessionRuntimePreferences | Promise<ProviderSessionRuntimePreferences>;
+
+export type SessionHandoffProviderBundleRecordExtractor = (
+  providerBundle: Readonly<Record<string, unknown>>,
+) => readonly unknown[];
+
+export type ProviderRuntimeLocalHandoffMetadataBuilder = (params: Readonly<{
+  metadata: Readonly<Record<string, unknown>>;
+  trackedSession: TrackedSession;
+  vendorResumeId: string;
+}>) => Partial<Pick<Metadata, 'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'externalSessionV1'>>;
 
 export type ProviderAttachScope = 'local' | 'remote';
 
@@ -84,14 +155,9 @@ export type ProviderAttachReachability =
  * implementation so the engine registry can avoid falling back to legacy
  * registries/runners during the migration.
  */
-// Intentionally `any`: the host binding seam is internal and the
-// canonical param/result types are owned by the engine registry layer.
-// Keeping this hook loosely typed avoids type-level coupling/cycles between
-// backend catalog definitions and the engine registry implementation, and avoids
-// surfacing unrelated in-flight lane type errors during the migration wave.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ProviderAttachOps = Readonly<{
-  evaluateEligibility: (params: Readonly<{
+  evaluateAvailability: (params: Readonly<{
+    sessionId: string;
     metadata: Record<string, unknown>;
     currentMachineId: string | null;
     sessionMachineId: string | null;
@@ -100,23 +166,117 @@ export type ProviderAttachOps = Readonly<{
   probeReachability?: (params: Readonly<{
     metadata: Record<string, unknown>;
   }>) => Promise<ProviderAttachReachability>;
-  runAttach: (params: Readonly<{
+  attach: (params: Readonly<{
     sessionId: string;
     metadata: Record<string, unknown>;
   }>) => Promise<number | false>;
 }>;
 
-export type SessionHandoffProviderOps = Readonly<{
-  exportBundle: (params: Readonly<{
-    metadata: Record<string, unknown>;
-    remoteSessionId: string;
-    activeServerDir: string;
-  }>) => Promise<SessionHandoffProviderBundle>;
-  importBundle: (params: Readonly<{
-    bundle: SessionHandoffProviderBundle;
-    targetPath: string;
-    sessionStorageMode?: 'direct' | 'persisted';
-  }>) => Promise<ImportedSessionHandoffBundle>;
+export type ConnectedServiceStateSharingDescriptorEntry = Readonly<{
+  path: string;
+  mode: 'linked' | 'copied' | 'linked_or_copied' | 'env_redirect' | 'force_copied';
+  envVar?: string;
+  allowHardLinkFallback?: boolean;
+  secret?: boolean;
+}>;
+
+export type ConnectedServiceStateSharingDescriptorTransform = Readonly<{
+  entry: string;
+  kind: 'rewrite_toml';
+  spec: Readonly<{
+    setStringValues: Readonly<Record<string, string>>;
+  }>;
+}>;
+
+export type ConnectedServiceStateSharingDynamicEntryPattern = Readonly<{
+  scope: 'config' | 'state';
+  pattern: string;
+  mode?: ConnectedServiceStateSharingDescriptorEntry['mode'];
+  envVar?: string;
+  allowHardLinkFallback?: boolean;
+}>;
+
+export type ConnectedServiceStateSharingDescriptor = Readonly<{
+  providerId: CatalogAgentId;
+  providerSupportStatus: 'supported' | 'unsupported';
+  config: Readonly<{
+    supported: boolean;
+    modes: ReadonlyArray<ConnectedServicesProviderConfigSharingModeV1>;
+    entries: ReadonlyArray<ConnectedServiceStateSharingDescriptorEntry>;
+    unavailableReason?: 'not_implemented' | 'dynamic_diagnostics_required';
+  }>;
+  state: Readonly<{
+    supported: boolean;
+    modes: ReadonlyArray<ConnectedServicesProviderStateSharingModeV1>;
+    entries: ReadonlyArray<ConnectedServiceStateSharingDescriptorEntry>;
+    sharedStatePrivacyRiskAcknowledgementRequired?: boolean;
+    symlinkUnavailableDegradePolicy: 'block_continuity' | 'degrade_to_isolated';
+    unavailableReason?: 'not_implemented' | 'dynamic_diagnostics_required';
+  }>;
+  authIsolation: Readonly<{
+    mode: 'env_only' | 'materialized_home' | 'process_env';
+    secretEntries: ReadonlyArray<string>;
+  }>;
+  transforms?: ReadonlyArray<ConnectedServiceStateSharingDescriptorTransform>;
+  dynamicEntryPatterns?: Readonly<Record<string, ConnectedServiceStateSharingDynamicEntryPattern>>;
+}>;
+
+export type ConnectedServiceRecoveryCapabilities = Readonly<{
+  predictiveSoftSwitch: Readonly<{
+    mode: 'supported' | 'unsupported';
+  }>;
+}>;
+
+export type ConnectedServiceSwitchContinuityMode =
+  | 'hot_apply'
+  | 'restart_same_home'
+  | 'restart_shared_state_required'
+  | 'unsupported';
+
+export type ConnectedServiceSwitchContinuityResult = Readonly<{
+  mode: ConnectedServiceSwitchContinuityMode;
+  reason?: string;
+  diagnostics?: ConnectedServiceResumeContinuityDiagnostics;
+}>;
+
+export type ConnectedServiceResumeContinuityDiagnostics = Readonly<{
+  materializationIdentityId: string | null;
+  targetMaterializedRoot: string | null;
+  vendorResumeId: string | null;
+  cwd: string | null;
+  candidatePersistedSessionFile: string | null;
+  requestedStateMode: 'shared' | 'isolated';
+  effectiveStateMode: 'shared' | 'isolated';
+  reachabilityMissReason: string;
+}>;
+
+export type ConnectedServiceSwitchEffectiveBinding = Readonly<{
+  source: 'native' | 'connected';
+  selection: 'native' | 'profile' | 'group';
+  serviceId: ConnectedServiceId;
+  profileId: string | null;
+  groupId: string | null;
+}>;
+
+export type ConnectedServiceSwitchContinuityParams = Readonly<{
+  sessionId: string;
+  agentId: CatalogAgentId;
+  serviceId: ConnectedServiceId;
+  previousBinding: ConnectedServiceSwitchEffectiveBinding | null;
+  nextBinding: ConnectedServiceSwitchEffectiveBinding;
+  fromBindings: ConnectedServiceBindingsV1;
+  toBindings: ConnectedServiceBindingsV1;
+  connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1 | null;
+  vendorResumeId?: string | null;
+  targetMaterializedRoot?: string | null;
+  targetMaterializedEnv?: Readonly<Record<string, string>> | null;
+  cwd?: string | null;
+  candidatePersistedSessionFile?: string | null;
+  runtimeAuthSelection?: unknown;
+}>;
+
+export type ConnectedServicePersistedSessionCandidateParams = Readonly<{
+  metadata: unknown;
 }>;
 
 export type AgentChecklistContributions = Partial<
@@ -143,16 +303,23 @@ export type AgentCatalogEntry = Readonly<{
    * Optional CLI subcommand handler for this agent.
    */
   getCliCommandHandler?: () => Promise<CommandHandler>;
-  getCliCapabilityOverride?: () => Promise<Capability>;
   /**
-   * Optional extra capabilities contributed by this agent.
-   *
-   * Use this for agent-specific deps/tools/experiments, not the base `cli.<agentId>`
-   * capability (handled by `getCliCapabilityOverride` / generic fallback).
+   * Optional root-help metadata for projected provider commands.
    */
-  getCapabilities?: () => Promise<ReadonlyArray<Capability>>;
+  rootHelpLabel?: string;
+  rootHelpDescription?: string;
+  rootHelpDetail?: string;
+  allowTmux?: boolean;
+  getCliCapabilityOverride?: () => Promise<Capability>;
   getCliDetect?: () => Promise<CliDetectSpec>;
   getCliAuthSpec?: () => Promise<CliAuthSpec>;
+  /**
+   * Optional provider-owned runtime preference resolver for direct CLI starts.
+   *
+   * Shared session command code passes account settings and process env through this
+   * hook instead of importing provider-specific preference modules.
+   */
+  resolveSessionRuntimePreferences?: ProviderSessionRuntimePreferencesResolver;
 	  /**
 	   * Optional cloud connect target for this agent.
 	   *
@@ -170,14 +337,85 @@ export type AgentCatalogEntry = Readonly<{
    *
    * Keep provider-specific implementations inside `src/backends/<provider>/...`
    * and expose them through this catalog hook instead of side registries.
+   *
+   * @deprecated Transitional built-in catalog bridge. New provider/plugin work
+   * should expose `BackendEngineV1.externalSessionSurface` from the plugin engine.
    */
   getExternalSessionProviderOps?: () => Promise<ExternalSessionProviderOps>;
+  /**
+   * Optional provider-owned host adapter contribution for external-session
+   * transcript stores and child-host/app-server candidate listing.
+   *
+   * Shared runtime code consumes these as provider-neutral adapter lists; provider
+   * specifics stay in `src/backends/<provider>/...` until the downstream provider
+   * closure can move/delete the remaining host leaves.
+   */
+  getExternalSessionRuntimeHostAdapters?: (
+    params: ExternalSessionRuntimeHostAdapterParams,
+  ) => Promise<ExternalSessionRuntimeHostAdapters>;
   /**
    * Optional provider-owned connected-services materializer used before spawning the backend.
    *
    * This keeps provider-specific auth file/env shaping out of the daemon core.
    */
   getConnectedServicesMaterializer?: () => Promise<ConnectedServicesMaterializer | null>;
+  /**
+   * Optional provider-owned runtime-auth adapter for connected-service account groups.
+   *
+   * Provider-specific classification, quota probing, refresh, and hot-apply logic
+   * lives in backend folders while daemon orchestration stays provider-agnostic.
+   */
+  getConnectedServiceRuntimeAuthAdapter?: () => Promise<ConnectedServiceProviderRuntimeAuthAdapter | null>;
+  /**
+   * Optional provider-owned runtime auth selection materializer.
+   *
+   * Shared auth-switch code resolves credentials and group metadata, then lets the
+   * provider attach runtime-specific helpers without branching on provider ids.
+   */
+  materializeConnectedServiceRuntimeAuthSelection?: ConnectedServiceRuntimeAuthSelectionMaterializer;
+  /**
+   * Optional provider-owned connected-service state/config sharing descriptor.
+   */
+  getConnectedServiceStateSharingDescriptor?: () => Promise<ConnectedServiceStateSharingDescriptor | null>;
+  /**
+   * Optional provider-owned recovery capability descriptor (P7/F13 minimum surface).
+   *
+   * Declares whether predictive (soft-threshold) account switches are safe for this provider.
+   * Restart-only providers must declare `predictiveSoftSwitch: { mode: 'unsupported' }` so daemon
+   * recovery policy suppresses predictive switches via a declared contract instead of inferring
+   * support from runtime-auth adapter shape. Providers without a descriptor keep the legacy
+   * adapter inference.
+   */
+  getConnectedServiceRecoveryCapabilities?: () => Promise<ConnectedServiceRecoveryCapabilities | null>;
+  /**
+   * Optional provider-owned continuity resolver for existing-session auth switches.
+   */
+  resolveConnectedServiceSwitchContinuity?: (
+    params: ConnectedServiceSwitchContinuityParams,
+  ) => Promise<ConnectedServiceSwitchContinuityResult>;
+  /**
+   * Optional provider-owned resume-reachability probe (K4).
+   *
+   * Resolved through the catalog so the "is the vendor session for `vendorResumeId` reachable from a
+   * source the switch will import / the target the vendor reads" decision stays in
+   * `src/backends/<provider>/...` instead of a central `switch(agentId)`.
+   *
+   * The signature is normalized across providers (single `VerifyResumeReachableInput`). Providers
+   * whose underlying probe takes a different shape (e.g. Claude's `{ vendorResumeId, processEnv }`)
+   * adapt to this normalized input inside their backend folder without changing behavior.
+   */
+  verifyResumeReachable?: (
+    input: VerifyResumeReachableInput,
+  ) => Promise<VerifyResumeReachableResult>;
+  /**
+   * Optional provider-owned persisted session-file resolver for connected-service resume continuity.
+   *
+   * Shared daemon code asks this catalog hook for a provider-specific file hint instead of branching on
+   * metadata fields such as PI's `piSessionFile` or Codex app-server rollout paths.
+   */
+  resolveConnectedServiceCandidatePersistedSessionFile?: (
+    input: ConnectedServicePersistedSessionCandidateParams,
+  ) => string | null;
   /**
    * Optional provider-owned managed-server launch spec used to identify and validate host-managed processes.
    *
@@ -192,10 +430,20 @@ export type AgentCatalogEntry = Readonly<{
    */
   getManagedServerShutdownCleanup?: () => Promise<ManagedServerShutdownCleanup | null>;
   /**
+   * Optional provider-owned managed-server claim descriptor for daemon auth-switch cleanup.
+   *
+   * The daemon owns tracked child-process inventory; providers own how to identify
+   * their managed server state path and process command.
+   */
+  getManagedServerClaimDescriptor?: () => Promise<ManagedServerClaimDescriptor | null>;
+  /**
    * Optional provider-owned attach operations for shared local-control backends.
    *
    * Keep provider-specific attach eligibility and execution in the backend folder
    * and expose it through this catalog hook instead of branching in shared CLI code.
+   *
+   * @deprecated Transitional built-in catalog bridge. New provider/plugin work
+   * should expose `BackendEngineV1.attachSurface` from the plugin engine.
    */
   getProviderAttachOps?: () => Promise<ProviderAttachOps>;
   /**
@@ -203,6 +451,9 @@ export type AgentCatalogEntry = Readonly<{
    *
    * This keeps terminal-hosted runtime discovery/binding logic in backend-owned modules
    * instead of branching in shared catalog consumers.
+   *
+   * @deprecated Transitional built-in catalog bridge. New provider/plugin work
+   * should expose `BackendEngineV1.terminalRuntimeSurface` from the plugin engine.
    */
   getTerminalRuntimeOps?: () => Promise<AnyTerminalRuntimeOps | null>;
   /**
@@ -210,12 +461,39 @@ export type AgentCatalogEntry = Readonly<{
    *
    * When present, the engine registry will prefer this runtimeCore over the legacy
    * execution-run registry fallback.
+   *
+   * @deprecated Transitional built-in catalog bridge. New provider/plugin work
+   * should expose `BackendEngineV1.runtimeCore` from the plugin engine.
    */
   getRuntimeCore?: CliRuntimeCoreGetter;
   /**
+   * Optional provider-owned goal adapter for inactive/offline local sessions.
+   *
+   * Active sessions keep using session-scoped runtime RPCs; generic session code
+   * resolves this hook only when it needs local provider control without a live
+   * session runtime.
+   */
+  getSessionGoalControlAdapter?: () => Promise<SessionGoalControlAdapter | null>;
+  /**
+   * Optional provider-owned catalog adapter for inactive/offline local sessions.
+   *
+   * Active sessions keep using session-scoped runtime RPCs; generic session code
+   * resolves this hook only when it needs local provider control without a live
+   * session runtime.
+   */
+  getSessionCatalogControlAdapter?: () => Promise<SessionCatalogControlAdapter | null>;
+  /**
+   * Optional provider-owned usage-limit recovery adapter for inactive/offline local sessions.
+   *
+   * Active sessions keep using session-scoped runtime RPCs; generic session code
+   * resolves this hook only when it needs provider quota probing without a live
+   * session runtime.
+   */
+  getSessionUsageLimitRecoveryControlAdapter?: () => Promise<SessionUsageLimitRecoveryControlAdapter | null>;
+  /**
    * Whether this agent supports vendor-level resume (NOT Happy session resume).
    *
-   * Used by the daemon to decide whether it may pass `--resume <vendorSessionId>`.
+   * Used by the daemon to decide whether it may pass `--resume <providerSessionId>`.
    */
   vendorResumeSupport: VendorResumeSupportLevel;
   /**
@@ -235,35 +513,52 @@ export type AgentCatalogEntry = Readonly<{
    *
    * This is intentionally "pull-based" (lazy import) to avoid side-effect
    * registration and import-order dependence.
+   *
+   * @deprecated Provider/plugin ACP backends should expose
+   * `getAcpRuntimeDefinitionBridge` so host ACP lifecycle remains generic.
    */
   getAcpBackendFactory?: () => Promise<CatalogAcpBackendFactory>;
   /**
-   * Optional ACP fork-continuation shaper.
+   * Optional provider/plugin-authored ACP definition bridge.
    *
-   * Used by fork orchestration to keep provider-specific resume/env/metadata shaping
-   * behind the backend catalog after ACP `session/fork` succeeds.
+   * The bridge may provide provider-specific definition construction, but ACP
+   * process lifecycle and runtime orchestration remain host-owned.
    */
-  getAcpForkContinuationHandler?: () => Promise<AcpForkContinuationHandler>;
+  getAcpRuntimeDefinitionBridge?: () => Promise<AcpRuntimeDefinitionBridgeV1 | null>;
   /**
-   * Optional provider-native fork handler.
+   * Optional provider-owned fork surface leaves.
    *
-   * Used by fork orchestration to delegate provider-specific native fork behavior
-   * through the backend catalog.
-   */
-  getProviderNativeForkHandler?: () => Promise<ProviderNativeForkHandler>;
-  /**
-   * Optional replay-fork continuation shaper.
+   * Host fork orchestration owns strategy selection, Happier child-session creation,
+   * replay seed construction, and metadata persistence. Provider leaves only perform
+   * native provider forks or resolve provider-specific child launch shaping.
    *
-   * Used by replay-fork orchestration to keep provider-specific affinity/env shaping
-   * behind the backend catalog (avoid provider branching in shared fork core).
+   * @deprecated Transitional built-in catalog bridge. New provider/plugin work
+   * should expose `BackendEngineV1.forkSurface` from the plugin engine.
    */
-  getReplayForkContinuationHandler?: () => Promise<ReplayForkContinuationHandler>;
+  getForkSurface?: () => Promise<ForkSurfaceV1 | null>;
   /**
    * Optional provider-owned session handoff bundle export/import operations.
    *
    * This keeps provider-specific handoff bundle logic out of shared session handoff core.
+   *
+   * @deprecated Transitional built-in catalog bridge. New provider/plugin work
+   * should expose `BackendEngineV1.handoffSurface` from the plugin engine.
    */
-  getSessionHandoffProviderOps?: () => Promise<SessionHandoffProviderOps | null>;
+  getHandoffSurface?: () => Promise<HandoffSurfaceV1 | null>;
+  /**
+   * Optional provider-owned handoff provider-bundle record extractor.
+   *
+   * Shared media continuity code applies provider-agnostic path validation after this hook
+   * extracts provider-specific transcript/export records.
+   */
+  getSessionHandoffProviderBundleRecordExtractor?: () => Promise<SessionHandoffProviderBundleRecordExtractor | null>;
+  /**
+   * Optional provider-owned runtime-local metadata builder for session handoff.
+   *
+   * Shared daemon handoff code owns export/runtime-local splitting; providers own
+   * provider-specific resume ids and external-session source metadata.
+   */
+  buildRuntimeLocalHandoffMetadata?: ProviderRuntimeLocalHandoffMetadataBuilder;
   /**
    * Optional provider-owned permission-mode normalization for daemon `happy session` forwarding.
    *
@@ -287,8 +582,31 @@ export type AgentCatalogEntry = Readonly<{
    */
   resolveModelsProbeVariant?: (params: Readonly<{
     backendTarget?: BackendTargetRefV1;
+    probeKind?: PreflightSessionControlsProbeKind;
     accountSettings?: Readonly<Record<string, unknown>> | null;
   }>) => string | null;
+  /**
+   * Optional cache-variant shaper for dynamic session-control probes.
+   *
+   * Providers with multiple runtime flavors should use this generic hook so models,
+   * modes, and config-option probes can partition caches without host provider-id
+   * branches.
+   */
+  resolveSessionControlsProbeVariant?: (params: Readonly<{
+    backendTarget?: BackendTargetRefV1;
+    probeKind: PreflightSessionControlsProbeKind;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+  }>) => string | null;
+  /**
+   * Optional provider-owned backend options for catalog ACP model probes.
+   *
+   * Use this when starting the probe backend itself depends on account settings or environment
+   * policy. Keep provider-specific option shaping in the provider catalog entry.
+   */
+  resolveModelsProbeBackendOptions?: (params: Readonly<{
+    backendTarget?: BackendTargetRefV1;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+  }>) => Readonly<Record<string, unknown>> | null;
   /**
    * Optional provider-owned adapter for probing dynamic session controls (models/modes/config options)
    * without starting a full ACP session.
@@ -303,14 +621,12 @@ export type AgentCatalogEntry = Readonly<{
    * engine can stay deterministic and easy to inspect.
    */
   checklists?: AgentChecklistContributions;
-  runtimeInstallableKeys?: readonly InstallableKey[];
 }>;
 
 export type {
-  AcpForkContinuationHandler,
   ExternalSessionProviderOps,
   ExternalSessionsProviderId,
-  ProviderNativeForkHandler,
-  ReplayForkContinuationHandler,
+  SessionCatalogControlAdapter,
+  SessionGoalControlAdapter,
 };
 export type { AnyTerminalRuntimeOps, TerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';

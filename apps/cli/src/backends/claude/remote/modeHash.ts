@@ -2,7 +2,7 @@ import { hashObject } from '@/utils/deterministicJson';
 
 import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
-import { resolveClaudeEffortForModel } from '@/backends/claude/utils/claudeEffort';
+import { resolveClaudeEffortForModel } from '@happier-dev/plugins-claude/agent/runtime/reasoningEffort';
 
 function resolveClaudeRemoteSettingSourcesOverrideForAgentSdk(mode: EnhancedMode): readonly ('user' | 'project' | 'local')[] | null {
     const rawV2 = (mode as any).claudeRemoteSettingSourcesV2 as unknown;

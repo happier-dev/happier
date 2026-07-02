@@ -15,7 +15,14 @@ const MANAGED_CLI_SHIM_INSTALLS = new Map(
       componentId: 'happier-cli',
       channel,
     });
-    return variant.installShims.map((shimName) => [
+    const legacyShimAliases =
+      channel === 'preview'
+        ? ['happier-preview']
+        : channel === 'publicdev'
+          ? ['happier-dev']
+          : [];
+    const shimNames = [...variant.installShims, ...legacyShimAliases];
+    return shimNames.map((shimName) => [
       normalizeExecutableBase(shimName),
       { channel, installRootName: variant.installRootName },
     ] as const);

@@ -54,6 +54,18 @@ export interface SDKSystemMessage extends SDKMessage {
     slash_commands?: string[]
 }
 
+export interface SDKResultModelUsage {
+    inputTokens?: number
+    outputTokens?: number
+    cacheReadInputTokens?: number
+    cacheCreationInputTokens?: number
+    webSearchRequests?: number
+    costUSD?: number
+    contextWindow?: number
+    maxOutputTokens?: number
+    [key: string]: unknown
+}
+
 export interface SDKResultMessage extends SDKMessage {
     type: 'result'
     subtype: 'success' | 'error_max_turns' | 'error_during_execution'
@@ -65,10 +77,7 @@ export interface SDKResultMessage extends SDKMessage {
         cache_read_input_tokens?: number
         cache_creation_input_tokens?: number
     }
-    modelUsage?: {
-        contextWindow?: number
-        [key: string]: unknown
-    }
+    modelUsage?: Record<string, SDKResultModelUsage> | SDKResultModelUsage
     total_cost_usd: number
     duration_ms: number
     duration_api_ms: number

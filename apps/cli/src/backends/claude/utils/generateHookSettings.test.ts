@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -110,18 +110,37 @@ describe('generateHookPluginDir', () => {
     envScope = createEnvKeyScope(envKeys);
   });
 
-  it('writes a session-scoped hooks/hooks.json containing SessionStart by default', () => {
+  it('writes a session-scoped hooks/hooks.json containing Claude lifecycle hooks by default', () => {
     const pluginDir = generateHookPluginDir(43123);
     expect(pluginDir).toBeTruthy();
     createdPluginDirs.push(pluginDir!);
 
     const hooksPath = join(pluginDir!, 'hooks', 'hooks.json');
     const parsed = JSON.parse(readFileSync(hooksPath, 'utf8')) as any;
+    const lifecycleHookNames = ['SessionStart', 'UserPromptSubmit', 'Stop', 'StopFailure', 'SessionEnd', 'PostToolUse'];
+    for (const hookName of lifecycleHookNames) {
+      const command = parsed.hooks?.[hookName]?.[0]?.hooks?.[0]?.command as string;
+      expect(command).toContain('session_hook_forwarder.cjs');
+      expect(command).toContain(hookName);
+    }
     const command = parsed.hooks?.SessionStart?.[0]?.hooks?.[0]?.command as string;
     expect(command).toContain('session_hook_forwarder.cjs');
     // Prefer execPath over `node` so hooks still work when PATH is minimal (common on Windows/GUI contexts).
     expect(command).toContain(process.execPath);
     expect(parsed.hooks?.PermissionRequest).toBeUndefined();
+  });
+
+  it('writes the Claude plugin manifest required for --plugin-dir loading', () => {
+    const pluginDir = generateHookPluginDir(43132);
+    expect(pluginDir).toBeTruthy();
+    createdPluginDirs.push(pluginDir!);
+
+    const manifestPath = join(pluginDir!, '.claude-plugin', 'plugin.json');
+    const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as any;
+    expect(parsed.name).toMatch(/^happier-session-hooks-\d+$/);
+    expect(parsed.version).toBe('1.0.0');
+    expect(parsed.description).toContain('Happier');
+    expect(parsed.author?.name).toBe('Happier');
   });
 
   it('adds PermissionRequest hook when local permission bridge is enabled', () => {
@@ -136,7 +155,39 @@ describe('generateHookPluginDir', () => {
     const parsed = JSON.parse(readFileSync(hooksPath, 'utf8')) as any;
     const permissionCommand = parsed.hooks?.PermissionRequest?.[0]?.hooks?.[0]?.command as string;
     expect(permissionCommand).toContain('permission_hook_forwarder.cjs');
-    expect(permissionCommand).toContain('test-secret-123');
+    expect(permissionCommand).toContain('--secret-file');
+    expect(permissionCommand).not.toContain('test-secret-123');
+    const secretFile = permissionCommand.match(/--secret-file "([^"]+)"/)?.[1];
+    expect(secretFile).toBeTruthy();
+    expect(readFileSync(secretFile!, 'utf8')).toBe('test-secret-123');
+    if (process.platform !== 'win32') {
+      expect(statSync(secretFile!).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it('adds an AskUserQuestion PreToolUse hook when local permission bridge is enabled', () => {
+    const pluginDir = generateHookPluginDir(43131, {
+      enableLocalPermissionBridge: true,
+      permissionHookSecret: 'test-secret-ask',
+    });
+    expect(pluginDir).toBeTruthy();
+    createdPluginDirs.push(pluginDir!);
+
+    const hooksPath = join(pluginDir!, 'hooks', 'hooks.json');
+    const parsed = JSON.parse(readFileSync(hooksPath, 'utf8')) as any;
+    const preToolUseHook = parsed.hooks?.PreToolUse?.[0];
+    expect(preToolUseHook?.matcher).toBe('AskUserQuestion');
+    const preToolUseCommand = preToolUseHook?.hooks?.[0]?.command as string;
+    expect(preToolUseCommand).toContain('permission_hook_forwarder.cjs');
+    expect(preToolUseCommand).toContain('PreToolUse');
+    expect(preToolUseCommand).toContain('--secret-file');
+    expect(preToolUseCommand).not.toContain('test-secret-ask');
+    const secretFile = preToolUseCommand.match(/--secret-file "([^"]+)"/)?.[1];
+    expect(secretFile).toBeTruthy();
+    expect(readFileSync(secretFile!, 'utf8')).toBe('test-secret-ask');
+    if (process.platform !== 'win32') {
+      expect(statSync(secretFile!).mode & 0o777).toBe(0o600);
+    }
   });
 
   it('returns null when HAPPIER_CLAUDE_HOOKS_DISABLED is set (debug escape hatch)', () => {

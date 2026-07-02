@@ -4,8 +4,8 @@
  * Reusable Ink “agent display” shell for read-only terminal sessions.
  * Renders a scrolling message log (from MessageBuffer) and a footer with exit controls.
  *
- * Provider-specific displays should live under their backend folders (e.g. src/backends/codex/ui)
- * and use this component as a thin wrapper.
+ * Provider-specific display metadata should come from the owning backend/plugin leaf,
+ * with shared renderers composing this shell.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';

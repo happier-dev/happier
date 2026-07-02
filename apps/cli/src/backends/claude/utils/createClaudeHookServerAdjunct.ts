@@ -2,14 +2,18 @@ import { randomUUID } from 'node:crypto';
 
 import type { ClaudeLocalPermissionBridgeManager } from '../runtime/terminal/permissions/createLocalPermissionBridgeManager';
 import type { Session } from '../runtime/session/ClaudeSession';
-import { startHookServer } from '@/backends/claude/utils/startHookServer';
+import {
+  startSessionHookServer,
+  type StartSessionHookServerOptions,
+} from '@/plugins/runtime/hooks/session/server';
 import {
   generateHookPluginDirWithEnsuredRuntime,
   generateHookSettingsFileWithEnsuredRuntime,
 } from '@/backends/claude/utils/generateHookSettingsFileWithEnsuredRuntime';
+import { buildDefaultPermissionHookResponse } from '@happier-dev/plugins-claude/agent';
 
 type HookServer = Readonly<{ port: number; stop: () => void }>;
-type HookServerOptions = Parameters<typeof startHookServer>[0];
+type HookServerOptions = StartSessionHookServerOptions;
 
 export type ClaudeHookServerAdjunct = Readonly<{
   hookServer: HookServer;
@@ -28,7 +32,7 @@ export type ClaudeHookServerAdjunct = Readonly<{
   hookPluginDir: string | null;
   permissionHookSecret: string;
   /**
-   * A stable reference passed into `startHookServer(...)`.
+   * A stable reference passed into the shared session hook server.
    * The Claude session loop mutates this to adjust permission timeouts dynamically.
    */
   hookServerOptions: HookServerOptions;
@@ -48,12 +52,21 @@ export function createClaudeHookServerAdjunctSpec(params: Readonly<{
   const permissionHookSecret = randomUUID();
 
   const hookServerOptions: HookServerOptions = {
+    session: () => {
+      const currentSession = params.getCurrentSession();
+      if (!currentSession) return null;
+      return {
+        providerId: 'claude',
+        sessionId: currentSession.client.sessionId,
+      };
+    },
     onSessionHook: (sessionId, data) => {
       params.getCurrentSession()?.onSessionFound(sessionId, data);
     },
     onPermissionHook: async (data) => {
       return await params.localPermissionBridgeManager.handlePermissionHook(data);
     },
+    defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
     permissionHookSecret,
     permissionRequestTimeoutMs: params.localPermissionBridgeWaitIndefinitely ? null : params.localPermissionBridgeTimeoutMs,
   };
@@ -89,7 +102,7 @@ export async function createClaudeHookServerAdjunct(params: Readonly<{
     generateHookPluginDir,
   } = createClaudeHookServerAdjunctSpec(params);
 
-  const hookServer = await startHookServer(hookServerOptions);
+  const hookServer = await startSessionHookServer(hookServerOptions);
 
   const hookSettingsPath = await generateHookSettingsFile(hookServer.port);
   const hookPluginDir = await generateHookPluginDir(hookServer.port);

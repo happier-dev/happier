@@ -14,18 +14,18 @@ import type {
 } from './types';
 
 type BasicAuthMaterializationRegistryFixture = Readonly<{
-  connectedAccountDescriptors: readonly Readonly<{
-    definition: Readonly<{
-      id: string;
-      materialization: Readonly<{
-        materializationKinds: readonly string[];
-        hookKey?: string;
+  scmHostingProvidersById: ReadonlyMap<string, Readonly<{
+    registration: Readonly<{
+      auth?: Readonly<{
+        basicAuthMaterializer?: Readonly<{
+          serviceId: string;
+          materialize: (
+            request: ScmHostingBasicAuthMaterializationRequest
+          ) => ScmHostingBasicAuthMaterializationResult;
+        }>;
       }>;
     }>;
-  }>[];
-  hookHandlersByHookId: ReadonlyMap<string, readonly Readonly<{
-    handler: (request: ScmHostingBasicAuthMaterializationRequest) => ScmHostingBasicAuthMaterializationResult;
-  }>[]>;
+  }>>;
 }>;
 
 type BasicAuthMaterializationResolver = (
@@ -34,23 +34,25 @@ type BasicAuthMaterializationResolver = (
 ) => Promise<ScmHostingBasicAuthMaterializationResult>;
 
 const bitbucketMaterializationRegistry: ScmHostingAuthMaterializationRegistry = {
-  connectedAccountDescriptors: [{
-    provenance: 'first_party',
-    source: { kind: 'bundled' },
-    definition: BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR,
-  }],
-  hookHandlersByHookId: new Map([[
-    'connectedServices.materialization.bitbucketScmHostingBasicAuth',
-    [{
-      handler: (request) => materializeBitbucketScmHostingBasicAuth(
-        request as Parameters<typeof materializeBitbucketScmHostingBasicAuth>[0],
-      ),
-    }],
+  scmHostingProvidersById: new Map([[
+    'scm.bitbucket',
+    {
+      registration: {
+        id: 'scm.bitbucket',
+        adapter: {},
+        auth: {
+          basicAuthMaterializer: {
+            serviceId: BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR.id,
+            materialize: materializeBitbucketScmHostingBasicAuth,
+          },
+        },
+      },
+    },
   ]]),
 };
 
 describe('resolveScmHostingBasicAuthMaterialization', () => {
-  it('materializes through a descriptor-declared hook handler', async () => {
+  it('materializes through a provider runtime materializer', async () => {
     const record = buildConnectedServiceCredentialRecord({
       now: 1700000000000,
       serviceId: 'bitbucket',
@@ -63,19 +65,14 @@ describe('resolveScmHostingBasicAuthMaterialization', () => {
       },
     });
     const registry: BasicAuthMaterializationRegistryFixture = {
-      connectedAccountDescriptors: [{
-        definition: {
-          id: 'bitbucket',
-          materialization: {
-            materializationKinds: ['scm_hosting_basic_auth'],
-            hookKey: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
-          },
-        },
-      }],
-      hookHandlersByHookId: new Map([[
-        'connectedServices.materialization.bitbucketScmHostingBasicAuth',
-        [{
-          handler: (request) => {
+      scmHostingProvidersById: new Map([[
+        'scm.example',
+        {
+          registration: {
+            auth: {
+              basicAuthMaterializer: {
+                serviceId: 'bitbucket',
+                materialize: (request) => {
             const tokenRecord = request.records.find((candidate) => candidate.kind === 'token');
             if (!tokenRecord || tokenRecord.kind !== 'token') {
               return { kind: 'missing', reason: 'credential_unavailable' };
@@ -90,8 +87,11 @@ describe('resolveScmHostingBasicAuthMaterialization', () => {
               providerAccountId: tokenRecord.token.providerAccountId,
               providerEmail: tokenRecord.token.providerEmail,
             };
+                },
+              },
+            },
           },
-        }],
+        },
       ]]),
     };
 
@@ -117,24 +117,22 @@ describe('resolveScmHostingBasicAuthMaterialization', () => {
 
   it('rejects malformed hook results instead of accepting undefined profile material', async () => {
     const registry: BasicAuthMaterializationRegistryFixture = {
-      connectedAccountDescriptors: [{
-        definition: {
-          id: 'bitbucket',
-          materialization: {
-            materializationKinds: ['scm_hosting_basic_auth'],
-            hookKey: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+      scmHostingProvidersById: new Map([[
+        'scm.example',
+        {
+          registration: {
+            auth: {
+              basicAuthMaterializer: {
+                serviceId: 'bitbucket',
+                materialize: () => ({
+                  kind: 'available',
+                  username: 'dev@example.com',
+                  password: 'bb-api-token',
+                } as unknown as ScmHostingBasicAuthMaterializationResult),
+              },
+            },
           },
         },
-      }],
-      hookHandlersByHookId: new Map([[
-        'connectedServices.materialization.bitbucketScmHostingBasicAuth',
-        [{
-          handler: () => ({
-            kind: 'available',
-            username: 'dev@example.com',
-            password: 'bb-api-token',
-          } as unknown as ScmHostingBasicAuthMaterializationResult),
-        }],
       ]]),
     };
 
@@ -154,23 +152,21 @@ describe('resolveScmHostingBasicAuthMaterialization', () => {
 
   it('rejects hook missing results with invalid reasons', async () => {
     const registry: BasicAuthMaterializationRegistryFixture = {
-      connectedAccountDescriptors: [{
-        definition: {
-          id: 'bitbucket',
-          materialization: {
-            materializationKinds: ['scm_hosting_basic_auth'],
-            hookKey: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+      scmHostingProvidersById: new Map([[
+        'scm.example',
+        {
+          registration: {
+            auth: {
+              basicAuthMaterializer: {
+                serviceId: 'bitbucket',
+                materialize: () => ({
+                  kind: 'missing',
+                  reason: 'not_a_typed_reason',
+                } as unknown as ScmHostingBasicAuthMaterializationResult),
+              },
+            },
           },
         },
-      }],
-      hookHandlersByHookId: new Map([[
-        'connectedServices.materialization.bitbucketScmHostingBasicAuth',
-        [{
-          handler: () => ({
-            kind: 'missing',
-            reason: 'not_a_typed_reason',
-          } as unknown as ScmHostingBasicAuthMaterializationResult),
-        }],
       ]]),
     };
 

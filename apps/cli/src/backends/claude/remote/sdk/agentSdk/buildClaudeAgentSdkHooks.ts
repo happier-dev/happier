@@ -1,16 +1,9 @@
 import { join } from 'node:path';
 
+import { CLAUDE_AUTH_ENV_KEYS } from '@happier-dev/plugins-claude/agent/auth/services/runtime';
 import { getProjectPath } from '@/backends/claude/utils/path';
 import type { EnhancedMode } from '@/backends/claude/runtime/claudeEnhancedMode';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
-
-const BASH_SECRET_SCRUB_ENV_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_OAUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'CLAUDE_CODE_SETUP_TOKEN',
-] as const;
 
 function toAgentSdkPermissionResult(result: PermissionResult): any {
   if (result.behavior === 'allow') {
@@ -100,7 +93,7 @@ export function buildClaudeAgentSdkHooks(params: Readonly<{
               return { continue: true, suppressOutput: true };
             }
 
-            const prefix = `unset ${BASH_SECRET_SCRUB_ENV_KEYS.join(' ')}; `;
+            const prefix = `unset ${CLAUDE_AUTH_ENV_KEYS.join(' ')}; `;
             const nextCommand = command.startsWith(prefix) ? command : prefix + command;
 
             return {

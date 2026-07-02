@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { materializeGithubScmHostingToken } from '@happier-dev/plugins-scm-github';
-import { buildConnectedServiceCredentialRecord, getConnectedAccountDescriptor } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import type { ScmHostingAuthMaterializationRegistry } from './materializationRegistry';
 import { resolveScmHostingTokenMaterialization } from './resolveScmHostingTokenMaterialization';
@@ -11,18 +11,16 @@ import type {
 } from './types';
 
 type TokenMaterializationRegistryFixture = Readonly<{
-  connectedAccountDescriptors: readonly Readonly<{
-    definition: Readonly<{
-      id: string;
-      materialization: Readonly<{
-        materializationKinds: readonly string[];
-        hookKey?: string;
+  scmHostingProvidersById: ReadonlyMap<string, Readonly<{
+    registration: Readonly<{
+      auth?: Readonly<{
+        tokenMaterializer?: Readonly<{
+          serviceId: string;
+          materialize: (request: ScmHostingTokenMaterializationRequest) => ScmHostingTokenMaterializationResult;
+        }>;
       }>;
     }>;
-  }>[];
-  hookHandlersByHookId: ReadonlyMap<string, readonly Readonly<{
-    handler: (request: ScmHostingTokenMaterializationRequest) => ScmHostingTokenMaterializationResult;
-  }>[]>;
+  }>>;
 }>;
 
 type TokenMaterializationResolver = (
@@ -31,27 +29,25 @@ type TokenMaterializationResolver = (
 ) => Promise<ScmHostingTokenMaterializationResult>;
 
 const githubMaterializationRegistry: ScmHostingAuthMaterializationRegistry = {
-  connectedAccountDescriptors: (() => {
-    const descriptor = getConnectedAccountDescriptor('github');
-    if (!descriptor) throw new Error('Expected GitHub connected-account descriptor fixture');
-    return [{
-      provenance: 'first_party' as const,
-      source: { kind: 'bundled' as const },
-      definition: descriptor,
-    }];
-  })(),
-  hookHandlersByHookId: new Map([[
-    'connectedServices.materialization.githubScmHostingToken',
-    [{
-      handler: (request) => materializeGithubScmHostingToken(
-        request as Parameters<typeof materializeGithubScmHostingToken>[0],
-      ),
-    }],
+  scmHostingProvidersById: new Map([[
+    'scm.github',
+    {
+      registration: {
+        id: 'scm.github',
+        adapter: {},
+        auth: {
+          tokenMaterializer: {
+            serviceId: 'github',
+            materialize: materializeGithubScmHostingToken,
+          },
+        },
+      },
+    },
   ]]),
 };
 
 describe('resolveScmHostingTokenMaterialization', () => {
-  it('materializes through a descriptor-declared hook handler', async () => {
+  it('materializes through a provider runtime materializer', async () => {
     const record = buildConnectedServiceCredentialRecord({
       now: 1700000000000,
       serviceId: 'github',
@@ -64,19 +60,14 @@ describe('resolveScmHostingTokenMaterialization', () => {
       },
     });
     const registry: TokenMaterializationRegistryFixture = {
-      connectedAccountDescriptors: [{
-        definition: {
-          id: 'github',
-          materialization: {
-            materializationKinds: ['scm_hosting_token'],
-            hookKey: 'connectedServices.materialization.githubScmHostingToken',
-          },
-        },
-      }],
-      hookHandlersByHookId: new Map([[
-        'connectedServices.materialization.githubScmHostingToken',
-        [{
-          handler: (request) => {
+      scmHostingProvidersById: new Map([[
+        'scm.example',
+        {
+          registration: {
+            auth: {
+              tokenMaterializer: {
+                serviceId: 'github',
+                materialize: (request) => {
             const tokenRecord = request.records.find((candidate) => candidate.kind === 'token');
             if (!tokenRecord || tokenRecord.kind !== 'token') {
               return { kind: 'missing', reason: 'credential_unavailable' };
@@ -90,8 +81,11 @@ describe('resolveScmHostingTokenMaterialization', () => {
               providerAccountId: tokenRecord.token.providerAccountId,
               providerEmail: tokenRecord.token.providerEmail,
             };
+                },
+              },
+            },
           },
-        }],
+        },
       ]]),
     };
 
@@ -116,23 +110,21 @@ describe('resolveScmHostingTokenMaterialization', () => {
 
   it('rejects malformed hook results instead of accepting undefined profile material', async () => {
     const registry: TokenMaterializationRegistryFixture = {
-      connectedAccountDescriptors: [{
-        definition: {
-          id: 'github',
-          materialization: {
-            materializationKinds: ['scm_hosting_token'],
-            hookKey: 'connectedServices.materialization.githubScmHostingToken',
+      scmHostingProvidersById: new Map([[
+        'scm.example',
+        {
+          registration: {
+            auth: {
+              tokenMaterializer: {
+                serviceId: 'github',
+                materialize: () => ({
+                  kind: 'available',
+                  token: 'registry-token',
+                } as unknown as ScmHostingTokenMaterializationResult),
+              },
+            },
           },
         },
-      }],
-      hookHandlersByHookId: new Map([[
-        'connectedServices.materialization.githubScmHostingToken',
-        [{
-          handler: () => ({
-            kind: 'available',
-            token: 'registry-token',
-          } as unknown as ScmHostingTokenMaterializationResult),
-        }],
       ]]),
     };
 
@@ -152,23 +144,21 @@ describe('resolveScmHostingTokenMaterialization', () => {
 
   it('rejects hook missing results with invalid reasons', async () => {
     const registry: TokenMaterializationRegistryFixture = {
-      connectedAccountDescriptors: [{
-        definition: {
-          id: 'github',
-          materialization: {
-            materializationKinds: ['scm_hosting_token'],
-            hookKey: 'connectedServices.materialization.githubScmHostingToken',
+      scmHostingProvidersById: new Map([[
+        'scm.example',
+        {
+          registration: {
+            auth: {
+              tokenMaterializer: {
+                serviceId: 'github',
+                materialize: () => ({
+                  kind: 'missing',
+                  reason: 'not_a_typed_reason',
+                } as unknown as ScmHostingTokenMaterializationResult),
+              },
+            },
           },
         },
-      }],
-      hookHandlersByHookId: new Map([[
-        'connectedServices.materialization.githubScmHostingToken',
-        [{
-          handler: () => ({
-            kind: 'missing',
-            reason: 'not_a_typed_reason',
-          } as unknown as ScmHostingTokenMaterializationResult),
-        }],
       ]]),
     };
 

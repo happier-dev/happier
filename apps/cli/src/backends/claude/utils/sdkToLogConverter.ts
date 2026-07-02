@@ -12,10 +12,12 @@ import type {
     SDKSystemMessage,
     SDKResultMessage
 } from '@/backends/claude/sdk'
-import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines'
+import type { RawJSONLines } from '@happier-dev/plugins-claude/agent'
+import {
+    INTERNAL_CLAUDE_EVENT_TYPES,
+    normalizeClaudeToolUseNamesInSdkMessage,
+} from '@happier-dev/plugins-claude/agent'
 import type { PermissionMode } from '@/api/types'
-import { normalizeClaudeToolUseNamesInSdkMessage } from './normalizeClaudeToolUseNames'
-import { INTERNAL_CLAUDE_EVENT_TYPES } from './internalClaudeEventTypes'
 
 /**
  * Context for converting SDK messages to log format

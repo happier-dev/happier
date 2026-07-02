@@ -1,7 +1,6 @@
 import type { StreamedTranscriptFlushSummary, StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import type { SDKMessage } from '@/backends/claude/sdk';
 import { logger } from '@/ui/logger';
-
 import {
     extractTextDeltaFromStreamEvent,
     extractTextStartFromStreamEvent,
@@ -16,7 +15,7 @@ import {
     messageContainsToolUseId,
     recordSeenToolBlocks,
     stripSeenToolBlocksFromMessage,
-} from './agentSdk/streamEventToolBlocks';
+} from '@happier-dev/plugins-claude/agent/runtime/remote/sdk';
 
 export type ClaudeAgentSdkTurnDiagnostics = {
     streamedTextDeltaChars: number;

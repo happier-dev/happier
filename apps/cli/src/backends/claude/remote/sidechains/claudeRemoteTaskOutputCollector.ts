@@ -1,8 +1,8 @@
 import type { SDKAssistantMessage, SDKMessage, SDKUserMessage } from '../../sdk';
+import { coerceClaudeToolResultText } from '@happier-dev/plugins-claude/agent';
 
 import type { ClaudeTaskOutputImportedMessage, ClaudeTaskOutputToolResultSummary } from './claudeTaskOutputSidechainImporter';
 import { ClaudeTaskOutputSidechainImporter } from './claudeTaskOutputSidechainImporter';
-import { coerceToolResultText } from './_shared';
 
 export type ClaudeRemoteTaskOutputCollectorObservation = {
   imported: ClaudeTaskOutputImportedMessage[];
@@ -56,7 +56,7 @@ export class ClaudeRemoteTaskOutputCollector {
       const toolUseId = String((item as any).tool_use_id ?? '').trim();
       if (!toolUseId) continue;
 
-      const toolResultText = coerceToolResultText(
+      const toolResultText = coerceClaudeToolResultText(
         toolUseResult !== undefined ? { content: (item as any).content, tool_use_result: toolUseResult } : (item as any).content,
       );
       const result = this.importer.ingestToolResult({ toolUseId, toolResultText });

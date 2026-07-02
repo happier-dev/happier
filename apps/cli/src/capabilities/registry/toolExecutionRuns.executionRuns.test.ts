@@ -33,7 +33,7 @@ function makeCliEngineRegistryMock(
       executionRunProfiles: Object.freeze([]),
       activationTargets: Object.freeze([]),
       hookRegistrations: Object.freeze([]),
-      runtimeCoreHooksByBackendId: new Map(),
+      surfaceHandlersByBackendId: new Map(),
       catalogEntriesById: {},
       providerDefinitionsById: new Map(),
       backendDefinitionsById: new Map(),
@@ -44,9 +44,11 @@ function makeCliEngineRegistryMock(
     resolveForBackendId: async () => null,
     resolveExecutionSurfaces: async () => ({
       terminalRuntime: null,
-      externalSessions: null,
+      externalSession: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     }),
   };
 }
@@ -140,7 +142,11 @@ describe('executionRunsCapability', () => {
       };
 
       expect(res?.available).toBe(true);
-      expect(res?.backends?.coderabbit).toBeUndefined();
+      expect(res?.backends?.coderabbit).toMatchObject({
+        available: false,
+        supportsVendorResume: false,
+        intents: ['review'],
+      });
     });
   });
 
@@ -180,10 +186,10 @@ describe('executionRunsCapability', () => {
     expect(res.backends.codex).toBeTruthy();
     expect(res.backends.customAcp).toBeTruthy();
     expect(res.backends.ohMyPi).toBeTruthy();
-    expect(res.backends.coderabbit).toBeUndefined();
+    expect(res.backends.coderabbit).toMatchObject({ intents: ['review'] });
 
     expect(res.intents).toContain('memory_hints');
-    for (const backendId of Object.keys(res.backends)) {
+    for (const backendId of ['claude', 'codex', 'customAcp', 'ohMyPi']) {
       expect(res.backends[backendId]?.intents).toBe(res.intents);
     }
   });
@@ -324,6 +330,112 @@ describe('executionRunsCapability', () => {
       available: true,
       supportsVendorResume: false,
     });
+  });
+
+  it('marks catalog entries with an ACP runtime definition bridge available', async () => {
+    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
+      catalogEntriesById: {
+        'plugin.acp': {
+          id: 'plugin.acp',
+          cliSubcommand: 'plugin-acp',
+          vendorResumeSupport: 'unsupported',
+          getAcpRuntimeDefinitionBridge: async () => ({
+            exec: {
+              systemTools: {
+                resolve: async () => {
+                  throw new Error('not reached');
+                },
+              },
+            },
+            createDefinition: () => {
+              throw new Error('not reached');
+            },
+          }),
+        },
+      },
+    }));
+
+    const res = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: makeCliSnapshot({}),
+      },
+      request: { id: 'tool.executionRuns' },
+    }) as {
+      available: boolean;
+      backends: Record<string, { available?: boolean; supportsVendorResume?: boolean }>;
+    };
+
+    expect(res.available).toBe(true);
+    expect(res.backends['plugin.acp']).toMatchObject({
+      available: true,
+      supportsVendorResume: false,
+    });
+  });
+
+  it('narrows plugin backend intents to backend-declared execution-run review intents', async () => {
+    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
+      backendDefinitionsById: new Map([
+        [
+          'plugin.review',
+          {
+            id: 'plugin.review',
+            providerId: 'plugin.provider',
+            provenance: 'external',
+            source: { kind: 'path' },
+            definition: { kindVersion: 1, id: 'plugin.review', providerId: 'plugin.provider' },
+            capabilities: normalizePluginBackendCapabilitiesV1({
+              executionRun: {
+                supported: true,
+                review: {
+                  intents: ['review'],
+                },
+              },
+            }),
+            getRuntimeCore: async () => async () => ({
+              runtimeCore: {
+                createSessionRuntime: async () => {
+                  throw new Error('not reached');
+                },
+                createExecutionRunBackend: () => {
+                  throw new Error('not reached');
+                },
+              },
+            }),
+          },
+        ],
+      ]),
+      providerDefinitionsById: new Map([
+        [
+          'plugin.provider',
+          {
+            id: 'plugin.provider',
+            provenance: 'external',
+            source: { kind: 'path' },
+            definition: { kindVersion: 1, id: 'plugin.provider', ownedBackendIds: ['plugin.review'] },
+          },
+        ],
+      ]),
+      catalogEntriesById: {},
+    }));
+
+    const res = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: makeCliSnapshot({}),
+      },
+      request: { id: 'tool.executionRuns' },
+    }) as {
+      available: boolean;
+      intents: readonly string[];
+      backends: Record<string, { intents: readonly string[]; available?: boolean; supportsVendorResume?: boolean }>;
+    };
+
+    expect(res.available).toBe(true);
+    expect(res.intents).toContain('plan');
+    expect(res.backends['plugin.review']).toMatchObject({
+      available: true,
+      supportsVendorResume: false,
+    });
+    expect(res.backends['plugin.review']?.intents).toEqual(['review']);
   });
 
   it('marks plugin-contributed backends unavailable when runtimeCore proof is missing', async () => {

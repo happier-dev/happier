@@ -612,6 +612,67 @@ describe('ClaudeLocalPermissionBridge', () => {
     });
   });
 
+  it('returns a PreToolUse-shaped AskUserQuestion response when the hook arrives through PreToolUse', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-ask-user-question-pre-tool-use');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 200 });
+    bridge.activate();
+
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'AskUserQuestion',
+      tool_input: {
+        questions: [
+          {
+            header: 'File cleanup',
+            question: 'Remove the scratch files?',
+            multiSelect: false,
+            options: [
+              { label: 'Remove', description: 'Delete the files' },
+              { label: 'Keep', description: 'Leave them for inspection' },
+            ],
+          },
+        ],
+      },
+      tool_use_id: 'toolu_ask_pre_tool_use_1',
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests.toolu_ask_pre_tool_use_1).toMatchObject({
+      tool: 'AskUserQuestion',
+    });
+
+    const permissionHandler = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionHandler).toBeDefined();
+    await permissionHandler?.({
+      id: 'toolu_ask_pre_tool_use_1',
+      approved: true,
+      answers: { 'Remove the scratch files?': 'Keep' },
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        updatedInput: {
+          questions: [
+            {
+              header: 'File cleanup',
+              question: 'Remove the scratch files?',
+              multiSelect: false,
+              options: [
+                { label: 'Remove', description: 'Delete the files' },
+                { label: 'Keep', description: 'Leave them for inspection' },
+              ],
+            },
+          ],
+          answers: { 'Remove the scratch files?': 'Keep' },
+        },
+      },
+    });
+  });
+
   it('waits indefinitely when responseTimeoutMs is null', async () => {
     const { session, client } = createPermissionHandlerSessionStub('session-infinite-timeout');
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });

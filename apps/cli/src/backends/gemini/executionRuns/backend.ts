@@ -1,4 +1,4 @@
-import { createCatalogProviderExecutionRunBackend } from '@/agent/executionRuns/runtime/backends/catalogProvider';
+import { createCatalogProviderExecutionRunBackend } from '@/agent/runtime/bridges/executionRun/runtime/catalog';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import {
     requireExecutionRunHostRuntime,

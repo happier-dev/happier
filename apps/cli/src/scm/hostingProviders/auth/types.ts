@@ -1,82 +1,26 @@
 import type {
-  ConnectedServiceCredentialKind,
-  ConnectedServiceCredentialRecordV1,
-  ConnectedServiceId,
-} from '@happier-dev/protocol';
+  ScmHostingProviderRuntimeBasicAuthMaterializer,
+  ScmHostingProviderRuntimeBasicAuthMaterializerRequest,
+  ScmHostingProviderRuntimeBasicAuthMaterializerResult,
+  ScmHostingProviderRuntimeTokenMaterializer,
+  ScmHostingProviderRuntimeTokenMaterializerRequest,
+  ScmHostingProviderRuntimeTokenMaterializerResult,
+} from '@happier-dev/plugin-sdk';
 
-export type ScmHostingTokenMaterializationRequest = Readonly<{
-  kind: 'scm_hosting_token';
-  providerId: string;
-  host: string;
-  profileId?: string | null;
-  records: readonly ConnectedServiceCredentialRecordV1[];
-}>;
-
-export type ScmHostingTokenMaterializationAvailable = Readonly<{
-  kind: 'available';
-  token: string;
-  profileId: string;
-  serviceId: ConnectedServiceId;
-  credentialKind: ConnectedServiceCredentialKind;
-  providerAccountId: string | null;
-  providerEmail: string | null;
-}>;
-
-export type ScmHostingTokenMaterializationMissingReason =
-  | 'unsupported_materialization'
-  | 'unsupported_provider'
-  | 'unsupported_host'
-  | 'credential_unavailable';
-
-export type ScmHostingTokenMaterializationMissing = Readonly<{
-  kind: 'missing';
-  reason: ScmHostingTokenMaterializationMissingReason;
-}>;
-
+export type ScmHostingTokenMaterializationRequest =
+  ScmHostingProviderRuntimeTokenMaterializerRequest;
 export type ScmHostingTokenMaterializationResult =
-  | ScmHostingTokenMaterializationAvailable
-  | ScmHostingTokenMaterializationMissing;
+  ScmHostingProviderRuntimeTokenMaterializerResult;
+export type ScmHostingTokenMaterializationMissingReason =
+  Extract<ScmHostingTokenMaterializationResult, { kind: 'missing' }>['reason'];
+export type ScmHostingTokenMaterializer =
+  ScmHostingProviderRuntimeTokenMaterializer;
 
-export type ScmHostingTokenMaterializer = Readonly<{
-  serviceId: ConnectedServiceId;
-  materialize(request: ScmHostingTokenMaterializationRequest): ScmHostingTokenMaterializationResult;
-}>;
-
-export type ScmHostingBasicAuthMaterializationRequest = Readonly<{
-  kind: 'scm_hosting_basic_auth';
-  providerId: string;
-  host: string;
-  profileId?: string | null;
-  records: readonly ConnectedServiceCredentialRecordV1[];
-}>;
-
-export type ScmHostingBasicAuthMaterializationAvailable = Readonly<{
-  kind: 'available';
-  username: string;
-  password: string;
-  profileId: string;
-  serviceId: ConnectedServiceId;
-  credentialKind: 'bitbucket_basic_auth';
-  providerAccountId: string | null;
-  providerEmail: string | null;
-}>;
-
-export type ScmHostingBasicAuthMaterializationMissingReason =
-  | 'unsupported_materialization'
-  | 'unsupported_provider'
-  | 'unsupported_host'
-  | 'credential_unavailable';
-
-export type ScmHostingBasicAuthMaterializationMissing = Readonly<{
-  kind: 'missing';
-  reason: ScmHostingBasicAuthMaterializationMissingReason;
-}>;
-
+export type ScmHostingBasicAuthMaterializationRequest =
+  ScmHostingProviderRuntimeBasicAuthMaterializerRequest;
 export type ScmHostingBasicAuthMaterializationResult =
-  | ScmHostingBasicAuthMaterializationAvailable
-  | ScmHostingBasicAuthMaterializationMissing;
-
-export type ScmHostingBasicAuthMaterializer = Readonly<{
-  serviceId: ConnectedServiceId;
-  materialize(request: ScmHostingBasicAuthMaterializationRequest): ScmHostingBasicAuthMaterializationResult;
-}>;
+  ScmHostingProviderRuntimeBasicAuthMaterializerResult;
+export type ScmHostingBasicAuthMaterializationMissingReason =
+  Extract<ScmHostingBasicAuthMaterializationResult, { kind: 'missing' }>['reason'];
+export type ScmHostingBasicAuthMaterializer =
+  ScmHostingProviderRuntimeBasicAuthMaterializer;

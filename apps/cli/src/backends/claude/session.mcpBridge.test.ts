@@ -30,6 +30,7 @@ function createSessionClientStub(overrides?: Partial<SessionClientPort>): Sessio
     getMetadataSnapshot: () => null,
     waitForMetadataUpdate: vi.fn(async () => false),
     popPendingMessage: vi.fn(async () => false),
+    shouldAttemptPendingMaterialization: vi.fn(() => true),
     peekPendingMessageQueueV2Count: vi.fn(async () => 0),
     discardPendingMessageQueueV2All: vi.fn(async () => 0),
     discardCommittedMessageLocalIds: vi.fn(async () => 0),

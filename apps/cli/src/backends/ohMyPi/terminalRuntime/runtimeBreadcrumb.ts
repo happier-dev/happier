@@ -1,100 +1,34 @@
-import { readFileSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
-
-import { canonicalizeExternalSessionsPath } from '@/session/external/sourceValidation';
+import { createTerminalBreadcrumbResolver } from '@/agent/runtime/terminal/breadcrumbs/createTerminalBreadcrumbResolver';
 import { getTerminalId } from '@/agent/terminalRuntime/providers/getTerminalId';
+import {
+    OH_MY_PI_TERMINAL_BREADCRUMB_SUBDIR,
+    OH_MY_PI_TERMINAL_SESSIONS_SUBDIR,
+    canonicalizeOhMyPiTerminalRuntimePath,
+    isOhMyPiTerminalRuntimeCwdMatch,
+    parseOhMyPiTerminalRuntimeSessionId,
+    projectOhMyPiTerminalRuntimeBreadcrumb,
+    resolveOhMyPiTerminalRuntimeAgentDir,
+    type OhMyPiTerminalRuntimeBreadcrumb,
+    type ResolveOhMyPiTerminalRuntimeBreadcrumbParams,
+} from '@happier-dev/plugins-ohmypi/agent/terminalRuntime/breadcrumb';
 
-import { resolveConfiguredOhMyPiAgentDir } from '../externalSessions/resolveOhMyPiAgentDir';
-
-export type ResolveOhMyPiTerminalRuntimeBreadcrumbParams = Readonly<{
-    cwd: string;
-    env?: NodeJS.ProcessEnv;
-    terminalId?: string | null;
-}>;
-
-export type OhMyPiTerminalRuntimeBreadcrumb = Readonly<{
-    agentDir: string;
-    breadcrumbCwd: string;
-    sessionFilePath: string;
-    remoteSessionId: string;
-    env: NodeJS.ProcessEnv;
-}>;
-
-function isPathInside(parentPath: string, childPath: string): boolean {
-    const relativePath = relative(resolve(parentPath), resolve(childPath));
-    return relativePath === '' || (!relativePath.startsWith('..') && !relativePath.includes('..\\'));
-}
-
-function parseRemoteSessionIdFromSessionFile(sessionFilePath: string): string | null {
-    const fileName = basename(sessionFilePath);
-    if (!fileName.endsWith('.jsonl')) {
-        return null;
-    }
-
-    const stem = fileName.slice(0, -'.jsonl'.length);
-    const separatorIndex = stem.indexOf('_');
-    if (separatorIndex === -1 || separatorIndex === stem.length - 1) {
-        return null;
-    }
-
-    const remoteSessionId = stem.slice(separatorIndex + 1).trim();
-    return remoteSessionId.length > 0 ? remoteSessionId : null;
-}
-
-function canonicalizePotentiallyMissingFilePath(rawPath: string): string {
-    const resolvedPath = resolve(rawPath);
-    const canonicalDirectory = canonicalizeExternalSessionsPath(dirname(resolvedPath));
-    return join(canonicalDirectory, basename(resolvedPath));
-}
+const resolveRuntimeBreadcrumb = createTerminalBreadcrumbResolver<
+    ResolveOhMyPiTerminalRuntimeBreadcrumbParams,
+    OhMyPiTerminalRuntimeBreadcrumb
+>({
+    agentDir: resolveOhMyPiTerminalRuntimeAgentDir,
+    resolveTerminalId: (input) => input.terminalId ?? getTerminalId({ env: input.env ?? process.env }),
+    breadcrumbSubdir: OH_MY_PI_TERMINAL_BREADCRUMB_SUBDIR,
+    sessionsSubdir: OH_MY_PI_TERMINAL_SESSIONS_SUBDIR,
+    parseSessionId: parseOhMyPiTerminalRuntimeSessionId,
+    validateCwd: isOhMyPiTerminalRuntimeCwdMatch,
+    validateSessionFile: () => true,
+    projectSource: projectOhMyPiTerminalRuntimeBreadcrumb,
+    canonicalizePath: canonicalizeOhMyPiTerminalRuntimePath,
+});
 
 export function runtimeBreadcrumb(
     params: ResolveOhMyPiTerminalRuntimeBreadcrumbParams,
 ): OhMyPiTerminalRuntimeBreadcrumb | undefined {
-    const env = params.env ?? process.env;
-    const terminalId = params.terminalId ?? getTerminalId({ env });
-    if (!terminalId) {
-        return undefined;
-    }
-
-    const agentDir = resolveConfiguredOhMyPiAgentDir(env);
-    const breadcrumbFile = join(agentDir, 'terminal-sessions', terminalId);
-
-    let breadcrumbContent: string;
-    try {
-        breadcrumbContent = readFileSync(breadcrumbFile, 'utf8');
-    } catch {
-        return undefined;
-    }
-
-    const [breadcrumbCwdRaw, sessionFileRaw] = breadcrumbContent
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-
-    if (!breadcrumbCwdRaw || !sessionFileRaw) {
-        return undefined;
-    }
-
-    if (resolve(breadcrumbCwdRaw) !== resolve(params.cwd)) {
-        return undefined;
-    }
-
-    const sessionsRoot = join(agentDir, 'sessions');
-    const sessionFilePath = canonicalizePotentiallyMissingFilePath(sessionFileRaw);
-    if (!isPathInside(sessionsRoot, sessionFilePath)) {
-        return undefined;
-    }
-
-    const remoteSessionId = parseRemoteSessionIdFromSessionFile(sessionFilePath);
-    if (!remoteSessionId) {
-        return undefined;
-    }
-
-    return {
-        agentDir,
-        breadcrumbCwd: resolve(breadcrumbCwdRaw),
-        sessionFilePath,
-        remoteSessionId,
-        env,
-    };
+    return resolveRuntimeBreadcrumb(params);
 }

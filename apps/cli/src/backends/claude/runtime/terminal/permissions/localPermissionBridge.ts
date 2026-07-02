@@ -13,7 +13,7 @@ import {
 } from '@/agent/permissions/permissionRequestCoordinator';
 
 import type { Session } from '../../session/ClaudeSession';
-import type { PermissionHookData, PermissionHookResponse } from '../../../utils/startHookServer';
+import type { PermissionHookData, PermissionHookResponse } from '@happier-dev/plugins-claude/agent';
 import { deepEqual } from '@/utils/deterministicJson';
 import type { PermissionRpcPayload } from '../../../utils/permissionRpc';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
@@ -25,16 +25,22 @@ import { shouldSuppressProviderPermissionForHappierApproval } from '@/agent/tool
 import {
     CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
     isClaudeLocalPermissionBridgeAgentStateRequest,
-} from '@happier-dev/agents';
+    withAskUserQuestionUiFreeformDefault,
+} from '@happier-dev/plugins-claude/agent';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
-import { withAskUserQuestionUiFreeformDefault } from './askUserQuestionFreeformDefault';
+import {
+    getSessionNotificationTitle,
+} from '@/agent/runtime/notifications/sessionNotificationContext';
 
 type PendingPermissionRequest = {
     id: string;
     toolName: string;
     toolInput: unknown;
     createdAt: number;
+    hookEventName: ClaudePermissionHookEventName;
 };
+
+type ClaudePermissionHookEventName = 'PermissionRequest' | 'PreToolUse';
 
 type CompletionStatus = 'approved' | 'denied' | 'canceled';
 
@@ -79,6 +85,8 @@ export class ClaudeLocalPermissionBridge {
             getPushSender: () => this.session.pushSender ?? null,
             getAccountSettings: () => this.session.accountSettings ?? null,
             getAccountSettingsSecretsReadKeys: () => this.session.accountSettingsSecretsReadKeys ?? [],
+            getSessionTitle: () => getSessionNotificationTitle(() => this.session.client.getMetadataSnapshot?.() ?? null),
+            getAgentDisplayName: () => 'Claude',
         });
         this.permissionCoordinator = createPermissionRequestCoordinator<PermissionHookResponse>({
             store: this.createCoordinatorStore(),
@@ -145,6 +153,7 @@ export class ClaudeLocalPermissionBridge {
         const permissionSuggestions = this.resolvePermissionSuggestions(data);
         const existing = this.pendingRequests.get(requestId);
         const createdAt = existing?.createdAt ?? Date.now();
+        const hookEventName = existing?.hookEventName ?? this.resolveHookEventName(data);
 
         // If we already have an allowlist rule for this tool call, respond immediately without surfacing a prompt.
         // This mirrors Claude Code's "don't ask again" behavior, but is enforced by Happier for reliability.
@@ -208,6 +217,7 @@ export class ClaudeLocalPermissionBridge {
                 toolName,
                 toolInput,
                 createdAt,
+                hookEventName,
             });
         }
 
@@ -595,11 +605,13 @@ export class ClaudeLocalPermissionBridge {
             requestId,
             buildCompletion: (context) => {
                 const updatedPermissions = payload.updatedPermissions;
+                const hookEventName = this.pendingRequests.get(context.requestId)?.hookEventName ?? 'PermissionRequest';
                 const hookResponse = this.buildHookResponse({
                     payload,
                     toolName: context.toolName,
                     toolInput: context.toolInput,
                     updatedPermissions,
+                    hookEventName,
                 });
                 shouldApplySideEffects = true;
 
@@ -630,9 +642,23 @@ export class ClaudeLocalPermissionBridge {
         toolName: string;
         toolInput: unknown;
         updatedPermissions: unknown;
+        hookEventName: ClaudePermissionHookEventName;
     }): PermissionHookResponse {
-        const { payload, toolName, toolInput, updatedPermissions } = params;
+        const { payload, toolName, toolInput, updatedPermissions, hookEventName } = params;
+        const updatedInput = this.buildUpdatedInput({ payload, toolName, toolInput });
         if (payload.approved) {
+            if (hookEventName === 'PreToolUse') {
+                return {
+                    continue: true,
+                    suppressOutput: true,
+                    hookSpecificOutput: {
+                        hookEventName: 'PreToolUse',
+                        permissionDecision: 'allow',
+                        ...(typeof updatedInput !== 'undefined' ? { updatedInput } : {}),
+                    },
+                };
+            }
+
             return {
                 continue: true,
                 suppressOutput: true,
@@ -640,24 +666,24 @@ export class ClaudeLocalPermissionBridge {
                     hookEventName: 'PermissionRequest',
                     decision: {
                         behavior: 'allow',
-                        ...(
-                            (toolName === 'AskUserQuestion' || toolName === 'ask_user_question')
-                            && payload.answers
-                            && typeof payload.answers === 'object'
-                            && !Array.isArray(payload.answers)
-                                ? {
-                                    updatedInput: {
-                                        ...(toolInput && typeof toolInput === 'object' && !Array.isArray(toolInput)
-                                            ? toolInput as Record<string, unknown>
-                                            : {}),
-                                        answers: payload.answers,
-                                    },
-                                }
-                                : {}
-                        ),
+                        ...(typeof updatedInput !== 'undefined' ? { updatedInput } : {}),
                         ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
                     },
                 },
+            };
+        }
+
+        if (hookEventName === 'PreToolUse') {
+            return {
+                continue: true,
+                suppressOutput: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'deny',
+                },
+                ...(typeof payload.reason === 'string' && payload.reason.length > 0
+                    ? { systemMessage: payload.reason }
+                    : {}),
             };
         }
 
@@ -674,6 +700,29 @@ export class ClaudeLocalPermissionBridge {
             ...(typeof payload.reason === 'string' && payload.reason.length > 0
                 ? { systemMessage: payload.reason }
                 : {}),
+        };
+    }
+
+    private buildUpdatedInput(params: {
+        payload: PermissionRpcPayload;
+        toolName: string;
+        toolInput: unknown;
+    }): unknown {
+        const { payload, toolName, toolInput } = params;
+        if (
+            (toolName !== 'AskUserQuestion' && toolName !== 'ask_user_question')
+            || !payload.answers
+            || typeof payload.answers !== 'object'
+            || Array.isArray(payload.answers)
+        ) {
+            return undefined;
+        }
+
+        return {
+            ...(toolInput && typeof toolInput === 'object' && !Array.isArray(toolInput)
+                ? toolInput as Record<string, unknown>
+                : {}),
+            answers: payload.answers,
         };
     }
 
@@ -867,5 +916,10 @@ export class ClaudeLocalPermissionBridge {
             return data.toolInput;
         }
         return {};
+    }
+
+    private resolveHookEventName(data: PermissionHookData): ClaudePermissionHookEventName {
+        const hookEventName = data.hook_event_name ?? data.hookEventName;
+        return hookEventName === 'PreToolUse' ? 'PreToolUse' : 'PermissionRequest';
     }
 }

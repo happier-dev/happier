@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { TurnDiffEmitter } from '@/agent/tools/diff/turnDiffEmitter';
+import {
+    collectGeminiToolResultDiffSignals,
+    type GeminiToolResultDiffSignal,
+} from '@happier-dev/plugins-gemini/agent/diff/toolResult';
 
 export interface DiffToolCall {
     type: 'tool-call';
@@ -28,33 +32,6 @@ export interface DiffToolResult {
     id: string;
 }
 
-function firstNonEmptyString(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value : null;
-}
-
-function extractTextDiffEntries(result: any): Array<{ path: string; oldText: string; newText: string; description?: string }> {
-    const candidates: any[] = [];
-    if (Array.isArray(result)) candidates.push(result);
-    if (result && typeof result === 'object' && Array.isArray((result as any).output)) candidates.push((result as any).output);
-    if (result && typeof result === 'object' && Array.isArray((result as any).result)) candidates.push((result as any).result);
-
-    const entries: Array<{ path: string; oldText: string; newText: string; description?: string }> = [];
-    for (const candidate of candidates) {
-        for (const item of candidate) {
-            if (!item || typeof item !== 'object') continue;
-            const type = (item as any).type;
-            if (type !== 'diff') continue;
-            const path = firstNonEmptyString((item as any).path);
-            const oldText = typeof (item as any).oldText === 'string' ? (item as any).oldText : null;
-            const newText = typeof (item as any).newText === 'string' ? (item as any).newText : null;
-            if (!path || oldText == null || newText == null) continue;
-            const description = firstNonEmptyString((item as any).description) ?? undefined;
-            entries.push({ path, oldText, newText, description });
-        }
-    }
-    return entries;
-}
-
 export class GeminiDiffProcessor {
     private readonly emitter = new TurnDiffEmitter();
     private onMessage: ((message: any) => void) | null = null;
@@ -73,44 +50,31 @@ export class GeminiDiffProcessor {
         this.emitter.observeUnifiedDiff({ filePath: path, unifiedDiff: diff, description });
     }
 
+    private observeGeminiDiffSignal(signal: GeminiToolResultDiffSignal): void {
+        if (signal.kind === 'text') {
+            this.emitter.observeTextDiff({
+                filePath: signal.filePath,
+                oldText: signal.oldText,
+                newText: signal.newText,
+                description: signal.description,
+            });
+            return;
+        }
+        this.emitter.observeUnifiedDiff({
+            filePath: signal.filePath,
+            unifiedDiff: signal.unifiedDiff,
+            description: signal.description,
+        });
+    }
+
     /**
      * Process a tool result that may contain diff information
      */
-    processToolResult(toolName: string, result: any, callId: string): void {
-        // Prefer structured old/new diffs if present (more reliable than unified diffs for "net" changes).
-        const textDiffs = extractTextDiffEntries(result);
-        for (const entry of textDiffs) {
-            logger.debug(`[GeminiDiffProcessor] Found text diff in tool result: ${toolName} (${callId})`);
-            this.emitter.observeTextDiff({
-                filePath: entry.path,
-                oldText: entry.oldText,
-                newText: entry.newText,
-                description: entry.description,
-            });
-        }
-
-        // Check if result contains diff information
-        if (result && typeof result === 'object') {
-            // Look for common diff fields
-            const diff = result.diff || result.unified_diff || result.patch;
-            const path = result.path || result.file;
-            
-            if (typeof diff === 'string' && diff.trim().length > 0 && typeof path === 'string' && path.trim().length > 0) {
-                logger.debug(`[GeminiDiffProcessor] Found diff in tool result: ${toolName} (${callId})`);
-                this.emitter.observeUnifiedDiff({ filePath: path, unifiedDiff: diff, description: result.description });
-            } else if (result.changes && typeof result.changes === 'object') {
-                // Handle multiple file changes (like patch operations)
-                for (const [filePath, change] of Object.entries(result.changes)) {
-                    const changeDiff = (change as any)?.diff || (change as any)?.unified_diff || (change as any)?.patch;
-                    if (typeof filePath !== 'string' || filePath.trim().length === 0) continue;
-                    if (typeof changeDiff !== 'string' || changeDiff.trim().length === 0) continue;
-                    this.emitter.observeUnifiedDiff({
-                        filePath,
-                        unifiedDiff: changeDiff,
-                        description: (change as any)?.description,
-                    });
-                }
-            }
+    processToolResult(toolName: string, result: unknown, callId: string): void {
+        const signals = collectGeminiToolResultDiffSignals(result);
+        for (const signal of signals) {
+            logger.debug(`[GeminiDiffProcessor] Found ${signal.kind} diff in tool result: ${toolName} (${callId})`);
+            this.observeGeminiDiffSignal(signal);
         }
     }
 

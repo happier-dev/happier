@@ -4,7 +4,6 @@ import { dirname } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
-import { buildPiToolsForPermissionMode } from '../permissionMode';
 import { createPiRpcBackend } from './backend';
 
 const envKeys = ['PATH', 'HAPPIER_PI_PATH'] as const;
@@ -66,6 +65,20 @@ describe('pi rpc backend argv', () => {
     expect(args).not.toContain('--thinking');
   });
 
+  it('passes the Happier session id into the Pi RPC backend options', () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_PI_PATH = createFakeBin('pi');
+
+    const backend = createPiRpcBackend({
+      cwd: '/tmp',
+      env: {},
+      permissionMode: 'default',
+      happierSessionId: 'happy-session-1',
+    }) as unknown as { options?: { happierSessionId?: string | null } };
+
+    expect(backend.options?.happierSessionId).toBe('happy-session-1');
+  });
+
   it('resolves the CLI from options.env PATH when process PATH is empty', () => {
     process.env.PATH = '';
     delete process.env.HAPPIER_PI_PATH;
@@ -99,19 +112,5 @@ describe('pi rpc backend argv', () => {
     expect(backend.provisionSession).toBeTypeOf('function');
     expect(backend.subscribeMessages).toBeTypeOf('function');
     expect(backend.waitForTurnCompletion).toBeTypeOf('function');
-  });
-});
-
-describe('buildPiToolsForPermissionMode', () => {
-  it.each([
-    { mode: 'plan', expected: ['read', 'grep', 'find', 'ls'] },
-    { mode: 'read-only', expected: ['read', 'grep', 'find', 'ls'] },
-    { mode: 'default', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
-    { mode: 'safe-yolo', expected: ['read', 'edit', 'write', 'grep', 'find', 'ls'] },
-    { mode: 'acceptEdits', expected: ['read', 'edit', 'write', 'grep', 'find', 'ls'] },
-    { mode: 'yolo', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
-    { mode: 'bypassPermissions', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
-  ] as const)('maps $mode to tools list', ({ mode, expected }) => {
-    expect(buildPiToolsForPermissionMode(mode)).toEqual(expected);
   });
 });

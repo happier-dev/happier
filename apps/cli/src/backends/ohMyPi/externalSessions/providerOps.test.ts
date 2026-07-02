@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -127,5 +127,191 @@ describe('ohMyPiExternalSessionProviderOps.canonicalizeLinkedSession', () => {
         agentDir: '/tmp/current-omp-agent',
       },
     });
+  });
+});
+
+describe('ohMyPiExternalSessionProviderOps.listCandidates', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('uses the plugin source validation before listing candidates', async () => {
+    const configuredAgentDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-oh-my-pi-list-configured-')));
+    const staleAgentDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-oh-my-pi-list-stale-')));
+    vi.stubEnv('PI_CODING_AGENT_DIR', configuredAgentDir);
+
+    const { ohMyPiExternalSessionProviderOps } = await import('./providerOps');
+
+    await expect(
+      ohMyPiExternalSessionProviderOps.listCandidates({
+        source: { kind: 'ohMyPiAgentDir', agentDir: staleAgentDir },
+        limit: 10,
+      }),
+    ).rejects.toThrow('source agentDir override is not allowed');
+  });
+});
+
+describe('ohMyPiExternalSessionProviderOps file-follow bridge', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('resolves an exact transcript path for host external-session grants', async () => {
+    const agentDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-oh-my-pi-provider-follow-path-')));
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const remoteSessionId = 'omp-session-path';
+    const filePath = join(sessionRoot, `2026-04-10T10-00-00-000Z_${remoteSessionId}.jsonl`);
+    await writeFile(filePath, jsonlLine({
+      type: 'session',
+      id: remoteSessionId,
+      timestamp: '2026-04-10T10:00:00.000Z',
+    }), 'utf8');
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+
+    const { ohMyPiExternalSessionProviderOps } = await import('./providerOps');
+    expect(ohMyPiExternalSessionProviderOps.resolveFollowTranscriptPath).toEqual(expect.any(Function));
+
+    await expect(ohMyPiExternalSessionProviderOps.resolveFollowTranscriptPath!({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      remoteSessionId,
+      reason: 'attached_view',
+    })).resolves.toEqual({
+      path: await realpath(filePath),
+      sourceId: remoteSessionId,
+    });
+  });
+
+  it('does not page symlinked transcript entries from the host bridge', async () => {
+    const agentDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-oh-my-pi-provider-page-symlink-')));
+    const externalDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-oh-my-pi-provider-page-external-')));
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const remoteSessionId = 'omp-session-page-symlink';
+    const targetPath = join(externalDir, 'outside.jsonl');
+    await writeFile(
+      targetPath,
+      [
+        jsonlLine({
+          type: 'session',
+          id: remoteSessionId,
+          timestamp: '2026-04-10T10:00:00.000Z',
+        }),
+        jsonlLine({
+          type: 'message',
+          id: 'assistant-1',
+          parentId: null,
+          timestamp: '2026-04-10T10:00:01.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'must not leak through symlink' }] },
+        }),
+      ].join(''),
+      'utf8',
+    );
+    await symlink(targetPath, join(sessionRoot, `2026-04-10T10-00-00-000Z_${remoteSessionId}.jsonl`));
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+
+    const { ohMyPiExternalSessionProviderOps } = await import('./providerOps');
+
+    await expect(ohMyPiExternalSessionProviderOps.pageTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      remoteSessionId,
+      direction: 'older',
+      maxBytes: 1024 * 1024,
+      maxItems: 10,
+    })).resolves.toMatchObject({
+      items: [],
+      hasMore: false,
+      truncated: false,
+    });
+  });
+
+  it('does not read-after symlinked transcript entries from the host bridge', async () => {
+    const agentDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-oh-my-pi-provider-read-after-symlink-')));
+    const externalDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-oh-my-pi-provider-read-after-external-')));
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const remoteSessionId = 'omp-session-read-after-symlink';
+    const targetPath = join(externalDir, 'outside.jsonl');
+    await writeFile(
+      targetPath,
+      [
+        jsonlLine({
+          type: 'session',
+          id: remoteSessionId,
+          timestamp: '2026-04-10T10:00:00.000Z',
+        }),
+        jsonlLine({
+          type: 'message',
+          id: 'assistant-1',
+          parentId: null,
+          timestamp: '2026-04-10T10:00:01.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'must not leak through read-after' }] },
+        }),
+      ].join(''),
+      'utf8',
+    );
+    await symlink(targetPath, join(sessionRoot, `2026-04-10T10-00-00-000Z_${remoteSessionId}.jsonl`));
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+
+    const { ohMyPiExternalSessionProviderOps } = await import('./providerOps');
+
+    await expect(ohMyPiExternalSessionProviderOps.readAfterTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      remoteSessionId,
+      cursor: 'idx:0',
+      maxBytes: 1024 * 1024,
+      maxItems: 10,
+    })).resolves.toMatchObject({
+      items: [],
+      truncated: false,
+    });
+  });
+
+  it('acquires follow leases through the plugin file-follow runtime service', async () => {
+    const agentDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-oh-my-pi-provider-follow-lease-')));
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const remoteSessionId = 'omp-session-follow';
+    const filePath = join(sessionRoot, `2026-04-10T10-00-00-000Z_${remoteSessionId}.jsonl`);
+    const sessionHeader = {
+      type: 'session',
+      id: remoteSessionId,
+      timestamp: '2026-04-10T10:00:00.000Z',
+      cwd: '/repo/oh-my-pi',
+    };
+    await writeFile(filePath, jsonlLine(sessionHeader), 'utf8');
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+
+    const follow = vi.fn(async (input) => ({
+      id: 'ohmypi-follow',
+      drainNow: vi.fn(async () => {
+        await input.onLine({
+          line: jsonlLine(sessionHeader).trimEnd(),
+          sourcePath: filePath,
+          sequence: 1,
+        });
+      }),
+      close: vi.fn(async () => undefined),
+    }));
+    const { ohMyPiExternalSessionProviderOps } = await import('./providerOps');
+    expect(ohMyPiExternalSessionProviderOps.acquireFollowLease).toEqual(expect.any(Function));
+
+    const lease = await ohMyPiExternalSessionProviderOps.acquireFollowLease!({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      remoteSessionId,
+      reason: 'attached_view',
+      runtime: {
+        signal: new AbortController().signal,
+        transcripts: { fileFollow: { follow } },
+        diagnostics: { issue: vi.fn() },
+      },
+    });
+
+    expect(follow).toHaveBeenCalledWith(expect.objectContaining({
+      path: await realpath(filePath),
+      startAt: 'beginning',
+      strategy: 'poll',
+    }));
+    await lease?.release();
   });
 });

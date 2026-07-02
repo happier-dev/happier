@@ -81,7 +81,7 @@ async function writePluginFixture(rootDir: string): Promise<void> {
               supportsModes: true,
               supportsConfigOptions: true,
             },
-            runtimeAdapters: [],
+            surfaceHandlers: [],
             launch: {
               command: 'plugin-variant-launch',
               args: ['--ignored'],

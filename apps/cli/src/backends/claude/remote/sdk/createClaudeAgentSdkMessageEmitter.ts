@@ -1,5 +1,5 @@
 import type { SDKMessage } from '@/backends/claude/sdk';
-import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
+import { normalizeClaudeToolUseNamesInSdkMessage } from '@happier-dev/plugins-claude/agent/transcripts';
 
 export function createClaudeAgentSdkMessageEmitter(params: {
     onMessage: (message: SDKMessage) => void;

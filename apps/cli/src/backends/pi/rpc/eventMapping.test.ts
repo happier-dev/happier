@@ -127,9 +127,77 @@ describe('mapPiRpcEventToAgentMessages', () => {
     ]);
   });
 
-  it('maps turn lifecycle events to status messages', () => {
-    expect(mapPiRpcEventToAgentMessages({ type: 'turn_start' })).toEqual([{ type: 'status', status: 'running' }]);
-    expect(mapPiRpcEventToAgentMessages({ type: 'turn_end' })).toEqual([{ type: 'status', status: 'idle' }]);
+  it('maps agent lifecycle events to status messages and keeps terminal boundaries informational', () => {
+    expect(mapPiRpcEventToAgentMessages({ type: 'agent_start' })).toEqual([{ type: 'status', status: 'running' }]);
+    expect(mapPiRpcEventToAgentMessages({ type: 'agent_end' })).toEqual([]);
+    expect(mapPiRpcEventToAgentMessages({ type: 'agent_end', willRetry: true })).toEqual([]);
+    expect(mapPiRpcEventToAgentMessages({ type: 'turn_start' })).toEqual([]);
+    expect(mapPiRpcEventToAgentMessages({ type: 'turn_end' })).toEqual([]);
+  });
+
+  it('maps compaction lifecycle events to structured provider events', () => {
+    expect(mapPiRpcEventToAgentMessages({ type: 'compaction_start', reason: 'manual' })).toEqual([
+      {
+        type: 'event',
+        name: 'context_compaction',
+        payload: {
+          type: 'context-compaction',
+          phase: 'started',
+          backendId: 'pi',
+          agentId: 'pi',
+          lifecycleId: 'pi:context-compaction',
+          trigger: 'manual',
+          source: 'provider-event',
+        },
+      },
+    ]);
+
+    expect(mapPiRpcEventToAgentMessages({
+      type: 'compaction_end',
+      reason: 'overflow',
+      result: { tokensBefore: 100, tokensAfter: 40, retryAttempt: 1 },
+    })).toEqual([
+      {
+        type: 'event',
+        name: 'context_compaction',
+        payload: {
+          type: 'context-compaction',
+          phase: 'completed',
+          backendId: 'pi',
+          agentId: 'pi',
+          lifecycleId: 'pi:context-compaction',
+          trigger: 'overflow',
+          source: 'provider-event',
+          tokenCountBefore: 100,
+          tokenCountAfter: 40,
+          retryAttempt: 1,
+        },
+      },
+    ]);
+  });
+
+  it('maps failed compaction events without leaking raw provider error text', () => {
+    expect(mapPiRpcEventToAgentMessages({
+      type: 'compaction_end',
+      aborted: true,
+      errorCode: 'context_limit',
+      errorMessage: 'provider specific failure with details',
+    })).toEqual([
+      {
+        type: 'event',
+        name: 'context_compaction',
+        payload: {
+          type: 'context-compaction',
+          phase: 'failed',
+          backendId: 'pi',
+          agentId: 'pi',
+          lifecycleId: 'pi:context-compaction',
+          trigger: 'unknown',
+          source: 'provider-event',
+          errorCode: 'context_limit',
+        },
+      },
+    ]);
   });
 
   it('returns an empty list for unknown events', () => {

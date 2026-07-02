@@ -5,6 +5,16 @@ import { join } from 'node:path';
 import { configuration } from '@/configuration';
 import type { BackendIsolationBundle, BackendIsolationRequest } from './types';
 
+function readDefinedProcessEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === 'string') {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
 export function resolveBackendIsolationBundle(request: BackendIsolationRequest): BackendIsolationBundle {
   const backendId = String(request.backendId ?? '').trim() || 'unknown';
   const scope = request.scope;
@@ -27,6 +37,7 @@ export function resolveBackendIsolationBundle(request: BackendIsolationRequest):
 
   return {
     env: {
+      ...readDefinedProcessEnv(),
       XDG_STATE_HOME: xdgState,
       XDG_CACHE_HOME: xdgCache,
       XDG_DATA_HOME: xdgData,

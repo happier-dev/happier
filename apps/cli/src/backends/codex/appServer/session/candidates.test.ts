@@ -100,12 +100,12 @@ describe('candidates', () => {
                             providerId: 'codex',
                             provider: expect.objectContaining({
                                 backendMode: 'appServer',
-                                vendorSessionId: 'thread-1',
+                                providerSessionId: 'thread-1',
                                 providerExtra: expect.objectContaining({
                                     v: 1,
                                     runtimeHandle: {
                                         backendMode: 'appServer',
-                                        vendorSessionId: 'thread-1',
+                                        providerSessionId: 'thread-1',
                                     },
                                 }),
                             }),

@@ -209,6 +209,22 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
         );
     });
 
+    it('accepts legacy preview shim names when resolving managed runtime roots', () => {
+        Object.defineProperty(process, 'execPath', {
+            value: '/Users/test/.happier/bin/happier-preview.exe',
+            configurable: true,
+        });
+        process.argv = ['/Users/test/.happier/bin/happier-preview.exe'];
+        vi.mocked(existsSync).mockImplementation((pathLike) => {
+            const path = String(pathLike);
+            return path === '/Users/test/.happier/cli-preview/current/package-dist/backends/codex/happyMcpStdioBridge.mjs';
+        });
+
+        expect(resolvePackagedRuntimeEntrypoint('backends/codex/happyMcpStdioBridge.mjs')).toBe(
+            '/Users/test/.happier/cli-preview/current/package-dist/backends/codex/happyMcpStdioBridge.mjs',
+        );
+    });
+
     it('prefers the installed publicdev cli payload root when launched from the hdev shim path', () => {
         Object.defineProperty(process, 'execPath', {
             value: '/Users/test/.happier/bin/hdev.exe',

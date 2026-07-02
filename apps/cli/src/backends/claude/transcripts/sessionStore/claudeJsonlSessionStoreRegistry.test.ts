@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -82,6 +84,14 @@ afterEach(() => {
 });
 
 describe('claudeJsonlSessionStoreRegistry', () => {
+    it('does not keep the unused projected session store factory adapter', () => {
+        expect(existsSync(new URL('./createClaudeJsonlSessionAdapter.ts', import.meta.url))).toBe(false);
+
+        const barrelSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+        expect(barrelSource).not.toContain('createClaudeJsonlSessionStoreFactory');
+        expect(barrelSource).not.toContain('createClaudeJsonlSessionAdapter');
+    });
+
     it('clamps cache policy values to the documented Claude bounds', () => {
         const detachedGraceMs = resolveClaudeJsonlSessionStoreDetachedGraceMs({
             HAPPIER_CLAUDE_JSONL_SESSION_STORE_DETACHED_GRACE_MS: '1',

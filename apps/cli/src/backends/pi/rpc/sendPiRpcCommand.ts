@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 
-import type { PendingRpcRequest } from './rpcSupport';
+import { PiRpcCommandResponseTimeoutError, type PendingRpcRequest } from './rpcSupport';
 import type { PiRpcCommand, PiRpcCommandWithoutId, PiRpcResponse } from './types';
 
 export async function sendPiRpcCommand(params: Readonly<{
@@ -25,8 +25,12 @@ export async function sendPiRpcCommand(params: Readonly<{
   return await new Promise<PiRpcResponse>((resolve, reject) => {
     const timeout = setTimeout(() => {
       params.pendingRequests.delete(id);
-      params.openPromptRequestIds.delete(id);
-      reject(new Error(`Timed out waiting for Pi RPC response (${params.command.type})`));
+      if (params.command.type === 'prompt') {
+        params.openPromptRequestIds.add(id);
+      } else {
+        params.openPromptRequestIds.delete(id);
+      }
+      reject(new PiRpcCommandResponseTimeoutError(params.command.type));
     }, params.timeoutMs ?? 30_000);
     timeout.unref?.();
 

@@ -3,6 +3,10 @@ import { configuration } from '@/configuration';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist } from '@/agent/permissions/applyPermissionAllowlistUpdates';
 import { PermissionRequestPushNotifier } from '@/settings/notifications/permissionRequestPushNotifier';
+import {
+    getSessionNotificationAgentDisplayName,
+    getSessionNotificationTitle,
+} from '@/agent/runtime/notifications/sessionNotificationContext';
 
 import type { Session } from '../runtime/session/ClaudeSession';
 import type { PermissionMode } from '../runtime/claudeEnhancedMode';
@@ -64,6 +68,9 @@ export class ClaudePermissionApprovalState {
             pushSender: this.session.pushSender,
             getSettings: () => this.session.accountSettings ?? null,
             getSettingsSecretsReadKeys: () => this.session.accountSettingsSecretsReadKeys,
+            getSessionTitle: () => getSessionNotificationTitle(() => this.session.client.getMetadataSnapshot?.() ?? null),
+            getAgentDisplayName: () =>
+                getSessionNotificationAgentDisplayName(() => this.session.client.getMetadataSnapshot?.() ?? null) ?? 'Claude',
             sessionId: this.session.client.sessionId,
             logPrefix: '[Claude]',
             onNotifiedAt: (permissionId, notifiedAtMs) => {

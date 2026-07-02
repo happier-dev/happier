@@ -1,42 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  withCodexAppServerClientMock,
-  readCodexAppServerSessionControlsMock,
+  resolvePreflightSessionControlsProbeAdapterMock,
+  probeConfigOptionsRawMock,
 } = vi.hoisted(() => ({
-  withCodexAppServerClientMock: vi.fn(),
-  readCodexAppServerSessionControlsMock: vi.fn(),
+  resolvePreflightSessionControlsProbeAdapterMock: vi.fn(),
+  probeConfigOptionsRawMock: vi.fn(),
 }));
 
-vi.mock('@/backends/codex/appServer/client/withCodexAppServerClient', () => ({
-  withCodexAppServerClient: withCodexAppServerClientMock,
-}));
-
-vi.mock('@/backends/codex/appServer/sessionControlsMetadata', () => ({
-  readCodexAppServerSessionControls: readCodexAppServerSessionControlsMock,
+vi.mock('./resolvePreflightSessionControlsProbeAdapter', () => ({
+  resolvePreflightSessionControlsProbeAdapter: resolvePreflightSessionControlsProbeAdapterMock,
 }));
 
 import { probeAgentConfigOptionsBestEffort } from './agentConfigOptionsProbe';
 
 describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
   beforeEach(() => {
-    withCodexAppServerClientMock.mockReset();
-    readCodexAppServerSessionControlsMock.mockReset();
+    resolvePreflightSessionControlsProbeAdapterMock.mockReset();
+    probeConfigOptionsRawMock.mockReset();
+    resolvePreflightSessionControlsProbeAdapterMock.mockResolvedValue({
+      failureCacheStrategy: 'retry',
+      probeConfigOptionsRaw: probeConfigOptionsRawMock,
+    });
   });
 
-  it('retries a transient Codex app-server failure within the same probe so the first result is rich', async () => {
-    withCodexAppServerClientMock
+  it('retries a transient Codex app-server preflight failure within the same probe so the first result is rich', async () => {
+    probeConfigOptionsRawMock
       .mockRejectedValueOnce(new Error('temporary codex app-server failure'))
-      .mockImplementationOnce(async ({ cwd, run }: any) => {
-        expect(cwd).toBe('/repo-transient');
-        return await run({ request: vi.fn() });
-      });
-    readCodexAppServerSessionControlsMock.mockResolvedValue({
-      availableModes: [],
-      currentModeId: 'default',
-      availableModels: [],
-      currentModelId: null,
-      configOptions: [
+      .mockResolvedValueOnce([
         {
           id: 'speed',
           name: 'Speed',
@@ -47,8 +38,7 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
             { value: 'fast', name: 'Fast' },
           ],
         },
-      ],
-    });
+      ]);
 
     const result = await probeAgentConfigOptionsBestEffort({
       agentId: 'codex',
@@ -72,45 +62,17 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
       ],
       source: 'dynamic',
     });
-    expect(withCodexAppServerClientMock).toHaveBeenCalledTimes(2);
-    expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(1);
+    expect(resolvePreflightSessionControlsProbeAdapterMock).toHaveBeenCalledWith('codex');
+    expect(probeConfigOptionsRawMock).toHaveBeenCalledTimes(2);
+    expect(probeConfigOptionsRawMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      cwd: '/repo-transient',
+      probeKind: 'configOptions',
+      accountSettings: { codexBackendMode: 'appServer' },
+    }));
   });
 
   it('returns only session-level config options when model-scoped controls are present', async () => {
-    withCodexAppServerClientMock.mockImplementation(async ({ cwd, run }: any) => {
-      expect(cwd).toBe('/repo');
-      return await run({ request: vi.fn() });
-    });
-    readCodexAppServerSessionControlsMock.mockResolvedValue({
-      availableModes: [],
-      currentModeId: 'default',
-      availableModels: [
-        {
-          id: 'gpt-5.4',
-          name: 'GPT-5.4',
-          modelOptions: [
-            {
-              id: 'reasoning_effort',
-              name: 'Thinking',
-              type: 'select',
-              currentValue: 'medium',
-              options: [
-                { value: 'low', name: 'Low' },
-                { value: 'medium', name: 'Medium' },
-              ],
-            },
-            {
-              id: 'speed',
-              name: 'Fast',
-              type: 'boolean',
-              currentValue: true,
-            },
-          ],
-        },
-      ],
-      currentModelId: 'gpt-5.4',
-      configOptions: [],
-    });
+    probeConfigOptionsRawMock.mockResolvedValueOnce([]);
 
     const result = await probeAgentConfigOptionsBestEffort({
       agentId: 'codex',
@@ -123,33 +85,22 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
       configOptions: [],
       source: 'dynamic',
     });
-    expect(withCodexAppServerClientMock).toHaveBeenCalledTimes(1);
-    expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(1);
+    expect(probeConfigOptionsRawMock).toHaveBeenCalledTimes(1);
   });
 
   it('uses Codex app-server session controls config options when the shared runtime defaults to appServer', async () => {
-    withCodexAppServerClientMock.mockImplementation(async ({ cwd, run }: any) => {
-      expect(cwd).toBe('/repo-default');
-      return await run({ request: vi.fn() });
-    });
-    readCodexAppServerSessionControlsMock.mockResolvedValue({
-      availableModes: [],
-      currentModeId: 'default',
-      availableModels: [],
-      currentModelId: null,
-      configOptions: [
-        {
-          id: 'speed',
-          name: 'Speed',
-          type: 'select',
-          currentValue: 'fast',
-          options: [
-            { value: 'standard', name: 'Standard' },
-            { value: 'fast', name: 'Fast' },
-          ],
-        },
-      ],
-    });
+    probeConfigOptionsRawMock.mockResolvedValueOnce([
+      {
+        id: 'speed',
+        name: 'Speed',
+        type: 'select',
+        currentValue: 'fast',
+        options: [
+          { value: 'standard', name: 'Standard' },
+          { value: 'fast', name: 'Fast' },
+        ],
+      },
+    ]);
 
     const result = await probeAgentConfigOptionsBestEffort({
       agentId: 'codex',
@@ -172,38 +123,19 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
       ],
       source: 'dynamic',
     });
-    expect(withCodexAppServerClientMock).toHaveBeenCalledTimes(1);
-    expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(1);
+    expect(probeConfigOptionsRawMock).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: '/repo-default',
+      probeKind: 'configOptions',
+      accountSettings: null,
+    }));
   });
 
   it('does not cache invalid dynamic config-options results as a 24h success fallback', async () => {
-    vi.resetModules();
-    const { probeAgentConfigOptionsBestEffort: probeFresh } = await import('./agentConfigOptionsProbe');
+    probeConfigOptionsRawMock
+      .mockResolvedValueOnce([{}])
+      .mockResolvedValueOnce([{}]);
 
-    withCodexAppServerClientMock.mockImplementation(async ({ cwd, run }: any) => {
-      expect(cwd).toBe('/repo-invalid');
-      return await run({ request: vi.fn() });
-    });
-
-    readCodexAppServerSessionControlsMock
-      .mockResolvedValueOnce({
-      availableModes: [],
-      currentModeId: 'default',
-      availableModels: [],
-      currentModelId: null,
-      // Invalid entry: array present, but nothing parseable.
-      configOptions: [{}],
-      })
-      // Retry within the same probe should not freeze a bad payload; still ends up as a fallback.
-      .mockResolvedValueOnce({
-        availableModes: [],
-        currentModeId: 'default',
-        availableModels: [],
-        currentModelId: null,
-        configOptions: [{}],
-      });
-
-    const first = await probeFresh({
+    const first = await probeAgentConfigOptionsBestEffort({
       agentId: 'codex',
       cwd: '/repo-invalid',
       accountSettings: { codexBackendMode: 'appServer' },
@@ -214,26 +146,20 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
       source: 'static',
     });
 
-    readCodexAppServerSessionControlsMock.mockResolvedValueOnce({
-      availableModes: [],
-      currentModeId: 'default',
-      availableModels: [],
-      currentModelId: null,
-      configOptions: [
-        {
-          id: 'speed',
-          name: 'Speed',
-          type: 'select',
-          currentValue: 'fast',
-          options: [
-            { value: 'standard', name: 'Standard' },
-            { value: 'fast', name: 'Fast' },
-          ],
-        },
-      ],
-    });
+    probeConfigOptionsRawMock.mockResolvedValueOnce([
+      {
+        id: 'speed',
+        name: 'Speed',
+        type: 'select',
+        currentValue: 'fast',
+        options: [
+          { value: 'standard', name: 'Standard' },
+          { value: 'fast', name: 'Fast' },
+        ],
+      },
+    ]);
 
-    const second = await probeFresh({
+    const second = await probeAgentConfigOptionsBestEffort({
       agentId: 'codex',
       cwd: '/repo-invalid',
       accountSettings: { codexBackendMode: 'appServer' },
@@ -255,6 +181,6 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
       ],
       source: 'dynamic',
     });
-    expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(3);
+    expect(probeConfigOptionsRawMock).toHaveBeenCalledTimes(3);
   });
 });

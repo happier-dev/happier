@@ -11,7 +11,7 @@ import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 
 import { configuration } from '@/configuration';
-import { codexAcpRuntimeInstallable } from '@/backends/codex/acp/runtimeInstallable';
+import { codexAcpRuntimeInstallable } from './codexAcpRuntimeInstallable';
 import { ghRuntimeInstallable } from '../ghRuntimeInstallable';
 import type { RuntimeInstallableAdapter } from '../registry';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
@@ -270,6 +270,33 @@ function createGenericGitHubReleaseBinaryRuntimeInstallable(
         availability: { ok: true },
         canAutoInstall: false,
         canBackgroundAutoUpdate: resolvedPath === managedBinPath,
+      };
+    },
+    resolveLaunchCommand: async (params = {}) => {
+      const command = primaryCommand(descriptor);
+      const env = params.env ?? process.env;
+      const preferManaged = params.sourcePreference === 'managed-first';
+      const systemBinPath = descriptor.binary.systemFirst === false
+        ? null
+        : await resolveCommandOnPath(command, env);
+      const managedPath = descriptor.binary.managedFallback === false
+        ? null
+        : await resolveManagedBinPath(descriptor);
+      const resolvedPath = preferManaged
+        ? managedPath ?? systemBinPath
+        : systemBinPath ?? managedPath;
+      if (!resolvedPath) {
+        return {
+          ok: false,
+          errorMessage: `${descriptor.display.name} is not installed`,
+          canAutoInstall: descriptor.binary.managedFallback !== false,
+        };
+      }
+      return {
+        ok: true,
+        command: resolvedPath,
+        args: [],
+        source: resolvedPath === managedPath ? 'managed' : 'system',
       };
     },
     installOrUpgrade: () => installGitHubReleaseBinary(descriptor),

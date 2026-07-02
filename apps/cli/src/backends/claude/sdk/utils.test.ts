@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 
-import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -127,7 +127,7 @@ describe('Claude SDK utils - getDefaultClaudeCodePath', () => {
     process.env.PATH = join(workDir, 'empty-path-2');
     mkdirSync(process.env.PATH, { recursive: true });
 
-    const runtimeSpec = getProviderCliRuntimeSpec('claude');
+    const runtimeSpec = getAgentCliRuntimeSpec('claude');
     const installGuideUrl = runtimeSpec.installGuideUrl ?? runtimeSpec.docsUrl ?? '';
     const unixRecipe = runtimeSpec.manualInstallRecipes?.linux?.[0];
     const windowsRecipe = runtimeSpec.manualInstallRecipes?.win32?.[0];

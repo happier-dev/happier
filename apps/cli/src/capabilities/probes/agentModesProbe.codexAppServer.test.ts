@@ -1,46 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  withCodexAppServerClientMock,
-  readCodexAppServerSessionControlsMock,
+  resolvePreflightSessionControlsProbeAdapterMock,
+  probeModesRawMock,
 } = vi.hoisted(() => ({
-  withCodexAppServerClientMock: vi.fn(),
-  readCodexAppServerSessionControlsMock: vi.fn(),
+  resolvePreflightSessionControlsProbeAdapterMock: vi.fn(),
+  probeModesRawMock: vi.fn(),
 }));
 
-vi.mock('@/backends/codex/appServer/client/withCodexAppServerClient', () => ({
-  withCodexAppServerClient: withCodexAppServerClientMock,
-}));
-
-vi.mock('@/backends/codex/appServer/sessionControlsMetadata', () => ({
-  readCodexAppServerSessionControls: readCodexAppServerSessionControlsMock,
+vi.mock('./resolvePreflightSessionControlsProbeAdapter', () => ({
+  resolvePreflightSessionControlsProbeAdapter: resolvePreflightSessionControlsProbeAdapterMock,
 }));
 
 import { probeAgentModesBestEffort } from './agentModesProbe';
 
 describe('probeAgentModesBestEffort (codex app-server)', () => {
   beforeEach(() => {
-    withCodexAppServerClientMock.mockReset();
-    readCodexAppServerSessionControlsMock.mockReset();
+    resolvePreflightSessionControlsProbeAdapterMock.mockReset();
+    probeModesRawMock.mockReset();
+    resolvePreflightSessionControlsProbeAdapterMock.mockResolvedValue({
+      failureCacheStrategy: 'retry',
+      probeModesRaw: probeModesRawMock,
+    });
   });
 
-  it('retries a transient Codex app-server failure within the same probe so the first result is rich', async () => {
-    withCodexAppServerClientMock
+  it('retries a transient Codex app-server preflight failure within the same probe so the first result is rich', async () => {
+    probeModesRawMock
       .mockRejectedValueOnce(new Error('temporary codex app-server failure'))
-      .mockImplementationOnce(async ({ cwd, run }: any) => {
-        expect(cwd).toBe('/repo-transient');
-        return await run({ request: vi.fn() });
-      });
-    readCodexAppServerSessionControlsMock.mockResolvedValue({
-      availableModes: [
+      .mockResolvedValueOnce([
         { id: 'default', name: 'Default' },
         { id: 'plan', name: 'Plan', description: 'Reasoning effort: medium' },
-      ],
-      currentModeId: 'default',
-      availableModels: [],
-      currentModelId: null,
-      configOptions: [],
-    });
+      ]);
 
     const result = await probeAgentModesBestEffort({
       agentId: 'codex',
@@ -56,25 +46,20 @@ describe('probeAgentModesBestEffort (codex app-server)', () => {
       ],
       source: 'dynamic',
     });
-    expect(withCodexAppServerClientMock).toHaveBeenCalledTimes(2);
-    expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(1);
+    expect(resolvePreflightSessionControlsProbeAdapterMock).toHaveBeenCalledWith('codex');
+    expect(probeModesRawMock).toHaveBeenCalledTimes(2);
+    expect(probeModesRawMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      cwd: '/repo-transient',
+      probeKind: 'modes',
+      accountSettings: { codexBackendMode: 'appServer' },
+    }));
   });
 
   it('uses Codex app-server collaboration modes when account settings select appServer', async () => {
-    withCodexAppServerClientMock.mockImplementation(async ({ cwd, run }: any) => {
-      expect(cwd).toBe('/repo');
-      return await run({ request: vi.fn() });
-    });
-    readCodexAppServerSessionControlsMock.mockResolvedValue({
-      availableModes: [
-        { id: 'default', name: 'Default' },
-        { id: 'plan', name: 'Plan', description: 'Reasoning effort: medium' },
-      ],
-      currentModeId: 'default',
-      availableModels: [],
-      currentModelId: null,
-      configOptions: [],
-    });
+    probeModesRawMock.mockResolvedValueOnce([
+      { id: 'default', name: 'Default' },
+      { id: 'plan', name: 'Plan', description: 'Reasoning effort: medium' },
+    ]);
 
     const result = await probeAgentModesBestEffort({
       agentId: 'codex',
@@ -90,25 +75,19 @@ describe('probeAgentModesBestEffort (codex app-server)', () => {
       ],
       source: 'dynamic',
     });
-    expect(withCodexAppServerClientMock).toHaveBeenCalledTimes(1);
-    expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(1);
+    expect(probeModesRawMock).toHaveBeenCalledTimes(1);
+    expect(probeModesRawMock).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: '/repo',
+      probeKind: 'modes',
+      accountSettings: { codexBackendMode: 'appServer' },
+    }));
   });
 
   it('uses Codex app-server collaboration modes when the shared runtime defaults to appServer', async () => {
-    withCodexAppServerClientMock.mockImplementation(async ({ cwd, run }: any) => {
-      expect(cwd).toBe('/repo-default');
-      return await run({ request: vi.fn() });
-    });
-    readCodexAppServerSessionControlsMock.mockResolvedValue({
-      availableModes: [
-        { id: 'default', name: 'Default' },
-        { id: 'plan', name: 'Plan' },
-      ],
-      currentModeId: 'default',
-      availableModels: [],
-      currentModelId: null,
-      configOptions: [],
-    });
+    probeModesRawMock.mockResolvedValueOnce([
+      { id: 'default', name: 'Default' },
+      { id: 'plan', name: 'Plan' },
+    ]);
 
     const result = await probeAgentModesBestEffort({
       agentId: 'codex',
@@ -123,7 +102,11 @@ describe('probeAgentModesBestEffort (codex app-server)', () => {
       ],
       source: 'dynamic',
     });
-    expect(withCodexAppServerClientMock).toHaveBeenCalledTimes(1);
-    expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(1);
+    expect(probeModesRawMock).toHaveBeenCalledTimes(1);
+    expect(probeModesRawMock).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: '/repo-default',
+      probeKind: 'modes',
+      accountSettings: null,
+    }));
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createSessionScanner } from './sessionScanner'
-import { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines'
+import { RawJSONLines } from '@happier-dev/plugins-claude/agent'
 import { clearClaudeRawJsonlSessionStoreRegistriesForTests } from '../transcripts/sessionStore'
 import { mkdir, writeFile, appendFile, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'

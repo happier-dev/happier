@@ -1,7 +1,7 @@
 import type { Capability, CapabilitiesDetectContext } from '../service';
 import { resolveCliFeatureDecision } from '../../features/featureDecisionService';
 import {
-  CANONICAL_AGENT_IDS,
+  AGENT_PROVIDER_IDS,
   hasBuiltInAcpConfig,
   isAgentId,
   resolveAgentRuntimeControlSurface,
@@ -9,10 +9,15 @@ import {
   resolveCodexSpawnExtrasForRuntime,
 } from '@happier-dev/agents';
 import {
+  ExecutionRunIntentSchema,
+  type ExecutionRunIntent,
+} from '@happier-dev/protocol';
+import {
   buildExecutionRunProfileCatalog,
   listExecutionRunProfileContributionDescriptors,
   listExecutionRunSupportedIntents,
 } from '../../agent/executionRuns/profiles/intentRegistry';
+import { hasCatalogAcpBackendOwner } from '../../agent/acp/catalog/owner';
 import { resolveCliEngineRegistry } from '../../agent/runtime/registry/engineRegistry';
 import type { ResolvedBackendContribution } from '../../plugins/projection/registry/types';
 
@@ -28,9 +33,40 @@ function isCliAvailable(context: CapabilitiesDetectContext, agentId: string): bo
 
 function hasExecutionRunCatalogOwner(entry: Readonly<{
   getAcpBackendFactory?: unknown;
+  getAcpRuntimeDefinitionBridge?: unknown;
   getRuntimeCore?: unknown;
 }> | null | undefined): boolean {
-  return typeof entry?.getAcpBackendFactory === 'function' || typeof entry?.getRuntimeCore === 'function';
+  return hasCatalogAcpBackendOwner(entry) || typeof entry?.getRuntimeCore === 'function';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function resolveBackendExecutionRunIntents(params: Readonly<{
+  backendContribution?: ResolvedBackendContribution;
+  defaultIntents: readonly ExecutionRunIntent[];
+}>): readonly ExecutionRunIntent[] {
+  const executionRun = params.backendContribution?.capabilities?.executionRun;
+  if (executionRun?.supported === false) return Object.freeze([]);
+
+  const defaultIntentSet = new Set(params.defaultIntents);
+  const review = isRecord(executionRun) ? executionRun.review : null;
+  const declaredIntents = isRecord(review) && Array.isArray(review.intents)
+    ? review.intents
+    : null;
+  if (!declaredIntents) {
+    return params.defaultIntents;
+  }
+
+  const resolved = declaredIntents
+    .map((intent) => ExecutionRunIntentSchema.safeParse(intent))
+    .filter((parsed): parsed is { success: true; data: ExecutionRunIntent } => (
+      parsed.success && defaultIntentSet.has(parsed.data)
+    ))
+    .map((parsed) => parsed.data);
+
+  return Object.freeze(Array.from(new Set(resolved)));
 }
 
 function resolveExecutionRunBackendAvailability(params: Readonly<{
@@ -39,6 +75,7 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
   isKnownBuiltInAgentId: boolean;
   entry: Readonly<{
     getAcpBackendFactory?: unknown;
+    getAcpRuntimeDefinitionBridge?: unknown;
     getRuntimeCore?: unknown;
   }> | null | undefined;
   backendContribution?: ResolvedBackendContribution;
@@ -90,7 +127,7 @@ export const executionRunsCapability: Capability = {
       : listExecutionRunSupportedIntents().filter((intent) => intent !== 'voice_agent');
     const contributedBackendIds = Array.from(cliEngineRegistry.contributions.backendDefinitionsById.keys());
     const catalogBackendIds = Object.keys(cliEngineRegistry.contributions.catalogEntriesById);
-    const knownBuiltInAgentIds = CANONICAL_AGENT_IDS;
+    const knownBuiltInAgentIds = AGENT_PROVIDER_IDS;
     const backendIds = Array.from(new Set([
       ...knownBuiltInAgentIds,
       'customAcp',
@@ -131,7 +168,7 @@ export const executionRunsCapability: Capability = {
           backendId,
           {
             available,
-            intents,
+            intents: resolveBackendExecutionRunIntents({ backendContribution, defaultIntents: intents }),
             supportsVendorResume: supportsVendorResumeByBackend[backendId] === true,
           },
         ] as const;

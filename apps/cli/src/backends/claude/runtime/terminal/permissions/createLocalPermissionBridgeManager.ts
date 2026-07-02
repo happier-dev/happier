@@ -1,7 +1,7 @@
 import { ClaudeLocalPermissionBridge, DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE } from './localPermissionBridge';
 
 import type { Session } from '../../session/ClaudeSession';
-import type { PermissionHookData, PermissionHookResponse } from '../../../utils/startHookServer';
+import type { PermissionHookData, PermissionHookResponse } from '@happier-dev/plugins-claude/agent';
 
 export type ClaudeLocalPermissionBridgeManager = Readonly<{
   setSession: (session: Session | null) => void;

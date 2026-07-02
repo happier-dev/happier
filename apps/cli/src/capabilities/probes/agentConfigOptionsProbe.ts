@@ -114,6 +114,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
   const probeVariant = await resolveAgentProbeVariant({
     agentId: params.agentId,
+    probeKind: 'configOptions',
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
   });
@@ -140,6 +141,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
       const probePreflightConfigOptionsOnce = async (): Promise<ProbedAgentConfigOption[] | null> => {
         const configOptionsRaw = await preflightAdapter.probeConfigOptionsRaw!({
           backendTarget: params.backendTarget,
+          probeKind: 'configOptions',
           cwd,
           timeoutMs,
           accountSettings: params.accountSettings ?? null,

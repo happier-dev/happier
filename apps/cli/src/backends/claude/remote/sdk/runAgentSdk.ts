@@ -7,6 +7,11 @@ import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 
 import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
+import {
+    buildClaudeCompactionCompletedEvent,
+    buildClaudeCompactionLifecycleId,
+    buildClaudeCompactionStartedEvent,
+} from '@/backends/claude/contextCompactionEvents';
 import type { StreamedTranscriptFlushSummary } from '@/api/session/streamedTranscriptWriter';
 import { createClaudeAgentSdkCheckpointLedger } from './createClaudeAgentSdkCheckpointLedger';
 import { createClaudeAgentSdkTurnOutputRuntime } from './createClaudeAgentSdkTurnOutputRuntime';
@@ -50,10 +55,39 @@ export async function runClaudeRemoteAgentSdk(opts: RunClaudeRemoteAgentSdkOptio
     }
 
     let isCompactCommand = false;
+    let compactionSequence = 0;
+    let activeCompactionLifecycleId: string | null = null;
+    const nextCompactionLifecycleId = (sessionId?: string | null) => buildClaudeCompactionLifecycleId({
+        sessionId: sessionId ?? opts.sessionId,
+        sequence: ++compactionSequence,
+    });
+    const startCompactCommand = () => {
+        const lifecycleId = nextCompactionLifecycleId();
+        activeCompactionLifecycleId = lifecycleId;
+        isCompactCommand = true;
+        opts.onCompletionEvent?.(buildClaudeCompactionStartedEvent({ lifecycleId }));
+    };
+    const buildCompactionCompletedEvent = (params?: Readonly<{
+        providerSessionId?: string | null;
+        trigger?: 'manual' | 'auto' | 'threshold' | 'overflow' | 'unknown';
+        tokenCountBefore?: number;
+        tokenCountSource?: string;
+    }>) => {
+        const lifecycleId = activeCompactionLifecycleId ?? nextCompactionLifecycleId(params?.providerSessionId);
+        activeCompactionLifecycleId = null;
+        return buildClaudeCompactionCompletedEvent({
+            lifecycleId,
+            source: 'provider-event',
+            trigger: params?.trigger ?? 'manual',
+            ...(params?.providerSessionId ? { providerSessionId: params.providerSessionId } : {}),
+            ...(typeof params?.tokenCountBefore === 'number' ? { tokenCountBefore: params.tokenCountBefore } : {}),
+            ...(params?.tokenCountSource ? { tokenCountSource: params.tokenCountSource } : {}),
+        });
+    };
+
     if (specialCommand.type === 'compact') {
         logger.debug('[claudeRemoteAgentSdk] /compact command detected - will process as normal but with compaction behavior');
-        isCompactCommand = true;
-        opts.onCompletionEvent?.('Compaction started');
+        startCompactCommand();
     }
 
     const promptChannel = createClaudeAgentSdkPromptChannel({
@@ -219,9 +253,7 @@ export async function runClaudeRemoteAgentSdk(opts: RunClaudeRemoteAgentSdkOptio
                 } as any);
             },
             recordTraceMarker,
-            setCompactCommandActive: (active) => {
-                isCompactCommand = active;
-            },
+            startCompactCommand,
             setMode: sessionController.setMode,
             updateRuntimeSettingsForMode: async (mode) => {
                 lastAppliedRuntimeSettings = await applyRuntimeSettingsUpdatesIfNeeded({
@@ -255,6 +287,10 @@ export async function runClaudeRemoteAgentSdk(opts: RunClaudeRemoteAgentSdkOptio
             enableFileCheckpointing,
             checkpointLedger,
             onCheckpointCaptured: opts.onCheckpointCaptured,
+            onRateLimitEvent: opts.onRateLimitEvent,
+            onRuntimeAuthFailureEvent: opts.onRuntimeAuthFailureEvent,
+            onCompletionEvent: opts.onCompletionEvent,
+            buildCompactionCompletedEvent,
             isAborted: opts.isAborted,
             isCompactCommandActive: () => isCompactCommand,
             setCompactCommandActive: (active) => {

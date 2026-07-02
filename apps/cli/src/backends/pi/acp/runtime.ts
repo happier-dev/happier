@@ -1,9 +1,14 @@
 import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { createCatalogProviderSessionIdentityRuntime } from '@/agent/acp/runtime/createProviderSessionIdentityRuntime';
+import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createProviderAcpRuntime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
-import type { PermissionMode } from '@/api/types';
+import type { Metadata, PermissionMode } from '@/api/types';
+import type { AccountSettings } from '@happier-dev/protocol';
+import {
+  maybeUpdatePiSessionIdMetadata,
+  type PublishedPiSessionMetadata,
+} from '@happier-dev/plugins-pi/agent/sessionMetadata';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 export function createPiAcpRuntime(params: {
@@ -16,22 +21,37 @@ export function createPiAcpRuntime(params: {
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
   memoryRecallGuidanceEnabled?: boolean;
+  accountSettings?: AccountSettings | null;
+  pendingQueueDrainMaxPopPerWake?: number;
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
-  return createCatalogProviderSessionIdentityRuntime({
+  const lastPublishedPiSessionMetadata = { value: null as PublishedPiSessionMetadata | null };
+
+  return createCatalogProviderAcpRuntime({
     provider: 'pi',
     loggerLabel: 'PiACP',
-    sessionIdMetadataKey: 'piSessionId',
     directory: params.directory,
-    machineId: params.machineId,
     session: params.session,
     transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
+    memoryRecallGuidance: {
+      enabled: params.memoryRecallGuidanceEnabled === true,
+      machineId: params.machineId,
+    },
+    accountSettings: params.accountSettings,
+    pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     getPermissionMode: params.getPermissionMode,
     inFlightSteer: { enabled: true },
+    onSessionIdChange: (nextSessionId) => {
+      maybeUpdatePiSessionIdMetadata<Metadata>({
+        getPiSessionId: () => nextSessionId,
+        getPiSessionFile: () => null,
+        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
+        lastPublished: lastPublishedPiSessionMetadata,
+      });
+    },
   });
 }

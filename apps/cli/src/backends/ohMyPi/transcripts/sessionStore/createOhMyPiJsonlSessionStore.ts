@@ -1,12 +1,13 @@
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import type { FileBackedTranscriptSessionStore, FileBackedTranscriptSessionStoreKey } from '@/api/session/fileBackedTranscripts/store';
 import { createProjectedJsonlSessionStore } from '@/api/session/fileBackedTranscripts/jsonl/createProjectedJsonlSessionStore';
+import { DEFAULT_JSONL_FOLLOW_POLICY } from '@/api/session/fileBackedTranscripts/jsonl/followPolicy';
 
 import {
   decodeOhMyPiTranscriptCursor,
   encodeOhMyPiTranscriptCursor,
   readOhMyPiSessionSnapshot,
-} from '../projection/readOhMyPiSessionSnapshot';
+} from '@happier-dev/plugins-ohmypi/agent/transcripts/snapshot';
 import { resolveOhMyPiSessionFile } from './resolveOhMyPiSessionFile';
 
 type OhMyPiSessionStoreActivity = Readonly<{
@@ -181,7 +182,7 @@ export function createOhMyPiJsonlSessionStore(key: FileBackedTranscriptSessionSt
           isRunning: false,
         };
       },
-      followPollIntervalMs: 250,
+      followPollIntervalMs: DEFAULT_JSONL_FOLLOW_POLICY.activeBurstPollIntervalMs,
     },
   });
 }

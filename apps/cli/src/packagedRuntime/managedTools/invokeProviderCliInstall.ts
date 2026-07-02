@@ -1,4 +1,4 @@
-import type { AgentId, ProviderCliRuntimeInstallPlatform } from '@happier-dev/agents';
+import type { AgentId, AgentCliInstallPlatform } from '@happier-dev/agents';
 import {
   installProviderCli as installProviderCliDefault,
   resolvePlatformFromNodePlatform,
@@ -29,7 +29,7 @@ export type ProviderCliInstallInvocationResult =
 function resolveProviderCliInstallPlatform(params: Readonly<{
   platform?: string;
   nodePlatform: string;
-}>): ProviderCliRuntimeInstallPlatform | null {
+}>): AgentCliInstallPlatform | null {
   const rawPlatform = typeof params.platform === 'string' ? params.platform.trim() : '';
   if (rawPlatform === 'darwin' || rawPlatform === 'linux' || rawPlatform === 'win32') return rawPlatform;
   return resolvePlatformFromNodePlatform(params.nodePlatform);

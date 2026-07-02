@@ -15,11 +15,6 @@ import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixture
 import type { Credentials } from '@/persistence';
 
 import { createPiSessionRuntimePlan } from '@/backends/pi/runtimeCore/session';
-import { createQwenSessionRuntimePlan } from '@/backends/qwen/runtimeCore/session';
-import { createKimiSessionRuntimePlan } from '@/backends/kimi/runtimeCore/session';
-import { createKiloSessionRuntimePlan } from '@/backends/kilo/runtimeCore/session';
-import { createCopilotSessionRuntimePlan } from '@/backends/copilot/runtimeCore/session';
-import { createAuggieSessionRuntimePlan } from '@/backends/auggie/runtimeCore/session';
 
 type CatalogSessionPlanBuilder = (opts: {
     credentials: Credentials;
@@ -27,7 +22,7 @@ type CatalogSessionPlanBuilder = (opts: {
 }) => HostSessionRuntimePlan;
 
 type ProviderCase = Readonly<{
-    providerId: 'pi' | 'qwen' | 'kimi' | 'kilo' | 'copilot' | 'auggie';
+    providerId: 'pi';
     expectedPermissionMode: PermissionMode;
     createPlan: CatalogSessionPlanBuilder;
     createSession?: () => ReturnType<typeof createApiSessionClientFixture>;
@@ -43,32 +38,6 @@ const providerCases: ReadonlyArray<ProviderCase> = [
         providerId: 'pi',
         expectedPermissionMode: 'read-only',
         createPlan: createPiSessionRuntimePlan,
-    },
-    {
-        providerId: 'qwen',
-        expectedPermissionMode: 'safe-yolo',
-        createPlan: createQwenSessionRuntimePlan,
-    },
-    {
-        providerId: 'kimi',
-        expectedPermissionMode: 'read-only',
-        createPlan: createKimiSessionRuntimePlan,
-        createSession: () => createApiSessionClientFixture({ metadataPermissionMode: 'read-only' }),
-    },
-    {
-        providerId: 'kilo',
-        expectedPermissionMode: 'safe-yolo',
-        createPlan: createKiloSessionRuntimePlan,
-    },
-    {
-        providerId: 'copilot',
-        expectedPermissionMode: 'yolo',
-        createPlan: createCopilotSessionRuntimePlan,
-    },
-    {
-        providerId: 'auggie',
-        expectedPermissionMode: 'safe-yolo',
-        createPlan: createAuggieSessionRuntimePlan,
     },
 ];
 
@@ -134,7 +103,7 @@ describe('ACP catalog family runtimeCore permission delegation', () => {
             const createCalls: CatalogAcpRuntimeCreateCall[] = [];
             const createSpy = createCatalogAcpBackendSpy(createCalls);
             const session = provider.createSession?.() ?? createApiSessionClientFixture();
-            const permissionMode = provider.providerId === 'kimi' ? undefined : provider.expectedPermissionMode;
+            const permissionMode = provider.expectedPermissionMode;
             const plan = provider.createPlan({
                 credentials,
                 ...(permissionMode ? { permissionMode } : {}),

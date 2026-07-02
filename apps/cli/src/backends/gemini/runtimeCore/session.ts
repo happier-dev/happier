@@ -19,7 +19,7 @@ import { logger } from '@/ui/logger';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { createGeminiAcpRuntime } from '@/backends/gemini/acp/runtime';
-import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_ENV } from '@/backends/gemini/constants';
+import { DEFAULT_GEMINI_MODEL } from '@/backends/gemini/constants';
 import { GeminiTerminalDisplay } from '@/backends/gemini/ui/GeminiTerminalDisplay';
 import { readGeminiLocalConfig } from '@/backends/gemini/utils/config';
 import { parseOptionsFromText } from '@/backends/gemini/utils/optionsParser';
@@ -52,11 +52,6 @@ function resolveInitialModelSelection(): { modelId?: string; modelUpdatedAt?: nu
     }
   } catch {
     // ignore
-  }
-
-  const envModel = typeof process.env[GEMINI_MODEL_ENV] === 'string' ? process.env[GEMINI_MODEL_ENV]!.trim() : '';
-  if (envModel) {
-    return { modelId: envModel, modelUpdatedAt: Date.now() };
   }
 
   return { modelId: DEFAULT_GEMINI_MODEL, modelUpdatedAt: Date.now() };
@@ -161,6 +156,8 @@ export function createGeminiSessionRuntimePlan(opts: HostSessionRuntimeRunOption
           setThinking,
           getPermissionMode,
           memoryRecallGuidanceEnabled,
+          accountSettings,
+          pendingQueueDrainMaxPopPerWake,
         }) => {
           const currentUserEmail = await resolveCurrentUserEmailBestEffort(opts.credentials);
           messageBufferRef = messageBuffer;
@@ -174,6 +171,8 @@ export function createGeminiSessionRuntimePlan(opts: HostSessionRuntimeRunOption
             permissionHandler,
             onThinkingChange: setThinking,
             memoryRecallGuidanceEnabled,
+            accountSettings,
+            pendingQueueDrainMaxPopPerWake,
             getPermissionMode,
             backendOptions: {
               ...(currentUserEmail ? { currentUserEmail } : {}),

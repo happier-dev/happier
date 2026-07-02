@@ -1,4 +1,5 @@
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
+import { hasCatalogAcpBackendOwner } from '@/agent/acp/catalog/owner';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import { AGENTS } from '@/backends/catalog';
@@ -171,6 +172,7 @@ export async function probeAgentModesBestEffort(params: {
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
   const probeVariant = await resolveAgentProbeVariant({
     agentId: params.agentId,
+    probeKind: 'modes',
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
   });
@@ -198,6 +200,7 @@ export async function probeAgentModesBestEffort(params: {
       const probePreflightModesOnce = async (): Promise<ProbedAgentMode[] | null> => {
         const modesRaw = await preflightAdapter.probeModesRaw!({
           backendTarget: params.backendTarget,
+          probeKind: 'modes',
           cwd,
           timeoutMs,
           accountSettings: params.accountSettings ?? null,
@@ -245,7 +248,7 @@ export async function probeAgentModesBestEffort(params: {
         return fallback;
       }
       const entry = AGENTS[params.agentId];
-      if (!entry?.getAcpBackendFactory) {
+      if (!hasCatalogAcpBackendOwner(entry)) {
         agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
         return fallback;
       }

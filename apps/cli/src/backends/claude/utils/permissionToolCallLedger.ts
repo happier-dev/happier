@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import { extractAgentIdFromTaskResultText } from '@/backends/claude/remote/sidechains/extractAgentIdFromTaskResult';
+import { extractAgentIdFromTaskResultText } from '@happier-dev/plugins-claude/agent';
 import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 
 import type { SDKAssistantMessage, SDKMessage, SDKUserMessage } from '../sdk';

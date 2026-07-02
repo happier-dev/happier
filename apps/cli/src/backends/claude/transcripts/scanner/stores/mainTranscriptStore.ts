@@ -1,10 +1,13 @@
 import { resolve } from 'node:path';
 
 import type { FileBackedTranscriptSessionLease, FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
-import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
+import type { RawJSONLines } from '@happier-dev/plugins-claude/agent';
+import {
+    readClaudeRawJsonlSessionMessages,
+    resolveClaudeExternalSessionJsonlFile,
+} from '@happier-dev/plugins-claude/agent/surfaces/sessions/external/providerOps';
 import { getProjectPath, resolveClaudeProjectId } from '../../../utils/path';
 import { acquireClaudeRawJsonlSessionStore } from '../../sessionStore';
-import { readClaudeRawJsonlSessionMessages, resolveClaudeJsonlSessionFile } from '../../sessionStore/operations';
 
 type ClaudeScannerMainTranscriptStoreLease = Readonly<{
     lease: FileBackedTranscriptSessionLease<FileBackedTranscriptSessionStore<RawJSONLines, unknown, string | null>>;
@@ -53,12 +56,13 @@ export function createMainTranscriptStore(params: Readonly<{
             return true;
         }
 
-        const resolved = await resolveClaudeJsonlSessionFile({
+        const resolved = await resolveClaudeExternalSessionJsonlFile({
             source: {
                 kind: 'claudeConfig',
                 configDir: params.claudeConfigDir ?? null,
                 projectId: resolvedProjectId,
             },
+            env: process.env,
             remoteSessionId: sessionId,
         });
         if (!resolved || resolved.filePath !== canonicalTranscriptPath) {

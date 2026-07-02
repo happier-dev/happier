@@ -1,4 +1,5 @@
 import type { AgentId } from '../agent/core';
+import { isRuntimeCheckedExperimentalVendorResume } from '@happier-dev/agents';
 import type { ExternalSessionsProviderId } from '@happier-dev/protocol';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import {
@@ -12,21 +13,36 @@ import { getResolvedContributionRegistry } from '../plugins/projection/registry/
 import { readBuiltInHostCatalogEntries } from './builtInHostCatalogEntries';
 import { CATALOG_AGENT_IDS, DEFAULT_CATALOG_AGENT_ID } from './types';
 import type {
-  AcpForkContinuationHandler,
   AgentCatalogEntry,
   CatalogAgentId,
   CatalogAgentLookupId,
+  ConnectedServiceRuntimeAuthSelectionMaterializerParams,
+  ConnectedServiceProviderRuntimeAuthAdapter,
+  ConnectedServiceRecoveryCapabilities,
+  ConnectedServiceStateSharingDescriptor,
+  ConnectedServiceSwitchContinuityParams,
+  ConnectedServiceSwitchContinuityResult,
   ConnectedServicesMaterializer,
   ExternalSessionProviderOps,
+  ManagedServerClaimDescriptor,
   ManagedServerShutdownCleanup,
   ProviderCliLaunchSpec,
+  ProviderSessionRuntimePreferences,
+  ProviderSessionRuntimePreferencesParams,
   ProviderAttachOps,
-  ProviderNativeForkHandler,
-  ReplayForkContinuationHandler,
-  SessionHandoffProviderOps,
+  ProviderRuntimeLocalHandoffMetadataBuilder,
+  SessionHandoffProviderBundleRecordExtractor,
+  SessionCatalogControlAdapter,
+  SessionGoalControlAdapter,
+  SessionUsageLimitRecoveryControlAdapter,
   AnyTerminalRuntimeOps,
   VendorResumeSupportFn,
 } from './types';
+import type { ForkSurfaceV1, HandoffSurfaceV1 } from '@happier-dev/agents';
+import type {
+  VerifyResumeReachableInput,
+  VerifyResumeReachableResult,
+} from '@/backends/connectedServices/verifyResumeReachableTypes';
 
 export type { AgentCatalogEntry, AgentChecklistContributions, CatalogAgentId, CliDetectSpec } from './types';
 export type { CatalogAgentLookupId } from './types';
@@ -38,10 +54,16 @@ export type {
 };
 
 function readCatalogEntriesSnapshot(): Record<string, AgentCatalogEntry> {
-  return {
-    ...(getResolvedContributionRegistry().catalogEntriesById as Record<string, AgentCatalogEntry>),
-    ...readBuiltInHostCatalogEntries(),
-  };
+  const hostEntries = readBuiltInHostCatalogEntries() as Readonly<Record<string, AgentCatalogEntry>>;
+  const projectedEntries = getResolvedContributionRegistry().catalogEntriesById as Record<string, AgentCatalogEntry>;
+  const mergedEntries: Record<string, AgentCatalogEntry> = { ...hostEntries };
+  for (const [id, projectedEntry] of Object.entries(projectedEntries)) {
+    mergedEntries[id] = Object.freeze({
+      ...(hostEntries[id] ?? {}),
+      ...projectedEntry,
+    }) as AgentCatalogEntry;
+  }
+  return mergedEntries;
 }
 
 const AGENT_PROXY_TARGET: Record<string, AgentCatalogEntry> = Object.create(null);
@@ -92,14 +114,35 @@ export function requireCatalogEntry(agentId: CatalogAgentLookupId): AgentCatalog
 const cachedVendorResumeSupportPromises = new Map<CatalogAgentId, Promise<VendorResumeSupportFn>>();
 const cachedExternalSessionProviderOpsPromises = new Map<ExternalSessionsProviderId, Promise<ExternalSessionProviderOps>>();
 const cachedConnectedServicesMaterializerPromises = new Map<CatalogAgentId, Promise<ConnectedServicesMaterializer | null>>();
+const cachedConnectedServiceRuntimeAuthAdapterPromises = new Map<CatalogAgentId, Promise<ConnectedServiceProviderRuntimeAuthAdapter | null>>();
+const cachedConnectedServiceStateSharingDescriptorPromises = new Map<CatalogAgentId, Promise<ConnectedServiceStateSharingDescriptor | null>>();
+const cachedConnectedServiceRecoveryCapabilitiesPromises = new Map<CatalogAgentId, Promise<ConnectedServiceRecoveryCapabilities | null>>();
 const cachedManagedServerLaunchSpecPromises = new Map<CatalogAgentId, Promise<ProviderCliLaunchSpec | null>>();
 const cachedManagedServerShutdownCleanupPromises = new Map<CatalogAgentId, Promise<ManagedServerShutdownCleanup | null>>();
 const cachedProviderAttachOpsPromises = new Map<CatalogAgentId, Promise<ProviderAttachOps | null>>();
 const cachedTerminalRuntimeOpsPromises = new Map<CatalogAgentId, Promise<AnyTerminalRuntimeOps | null>>();
-const cachedAcpForkContinuationHandlerPromises = new Map<CatalogAgentId, Promise<AcpForkContinuationHandler | null>>();
-const cachedProviderNativeForkHandlerPromises = new Map<CatalogAgentId, Promise<ProviderNativeForkHandler | null>>();
-const cachedReplayForkContinuationHandlerPromises = new Map<CatalogAgentId, Promise<ReplayForkContinuationHandler | null>>();
-const cachedSessionHandoffProviderOpsPromises = new Map<CatalogAgentId, Promise<SessionHandoffProviderOps | null>>();
+const cachedForkSurfacePromises = new Map<CatalogAgentId, Promise<ForkSurfaceV1 | null>>();
+const cachedSessionGoalControlAdapterPromises = new Map<CatalogAgentId, Promise<SessionGoalControlAdapter | null>>();
+const cachedSessionCatalogControlAdapterPromises = new Map<CatalogAgentId, Promise<SessionCatalogControlAdapter | null>>();
+const cachedSessionUsageLimitRecoveryControlAdapterPromises = new Map<CatalogAgentId, Promise<SessionUsageLimitRecoveryControlAdapter | null>>();
+const cachedHandoffSurfacePromises = new Map<CatalogAgentId, Promise<HandoffSurfaceV1 | null>>();
+const cachedSessionHandoffProviderBundleRecordExtractorPromises = new Map<
+  CatalogAgentId,
+  Promise<SessionHandoffProviderBundleRecordExtractor | null>
+>();
+
+function isExternalSessionProviderOps(value: unknown): value is ExternalSessionProviderOps {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Partial<Record<keyof ExternalSessionProviderOps, unknown>>;
+  return typeof candidate.validateSource === 'function'
+    && typeof candidate.listCandidates === 'function'
+    && typeof candidate.getActivity === 'function'
+    && typeof candidate.pageTranscript === 'function'
+    && typeof candidate.readAfterTranscript === 'function'
+    && typeof candidate.resolveTakeoverSpawnOptions === 'function';
+}
 
 export async function getVendorResumeSupport(agentId?: AgentId | null): Promise<VendorResumeSupportFn> {
   const catalogId = resolveCatalogAgentId(agentId);
@@ -117,6 +160,9 @@ export async function getVendorResumeSupport(agentId?: AgentId | null): Promise<
     if (entry.getVendorResumeSupport) {
       return await entry.getVendorResumeSupport();
     }
+    if (isRuntimeCheckedExperimentalVendorResume(catalogId)) {
+      return () => true;
+    }
     return () => false;
   })();
 
@@ -129,11 +175,16 @@ export async function getExternalSessionProviderOps(providerId: ExternalSessions
   if (existing) return await existing;
 
   const entry = AGENTS[providerId];
-  if (!entry?.getExternalSessionProviderOps) {
-    throw new Error(`Missing direct-session provider ops for ${providerId}`);
-  }
-
-  const promise = entry.getExternalSessionProviderOps();
+  const promise = (async () => {
+    const resolution = await resolveBackendEngineAdapterResolutionFromRegistry(providerId);
+    if (isExternalSessionProviderOps(resolution?.executionSurfaces.externalSession)) {
+      return resolution.executionSurfaces.externalSession;
+    }
+    if (!entry?.getExternalSessionProviderOps) {
+      throw new Error(`Missing direct-session provider ops for ${providerId}`);
+    }
+    return await entry.getExternalSessionProviderOps();
+  })();
   cachedExternalSessionProviderOpsPromises.set(providerId, promise);
   return await promise;
 }
@@ -148,6 +199,97 @@ export async function getConnectedServicesMaterializer(agentId: CatalogAgentId):
     : Promise.resolve(null);
   cachedConnectedServicesMaterializerPromises.set(agentId, promise);
   return await promise;
+}
+
+export async function getConnectedServiceRuntimeAuthAdapter(
+  agentId: CatalogAgentId,
+): Promise<ConnectedServiceProviderRuntimeAuthAdapter | null> {
+  const existing = cachedConnectedServiceRuntimeAuthAdapterPromises.get(agentId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[agentId];
+  const promise = entry?.getConnectedServiceRuntimeAuthAdapter
+    ? entry.getConnectedServiceRuntimeAuthAdapter()
+    : Promise.resolve(null);
+  cachedConnectedServiceRuntimeAuthAdapterPromises.set(agentId, promise);
+  return await promise;
+}
+
+export async function materializeConnectedServiceRuntimeAuthSelectionThroughCatalog(
+  agentId: AgentId | null | undefined,
+  params: ConnectedServiceRuntimeAuthSelectionMaterializerParams,
+): Promise<unknown | null> {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const entry = AGENTS[catalogId];
+  if (!entry?.materializeConnectedServiceRuntimeAuthSelection) return null;
+  return await entry.materializeConnectedServiceRuntimeAuthSelection(params);
+}
+
+export async function getConnectedServiceStateSharingDescriptor(
+  agentId: CatalogAgentId,
+): Promise<ConnectedServiceStateSharingDescriptor | null> {
+  const existing = cachedConnectedServiceStateSharingDescriptorPromises.get(agentId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[agentId];
+  const promise = entry?.getConnectedServiceStateSharingDescriptor
+    ? entry.getConnectedServiceStateSharingDescriptor()
+    : Promise.resolve(null);
+  cachedConnectedServiceStateSharingDescriptorPromises.set(agentId, promise);
+  return await promise;
+}
+
+export async function getConnectedServiceRecoveryCapabilities(
+  agentId: CatalogAgentId,
+): Promise<ConnectedServiceRecoveryCapabilities | null> {
+  const existing = cachedConnectedServiceRecoveryCapabilitiesPromises.get(agentId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[agentId];
+  const promise = entry?.getConnectedServiceRecoveryCapabilities
+    ? entry.getConnectedServiceRecoveryCapabilities()
+    : Promise.resolve(null);
+  cachedConnectedServiceRecoveryCapabilitiesPromises.set(agentId, promise);
+  return await promise;
+}
+
+export async function resolveConnectedServiceSwitchContinuity(
+  agentId: CatalogAgentId,
+  params: ConnectedServiceSwitchContinuityParams,
+): Promise<ConnectedServiceSwitchContinuityResult> {
+  const entry = AGENTS[agentId];
+  if (!entry?.resolveConnectedServiceSwitchContinuity) {
+    return { mode: 'unsupported', reason: 'provider_unsupported' };
+  }
+  return await entry.resolveConnectedServiceSwitchContinuity(params);
+}
+
+export async function verifyResumeReachableThroughCatalog(
+  agentId: AgentId | null | undefined,
+  input: VerifyResumeReachableInput,
+): Promise<VerifyResumeReachableResult | null> {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const entry = AGENTS[catalogId];
+  if (!entry?.verifyResumeReachable) return null;
+  return await entry.verifyResumeReachable(input);
+}
+
+export function resolveConnectedServiceCandidatePersistedSessionFile(
+  agentId: AgentId | null | undefined,
+  metadata: unknown,
+): string | null {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const entry = AGENTS[catalogId];
+  return entry?.resolveConnectedServiceCandidatePersistedSessionFile?.({ metadata }) ?? null;
+}
+
+export async function resolveProviderSessionRuntimePreferences(
+  agentId: AgentId | null | undefined,
+  params: ProviderSessionRuntimePreferencesParams,
+): Promise<ProviderSessionRuntimePreferences> {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const entry = AGENTS[catalogId];
+  return await (entry?.resolveSessionRuntimePreferences?.(params) ?? Promise.resolve({}));
 }
 
 export async function getManagedServerLaunchSpec(agentId: CatalogAgentId): Promise<ProviderCliLaunchSpec | null> {
@@ -174,6 +316,14 @@ export async function getManagedServerShutdownCleanup(
   return await promise;
 }
 
+export async function listManagedServerClaimDescriptors(): Promise<readonly ManagedServerClaimDescriptor[]> {
+  const entries = readCatalogEntriesSnapshot();
+  const descriptors = await Promise.all(Object.values(entries).map(async (entry) => (
+    entry.getManagedServerClaimDescriptor ? await entry.getManagedServerClaimDescriptor() : null
+  )));
+  return Object.freeze(descriptors.filter((descriptor): descriptor is ManagedServerClaimDescriptor => Boolean(descriptor)));
+}
+
 export async function getProviderAttachOps(agentId?: AgentId | null): Promise<ProviderAttachOps | null> {
   const catalogId = resolveCatalogAgentId(agentId);
   const existing = cachedProviderAttachOpsPromises.get(catalogId);
@@ -196,47 +346,96 @@ export async function getTerminalRuntimeOps(agentId?: AgentId | null): Promise<A
   return await promise;
 }
 
-export async function getAcpForkContinuationHandler(agentId: CatalogAgentId): Promise<AcpForkContinuationHandler | null> {
-  const existing = cachedAcpForkContinuationHandlerPromises.get(agentId);
-  if (existing) return await existing;
-
-  const entry = AGENTS[agentId];
-  const promise = entry?.getAcpForkContinuationHandler ? entry.getAcpForkContinuationHandler() : Promise.resolve(null);
-  cachedAcpForkContinuationHandlerPromises.set(agentId, promise);
-  return await promise;
-}
-
-export async function getProviderNativeForkHandler(agentId: CatalogAgentId): Promise<ProviderNativeForkHandler | null> {
-  const existing = cachedProviderNativeForkHandlerPromises.get(agentId);
-  if (existing) return await existing;
-
-  const entry = AGENTS[agentId];
-  const promise = entry?.getProviderNativeForkHandler ? entry.getProviderNativeForkHandler() : Promise.resolve(null);
-  cachedProviderNativeForkHandlerPromises.set(agentId, promise);
-  return await promise;
-}
-
-export async function getReplayForkContinuationHandler(agentId: CatalogAgentId): Promise<ReplayForkContinuationHandler | null> {
-  const existing = cachedReplayForkContinuationHandlerPromises.get(agentId);
-  if (existing) return await existing;
-
-  const entry = AGENTS[agentId];
-  const promise = entry?.getReplayForkContinuationHandler ? entry.getReplayForkContinuationHandler() : Promise.resolve(null);
-  cachedReplayForkContinuationHandlerPromises.set(agentId, promise);
-  return await promise;
-}
-
-export async function getSessionHandoffProviderOps(agentId?: AgentId | null): Promise<SessionHandoffProviderOps | null> {
+export async function getSessionGoalControlAdapter(agentId?: AgentId | null): Promise<SessionGoalControlAdapter | null> {
   const catalogId = resolveCatalogAgentId(agentId);
-  const existing = cachedSessionHandoffProviderOpsPromises.get(catalogId);
+  const existing = cachedSessionGoalControlAdapterPromises.get(catalogId);
   if (existing) return await existing;
 
   const entry = AGENTS[catalogId];
-  const promise = entry?.getSessionHandoffProviderOps
-    ? entry.getSessionHandoffProviderOps()
-    : Promise.resolve(null);
-  cachedSessionHandoffProviderOpsPromises.set(catalogId, promise);
+  const promise = entry?.getSessionGoalControlAdapter ? entry.getSessionGoalControlAdapter() : Promise.resolve(null);
+  cachedSessionGoalControlAdapterPromises.set(catalogId, promise);
   return await promise;
+}
+
+export async function getSessionCatalogControlAdapter(agentId?: AgentId | null): Promise<SessionCatalogControlAdapter | null> {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const existing = cachedSessionCatalogControlAdapterPromises.get(catalogId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[catalogId];
+  const promise = entry?.getSessionCatalogControlAdapter ? entry.getSessionCatalogControlAdapter() : Promise.resolve(null);
+  cachedSessionCatalogControlAdapterPromises.set(catalogId, promise);
+  return await promise;
+}
+
+export async function getSessionUsageLimitRecoveryControlAdapter(agentId?: AgentId | null): Promise<SessionUsageLimitRecoveryControlAdapter | null> {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const existing = cachedSessionUsageLimitRecoveryControlAdapterPromises.get(catalogId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[catalogId];
+  const promise = entry?.getSessionUsageLimitRecoveryControlAdapter
+    ? entry.getSessionUsageLimitRecoveryControlAdapter()
+    : Promise.resolve(null);
+  cachedSessionUsageLimitRecoveryControlAdapterPromises.set(catalogId, promise);
+  return await promise;
+}
+
+export async function getForkSurface(agentId: CatalogAgentId): Promise<ForkSurfaceV1 | null> {
+  const existing = cachedForkSurfacePromises.get(agentId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[agentId];
+  const promise = (async () => {
+    const resolution = await resolveBackendEngineAdapterResolutionFromRegistry(agentId);
+    if (resolution?.executionSurfaces.fork) {
+      return resolution.executionSurfaces.fork;
+    }
+    return entry?.getForkSurface ? await entry.getForkSurface() : null;
+  })();
+  cachedForkSurfacePromises.set(agentId, promise);
+  return await promise;
+}
+
+export async function getHandoffSurface(agentId?: AgentId | null): Promise<HandoffSurfaceV1 | null> {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const existing = cachedHandoffSurfacePromises.get(catalogId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[catalogId];
+  const promise = (async () => {
+    const resolution = await resolveBackendEngineAdapterResolutionFromRegistry(catalogId);
+    if (resolution?.executionSurfaces.handoff) {
+      return resolution.executionSurfaces.handoff;
+    }
+    return entry?.getHandoffSurface ? await entry.getHandoffSurface() : null;
+  })();
+  cachedHandoffSurfacePromises.set(catalogId, promise);
+  return await promise;
+}
+
+export async function getSessionHandoffProviderBundleRecordExtractor(
+  agentId?: AgentId | null,
+): Promise<SessionHandoffProviderBundleRecordExtractor | null> {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const existing = cachedSessionHandoffProviderBundleRecordExtractorPromises.get(catalogId);
+  if (existing) return await existing;
+
+  const entry = AGENTS[catalogId];
+  const promise = entry?.getSessionHandoffProviderBundleRecordExtractor
+    ? entry.getSessionHandoffProviderBundleRecordExtractor()
+    : Promise.resolve(null);
+  cachedSessionHandoffProviderBundleRecordExtractorPromises.set(catalogId, promise);
+  return await promise;
+}
+
+export function buildRuntimeLocalHandoffMetadataForAgent(
+  agentId: AgentId | null | undefined,
+  params: Parameters<ProviderRuntimeLocalHandoffMetadataBuilder>[0],
+): ReturnType<ProviderRuntimeLocalHandoffMetadataBuilder> | null {
+  const catalogId = resolveCatalogAgentId(agentId);
+  const entry = AGENTS[catalogId];
+  return entry?.buildRuntimeLocalHandoffMetadata?.(params) ?? null;
 }
 
 export async function resolveBackendEngineAdapterResolution(

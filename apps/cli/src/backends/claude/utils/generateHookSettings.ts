@@ -26,7 +26,7 @@
  */
 
 import { join } from 'node:path';
-import { writeFileSync, mkdirSync, unlinkSync, existsSync, rmSync } from 'node:fs';
+import { chmodSync, writeFileSync, mkdirSync, unlinkSync, existsSync, rmSync } from 'node:fs';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { buildMissingJavaScriptRuntimeMessage } from '@/packagedRuntime/js/buildMissingJavaScriptRuntimeMessage';
@@ -34,16 +34,18 @@ import { resolveJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/resolve
 import { isBun } from '@/utils/runtime';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
+import {
+    buildClaudeHookPluginHooks,
+    buildClaudeHookPluginManifest,
+    buildClaudeHookSettingsOverlay,
+    type BuildClaudeHookPluginHooksParams,
+} from '@happier-dev/plugins-claude/agent/hooks/settings';
 
-export interface GenerateHookSettingsOptions {
-    enableLocalPermissionBridge?: boolean;
+export type GenerateHookSettingsOptions = Pick<
+    BuildClaudeHookPluginHooksParams,
+    'enableLocalPermissionBridge'
+> & Readonly<{
     permissionHookSecret?: string;
-}
-
-type ClaudeSettingsOverlay = Readonly<{
-    permissions?: Readonly<{
-        allow?: readonly string[];
-    }>;
 }>;
 
 const HOOKS_DISABLED_ENV_VAR = 'HAPPIER_CLAUDE_HOOKS_DISABLED';
@@ -73,6 +75,21 @@ function resolveTmpRoot(subdirName: 'hooks' | 'hook-plugins'): string {
     return root;
 }
 
+function applyPrivateMode(path: string, mode: number): void {
+    if (process.platform === 'win32') return;
+    chmodSync(path, mode);
+}
+
+function ensurePrivateDir(path: string): void {
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    applyPrivateMode(path, 0o700);
+}
+
+function writePrivateSecretFile(path: string, secret: string): void {
+    writeFileSync(path, secret, { encoding: 'utf8', mode: 0o600 });
+    applyPrivateMode(path, 0o600);
+}
+
 /**
  * Generate a temporary settings JSON file with non-hook configuration only
  * (currently: MCP change_title allow rules). Hooks are no longer carried here;
@@ -85,14 +102,7 @@ export function generateHookSettingsFile(_port: number, _options: GenerateHookSe
     const filename = `session-hook-${process.pid}.json`;
     const filepath = join(hooksDir, filename);
 
-    const settings: ClaudeSettingsOverlay = {
-        permissions: {
-            allow: [
-                'mcp__happier__change_title',
-                'mcp__happier__session_title_set',
-            ],
-        },
-    };
+    const settings = buildClaudeHookSettingsOverlay();
 
     writeFileSync(filepath, JSON.stringify(settings, null, 2));
     logger.debug(`[generateHookSettings] Created settings file: ${filepath}`);
@@ -116,49 +126,35 @@ export function generateHookPluginDir(port: number, options: GenerateHookSetting
 
     const pluginsRoot = resolveTmpRoot('hook-plugins');
     const pluginDir = join(pluginsRoot, `session-${process.pid}`);
+    const manifestDir = join(pluginDir, '.claude-plugin');
     const hooksDir = join(pluginDir, 'hooks');
-    mkdirSync(hooksDir, { recursive: true });
+    ensurePrivateDir(pluginDir);
+    ensurePrivateDir(manifestDir);
+    ensurePrivateDir(hooksDir);
 
     const nodeExecutable = resolveNodeExecutable();
     const sessionForwarderScript = resolveCliRuntimeAssetPath('scripts', 'session_hook_forwarder.cjs');
-    const sessionHookCommand = `${JSON.stringify(nodeExecutable)} ${JSON.stringify(sessionForwarderScript)} ${port}`;
-
-    const hooks: Record<string, unknown> = {
-        SessionStart: [
-            {
-                matcher: '',
-                hooks: [
-                    {
-                        type: 'command',
-                        command: sessionHookCommand,
-                    },
-                ],
-            },
-        ],
-    };
-
-    if (options.enableLocalPermissionBridge) {
-        const permissionForwarderScript = resolveCliRuntimeAssetPath('scripts', 'permission_hook_forwarder.cjs');
-        const secretPart =
-            typeof options.permissionHookSecret === 'string' && options.permissionHookSecret.length > 0
-                ? ` ${JSON.stringify(options.permissionHookSecret)}`
-                : '';
-        const permissionCommand = `${JSON.stringify(nodeExecutable)} ${JSON.stringify(permissionForwarderScript)} ${port}${secretPart}`;
-
-        hooks.PermissionRequest = [
-            {
-                matcher: '',
-                hooks: [
-                    {
-                        type: 'command',
-                        command: permissionCommand,
-                    },
-                ],
-            },
-        ];
+    const permissionForwarderScript = options.enableLocalPermissionBridge === true
+        ? resolveCliRuntimeAssetPath('scripts', 'permission_hook_forwarder.cjs')
+        : undefined;
+    const permissionHookSecretFile = options.permissionHookSecret
+        ? join(hooksDir, 'permission.secret')
+        : undefined;
+    if (permissionHookSecretFile && options.permissionHookSecret) {
+        writePrivateSecretFile(permissionHookSecretFile, options.permissionHookSecret);
     }
+    const hooksJson = buildClaudeHookPluginHooks({
+        port,
+        nodeExecutable,
+        sessionForwarderScript,
+        permissionForwarderScript,
+        enableLocalPermissionBridge: options.enableLocalPermissionBridge,
+        permissionHookSecretFile,
+    });
 
-    const hooksJson = { hooks };
+    const manifest = buildClaudeHookPluginManifest({ instanceId: String(process.pid) });
+    writeFileSync(join(manifestDir, 'plugin.json'), JSON.stringify(manifest, null, 2));
+
     const hooksFile = join(hooksDir, 'hooks.json');
     writeFileSync(hooksFile, JSON.stringify(hooksJson, null, 2));
     logger.debug(`[generateHookSettings] Created hook plugin dir: ${pluginDir}`);

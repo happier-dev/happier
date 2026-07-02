@@ -2,7 +2,7 @@ import { readJsonlFileForward } from '../../../api/session/fileBackedTranscripts
 import { readExternalSessionTitleCandidate } from '../../../api/session/external/title/readExternalSessionTitleCandidate';
 import { isChangeTitleToolNameAlias } from '@happier-dev/protocol';
 
-import { mapCodexRolloutEventToActions } from './projection/mapCodexRolloutEventToActions';
+import { mapCodexRolloutEventToActions } from '@happier-dev/plugins-codex/agent/rollout/projection/actions';
 
 const TITLE_SCAN_CHUNK_MAX_BYTES = 128 * 1024;
 const TITLE_SCAN_CHUNK_MAX_ITEMS = 64;

@@ -4,6 +4,20 @@ import { logger } from '@/ui/logger';
 import type { StreamedTranscriptFlushSummary } from '@/api/session/streamedTranscriptWriter';
 import { getProjectPath } from '@/backends/claude/utils/path';
 import type { SDKMessage, SDKSystemMessage } from '@/backends/claude/sdk';
+import {
+    hasClaudeAgentSdkRuntimeAuthFailureEvidence,
+    isClaudeAgentSdkStopHookWithNoBackgroundTasks,
+    isTerminalClaudeAgentSdkProviderTaskStatus,
+    readClaudeAgentSdkBackgroundTaskId,
+    readClaudeAgentSdkProviderTaskStatus,
+    readClaudeAgentSdkResultFailure,
+    readClaudeAgentSdkResultText,
+} from '@happier-dev/plugins-claude/agent/runtime/remote/sdk';
+import type { ClaudeCompletionEvent } from '@/backends/claude/contextCompactionEvents';
+import {
+    mapClaudeRateLimitEventToUsageDetails,
+    type NormalizedClaudeUsageLimitDetails,
+} from '@happier-dev/plugins-claude/agent/auth/services/runtime';
 
 type CheckpointLedger = {
     captureUserTextCheckpoint: (params: {
@@ -26,31 +40,60 @@ function isUserTextMessage(message: unknown): boolean {
     );
 }
 
-function extractResultText(message: unknown): string | null {
-    const msg: any = message;
-    if (!msg || typeof msg !== 'object') return null;
-    if (msg.type !== 'result') return null;
-    return typeof msg.result === 'string' && msg.result.trim().length > 0 ? msg.result : null;
-}
+function readCompactBoundaryMetadata(system: Record<string, unknown>): {
+    trigger?: 'manual' | 'auto' | 'threshold' | 'overflow' | 'unknown';
+    tokenCountBefore?: number;
+    tokenCountSource?: string;
+} {
+    const metadata = system.compact_metadata;
+    if (!metadata || typeof metadata !== 'object') return {};
+    const record = metadata as Record<string, unknown>;
 
-function readAgentSdkResultFailure(message: unknown): string | null {
-    const msg: any = message;
-    if (!msg || typeof msg !== 'object' || msg.type !== 'result') return null;
-    const subtype = typeof msg.subtype === 'string' ? msg.subtype : '';
-    if (subtype !== 'error_max_turns' && subtype !== 'error_during_execution') return null;
-    const resultText = extractResultText(message);
-    return resultText ? `${subtype}: ${resultText}` : subtype;
+    const trigger = (() => {
+        const raw = record.trigger;
+        if (
+            raw === 'manual' ||
+            raw === 'auto' ||
+            raw === 'threshold' ||
+            raw === 'overflow' ||
+            raw === 'unknown'
+        ) {
+            return raw;
+        }
+        return undefined;
+    })();
+
+    const tokenCountBefore = typeof record.pre_tokens === 'number' && Number.isFinite(record.pre_tokens)
+        ? record.pre_tokens
+        : undefined;
+
+    return {
+        ...(trigger ? { trigger } : {}),
+        ...(typeof tokenCountBefore === 'number'
+            ? {
+                tokenCountBefore,
+                tokenCountSource: 'claude-compact-metadata.pre_tokens',
+            }
+            : {}),
+    };
 }
 
 export async function runClaudeAgentSdkStreamLoop(params: {
     response: AsyncIterable<unknown>;
     shapeLogger: { log: (shape: string, payload: unknown) => void };
     turnLifecycle: {
+        noteIncomingMessageBeforeDiagnostics: (message: unknown, inboundType: string) => void;
         recordInboundType: (inboundType: string) => void;
         onTurnStartBoundary: () => void;
         onPreparedIncomingMessage: (incomingMessageType: unknown) => void;
-        finalizeCurrentTurn: (options?: { completionEvent?: string }) => Promise<void>;
+        finalizeCurrentTurn: (options?: { completionEvent?: ClaudeCompletionEvent }) => Promise<void>;
+        releaseCurrentTurnForResult: () => Promise<void>;
         finalizeSubagentTurn: () => Promise<void>;
+        noteProviderTaskStarted: (taskId: unknown) => void;
+        noteProviderTaskProgress: (taskId: unknown) => void;
+        noteProviderTaskFinished: (taskId: unknown) => void;
+        noteBackgroundProviderTask: (taskId: unknown) => void;
+        noteNoActiveBackgroundProviderTasks: () => void;
         isTurnFinalized: () => boolean;
         getLastTurnFlushSummary: () => StreamedTranscriptFlushSummary | null;
     };
@@ -66,8 +109,8 @@ export async function runClaudeAgentSdkStreamLoop(params: {
     };
     emitMessage: (message: SDKMessage, hints?: { defaultUuid?: string | null }) => void;
     interruptController: {
-        noteTaskStarted: (taskId: unknown) => void;
-        noteTaskProgress: (taskId: unknown) => void;
+        noteTaskStarted: (taskId: unknown, status?: unknown) => void;
+        noteTaskProgress: (taskId: unknown, status?: unknown) => void;
         noteTaskNotification: (taskId: unknown, status: unknown) => boolean;
     };
     recordSessionFound: (sessionId: string, data?: { transcript_path?: string; transcriptPath?: string }) => void;
@@ -76,6 +119,15 @@ export async function runClaudeAgentSdkStreamLoop(params: {
     enableFileCheckpointing: boolean;
     checkpointLedger: CheckpointLedger;
     onCheckpointCaptured?: ((checkpointId: string) => void) | undefined;
+    onRateLimitEvent?: ((details: NormalizedClaudeUsageLimitDetails) => void | Promise<void>) | undefined;
+    onRuntimeAuthFailureEvent?: ((error: unknown) => boolean | void | Promise<boolean | void>) | undefined;
+    onCompletionEvent?: ((message: ClaudeCompletionEvent) => void) | undefined;
+    buildCompactionCompletedEvent: (params?: Readonly<{
+        providerSessionId?: string | null;
+        trigger?: 'manual' | 'auto' | 'threshold' | 'overflow' | 'unknown';
+        tokenCountBefore?: number;
+        tokenCountSource?: string;
+    }>) => ClaudeCompletionEvent;
     isAborted: (toolCallId: string) => boolean;
     isCompactCommandActive: () => boolean;
     setCompactCommandActive: (active: boolean) => void;
@@ -87,8 +139,29 @@ export async function runClaudeAgentSdkStreamLoop(params: {
             return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : 'unknown';
         })();
         params.shapeLogger.log(`inbound:${inboundType}`, message);
+        if (isClaudeAgentSdkStopHookWithNoBackgroundTasks(message)) {
+            params.turnLifecycle.noteNoActiveBackgroundProviderTasks();
+        }
+        params.turnLifecycle.noteIncomingMessageBeforeDiagnostics(message, inboundType);
         params.turnLifecycle.recordInboundType(inboundType);
         params.turnLifecycle.onTurnStartBoundary();
+
+        if (hasClaudeAgentSdkRuntimeAuthFailureEvidence(message)) {
+            const handled = await params.onRuntimeAuthFailureEvent?.(message);
+            if (handled !== false) {
+                const preparedMessage = params.turnOutputRuntime.prepareIncomingMessage(message as SDKMessage);
+                if (preparedMessage) params.emitMessage(preparedMessage);
+                return;
+            }
+        }
+
+        if (inboundType === 'rate_limit_event') {
+            const details = mapClaudeRateLimitEventToUsageDetails(message);
+            if (details) {
+                await params.onRateLimitEvent?.(details);
+            }
+            continue;
+        }
 
         if (await params.turnOutputRuntime.handleStreamEvent(message)) {
             continue;
@@ -103,40 +176,79 @@ export async function runClaudeAgentSdkStreamLoop(params: {
         if (message && message.type === 'system') {
             const system = message as SDKSystemMessage;
             const subtype = (system as any).subtype;
+            const taskStatus = readClaudeAgentSdkProviderTaskStatus(system);
+            const isTerminalTaskStatus = isTerminalClaudeAgentSdkProviderTaskStatus(taskStatus);
 
             if (subtype === 'task_started') {
-                params.interruptController.noteTaskStarted((system as any).task_id);
+                params.turnLifecycle.noteProviderTaskStarted((system as any).task_id);
+                params.interruptController.noteTaskStarted(
+                    (system as any).task_id,
+                    taskStatus,
+                );
+                if (isTerminalTaskStatus) {
+                    params.turnLifecycle.noteProviderTaskFinished((system as any).task_id);
+                }
             } else if (subtype === 'task_progress') {
-                params.interruptController.noteTaskProgress((system as any).task_id);
+                params.turnLifecycle.noteProviderTaskProgress((system as any).task_id);
+                params.interruptController.noteTaskProgress(
+                    (system as any).task_id,
+                    taskStatus,
+                );
+                if (isTerminalTaskStatus) {
+                    params.turnLifecycle.noteProviderTaskFinished((system as any).task_id);
+                }
             } else if (subtype === 'task_notification') {
                 const shouldFlushSubagent = params.interruptController.noteTaskNotification(
                     (system as any).task_id,
-                    (system as any).status,
+                    taskStatus,
                 );
                 if (shouldFlushSubagent) {
                     await params.turnLifecycle.finalizeSubagentTurn();
+                    params.turnLifecycle.noteProviderTaskFinished((system as any).task_id);
                 }
             }
 
-            if (subtype === 'init' && system.session_id) {
+            if ((subtype === 'init' || subtype === 'compact_boundary') && system.session_id) {
                 const transcriptPath = join(
                     getProjectPath(params.workDir, params.claudeConfigDir ?? undefined),
                     `${system.session_id}.jsonl`,
                 );
-                logger.debug('[claudeRemoteAgentSdk] Session initialized', {
-                    claudeSessionId: system.session_id,
-                    transcriptPath,
-                });
+                logger.debug(
+                    subtype === 'compact_boundary'
+                        ? '[claudeRemoteAgentSdk] Compact boundary'
+                        : '[claudeRemoteAgentSdk] Session initialized',
+                    {
+                        claudeSessionId: system.session_id,
+                        transcriptPath,
+                    },
+                );
                 params.recordSessionFound(system.session_id, { transcript_path: transcriptPath, transcriptPath });
-                if (params.isCompactCommandActive()) {
+                if (subtype === 'compact_boundary') {
+                    const completionEvent = params.buildCompactionCompletedEvent({
+                        providerSessionId: system.session_id,
+                        ...readCompactBoundaryMetadata(system as Record<string, unknown>),
+                    });
+                    if (params.isCompactCommandActive()) {
+                        params.setCompactCommandActive(false);
+                        await params.turnLifecycle.finalizeCurrentTurn({ completionEvent });
+                    } else {
+                        params.onCompletionEvent?.(completionEvent);
+                    }
+                } else if (params.isCompactCommandActive()) {
                     params.setCompactCommandActive(false);
-                    await params.turnLifecycle.finalizeCurrentTurn({ completionEvent: 'Compaction completed' });
+                    await params.turnLifecycle.finalizeCurrentTurn({
+                        completionEvent: params.buildCompactionCompletedEvent({
+                            providerSessionId: system.session_id,
+                            trigger: 'manual',
+                        }),
+                    });
                 }
             }
         }
 
         if (message && message.type === 'user') {
             const msg = message as any;
+            params.turnLifecycle.noteBackgroundProviderTask(readClaudeAgentSdkBackgroundTaskId(msg));
             params.checkpointLedger.captureUserTextCheckpoint({
                 enabled: params.enableFileCheckpointing,
                 isUserTextMessage: isUserTextMessage(msg),
@@ -154,20 +266,22 @@ export async function runClaudeAgentSdkStreamLoop(params: {
         }
 
         if (message && message.type === 'result') {
-            const failure = readAgentSdkResultFailure(message);
+            const failure = readClaudeAgentSdkResultFailure(message);
             if (failure) {
                 throw new Error(failure);
             }
 
-            const resultText = extractResultText(message);
+            const resultText = readClaudeAgentSdkResultText(message);
             params.turnOutputRuntime.bufferResultAssistantTextIfNeeded(message, resultText);
 
             if (!params.turnLifecycle.isTurnFinalized()) {
                 if (params.isCompactCommandActive()) {
                     params.setCompactCommandActive(false);
-                    await params.turnLifecycle.finalizeCurrentTurn({ completionEvent: 'Compaction completed' });
+                    await params.turnLifecycle.finalizeCurrentTurn({
+                        completionEvent: params.buildCompactionCompletedEvent({ trigger: 'manual' }),
+                    });
                 } else {
-                    await params.turnLifecycle.finalizeCurrentTurn();
+                    await params.turnLifecycle.releaseCurrentTurnForResult();
                 }
             }
 

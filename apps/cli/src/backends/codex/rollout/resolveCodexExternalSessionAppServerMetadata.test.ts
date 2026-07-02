@@ -9,10 +9,7 @@ import {
   writeFakeCodexAppServerThreadListScript,
 } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 
-import {
-  mapCodexExternalSessionAppServerPreviewToMessage,
-  resolveCodexExternalSessionAppServerMetadata,
-} from './resolveCodexExternalSessionAppServerMetadata';
+import { resolveCodexExternalSessionAppServerMetadata } from './resolveCodexExternalSessionAppServerMetadata';
 
 describe('resolveCodexExternalSessionAppServerMetadata', () => {
   it('returns the newest app-server preview metadata and trims title and cwd fields', async () => {
@@ -46,30 +43,4 @@ describe('resolveCodexExternalSessionAppServerMetadata', () => {
     });
   });
 
-  it('maps app-server preview metadata into a direct transcript message', () => {
-    expect(
-      mapCodexExternalSessionAppServerPreviewToMessage({
-        remoteSessionId: 'remote_preview',
-        metadata: {
-          updatedAtMs: 1_736_000_100_000,
-          previewText: '  App server preview  ',
-          workingDirectory: '/repo/from-app-server',
-        },
-      }),
-    ).toEqual({
-      id: 'codex:app-server:remote_preview:1736000100000',
-      localId: 'codex:app-server:remote_preview:1736000100000',
-      createdAtMs: 1_736_000_100_000,
-      raw: {
-        role: 'agent',
-        content: {
-          type: 'codex',
-          data: {
-            type: 'message',
-            message: 'App server preview',
-          },
-        },
-      },
-    });
-  });
 });

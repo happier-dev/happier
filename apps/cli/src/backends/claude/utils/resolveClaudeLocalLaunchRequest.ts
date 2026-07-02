@@ -1,9 +1,15 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import type { Session } from '../runtime/session/ClaudeSession';
+import type { EnhancedMode } from '../runtime/claudeEnhancedMode';
 import { resolveSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permissions/modeFromMetadata';
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from './permissionMode';
-import { inferPermissionIntentFromClaudeArgs } from './inferPermissionIntentFromArgs';
-import { resolveClaudeCodeExperimentalEnvOverlay } from '../spawn/resolveClaudeCodeExperimentalEnvOverlay';
+import { resolveClaudeCodeExperimentalEnvOverlay } from '@happier-dev/plugins-claude/agent/runtime/remote/sdk';
+import { inferPermissionIntentFromClaudeArgs } from '@happier-dev/plugins-claude/agent/runtime/permissionMode';
+
+function normalizeOptionalString(value: unknown): string | undefined {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    return normalized.length > 0 ? normalized : undefined;
+}
 
 function upsertClaudePermissionModeArgs(
     args: string[] | undefined,
@@ -44,11 +50,16 @@ function upsertClaudePermissionModeArgs(
 
 export async function resolveClaudeLocalLaunchRequest(params: Readonly<{
     session: Session;
+    mode?: EnhancedMode;
     getMetadataSnapshot: () => Metadata | null | undefined;
 }>): Promise<Readonly<{
     claudeArgs: string[] | undefined;
     happierMcpConfigJson: string;
     envOverlay: Record<string, string>;
+    model: string | undefined;
+    fallbackModel: string | undefined;
+    customSystemPrompt: string | undefined;
+    appendSystemPrompt: string | undefined;
 }>> {
     const metadataSnapshot = params.getMetadataSnapshot();
     const resolvedAgentMode = resolveSessionModeOverrideFromMetadataSnapshot({
@@ -68,5 +79,9 @@ export async function resolveClaudeLocalLaunchRequest(params: Readonly<{
         envOverlay: resolveClaudeCodeExperimentalEnvOverlay({
             claudeCodeExperimentalAgentTeamsEnabled: params.session.claudeCodeExperimentalAgentTeamsEnabled,
         }),
+        model: normalizeOptionalString(params.mode?.model),
+        fallbackModel: normalizeOptionalString(params.mode?.fallbackModel),
+        customSystemPrompt: normalizeOptionalString(params.mode?.customSystemPrompt),
+        appendSystemPrompt: normalizeOptionalString(params.mode?.appendSystemPrompt),
     };
 }

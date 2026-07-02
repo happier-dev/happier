@@ -18,13 +18,15 @@ import type {
   StderrContext,
   StderrResult,
   ToolNameContext,
+  PromptErrorContext,
+  TerminalToolUpdateLogContext,
 } from '@/agent/transport/TransportHandler';
 import type { AgentMessage } from '@/agent/core';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { filterJsonObjectOrArrayLine } from '@/agent/transport/utils/jsonStdoutFilter';
 import { extractHappierToolsShellBridgeToolNameHint } from '@/agent/transport/utils/happierToolsShellBridgeToolNameHint';
 import { getSuggestedGeminiModelsForUi } from '@/backends/gemini/models/suggestedGeminiModelsForUi';
+import { GEMINI_TOOL_NAME_INFERENCE } from '@happier-dev/plugins-gemini/agent/acp/toolNames';
 import {
   findToolNameFromId,
   findToolNameFromInputFields,
@@ -58,54 +60,7 @@ export const GEMINI_TIMEOUTS = {
  * - patterns: strings to match in toolCallId (case-insensitive)
  * - inputFields: optional fields that indicate this tool when present in input
  */
-const GEMINI_TOOL_PATTERNS: ToolPatternWithInputFields[] = [
-  {
-    name: 'change_title',
-    patterns: CHANGE_TITLE_TOOL_NAME_ALIASES,
-    inputFields: ['title'],
-  },
-  {
-    name: 'save_memory',
-    patterns: ['save_memory', 'save-memory'],
-    inputFields: ['memory', 'content'],
-  },
-  {
-    name: 'think',
-    patterns: ['think'],
-    inputFields: ['thought', 'thinking'],
-  },
-  // Gemini CLI filesystem / shell tool conventions
-  {
-    name: 'read',
-    patterns: ['read', 'read_file'],
-    inputFields: ['filePath', 'file_path', 'path', 'locations'],
-  },
-  {
-    name: 'write',
-    patterns: ['write', 'write_file'],
-    inputFields: ['filePath', 'file_path', 'path', 'content'],
-  },
-  {
-    name: 'edit',
-    patterns: ['edit', 'replace'],
-    inputFields: ['oldText', 'newText', 'old_string', 'new_string', 'oldString', 'newString'],
-  },
-  {
-    name: 'execute',
-    patterns: ['run_shell_command', 'shell', 'exec', 'bash'],
-    inputFields: ['command', 'cmd'],
-  },
-  {
-    name: 'glob',
-    patterns: ['glob'],
-    inputFields: ['pattern', 'glob'],
-  },
-  {
-    name: 'TodoWrite',
-    patterns: ['write_todos', 'todo_write', 'todowrite'],
-    inputFields: ['todos', 'items'],
-  },
-];
+const GEMINI_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = GEMINI_TOOL_NAME_INFERENCE.patterns;
 
 function isSyntheticTitleOnlyInferenceInput(input: Record<string, unknown>): boolean {
   const keys = Object.keys(input);
@@ -139,6 +94,56 @@ function extractOpaqueToolNamePrefix(toolCallId: string): string | null {
   if (!/^[a-z0-9_]+$/i.test(prefix)) return null;
   if (findToolNameFromId(prefix, GEMINI_TOOL_PATTERNS, { preferLongestMatch: true })) return null;
   return prefix;
+}
+
+function isGeminiAcpDebugEnabled(): boolean {
+  const flag = process.env.HAPPIER_STACK_GEMINI_ACP_DEBUG;
+  return flag === '1' || flag === 'true';
+}
+
+function sanitizeForGeminiAcpDebugLogs(value: unknown, depth = 0): unknown {
+  if (depth > 4) return '[truncated depth]';
+  if (typeof value === 'string') {
+    const max = 400;
+    if (value.length <= max) return value;
+    return `${value.slice(0, max)}... [truncated ${value.length - max} chars]`;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 50) {
+      return [
+        ...value.slice(0, 50).map((entry) => sanitizeForGeminiAcpDebugLogs(entry, depth + 1)),
+        `... [truncated ${value.length - 50} items]`,
+      ];
+    }
+    return value.map((entry) => sanitizeForGeminiAcpDebugLogs(entry, depth + 1));
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(obj)) {
+      if (/(token|secret|authorization|cookie|api[_-]?key|password)/i.test(key)) {
+        out[key] = '[redacted]';
+        continue;
+      }
+      out[key] = sanitizeForGeminiAcpDebugLogs(entry, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+function extractInternalErrorDetails(error: unknown): Readonly<{
+  code: number | null;
+  details: string;
+}> {
+  const errorRecord = error && typeof error === 'object' ? error as Record<string, unknown> : null;
+  const code = typeof errorRecord?.code === 'number' ? errorRecord.code : null;
+  const errorData = errorRecord?.data;
+  const details =
+    errorData && typeof errorData === 'object' && typeof (errorData as Record<string, unknown>).details === 'string'
+      ? (errorData as Record<string, unknown>).details as string
+      : '';
+  return { code, details };
 }
 
 /**
@@ -237,7 +242,7 @@ export class GeminiTransport implements TransportHandler {
    * Gemini-specific tool patterns
    */
   getToolPatterns(): ToolPattern[] {
-    return GEMINI_TOOL_PATTERNS;
+    return [...GEMINI_TOOL_PATTERNS];
   }
 
   /**
@@ -337,6 +342,28 @@ export class GeminiTransport implements TransportHandler {
     }
 
     return toolName;
+  }
+
+  shouldIgnorePromptError(error: unknown, context: PromptErrorContext): boolean {
+    const { code, details } = extractInternalErrorDetails(error);
+    return (
+      code === -32603 &&
+      details.includes('Model stream ended with empty response text') &&
+      (!context.waitingForResponse || context.sawSessionUpdateSincePrompt) &&
+      context.activeToolCallCount === 0
+    );
+  }
+
+  logTerminalToolUpdate<T extends { sessionUpdate?: unknown; status?: unknown }>(
+    update: T,
+    _context: TerminalToolUpdateLogContext,
+  ): void {
+    if (!isGeminiAcpDebugEnabled()) return;
+    logger.debug('[AcpBackend] [GeminiACP] Terminal tool update keys:', Object.keys(update));
+    logger.debug(
+      '[AcpBackend] [GeminiACP] Terminal tool update payload:',
+      JSON.stringify(sanitizeForGeminiAcpDebugLogs(update), null, 2),
+    );
   }
 }
 

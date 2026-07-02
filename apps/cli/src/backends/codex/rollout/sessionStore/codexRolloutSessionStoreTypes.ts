@@ -22,12 +22,14 @@ export type CodexRolloutSessionStorePageParams = Readonly<{
     cursor?: string;
     maxBytes: number;
     maxItems: number;
+    allowProviderFallback?: boolean;
 }>;
 
 export type CodexRolloutSessionStoreReadAfterParams = Readonly<{
     cursor: string;
     maxBytes: number;
     maxItems: number;
+    allowProviderFallback?: boolean;
 }>;
 
 export type CodexRolloutSessionStorePageResult = FileBackedTranscriptPageResult<ExternalSessionTranscriptRawMessageV1>;

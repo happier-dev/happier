@@ -8,6 +8,7 @@
 import { randomBytes } from 'crypto';
 import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 import { generatePkceCodes } from '@/cloud/pkce';
+import { buildSafeOauthProviderFailureMessage } from '@/cloud/safeOauthProviderError';
 import { openBrowser } from '@/ui/openBrowser';
 import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
 import { startOauthPkceWithPasteFallback } from '@/cloud/oauthPkceWithPasteFallback';
@@ -60,8 +61,13 @@ export async function exchangeGeminiAuthorizationCodeForTokens(params: Readonly<
     });
 
     if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Token exchange failed: ${error}`);
+        const body = await response.text().catch(() => '');
+        throw new Error(buildSafeOauthProviderFailureMessage({
+            operation: 'Token exchange',
+            status: response.status,
+            statusText: response.statusText,
+            body,
+        }));
     }
 
     const data = (await response.json()) as GeminiAuthTokens;

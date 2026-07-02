@@ -1,6 +1,6 @@
 import type { SessionId } from '@/agent/core';
 
-import { asError, normalizePiThinkingEffort } from './rpcSupport';
+import { asError, isPromptResponseTimeoutError, normalizePiThinkingEffort } from './rpcSupport';
 import type { PiRpcCommandWithoutId, PiRpcResponse, PiRpcStateData } from './types';
 
 export type PiRpcPromptBarrier = Readonly<{
@@ -12,9 +12,13 @@ export type PiRpcResponseFlowContext = Readonly<{
   assertSession: (sessionId: SessionId) => void;
   beginPromptBarrier: () => PiRpcPromptBarrier;
   createPendingTurn: (timeoutMs: number) => Promise<void>;
+  getPendingTurnStallTimeoutMs: () => number;
+  hasPendingTurn: () => boolean;
+  waitForPromptCollisionToBecomeIdle: () => Promise<void>;
   rejectPendingTurn: (error: Error) => void;
   resolvePendingTurn: () => void;
   ensureProcess: () => Promise<void>;
+  hasProcess: () => boolean;
   maybeRestartForUpdatedAuthJson: () => Promise<void> | void;
   restartAndContinue: () => Promise<void>;
   sendCommand: (command: PiRpcCommandWithoutId, timeoutMs?: number) => Promise<PiRpcResponse>;
@@ -24,6 +28,14 @@ export type PiRpcResponseFlowContext = Readonly<{
   rememberCurrentModelProvider: (provider: string) => void;
   emitIdleStatus: () => void;
 }>;
+
+function parseCompactInstructions(command: string): string | undefined {
+  const trimmed = command.trim();
+  if (trimmed === '/compact') return undefined;
+  if (!trimmed.startsWith('/compact ')) return undefined;
+  const instructions = trimmed.slice('/compact'.length).trim();
+  return instructions.length > 0 ? instructions : undefined;
+}
 
 export async function sendPiRpcPrompt(
   context: PiRpcResponseFlowContext,
@@ -49,32 +61,47 @@ export async function sendPiRpcPrompt(
     promptBarrier.settle();
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const turn = context.createPendingTurn(240_000);
+      let turn: Promise<void> | null = null;
       try {
+        if (context.hasPendingTurn()) {
+          if (attempt === 0) {
+            await context.waitForPromptCollisionToBecomeIdle();
+            continue;
+          }
+          throw new Error('Pi is already processing another prompt');
+        }
+        turn = context.createPendingTurn(context.getPendingTurnStallTimeoutMs());
         await context.sendCommand({ type: 'prompt', message });
         await turn;
         return;
       } catch (error) {
         const promptError = asError(error);
         const normalizedError = promptError.message.toLowerCase();
-        const canFallbackToSteer =
+        const isPromptCollisionError =
           normalizedError.includes('already processing') || normalizedError.includes('streamingbehavior');
 
-        if (canFallbackToSteer) {
-          try {
-            await context.sendCommand({ type: 'steer', message });
-            await turn;
-            return;
-          } catch (steerError) {
-            const resolvedSteerError = asError(steerError);
-            context.rejectPendingTurn(resolvedSteerError);
+        if (isPromptCollisionError && attempt === 0) {
+          if (turn) {
+            context.rejectPendingTurn(promptError);
             await turn.catch(() => undefined);
-            throw resolvedSteerError;
           }
+          await context.waitForPromptCollisionToBecomeIdle();
+          continue;
         }
 
-        context.rejectPendingTurn(promptError);
-        await turn.catch(() => undefined);
+        if (turn && isPromptResponseTimeoutError(promptError)) {
+          // The prompt write succeeded, but Pi did not acknowledge the prompt before entering a
+          // long provider phase (for example threshold compaction). At this point the turn stream
+          // is the source of truth: keep the pending turn alive so later compaction/tool/agent_end
+          // events can complete it instead of surfacing a false transport timeout to the user.
+          await turn;
+          return;
+        }
+
+        if (turn) {
+          context.rejectPendingTurn(promptError);
+          await turn.catch(() => undefined);
+        }
 
         const canRecoverFromProcessExit =
           attempt === 0 &&
@@ -101,6 +128,23 @@ export async function sendPiRpcPrompt(
   }
 }
 
+export async function compactPiRpcContext(
+  context: PiRpcResponseFlowContext,
+  sessionId: SessionId,
+  command: string,
+): Promise<void> {
+  context.assertSession(sessionId);
+  const maybeRestart = context.maybeRestartForUpdatedAuthJson();
+  if (maybeRestart) {
+    await maybeRestart;
+  }
+  const customInstructions = parseCompactInstructions(command);
+  await context.sendCommand({
+    type: 'compact',
+    ...(customInstructions ? { customInstructions } : {}),
+  }, 240_000);
+}
+
 export async function sendPiRpcSteerPrompt(
   context: PiRpcResponseFlowContext,
   sessionId: SessionId,
@@ -114,6 +158,9 @@ export async function sendPiRpcSteerPrompt(
   const message = prompt.trim();
   if (!message) {
     return;
+  }
+  if (!context.hasProcess()) {
+    throw new Error('Pi process is not running');
   }
   await context.sendCommand({ type: 'steer', message });
 }

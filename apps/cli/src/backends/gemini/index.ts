@@ -1,29 +1,34 @@
-import { AGENTS_CORE } from '@happier-dev/agents';
-
 import { checklists } from './cli/checklists';
+import { createGeminiConnectedServiceRuntimeAuthAdapter } from './connectedServices/createGeminiConnectedServiceRuntimeAuthAdapter';
+import { createGeminiConnectedServicesMaterializer } from './connectedServices/createGeminiConnectedServicesMaterializer';
+import { geminiConnectedServiceStateSharingDescriptor } from './connectedServices/geminiConnectedServiceStateSharingDescriptor';
+import { geminiUsageLimitRecoveryControlAdapter } from './connectedServices/geminiUsageLimitRecoveryControlAdapter';
+import { resolveGeminiConnectedServiceSwitchContinuity } from './connectedServices/resolveGeminiConnectedServiceSwitchContinuity';
 import { geminiDaemonSpawnHooks } from './daemon/spawnHooks';
 import type { AgentCatalogEntry } from '../types';
 
+/**
+ * Gemini Agent Catalog Entry
+ */
 export const agent = {
-  id: AGENTS_CORE.gemini.id,
-  cliSubcommand: AGENTS_CORE.gemini.cliSubcommand,
+  id: 'gemini',
+  cliSubcommand: 'gemini',
   getCliCommandHandler: async () => (await import('@/backends/gemini/cli/command')).handleGeminiCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/gemini/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/gemini/cli/detect')).cliDetect,
   getCliAuthSpec: async () => (await import('@/backends/gemini/cli/auth/geminiCliAuthSpec')).geminiCliAuthSpec,
   getCloudConnectTarget: async () => (await import('@/backends/gemini/cloud/connect')).geminiCloudConnect,
   getDaemonSpawnHooks: async () => geminiDaemonSpawnHooks,
-  getConnectedServicesMaterializer: async () =>
-    (await import('@/backends/gemini/connectedServices/createGeminiConnectedServicesMaterializer'))
-      .createGeminiConnectedServicesMaterializer(),
-  getRuntimeCore: async () => {
-    const { createGeminiRuntimeCore } = await import('@/backends/gemini/runtimeCore/index');
-    return () => createGeminiRuntimeCore();
-  },
-  vendorResumeSupport: AGENTS_CORE.gemini.resume.vendorResume,
-  getAcpBackendFactory: async () => {
-    const { createGeminiBackend } = await import('@/backends/gemini/acp/backend');
-    return (opts) => createGeminiBackend(opts);
-  },
+  getConnectedServicesMaterializer: async () => createGeminiConnectedServicesMaterializer(),
+  getConnectedServiceStateSharingDescriptor: async () => geminiConnectedServiceStateSharingDescriptor,
+  // Gemini account switching is restart/rematerialize-only: predictive (soft-threshold)
+  // switches are suppressed by declared contract.
+  getConnectedServiceRecoveryCapabilities: async () => ({ predictiveSoftSwitch: { mode: 'unsupported' } }),
+  getConnectedServiceRuntimeAuthAdapter: async () => createGeminiConnectedServiceRuntimeAuthAdapter(),
+  resolveConnectedServiceSwitchContinuity: async (params) => resolveGeminiConnectedServiceSwitchContinuity(params),
+  getSessionUsageLimitRecoveryControlAdapter: async () => geminiUsageLimitRecoveryControlAdapter,
+  verifyResumeReachable: async (input) =>
+    (await import('@/backends/gemini/connectedServices/verifyResumeReachableGemini')).verifyResumeReachableGemini(input),
+  vendorResumeSupport: 'supported',
   checklists,
 } satisfies AgentCatalogEntry;

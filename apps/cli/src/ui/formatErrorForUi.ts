@@ -1,3 +1,5 @@
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+
 /**
  * Convert an unknown thrown value into a user-visible string.
  *
@@ -41,5 +43,6 @@ export function formatErrorForUi(error: unknown, opts?: { maxChars?: number }): 
     return String(error);
   })();
 
-  return msg.length > maxChars ? `${msg.slice(0, maxChars)}\n…[truncated]` : msg;
+  const redacted = redactBugReportSensitiveText(msg);
+  return redacted.length > maxChars ? `${redacted.slice(0, maxChars)}\n…[truncated]` : redacted;
 }

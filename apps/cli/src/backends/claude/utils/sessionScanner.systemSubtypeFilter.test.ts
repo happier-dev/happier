@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 
 import { createSessionScanner } from './sessionScanner';
 import { getProjectPath } from './path';
-import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
+import type { RawJSONLines } from '@happier-dev/plugins-claude/agent';
 import { clearClaudeRawJsonlSessionStoreRegistriesForTests } from '../transcripts/sessionStore';
 
 async function waitFor(predicate: () => boolean, timeoutMs = 2000, intervalMs = 25): Promise<void> {

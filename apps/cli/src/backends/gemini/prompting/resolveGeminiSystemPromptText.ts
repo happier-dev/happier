@@ -1,3 +1,5 @@
+import { getAgentToolsCapability } from '@happier-dev/agents';
+
 import type { Credentials } from '@/persistence';
 import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 
@@ -19,7 +21,7 @@ export async function resolveGeminiSystemPromptText(params: Readonly<{
     baseOverride: params.baseOverride,
     executionRunsFeatureEnabled: params.executionRunsFeatureEnabled,
     providerId: 'gemini',
-    toolDelivery: 'shell_bridge',
+    toolDelivery: getAgentToolsCapability('gemini').delivery,
     toolDeliverySessionId: params.sessionId,
     toolDeliveryDirectory: params.runtimeDirectory,
     memoryMachineId: params.machineId,

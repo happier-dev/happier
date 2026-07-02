@@ -1,4 +1,8 @@
 import { repairClaudeTranscriptAfterInterrupt } from './agentSdk/repairClaudeTranscriptAfterInterrupt';
+import {
+    isTerminalClaudeAgentSdkProviderTaskStatus,
+    normalizeClaudeAgentSdkProviderTaskId,
+} from '@happier-dev/plugins-claude/agent/runtime/remote/sdk';
 
 type FlushReason = 'tool-call-boundary' | 'turn-end' | 'abort';
 
@@ -62,21 +66,33 @@ export function createClaudeAgentSdkInterruptController(params: {
     params.setTurnInterrupt?.(interruptTurn);
 
     return {
-        noteTaskStarted: (taskId: unknown) => {
-            if (typeof taskId === 'string' && taskId.trim().length > 0) {
-                activeTaskId = taskId;
+        noteTaskStarted: (taskId: unknown, status?: unknown) => {
+            const normalizedTaskId = normalizeClaudeAgentSdkProviderTaskId(taskId);
+            const isTerminalTaskStatus = isTerminalClaudeAgentSdkProviderTaskStatus(status);
+            if (normalizedTaskId && !isTerminalTaskStatus) {
+                activeTaskId = normalizedTaskId;
+            }
+            if (normalizedTaskId && isTerminalTaskStatus && normalizedTaskId === activeTaskId) {
+                activeTaskId = null;
             }
         },
-        noteTaskProgress: (taskId: unknown) => {
-            if (!activeTaskId && typeof taskId === 'string' && taskId.trim().length > 0) {
-                activeTaskId = taskId;
+        noteTaskProgress: (taskId: unknown, status?: unknown) => {
+            const normalizedTaskId = normalizeClaudeAgentSdkProviderTaskId(taskId);
+            const isTerminalTaskStatus = isTerminalClaudeAgentSdkProviderTaskStatus(status);
+            if (!activeTaskId && normalizedTaskId && !isTerminalTaskStatus) {
+                activeTaskId = normalizedTaskId;
+            }
+            if (normalizedTaskId && isTerminalTaskStatus && normalizedTaskId === activeTaskId) {
+                activeTaskId = null;
             }
         },
         noteTaskNotification: (taskId: unknown, status: unknown) => {
-            if (typeof taskId === 'string' && taskId === activeTaskId) {
+            const normalizedTaskId = normalizeClaudeAgentSdkProviderTaskId(taskId);
+            const isTerminalTaskStatus = isTerminalClaudeAgentSdkProviderTaskStatus(status);
+            if (normalizedTaskId && normalizedTaskId === activeTaskId && isTerminalTaskStatus) {
                 activeTaskId = null;
             }
-            return status === 'stopped' || status === 'failed' || status === 'completed';
+            return isTerminalTaskStatus;
         },
         clearActiveTask: () => {
             activeTaskId = null;

@@ -8,7 +8,7 @@ import {
 } from '@/api/session/agentStateRecords';
 import {
     isClaudeLocalPermissionBridgeAgentStateRequest,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugins-claude/agent';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
 

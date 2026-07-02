@@ -10,7 +10,7 @@ import { isBun } from '../../utils/runtime';
 
 import {
   buildMissingProviderCliCommandErrorMessage,
-  resolveProviderCliRuntimeSpecForLookupId,
+  resolveAgentCliRuntimeSpecForLookupId,
 } from './requireProviderCliCommand';
 
 export type ProviderCliLaunchSpec = Readonly<{
@@ -25,7 +25,7 @@ export function resolveProviderCliLaunchSpec(
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): ProviderCliLaunchSpec | null {
   const processEnv = opts.processEnv ?? process.env;
-  const resolved = resolveProviderCliCommandForRuntime(resolveProviderCliRuntimeSpecForLookupId(agentId), {
+  const resolved = resolveProviderCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(agentId), {
     processEnv,
     isBunRuntime: isBun(),
     currentExecPath: process.execPath,

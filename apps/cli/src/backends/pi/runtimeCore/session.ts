@@ -8,8 +8,8 @@ import {
 import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { runHostSessionRuntimePlan, type HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 import { createPiAcpRuntime } from '@/backends/pi/acp/runtime';
-import { buildPiToolsForPermissionMode } from '@/backends/pi/permissionMode';
 import { PiTerminalDisplay } from '@/backends/pi/ui/PiTerminalDisplay';
+import { buildPiToolsForPermissionMode } from '@happier-dev/plugins-pi/agent/runtime/rpc/permissions';
 
 export type PiSessionRuntimeOptions = HostSessionRuntimeRunOptions & {
   credentials: Credentials;
@@ -40,6 +40,8 @@ export function createPiSessionRuntimePlan(opts: PiSessionRuntimeOptions): HostS
           setThinking,
           getPermissionMode,
           memoryRecallGuidanceEnabled,
+          accountSettings,
+          pendingQueueDrainMaxPopPerWake,
         }) => createPiAcpRuntime({
           directory,
           machineId,
@@ -50,6 +52,8 @@ export function createPiSessionRuntimePlan(opts: PiSessionRuntimeOptions): HostS
           permissionHandler,
           onThinkingChange: setThinking,
           memoryRecallGuidanceEnabled,
+          accountSettings,
+          pendingQueueDrainMaxPopPerWake,
           getPermissionMode,
         }),
         attachMetadataLogLabel: 'pi',

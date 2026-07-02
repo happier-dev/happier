@@ -1,11 +1,14 @@
 import { InvalidateSync } from "@/utils/sync";
-import type { RawJSONLines } from "@/backends/claude/contracts/rawJsonLines";
+import {
+    createMessageRouter,
+    createClaudeTeamInboxCollector,
+    resolveClaudeSubagentJsonlPath,
+    type RawJSONLines,
+} from "@happier-dev/plugins-claude/agent";
 import { logger } from "@/ui/logger";
+import { startFileWatcher } from "@/integrations/watcher/startFileWatcher";
 import { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
-import { resolveClaudeSubagentJsonlPath } from '../remote/sidechains/resolveClaudeSubagentJsonlPath';
-import { createClaudeTeamInboxCollector } from './teamInbox/claudeTeamInboxCollector';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
-import { createMessageRouter } from '../transcripts/scanner/coordination/messageRouter';
 import { createSessionCoordinator } from '../transcripts/scanner/coordination/sessionCoordinator';
 import { createSessionPathResolver } from '../transcripts/scanner/paths/sessionPathResolver';
 import { createFileObservationRuntime } from '../transcripts/scanner/runtime/fileObservation';
@@ -81,14 +84,16 @@ export async function createSessionScanner(opts: {
                 // If router emission fails unexpectedly, keep behavior best-effort and continue.
             }
         },
-        resolveJsonlPathForAgentId: ({ agentId, claudeSessionId }) => {
+        resolveJsonlPathForAgentId: ({ agentId, sidechainId, claudeSessionId }) => {
             if (!claudeSessionId) return null;
             const sanitized = String(agentId ?? '').trim();
-            if (!sanitized) return null;
+            const sanitizedSidechainId = String(sidechainId ?? '').trim();
+            if (!sanitized && !sanitizedSidechainId) return null;
             return resolveClaudeSubagentJsonlPath({
                 projectDir: sessionPathResolver.getProjectDirForSession(sessionCoordinator.getCurrentSessionId()),
                 claudeSessionId,
                 agentId: sanitized,
+                sidechainId: sanitizedSidechainId,
             });
         },
     });
@@ -103,6 +108,8 @@ export async function createSessionScanner(opts: {
                 // ignore
             }
         },
+        watchFile: (filePath, onChange) => startFileWatcher(filePath, () => onChange()),
+        logDebug: (message, metadata) => logger.debug(message, metadata),
     });
 
     if (opts.sessionId) {
