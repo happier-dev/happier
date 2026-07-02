@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { updateAccountSettingsV2WithRetry } from './updateAccountSettingsV2WithRetry';
+import type { AccountSettingsCache } from './accountSettingsCache';
 
 type LegacyCredentialsStub = Credentials & Readonly<{ encryption: Readonly<{ type: 'legacy'; secret: Uint8Array }> }>;
 
@@ -154,6 +155,182 @@ describe('updateAccountSettingsV2WithRetry', () => {
     expect(calls[0]?.expectedVersion).toBe(1);
     expect(calls[1]?.expectedVersion).toBe(2);
     expect((calls[1]?.content as any)?.v).toMatchObject({ otherKey: 'changed', hello: 'world' });
+  });
+
+  it('preserves malformed known raw fields while applying a sparse mutation', async () => {
+    const calls: Array<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }> = [];
+
+    await updateAccountSettingsV2WithRetry({
+      credentials: createLegacyCredentialsStub(),
+      mutate: (settings: Readonly<Record<string, unknown>>) => ({ ...settings, hello: 'world' }),
+      deps: {
+        fetchSettings: async () => ({
+          content: {
+            t: 'plain',
+            v: {
+              acpCatalogSettingsV1: 'malformed',
+              unknownFutureField: { keep: true },
+            },
+          },
+          version: 7,
+        }),
+        updateSettings: async (req: Readonly<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }>): Promise<AccountSettingsV2UpdateResponse> => {
+          calls.push({ expectedVersion: req.expectedVersion, content: req.content });
+          return { success: true, version: 8 };
+        },
+      },
+    });
+
+    expect(calls).toHaveLength(1);
+    expect((calls[0]?.content as any)?.v).toMatchObject({
+      acpCatalogSettingsV1: 'malformed',
+      unknownFutureField: { keep: true },
+      hello: 'world',
+    });
+  });
+
+  it('preserves untouched raw fields when mutation returns sparse touched settings', async () => {
+    const credentials = createLegacyCredentialsStub();
+    const initial = {
+      schemaVersion: 2,
+      usageLimitRecoverySettingsV1: 'malformed-but-untouched',
+      customFutureField: { preserved: true },
+      someKey: 'before',
+    };
+    const initialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'account_settings',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: initial,
+      randomBytes: () => new Uint8Array(24).fill(1),
+    });
+
+    const calls: Array<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }> = [];
+
+    await updateAccountSettingsV2WithRetry({
+      credentials,
+      mutate: () => ({ someKey: 'after' }),
+      deps: {
+        fetchSettings: async () => ({
+          content: { t: 'encrypted', c: initialCiphertext },
+          version: 10,
+        }),
+        updateSettings: async (req: Readonly<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }>): Promise<AccountSettingsV2UpdateResponse> => {
+          calls.push({ expectedVersion: req.expectedVersion, content: req.content });
+          return { success: true, version: 11 };
+        },
+        randomBytes: () => new Uint8Array(24).fill(2),
+      },
+    });
+
+    const posted = calls[0]?.content;
+    expect(posted?.t).toBe('encrypted');
+    if (posted?.t !== 'encrypted') throw new Error('expected encrypted content');
+    const opened = openAccountScopedBlobCiphertext({
+      kind: 'account_settings',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      ciphertext: posted.c,
+    });
+    expect(opened?.value).toEqual({
+      schemaVersion: 2,
+      usageLimitRecoverySettingsV1: 'malformed-but-untouched',
+      customFutureField: { preserved: true },
+      someKey: 'after',
+    });
+  });
+
+  it('filters parser-materialized defaults from mutation results before posting', async () => {
+    const credentials = createLegacyCredentialsStub();
+    const initial = {
+      schemaVersion: 2,
+      usageLimitRecoverySettingsV1: 'malformed-but-untouched',
+      customFutureField: { preserved: true },
+    };
+    const initialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'account_settings',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: initial,
+      randomBytes: () => new Uint8Array(24).fill(1),
+    });
+
+    const calls: Array<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }> = [];
+
+    await updateAccountSettingsV2WithRetry({
+      credentials,
+      mutate: (settings: Readonly<Record<string, unknown>>) => ({
+        ...accountSettingsParse(settings),
+        customFutureField: settings.customFutureField,
+        someKey: 'after',
+      }),
+      deps: {
+        fetchSettings: async () => ({
+          content: { t: 'encrypted', c: initialCiphertext },
+          version: 10,
+        }),
+        updateSettings: async (req: Readonly<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }>): Promise<AccountSettingsV2UpdateResponse> => {
+          calls.push({ expectedVersion: req.expectedVersion, content: req.content });
+          return { success: true, version: 11 };
+        },
+        randomBytes: () => new Uint8Array(24).fill(2),
+      },
+    });
+
+    const posted = calls[0]?.content;
+    expect(posted?.t).toBe('encrypted');
+    if (posted?.t !== 'encrypted') throw new Error('expected encrypted content');
+    const opened = openAccountScopedBlobCiphertext({
+      kind: 'account_settings',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      ciphertext: posted.c,
+    });
+    expect(opened?.value).toEqual({
+      schemaVersion: 2,
+      usageLimitRecoverySettingsV1: 'malformed-but-untouched',
+      customFutureField: { preserved: true },
+      someKey: 'after',
+    });
+  });
+
+  it('skips the update when mutation output is semantically equal to the raw baseline', async () => {
+    const credentials = createLegacyCredentialsStub();
+    const initial = {
+      schemaVersion: 2,
+      usageLimitRecoverySettingsV1: 'malformed-but-untouched',
+    };
+    const initialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'account_settings',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: initial,
+      randomBytes: () => new Uint8Array(24).fill(1),
+    });
+    let updateCalls = 0;
+    const writes: AccountSettingsCache[] = [];
+
+    const result = await updateAccountSettingsV2WithRetry({
+      credentials,
+      mutate: (settings: Readonly<Record<string, unknown>>) => accountSettingsParse(settings),
+      deps: {
+        fetchSettings: async () => ({
+          content: { t: 'encrypted', c: initialCiphertext },
+          version: 10,
+        }),
+        updateSettings: async (): Promise<AccountSettingsV2UpdateResponse> => {
+          updateCalls += 1;
+          return { success: true, version: 11 };
+        },
+        writeCache: async (_path, cache) => {
+          writes.push(cache);
+        },
+      },
+    });
+
+    expect(result.version).toBe(10);
+    expect(updateCalls).toBe(0);
+    expect(writes).toEqual([
+      expect.objectContaining({
+        settingsContent: { t: 'encrypted', c: initialCiphertext },
+        settingsVersion: 10,
+      }),
+    ]);
   });
 
   it('uses apiServerUrl for fetch and update requests when canonical serverUrl differs', async () => {

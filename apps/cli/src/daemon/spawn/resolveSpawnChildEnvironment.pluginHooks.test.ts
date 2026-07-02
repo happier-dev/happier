@@ -86,13 +86,13 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
     daemonModuleContents: [
       'import { appendFile } from "node:fs/promises";',
       '',
-      'export async function validateSpawn(event = {}) {',
-      `  await appendFile(${JSON.stringify(params.markerPath)}, JSON.stringify({ type: "decision", event }, null, 2) + "\\n", "utf8");`,
+      'export async function validateSpawn(event = {}, context = {}) {',
+      `  await appendFile(${JSON.stringify(params.markerPath)}, JSON.stringify({ type: "decision", event, hasToolContext: typeof context?.tools?.resolveManagedInstallable === "function" }, null, 2) + "\\n", "utf8");`,
       '  return { allowed: true };',
       '}',
       '',
-      'export async function augmentSpawnEnv(event = {}) {',
-      `  await appendFile(${JSON.stringify(params.markerPath)}, JSON.stringify({ type: "augment", event }, null, 2) + "\\n", "utf8");`,
+      'export async function augmentSpawnEnv(event = {}, context = {}) {',
+      `  await appendFile(${JSON.stringify(params.markerPath)}, JSON.stringify({ type: "augment", event, hasToolContext: typeof context?.tools?.resolveManagedInstallable === "function" }, null, 2) + "\\n", "utf8");`,
       '  return { HAPPIER_PLUGIN_SPAWN_ENV: "plugin-hook" };',
       '}',
       '',
@@ -115,33 +115,33 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
           entry: './daemon.mjs',
         },
       },
-      permissions: [],
-      contributions: [
-        {
-          kind: 'hook',
-          hookApiVersion: 1,
-          id: 'backend.resolveRuntimePrerequisites',
-          category: 'decision',
-          scope: 'backend',
-          executionKind: 'decide',
-          handler: {
-            target: 'plugin',
-            exportName: 'validateSpawn',
+      capabilities: { permissions: [] },
+      contributes: {
+        hooks: [
+          {
+            hookApiVersion: 1,
+            id: 'backend.resolveRuntimePrerequisites',
+            category: 'decision',
+            scope: 'backend',
+            executionKind: 'decide',
+            handler: {
+              target: 'plugin',
+              exportName: 'validateSpawn',
+            },
           },
-        },
-        {
-          kind: 'hook',
-          hookApiVersion: 1,
-          id: 'spawn.augmentEnv',
-          category: 'augmentation',
-          scope: 'daemon',
-          executionKind: 'augment',
-          handler: {
-            target: 'plugin',
-            exportName: 'augmentSpawnEnv',
+          {
+            hookApiVersion: 1,
+            id: 'spawn.augmentEnv',
+            category: 'augmentation',
+            scope: 'daemon',
+            executionKind: 'augment',
+            handler: {
+              target: 'plugin',
+              exportName: 'augmentSpawnEnv',
+            },
           },
-        },
-      ],
+        ],
+      },
     },
   });
 }
@@ -169,7 +169,7 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
       const options: SpawnSessionOptions = {
         directory: '/repo',
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-        codexBackendMode: 'mcp',
+        codexBackendMode: 'appServer',
       };
 
       const result = await resolveSpawnChildEnvironment({
@@ -195,6 +195,7 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
       expect(marker).toContain('"eventId": "backend.resolveRuntimePrerequisites"');
       expect(marker).toContain('"eventId": "spawn.augmentEnv"');
       expect(marker).toContain('"backendTarget": "backend:codex"');
+      expect(marker).toContain('"hasToolContext": true');
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
       await rm(pluginRoot, { recursive: true, force: true });

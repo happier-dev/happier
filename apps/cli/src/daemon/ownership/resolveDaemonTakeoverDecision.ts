@@ -17,6 +17,9 @@ function canImplicitlyReplaceConflictingManualOwner(
   if (owner.serviceManaged === true) {
     return false;
   }
+  if (owner.source === 'process') {
+    return false;
+  }
 
   return !owner.versionMatches || !owner.releaseChannelMatches;
 }

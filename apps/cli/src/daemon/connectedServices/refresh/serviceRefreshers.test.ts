@@ -47,6 +47,35 @@ describe('serviceRefreshers', () => {
     });
   });
 
+  it('does not include raw refresh failure response bodies in thrown errors', async () => {
+    const runtimeFetch = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      headers: {},
+      text: async () => JSON.stringify({
+        error: 'invalid_grant',
+        refresh_token: 'secret-refresh-token',
+        access_token: 'secret-access-token',
+      }),
+      json: async () => ({}),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+
+    await expect(refreshConnectedAccountOauthTokens({
+      serviceId: 'openai-codex',
+      refreshToken: 'old-refresh',
+      now: 1000,
+      runtimeFetch,
+    })).rejects.toThrow(/Connected account refresh failed \(openai-codex, 400\): invalid_grant/);
+    await expect(refreshConnectedAccountOauthTokens({
+      serviceId: 'openai-codex',
+      refreshToken: 'old-refresh',
+      now: 1000,
+      runtimeFetch,
+    })).rejects.not.toThrow(/secret-refresh-token|secret-access-token|old-refresh/);
+  });
+
   it('refreshes OpenAI Codex tokens via refresh_token grant', async () => {
     const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) => ({
       ok: true,
@@ -102,6 +131,8 @@ describe('serviceRefreshers', () => {
         access_token: 'new-access',
         refresh_token: 'new-refresh',
         expires_in: 123,
+        scope: 'user:inference user:profile user:sessions:claude_code',
+        token_type: 'Bearer',
       }),
     }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
@@ -128,6 +159,8 @@ describe('serviceRefreshers', () => {
       expect(refreshed.accessToken).toBe('new-access');
       expect(refreshed.refreshToken).toBe('new-refresh');
       expect(refreshed.expiresAt).toBe(now + 123 * 1000);
+      expect(refreshed.scope).toBe('user:inference user:profile user:sessions:claude_code');
+      expect(refreshed.tokenType).toBe('Bearer');
     } finally {
       process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = previousTokenUrl;
       process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID = previousClientId;
@@ -189,6 +222,8 @@ describe('serviceRefreshers', () => {
       expect(refreshed.accessToken).toBe('new-access');
       expect(refreshed.refreshToken).toBe('new-refresh');
       expect(refreshed.expiresAt).toBe(now + 60 * 1000);
+      expect(refreshed.scope).toBe('scope');
+      expect(refreshed.tokenType).toBe('Bearer');
     } finally {
       process.env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET = previousClientSecret;
     }
@@ -235,6 +270,8 @@ describe('serviceRefreshers', () => {
         accessToken: 'new-access',
         refreshToken: 'new-refresh',
         idToken: null,
+        scope: null,
+        tokenType: null,
         expiresAt: 94_000,
       });
     } finally {
@@ -272,6 +309,8 @@ describe('serviceRefreshers', () => {
       accessToken: 'mapped-access',
       refreshToken: 'mapped-refresh',
       idToken: 'mapped-id',
+      scope: null,
+      tokenType: null,
       expiresAt: 12_000,
     });
   });
@@ -303,6 +342,8 @@ describe('serviceRefreshers', () => {
       accessToken: 'new-access',
       refreshToken: 'old-refresh',
       idToken: '',
+      scope: null,
+      tokenType: null,
       expiresAt: 7000,
     });
   });

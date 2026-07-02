@@ -30,6 +30,12 @@ describe('resolveDaemonLaunchSpec', () => {
     vi.restoreAllMocks();
     vi.resetModules();
     delete process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK;
+    delete process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT;
+    delete process.env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX;
+    delete process.env.HAPPIER_STACK_REPO_DIR;
+    delete process.env.HAPPIER_STACK_CLI_ROOT_DIR;
+    delete process.env.HAPPIER_STACK_STACK;
+    delete process.env.HAPPIER_VARIANT;
   });
 
   it('reuses the current self-contained binary when running from a bundled Windows executable', async () => {
@@ -54,6 +60,39 @@ describe('resolveDaemonLaunchSpec', () => {
       expect(result).toEqual({
         filePath: 'C:\\hq\\winsvc005-live\\happier-v0.2.4-windows-x64\\happier.exe',
         args: ['daemon', 'start-sync'],
+      });
+      expect(ensureJavaScriptRuntimeExecutableMock).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, 'execPath', {
+        value: originalExecPath,
+        configurable: true,
+      });
+      process.argv = originalArgv;
+    }
+  });
+
+  it('reuses the current runtime executable when launched from a packaged entrypoint under a managed JS runtime wrapper', async () => {
+    const originalExecPath = process.execPath;
+    const originalArgv = [...process.argv];
+
+    try {
+      Object.defineProperty(process, 'execPath', {
+        value: 'C:\\Users\\test_qa\\.happier\\tools\\js-runtime\\current\\bin\\happier-js-runtime.cmd',
+        configurable: true,
+      });
+      process.argv = [
+        'happier',
+        'C:\\Users\\test_qa\\.happier\\cli-preview\\versions\\0.2.8\\package-dist\\index.mjs',
+        'daemon',
+        'restart',
+      ];
+
+      const mod = await import('./resolveDaemonLaunchSpec');
+      const result = await mod.resolveDaemonLaunchSpec(['daemon', 'start-sync']);
+
+      expect(result).toEqual({
+        filePath: 'C:\\Users\\test_qa\\.happier\\tools\\js-runtime\\current\\bin\\happier-js-runtime.cmd',
+        args: ['C:\\Users\\test_qa\\.happier\\cli-preview\\versions\\0.2.8\\package-dist\\index.mjs', 'daemon', 'start-sync'],
       });
       expect(ensureJavaScriptRuntimeExecutableMock).not.toHaveBeenCalled();
     } finally {
@@ -231,6 +270,94 @@ describe('resolveDaemonLaunchSpec', () => {
       filePath: '/usr/bin/node',
       args: ['--no-warnings', '--no-deprecation', '/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync'],
     });
+  });
+
+  it('prefers the source entrypoint in stack context even when a packaged entrypoint exists', async () => {
+    process.env.HAPPIER_STACK_REPO_DIR = '/repo';
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return {
+        ...actual,
+        existsSync: (path: string) => (
+          path === '/opt/happier/package-dist/index.mjs'
+          || path.replaceAll('\\', '/').endsWith('/src/index.ts')
+        ),
+      };
+    });
+
+    const mod = await import('./resolveDaemonLaunchSpec');
+    const result = await mod.resolveDaemonLaunchSpec(['daemon', 'start-sync']);
+
+    expect(result).toEqual({
+      filePath: '/usr/bin/node',
+      args: [
+        '--no-warnings',
+        '--no-deprecation',
+        '--import',
+        '/opt/happier/node_modules/tsx/dist/esm/index.mjs',
+        expect.stringMatching(/src[\\/]index\.ts$/),
+        'daemon',
+        'start-sync',
+      ],
+      env: {
+        TSX_TSCONFIG_PATH: '/opt/happier/apps/cli/tsconfig.json',
+      },
+    });
+  });
+
+  it('does not reuse the current packaged entrypoint when stack context prefers source launch', async () => {
+    process.env.HAPPIER_STACK_REPO_DIR = '/repo';
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return {
+        ...actual,
+        existsSync: (path: string) => (
+          path === '/opt/happier/package-dist/index.mjs'
+          || path.replaceAll('\\', '/').endsWith('/src/index.ts')
+        ),
+      };
+    });
+
+    const originalExecPath = process.execPath;
+    const originalArgv = [...process.argv];
+
+    try {
+      Object.defineProperty(process, 'execPath', {
+        value: '/Users/test/.happier/tools/js-runtime/current/bin/happier-js-runtime',
+        configurable: true,
+      });
+      process.argv = [
+        'happier',
+        '/opt/happier/package-dist/index.mjs',
+        'daemon',
+        'restart',
+      ];
+
+      const mod = await import('./resolveDaemonLaunchSpec');
+      const result = await mod.resolveDaemonLaunchSpec(['daemon', 'start-sync']);
+
+      expect(result).toEqual({
+        filePath: '/usr/bin/node',
+        args: [
+          '--no-warnings',
+          '--no-deprecation',
+          '--import',
+          '/opt/happier/node_modules/tsx/dist/esm/index.mjs',
+          expect.stringMatching(/src[\\/]index\.ts$/),
+          'daemon',
+          'start-sync',
+        ],
+        env: {
+          TSX_TSCONFIG_PATH: '/opt/happier/apps/cli/tsconfig.json',
+        },
+      });
+    } finally {
+      Object.defineProperty(process, 'execPath', {
+        value: originalExecPath,
+        configurable: true,
+      });
+      process.argv = originalArgv;
+    }
   });
 
   it('falls back to tsx source entrypoint only when explicitly allowed', async () => {

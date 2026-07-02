@@ -33,15 +33,15 @@ function resolveVendorResumeSupportParamsForSpawn(params: Readonly<{
     options: SpawnSessionOptions;
     daemonSpawnHooks: unknown;
 }>): Readonly<Record<string, unknown>> {
+    const runtimeSelection = readCanonicalSpawnRuntimeSelection(params.options);
     const hook = (params.daemonSpawnHooks as DaemonVendorResumeSupportHook | null)?.resolveVendorResumeSupportParams;
     if (hook) {
-        const runtimeSelection = readCanonicalSpawnRuntimeSelection(params.options);
         return hook({
             catalogAgentId: params.catalogAgentId,
             options: runtimeSelection,
         });
     }
-    return {};
+    return runtimeSelection;
 }
 
 type BackendIdentitySuccess = Extract<

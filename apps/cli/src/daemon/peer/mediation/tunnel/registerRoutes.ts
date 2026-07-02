@@ -2,6 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 
 import {
+    DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES,
+    decodePeerTcpTunnelBinaryFrameV2,
+    PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
+    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
     PEER_TCP_TUNNEL_OPEN_PATH,
     PEER_TCP_TUNNEL_STREAM_PATH,
     PeerTcpTunnelOpenV1Schema,
@@ -9,8 +13,12 @@ import {
 
 import { openPeerTcpTunnel, type OpenPeerTcpTunnelInput, type OpenPeerTcpTunnelResult } from './open';
 import {
+    createPeerTcpTunnelSubstreamMuxSession,
     createPeerTcpTunnelStreamSession,
+    decodePeerTcpTunnelBinaryFrameForSession,
+    encodePeerTcpTunnelBinaryFrameForSession,
 } from './frames';
+import { connectPeerTcpTunnelTcp } from './open';
 
 const registeredTunnelApps = new WeakSet<FastifyInstance>();
 const DEFAULT_DIRECT_TUNNEL_LIMITS: Readonly<{
@@ -31,13 +39,21 @@ export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelI
 }>;
 
 type ActivePeerTcpTunnel = (OpenPeerTcpTunnelResult & { ok: true }) & Readonly<{
+    open: ReturnType<typeof PeerTcpTunnelOpenV1Schema.parse>;
     openStreamTimeout?: ReturnType<typeof setTimeout>;
 }>;
 
 type PeerTcpTunnelFastifyWebSocket = Readonly<{
     on: (event: 'message' | 'close', handler: (payload?: unknown) => void) => void;
-    send: (payload: string) => void;
+    send: (payload: string | Uint8Array) => void;
     close: () => void;
+}>;
+
+type PeerTcpTunnelLoopbackSession = Readonly<{
+    session: ReturnType<typeof createPeerTcpTunnelStreamSession>;
+    substreamMux?: ReturnType<typeof createPeerTcpTunnelSubstreamMuxSession>;
+    encoding: ActivePeerTcpTunnel['response']['encoding'];
+    maxFrameBytes: number;
 }>;
 
 function readFrameTunnelId(frame: unknown): string | null {
@@ -54,6 +70,34 @@ function readFrameTunnelId(frame: unknown): string | null {
 function readOpenTunnelId(open: unknown): string | null {
     const parsed = PeerTcpTunnelOpenV1Schema.safeParse(open);
     return parsed.success ? parsed.data.tunnelId : null;
+}
+
+function toBinaryFramePayload(raw: unknown, maxHeaderBytes: number): Uint8Array | null {
+    const bytes =
+        raw instanceof Uint8Array
+            ? raw
+            : raw instanceof ArrayBuffer
+                ? new Uint8Array(raw)
+                : ArrayBuffer.isView(raw)
+                    ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
+                    : null;
+    if (!bytes || bytes.byteLength < 4) return null;
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const headerLength = view.getUint32(0, false);
+    if (headerLength < 1 || headerLength > maxHeaderBytes || bytes.byteLength < 4 + headerLength) {
+        return null;
+    }
+    return bytes;
+}
+
+function readBinaryFrameTunnelId(raw: Uint8Array, maxHeaderBytes: number): string | null {
+    const decoded = decodePeerTcpTunnelBinaryFrameV2({
+        frame: raw,
+        maxHeaderBytes,
+        maxPayloadBytes: Number.MAX_SAFE_INTEGER,
+    });
+    return decoded.ok ? decoded.header.tunnelId : null;
 }
 
 function closeSocket(socket: PeerTcpTunnelFastifyWebSocket): void {
@@ -77,56 +121,138 @@ export function registerPeerTcpTunnelLoopbackRoutes(
             ? Math.floor(options.openStreamTimeoutMs)
             : DEFAULT_OPEN_STREAM_TIMEOUT_MS;
     app.register(fastifyWebsocket);
-    app.get(PEER_TCP_TUNNEL_STREAM_PATH, { websocket: true }, (socket: PeerTcpTunnelFastifyWebSocket) => {
-        const sessions = new Map<string, ReturnType<typeof createPeerTcpTunnelStreamSession>>();
-        const getSession = (tunnelId: string) => {
-            const existing = sessions.get(tunnelId);
-            if (existing) return existing;
-            const tunnel = activeTunnels.get(tunnelId);
-            if (!tunnel) return null;
-            if (tunnel.openStreamTimeout) {
-                clearTimeout(tunnel.openStreamTimeout);
-            }
-            const limits = tunnel.limits ?? DEFAULT_DIRECT_TUNNEL_LIMITS;
-            const session = createPeerTcpTunnelStreamSession({
-                tunnelId,
-                initialWindowBytes: tunnel.response.initialWindowBytes,
-                maxFrameBytes: tunnel.response.maxFrameBytes,
-                maxIdleMs: limits.maxIdleMs,
-                maxDurationMs: limits.maxDurationMs,
-                maxTotalBytes: limits.maxTotalBytes,
-                connection: tunnel.connection,
-                sendFrame: (frame) => {
-                    socket.send(JSON.stringify(frame));
-                },
-            });
-            sessions.set(tunnelId, session);
-            return session;
-        };
-
-        socket.on('message', (raw) => {
-            let frame: unknown;
-            try {
-                frame = JSON.parse(Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw));
-            } catch {
-                closeSocket(socket);
-                return;
-            }
-            const tunnelId = readFrameTunnelId(frame);
-            if (!tunnelId) {
-                closeSocket(socket);
-                return;
-            }
-            void getSession(tunnelId)?.acceptFrame(frame);
-        });
-
-        socket.on('close', () => {
-            for (const tunnelId of sessions.keys()) {
+    app.register(async (streamRoutes) => {
+        streamRoutes.get(PEER_TCP_TUNNEL_STREAM_PATH, { websocket: true }, (socket: PeerTcpTunnelFastifyWebSocket) => {
+            const sessions = new Map<string, PeerTcpTunnelLoopbackSession>();
+            const getSession = (tunnelId: string) => {
+                const existing = sessions.get(tunnelId);
+                if (existing) return existing;
                 const tunnel = activeTunnels.get(tunnelId);
-                void tunnel?.connection.close();
-                activeTunnels.delete(tunnelId);
-            }
-            sessions.clear();
+                if (!tunnel) return null;
+                if (tunnel.openStreamTimeout) {
+                    clearTimeout(tunnel.openStreamTimeout);
+                }
+                const limits = tunnel.limits ?? DEFAULT_DIRECT_TUNNEL_LIMITS;
+                const session = createPeerTcpTunnelStreamSession({
+                    tunnelId,
+                    initialWindowBytes: tunnel.response.initialWindowBytes,
+                    maxFrameBytes: tunnel.response.maxFrameBytes,
+                    maxIdleMs: limits.maxIdleMs,
+                    maxDurationMs: limits.maxDurationMs,
+                    maxTotalBytes: limits.maxTotalBytes,
+                    connection: tunnel.connection,
+                    sendFrame: (frame) => {
+                        if (tunnel.response.encoding === PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 && frame.kind !== 'open') {
+                            socket.send(encodePeerTcpTunnelBinaryFrameForSession(frame));
+                            return;
+                        }
+                        socket.send(JSON.stringify(frame));
+                    },
+                });
+                const substreamMux = tunnel.response.encoding === PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2
+                    ? createPeerTcpTunnelSubstreamMuxSession({
+                        tunnelId,
+                        destination: {
+                            host: tunnel.open.destination.host.trim().toLowerCase(),
+                            port: tunnel.open.destination.port,
+                        },
+                        initialWindowBytes: tunnel.response.initialWindowBytes,
+                        maxFrameBytes: tunnel.response.maxFrameBytes,
+                        maxBinaryHeaderBytes: tunnel.response.maxFrameBytes,
+                        maxRawPayloadBytes: tunnel.response.maxFrameBytes,
+                        caps: {
+                            ...DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES,
+                            maxBytesPerSubstream: tunnel.limits.maxTotalBytes ?? DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES.maxBytesPerSubstream,
+                            maxAggregateBytes: tunnel.limits.maxTotalBytes ?? DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES.maxAggregateBytes,
+                            maxSubstreamIdleMs: tunnel.limits.maxIdleMs,
+                            maxSessionIdleMs: tunnel.limits.maxIdleMs,
+                        },
+                        connectTcp: options.connectTcp ?? connectPeerTcpTunnelTcp,
+                        sendBinaryFrame: (frame) => {
+                            socket.send(frame);
+                        },
+                        nowMs: options.nowMs,
+                    })
+                    : undefined;
+                const entry = {
+                    session,
+                    ...(substreamMux ? { substreamMux } : {}),
+                    encoding: tunnel.response.encoding,
+                    maxFrameBytes: tunnel.response.maxFrameBytes,
+                };
+                sessions.set(tunnelId, entry);
+                return entry;
+            };
+
+            let inboundQueue = Promise.resolve();
+            socket.on('message', (raw) => {
+                inboundQueue = inboundQueue.then(async () => {
+                    const binaryPayload = toBinaryFramePayload(raw, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES);
+                    if (binaryPayload) {
+                        const tunnelId = readBinaryFrameTunnelId(binaryPayload, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES);
+                        if (!tunnelId) {
+                            closeSocket(socket);
+                            return;
+                        }
+                        const entry = getSession(tunnelId);
+                        if (!entry || entry.encoding !== PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2) {
+                            closeSocket(socket);
+                            return;
+                        }
+                        const decodedHeader = decodePeerTcpTunnelBinaryFrameV2({
+                            frame: binaryPayload,
+                            maxHeaderBytes: entry.maxFrameBytes,
+                            maxPayloadBytes: entry.maxFrameBytes,
+                        });
+                        if (decodedHeader.ok && decodedHeader.header.substreamId) {
+                            await entry.substreamMux?.acceptBinaryFrame(binaryPayload);
+                            return;
+                        }
+                        const decoded = decodePeerTcpTunnelBinaryFrameForSession({
+                            frame: binaryPayload,
+                            maxBinaryHeaderBytes: entry.maxFrameBytes,
+                            maxRawPayloadBytes: entry.maxFrameBytes,
+                        });
+                        if (!decoded.ok) {
+                            closeSocket(socket);
+                            return;
+                        }
+                        await entry.session.acceptFrame(decoded.frame);
+                        return;
+                    }
+
+                    let frame: unknown;
+                    try {
+                        frame = JSON.parse(Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw));
+                    } catch {
+                        closeSocket(socket);
+                        return;
+                    }
+                    const tunnelId = readFrameTunnelId(frame);
+                    if (!tunnelId) {
+                        closeSocket(socket);
+                        return;
+                    }
+                    const entry = getSession(tunnelId);
+                    if (!entry || entry.encoding === PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2) {
+                        closeSocket(socket);
+                        return;
+                    }
+                    await entry.session.acceptFrame(frame);
+                }).catch(() => {
+                    closeSocket(socket);
+                });
+            });
+
+            socket.on('close', () => {
+                for (const [tunnelId, entry] of sessions) {
+                    const tunnel = activeTunnels.get(tunnelId);
+                    void entry.substreamMux?.close();
+                    void tunnel?.connection.close();
+                    activeTunnels.delete(tunnelId);
+                }
+                sessions.clear();
+            });
         });
     });
     app.addHook('onClose', async () => {
@@ -178,6 +304,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
         openStreamTimeout?.unref?.();
         activeTunnels.set(result.response.tunnelId, {
             ...result,
+            open: PeerTcpTunnelOpenV1Schema.parse(request.body),
             ...(openStreamTimeout ? { openStreamTimeout } : {}),
         });
         return result.response;

@@ -16,8 +16,19 @@ export type DaemonChildExit = Readonly<{ reason: string; code: number | null; si
 export type SessionRunnerRespawnManager = Readonly<{
   markStopRequested: (sessionId: string, request: StopRequest) => void;
   clearStopRequested: (sessionId: string) => void;
-  handleUnexpectedExit: (trackedSession: TrackedSession, exit: DaemonChildExit) => void;
+  handleUnexpectedExit: (
+    trackedSession: TrackedSession,
+    exit: DaemonChildExit,
+    options?: Readonly<{ forceRestart?: boolean }>,
+  ) => void;
 }>;
+
+export type SessionRunnerRespawnOptionsResolver = (input: Readonly<{
+  sessionId: string;
+  spawnOptions: SpawnSessionOptions;
+  vendorResumeId: string;
+  defaultOptions: SpawnSessionOptions;
+}>) => SpawnSessionOptions | Promise<SpawnSessionOptions>;
 
 function normalizeSessionId(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : '';
@@ -57,6 +68,12 @@ function toTerminationEvent(exit: DaemonChildExit): TerminationEvent {
   return { type: 'exited', code: 1 };
 }
 
+const connectedServiceRestartRequestedTerminationEvent: TerminationEvent = {
+  type: 'spawn_error',
+  errorName: 'ConnectedServiceRestartRequested',
+  errorMessage: 'connected_service_auth_group_restart_requested',
+};
+
 function buildRespawnOptions(params: Readonly<{
   spawnOptions: SpawnSessionOptions;
   sessionId: string;
@@ -83,6 +100,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
   jitterMs: number;
   isSessionAlreadyRunning: (sessionId: string) => boolean | Promise<boolean>;
   spawnSession: (opts: SpawnSessionOptions) => Promise<unknown>;
+  resolveRespawnOptions?: SessionRunnerRespawnOptionsResolver;
   random: () => number;
   logDebug: (message: string, payload?: unknown) => void;
   logWarn: (message: string) => void;
@@ -168,7 +186,10 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
           return;
         }
 
-        const respawnOptions = buildRespawnOptions({ spawnOptions, sessionId, vendorResumeId });
+        const defaultOptions = buildRespawnOptions({ spawnOptions, sessionId, vendorResumeId });
+        const respawnOptions = params.resolveRespawnOptions
+          ? await params.resolveRespawnOptions({ sessionId, spawnOptions, vendorResumeId, defaultOptions })
+          : defaultOptions;
         params.logDebug(
           `[DAEMON RUN] Respawning runner for session ${sessionId} after ${delayMs}ms (attempt ${attempt})`,
           { exit: event },
@@ -248,8 +269,8 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         existing.controller.clearStopRequested();
       }
     },
-    handleUnexpectedExit: (trackedSession: TrackedSession, exit: DaemonChildExit) => {
-      if (!params.enabled) return;
+    handleUnexpectedExit: (trackedSession: TrackedSession, exit: DaemonChildExit, options) => {
+      if (!params.enabled && options?.forceRestart !== true) return;
       if (trackedSession.startedBy !== 'daemon') return;
       const sessionId = normalizeSessionId(trackedSession.happySessionId);
       if (!sessionId) return;
@@ -263,7 +284,8 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
 
       const vendorResumeId = normalizeOptionalString(trackedSession.vendorResumeId);
       const controller = getOrCreateController(sessionId);
-      const event = toTerminationEvent(exit);
+      const forceRestart = options?.forceRestart === true;
+      const event = forceRestart ? connectedServiceRestartRequestedTerminationEvent : toTerminationEvent(exit);
       const decision = controller.nextDecisionForTermination(event);
       if (decision.type === 'no_restart') {
         if (decision.reason.startsWith('max_restarts_exceeded')) {
@@ -273,7 +295,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         return;
       }
 
-      scheduleSpawn(sessionId, spawnOptions, vendorResumeId, decision.delayMs, decision.attempt, event);
+      scheduleSpawn(sessionId, spawnOptions, vendorResumeId, forceRestart ? 0 : decision.delayMs, decision.attempt, event);
     },
   };
 }

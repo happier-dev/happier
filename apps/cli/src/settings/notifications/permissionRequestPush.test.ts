@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse, type LiveActivityRemoteUpdateRequestV1 } from '@happier-dev/protocol';
+import { logger } from '@/ui/logger';
 
 import { sendPermissionRequestPushNotificationAsync } from './permissionRequestPush';
 
@@ -19,6 +20,8 @@ describe('sendPermissionRequestPushNotificationAsync', () => {
     await sendPermissionRequestPushNotificationAsync({
       pushSender: { sendToAllDevicesAsync },
       sessionId: 's1',
+      sessionTitle: 'Fix prod issue',
+      agentDisplayName: 'Claude',
       permissionId: 'p1',
       toolName: 'Read',
       settings,
@@ -45,6 +48,8 @@ describe('sendPermissionRequestPushNotificationAsync', () => {
     await sendPermissionRequestPushNotificationAsync({
       pushSender: { sendToAllDevicesAsync },
       sessionId: 's1',
+      sessionTitle: 'Fix prod issue',
+      agentDisplayName: 'Claude',
       permissionId: 'p1',
       toolName: 'Read',
       settings,
@@ -62,6 +67,8 @@ describe('sendPermissionRequestPushNotificationAsync', () => {
     await sendPermissionRequestPushNotificationAsync({
       pushSender: { sendToAllDevicesAsync },
       sessionId: 's1',
+      sessionTitle: 'Fix prod issue',
+      agentDisplayName: 'Claude',
       permissionId: 'p1',
       toolName: 'Read',
       settings,
@@ -69,8 +76,8 @@ describe('sendPermissionRequestPushNotificationAsync', () => {
 
     expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
     expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
-      'Permission Request',
-      expect.stringContaining('Read'),
+      'Fix prod issue',
+      'Claude asks permission to use Read',
       expect.objectContaining({ sessionId: 's1', requestId: 'p1' }),
       { sound: 'happier_urgent.wav', priority: 'high', androidSoundId: 'urgent' },
     );
@@ -120,6 +127,43 @@ describe('sendPermissionRequestPushNotificationAsync', () => {
       },
     });
     expect(JSON.stringify(request)).not.toContain('secret-token');
+  });
+
+  it('redacts non-Axios push errors before logging', async () => {
+    const settings = accountSettingsParse({
+      notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
+    });
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const sendToAllDevicesAsync = async () => {
+      throw new Error(
+        'request failed for https://alice:SUPER_SECRET_PASSWORD@push.example.test/v1/send?token=secret Authorization: Bearer PUSH_SECRET',
+      );
+    };
+
+    try {
+      await expect(
+        sendPermissionRequestPushNotificationAsync({
+          pushSender: { sendToAllDevicesAsync },
+          sessionId: 's1',
+          permissionId: 'p1',
+          toolName: 'Read',
+          settings,
+        }),
+      ).resolves.toBe(false);
+
+      const [, logged] = debugSpy.mock.calls.find(([message]) =>
+        message === '[activityNotifications] Failed to dispatch outbound notification'
+      ) ?? [];
+      expect(logged).toEqual(expect.objectContaining({
+        name: 'Error',
+        message: 'request failed for https://push.example.test/v1/send Authorization: <redacted>',
+      }));
+      expect(JSON.stringify(logged)).not.toContain('SUPER_SECRET_PASSWORD');
+      expect(JSON.stringify(logged)).not.toContain('token=secret');
+      expect(JSON.stringify(logged)).not.toContain('PUSH_SECRET');
+    } finally {
+      debugSpy.mockRestore();
+    }
   });
 
   it('delivers webhook requests during quiet hours when Expo push is suppressed', async () => {

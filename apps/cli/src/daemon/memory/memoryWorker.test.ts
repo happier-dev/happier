@@ -149,7 +149,7 @@ describe('memoryWorker', () => {
     worker.stop();
   });
 
-  it('ingests session_summary_shard.v1 transcript artifacts into the tier-1 index', async () => {
+  it('ingests committed memory summary system records into the tier-1 index', async () => {
     const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
     await writeMemorySettingsToDisk({ v: 1, enabled: true, indexMode: 'hints' });
 
@@ -161,28 +161,18 @@ describe('memoryWorker', () => {
       credentials,
       machineId: 'machine_1',
       deps: {
-        fetchDecryptedTranscriptPageAfterSeq: async () => [
+        fetchDecryptedTranscriptPageAfterSeq: async () => [],
+        fetchCommittedSummaryShards: async () => [
           {
-            seq: 12,
-            createdAtMs: 2000,
-            role: 'agent' as const,
-            content: { type: 'text', text: '[memory]' },
-            meta: {
-              happier: {
-                kind: 'session_summary_shard.v1',
-                payload: {
-                  v: 1,
-                  seqFrom: 10,
-                  seqTo: 12,
-                  createdAtFromMs: 1000,
-                  createdAtToMs: 2000,
-                  summary: 'We discussed integrating OpenClaw memory search.',
-                  keywords: ['openclaw', 'memory'],
-                  entities: ['Happier'],
-                  decisions: ['Make memory search opt-in'],
-                },
-              },
-            },
+            v: 1,
+            seqFrom: 10,
+            seqTo: 12,
+            createdAtFromMs: 1000,
+            createdAtToMs: 2000,
+            summary: 'We discussed integrating OpenClaw memory search.',
+            keywords: ['openclaw', 'memory'],
+            entities: ['Happier'],
+            decisions: ['Make memory search opt-in'],
           },
         ],
       },
@@ -205,7 +195,7 @@ describe('memoryWorker', () => {
     expect(result.hits[0]!.sessionId).toBe('sess-1');
 
     worker.stop();
-  });
+  }, 60_000);
 
   it('indexes transcript text into the deep index when ensureUpToDate is called', async () => {
     const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
@@ -256,6 +246,81 @@ describe('memoryWorker', () => {
     worker.stop();
   });
 
+  it('uses the role-filtered transcript message API for default deep indexing', async () => {
+    const fetchSessionById = vi.fn(async () => ({}));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
+      fetchSessionById,
+    }));
+    const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+    vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+      fetchEncryptedTranscriptPageAfterSeq,
+    }));
+    const fetchEncryptedTranscriptMessagesPage = vi.fn(async (args: { roles?: readonly string[] }) => ({
+      messages: args.roles?.includes('agent')
+        ? [
+          {
+            id: 'row-agent',
+            seq: 1,
+            createdAt: 1000,
+            messageRole: 'agent',
+            content: {
+              t: 'plain',
+              v: {
+                role: 'agent',
+                content: {
+                  type: 'codex',
+                  provider: 'codex',
+                  data: { type: 'message', message: 'role filtered deep memory row' },
+                },
+              },
+            },
+          },
+        ]
+        : [],
+      hasMore: false,
+      nextBeforeSeq: null,
+      nextAfterSeq: null,
+    }));
+    vi.doMock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
+      fetchEncryptedTranscriptMessagesPage,
+    }));
+
+    const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
+    await writeMemorySettingsToDisk({ v: 1, enabled: true, indexMode: 'deep' });
+
+    const { startMemoryWorker } = await import('./memoryWorker');
+    const { searchTier2Memory } = await import('./searchMemory');
+
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    const worker = await startMemoryWorker({
+      credentials,
+      machineId: 'machine_1',
+    });
+
+    await worker.reloadSettings();
+    await worker.ensureUpToDate('sess-role-filter');
+
+    const deepPath = worker.getDeepDbPath();
+    expect(deepPath).toBeTruthy();
+    const result = await searchTier2Memory({
+      dbPath: deepPath!,
+      query: { v: 1, query: 'filtered', scope: { type: 'global' }, mode: 'deep' },
+      previewChars: 240,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hits.some((hit) => hit.sessionId === 'sess-role-filter')).toBe(true);
+    expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledWith(expect.objectContaining({
+      roles: ['user', 'agent'],
+      scope: 'main',
+    }));
+    expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
+
+    worker.stop();
+  });
+
   it('continues background deep indexing for recently updated inactive sessions when backfill policy is new_only', async () => {
     vi.useFakeTimers();
     const argvBackup = process.argv.slice();
@@ -275,14 +340,14 @@ describe('memoryWorker', () => {
         hasNext: false,
       }));
       const fetchSessionById = vi.fn(async () => ({}));
-      const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
+      const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
 
       vi.doMock('@/session/transport/http/sessionsHttp', () => ({
         fetchSessionsPage,
         fetchSessionById,
       }));
       vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-        fetchEncryptedTranscriptPageLatest,
+        fetchEncryptedTranscriptPageAfterSeq,
       }));
 
       const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');

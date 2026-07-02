@@ -150,6 +150,7 @@ export interface TmuxCommandResult {
   stdout: string;
   stderr: string;
   command: string[];
+  timedOut?: boolean;
 }
 
 export interface TmuxSessionInfo {

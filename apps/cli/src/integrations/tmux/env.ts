@@ -17,6 +17,14 @@ export function resolveTmuxCommandTimeoutMs(): number {
   return readPositiveIntegerEnv('HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS', 15_000);
 }
 
+export function resolveTmuxPromptSubmitDelayMs(): number {
+  return readNonNegativeIntegerEnv('HAPPIER_CLI_TMUX_PROMPT_SUBMIT_DELAY_MS', 50);
+}
+
+export function resolveTmuxSendKeysChunkSize(): number {
+  return readPositiveIntegerEnv('HAPPIER_CLI_TMUX_SEND_KEYS_CHUNK_SIZE', 8192);
+}
+
 export function isTmuxWindowIndexConflict(stderr: string | undefined): boolean {
   return /index\s+\d+\s+in\s+use/i.test(stderr ?? '');
 }

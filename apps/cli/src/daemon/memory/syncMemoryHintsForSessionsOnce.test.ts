@@ -6,6 +6,82 @@ import { describe, expect, it } from 'vitest';
 import { openSummaryShardIndexDb } from './summaryShardIndexDb';
 
 describe('syncMemoryHintsForSessionsOnce', () => {
+  it('indexes semantic provider messages without requiring the legacy text window gate', async () => {
+    const { syncMemoryHintsForSessionsOnce } = await import('./syncMemoryHintsForSessionsOnce');
+
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-sync-semantic-'));
+    try {
+      const dbPath = join(dir, 'memory.sqlite');
+      const tier1 = openSummaryShardIndexDb({ dbPath });
+      tier1.init();
+
+      const rows = [
+        {
+          seq: 1,
+          createdAtMs: 1000,
+          role: 'agent' as const,
+          content: { type: 'codex', provider: 'codex', data: { type: 'message', message: 'Openclaw semantic provider memory row' } },
+        },
+      ];
+
+      let promptText = '';
+      let committed = 0;
+      await syncMemoryHintsForSessionsOnce({
+        sessionIds: ['sess-1'],
+        tier1,
+        settings: {
+          enabled: true,
+          indexMode: 'hints',
+          backfillPolicy: 'all_history',
+          hints: {
+            updateMode: 'continuous',
+            idleDelayMs: 0,
+            windowSizeMessages: 40,
+            maxShardChars: 12_000,
+            maxSummaryChars: 500,
+            maxKeywords: 5,
+            maxEntities: 5,
+            maxDecisions: 5,
+            maxRunsPerHour: 999,
+            maxShardsPerSession: 250,
+            failureBackoffBaseMs: 0,
+            failureBackoffMaxMs: 0,
+          },
+        },
+        now: () => 5000,
+        fetchRecentDecryptedRows: async () => rows,
+        runSummarizer: async (prompt) => {
+          promptText = prompt;
+          return JSON.stringify({
+            shard: {
+              v: 1,
+              seqFrom: 1,
+              seqTo: 1,
+              createdAtFromMs: 1000,
+              createdAtToMs: 1000,
+              summary: 'We discussed OpenClaw semantic provider memory.',
+              keywords: [],
+              entities: [],
+              decisions: [],
+            },
+            synopsis: null,
+          });
+        },
+        commitArtifacts: async () => {
+          committed += 1;
+        },
+      });
+
+      expect(committed).toBe(1);
+      expect(promptText).toContain('Openclaw semantic provider memory row');
+      expect(tier1.search({ query: 'openclaw', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+
+      tier1.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('generates and indexes a new summary shard when a session has enough new messages', async () => {
     const { syncMemoryHintsForSessionsOnce } = await import('./syncMemoryHintsForSessionsOnce');
 
@@ -133,6 +209,57 @@ describe('syncMemoryHintsForSessionsOnce', () => {
 
       expect(summarizerCalls).toBe(0);
       expect(committed).toBe(0);
+
+      tier1.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('seeds uninitialized new_only sessions from the observed session seq without fetching old transcript rows', async () => {
+    const { syncMemoryHintsForSessionsOnce } = await import('./syncMemoryHintsForSessionsOnce');
+
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-new-only-seed-'));
+    try {
+      const dbPath = join(dir, 'memory.sqlite');
+      const tier1 = openSummaryShardIndexDb({ dbPath });
+      tier1.init();
+
+      let transcriptFetches = 0;
+      await syncMemoryHintsForSessionsOnce({
+        sessionIds: ['sess-1'],
+        initialCursorSeqBySessionId: new Map([['sess-1', 40]]),
+        tier1,
+        settings: {
+          enabled: true,
+          indexMode: 'hints',
+          backfillPolicy: 'new_only',
+          hints: {
+            updateMode: 'continuous',
+            idleDelayMs: 0,
+            windowSizeMessages: 40,
+            maxShardChars: 12_000,
+            maxSummaryChars: 500,
+            maxKeywords: 5,
+            maxEntities: 5,
+            maxDecisions: 5,
+            maxRunsPerHour: 999,
+            maxShardsPerSession: 250,
+            failureBackoffBaseMs: 0,
+            failureBackoffMaxMs: 0,
+          },
+        },
+        now: () => 5000,
+        fetchRecentDecryptedRows: async () => {
+          transcriptFetches += 1;
+          return [];
+        },
+        runSummarizer: async () => '{}',
+        commitArtifacts: async () => {},
+      });
+
+      expect(transcriptFetches).toBe(0);
+      expect(tier1.getSessionCursors({ sessionId: 'sess-1', nowMs: 5000 }).lastHintedSeq).toBe(40);
 
       tier1.close();
     } finally {

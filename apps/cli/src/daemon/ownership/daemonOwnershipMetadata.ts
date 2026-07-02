@@ -57,17 +57,9 @@ export function resolveDaemonStartupSourceServiceManagedState(
   startupSource: DaemonStartupSource | null | undefined,
   serviceLabel?: string | null,
 ): boolean | null {
-  if (startupSource === 'background-service') {
-    return true;
+  if (!startupSource || startupSource === 'unknown') {
+    const normalizedServiceLabel = String(serviceLabel ?? '').trim();
+    return normalizedServiceLabel.length > 0;
   }
-  if (startupSource === 'manual') {
-    return false;
-  }
-  if (String(serviceLabel ?? '').trim()) {
-    return true;
-  }
-  if (startupSource === 'unknown') {
-    return null;
-  }
-  return false;
+  return isDaemonStartupSourceServiceManaged(startupSource);
 }

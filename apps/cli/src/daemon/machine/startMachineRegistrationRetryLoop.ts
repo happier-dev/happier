@@ -1,6 +1,7 @@
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { DaemonState, MachineMetadata } from '@/api/types';
+import { computeRestartDelayMs } from '@/subprocess/supervision/backoff';
 import { logger } from '@/ui/logger';
 import { isMachineContentPublicKeyMismatchError } from '@/api/machine/machineRegistrationErrors';
 import { shouldRetryMachineRegistrationError } from '../machineRegistrationRetryPolicy';
@@ -17,14 +18,41 @@ export type StartMachineRegistrationRetryLoopParams = Readonly<{
   metadataForRegistration: MachineMetadata;
   initialDaemonState: DaemonState;
   machineRegistrationTimeoutMs: number;
-  machineRegistrationRetryDelayMs: number;
+  machineRegistrationRetryBaseDelayMs: number;
+  machineRegistrationRetryMaxDelayMs: number;
+  machineRegistrationRetryJitterMs: number;
   machineRegistrationMaxAttempts: number;
+  resolvesWhenShutdownRequested: Promise<unknown>;
   initialPreflightMachineRegistration: EnsuredMachineRegistration | null;
   resolveMachineId: () => string;
   setMachineId: (machineId: string) => void;
   isShuttingDown: () => boolean;
   onMachineRegistered: (input: OnMachineRegisteredInput) => Promise<void>;
 }>;
+
+async function sleepUntilRetryOrShutdown(
+  delayMs: number,
+  shutdownPromise: Promise<unknown>,
+): Promise<'elapsed' | 'shutdown'> {
+  if (delayMs <= 0) return 'elapsed';
+
+  return await new Promise<'elapsed' | 'shutdown'>((resolve) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      settled = true;
+      resolve('elapsed');
+    }, delayMs);
+    timeout.unref?.();
+
+    const resolveShutdown = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve('shutdown');
+    };
+    void shutdownPromise.then(resolveShutdown, resolveShutdown);
+  });
+}
 
 export function startMachineRegistrationRetryLoop(params: StartMachineRegistrationRetryLoopParams): void {
   let preflightMachineRegistration = params.initialPreflightMachineRegistration;
@@ -68,13 +96,6 @@ export function startMachineRegistrationRetryLoop(params: StartMachineRegistrati
         }
 
         attempts += 1;
-        // IMPORTANT: Do not log raw Axios errors here; they can contain bearer tokens.
-        logger.warn('[DAEMON RUN] Machine registration unavailable; retrying', {
-          attempt: attempts,
-          retryDelayMs: params.machineRegistrationRetryDelayMs,
-          ...(serializeAxiosErrorForLog(error) as Record<string, unknown>),
-        });
-
         if (params.machineRegistrationMaxAttempts > 0 && attempts >= params.machineRegistrationMaxAttempts) {
           logger.warn('[DAEMON RUN] Machine registration failed too many times; giving up', {
             attempt: attempts,
@@ -86,7 +107,28 @@ export function startMachineRegistrationRetryLoop(params: StartMachineRegistrati
           return;
         }
 
-        await new Promise((resolve) => setTimeout(resolve, params.machineRegistrationRetryDelayMs));
+        const retryDelayMs = Math.min(
+          params.machineRegistrationRetryMaxDelayMs,
+          computeRestartDelayMs({
+            attempt: attempts,
+            baseDelayMs: params.machineRegistrationRetryBaseDelayMs,
+            maxDelayMs: params.machineRegistrationRetryMaxDelayMs,
+            jitterMs: params.machineRegistrationRetryJitterMs,
+            random: () => Math.random(),
+          }),
+        );
+
+        // IMPORTANT: Do not log raw Axios errors here; they can contain bearer tokens.
+        logger.warn('[DAEMON RUN] Machine registration unavailable; retrying', {
+          attempt: attempts,
+          retryDelayMs,
+          error: serializeAxiosErrorForLog(error),
+        });
+
+        const sleepResult = await sleepUntilRetryOrShutdown(retryDelayMs, params.resolvesWhenShutdownRequested);
+        if (sleepResult === 'shutdown') {
+          return;
+        }
       }
     }
   })();

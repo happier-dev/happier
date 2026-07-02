@@ -1,7 +1,95 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TrackedSession } from './types';
 
+describe('daemon observed open-turn settlement', () => {
+  it('enqueues a durable turn settlement for the exited runner session', async () => {
+    const apiMachine = {
+      enqueueSessionTurnSettlementMutation: vi.fn(),
+    };
+
+    const { settleDaemonObservedOpenTurn } = await import('./sessionTermination');
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 123,
+      happySessionId: 'sess_1',
+    };
+
+    const now = 1710000000000;
+    settleDaemonObservedOpenTurn({
+      apiMachine,
+      trackedSession: tracked,
+      now: () => now,
+    });
+
+    expect(apiMachine.enqueueSessionTurnSettlementMutation).toHaveBeenCalledWith({
+      sid: 'sess_1',
+      time: now,
+    });
+  });
+
+  it('does not enqueue a settlement when the session id is unknown', async () => {
+    const apiMachine = {
+      enqueueSessionTurnSettlementMutation: vi.fn(),
+    };
+
+    const { settleDaemonObservedOpenTurn } = await import('./sessionTermination');
+
+    settleDaemonObservedOpenTurn({
+      apiMachine,
+      trackedSession: { startedBy: 'daemon', pid: 123 },
+      now: () => 1,
+    });
+
+    expect(apiMachine.enqueueSessionTurnSettlementMutation).not.toHaveBeenCalled();
+  });
+
+  it('tolerates an api machine without the settlement channel', async () => {
+    const { settleDaemonObservedOpenTurn } = await import('./sessionTermination');
+
+    expect(() => settleDaemonObservedOpenTurn({
+      apiMachine: {},
+      trackedSession: { startedBy: 'daemon', pid: 123, happySessionId: 'sess_1' },
+      now: () => 1,
+    })).not.toThrow();
+  });
+});
+
 describe('daemon session termination reporting', () => {
+  it('prefers durable session-end enqueue when available', async () => {
+    const apiMachine = {
+      emitSessionEnd: vi.fn(),
+      enqueueSessionEndMutation: vi.fn(),
+    };
+
+    const { reportDaemonObservedSessionExit } = await import('./sessionTermination');
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 123,
+      happySessionId: 'sess_1',
+    };
+
+    const now = 1710000000000;
+    reportDaemonObservedSessionExit({
+      apiMachine,
+      trackedSession: tracked,
+      now: () => now,
+      exit: { reason: 'process-missing' },
+    });
+
+    expect(apiMachine.enqueueSessionEndMutation).toHaveBeenCalledWith({
+      sid: 'sess_1',
+      time: now,
+      exit: expect.objectContaining({
+        observedBy: 'daemon',
+        reason: 'process-missing',
+        pid: 123,
+      }),
+    });
+    expect(apiMachine.emitSessionEnd).not.toHaveBeenCalled();
+  });
+
   it('emits session-end when sessionId is known', async () => {
     const apiMachine = {
       emitSessionEnd: vi.fn(),

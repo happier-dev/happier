@@ -23,6 +23,7 @@ describe('startMachineLiveStreamFramePump', () => {
         const receipts: unknown[] = [];
         const pump = startMachineLiveStreamFramePump({
             streamId: 'stream_1',
+            routeKind: 'server_relay',
             caps: {
                 maxBitrateBps: 64_000,
                 maxFramesPerSecond: 12,
@@ -54,6 +55,7 @@ describe('startMachineLiveStreamFramePump', () => {
         expect(receipts).toContainEqual(expect.objectContaining({
             id: PEER_MEDIATION_RECEIPTS.streamPaused,
             reasonCode: 'backpressure_window_exhausted',
+            routeKind: 'server_relay',
         }));
     });
 

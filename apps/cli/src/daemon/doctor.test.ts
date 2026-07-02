@@ -67,6 +67,23 @@ describe('classifyHappyProcess', () => {
     expect(res!.type).toBe('dev-daemon');
   });
 
+  it('preserves daemon ownership scope extracted from the process environment', () => {
+    const res = classifyHappyProcess({
+      pid: 123,
+      name: 'node',
+      cmd: '/usr/bin/node /repo/apps/cli/node_modules/.bin/tsx /repo/apps/cli/src/index.ts daemon start-sync',
+      daemonOwnershipEnvironmentVariables: {
+        HAPPIER_HOME_DIR: '/tmp/happier-stack/cli',
+        HAPPIER_ACTIVE_SERVER_ID: 'stack_current__id_default',
+      },
+    });
+    expect(res).not.toBeNull();
+    expect(res!.daemonOwnershipEnvironmentVariables).toEqual({
+      HAPPIER_HOME_DIR: '/tmp/happier-stack/cli',
+      HAPPIER_ACTIVE_SERVER_ID: 'stack_current__id_default',
+    });
+  });
+
   it('should detect a daemon-spawned session launched from a CLI source snapshot', () => {
     const res = classifyHappyProcess({
       pid: 123,

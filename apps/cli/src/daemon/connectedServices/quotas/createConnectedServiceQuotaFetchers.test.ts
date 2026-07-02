@@ -1,45 +1,36 @@
-import { describe, expect, it, vi } from 'vitest';
-
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { describe, expect, it } from 'vitest';
 
 import { createConnectedServiceQuotaFetchers } from './createConnectedServiceQuotaFetchers';
+import type { ConnectedServiceQuotaFetcherDescriptorParams } from './types';
 
 describe('createConnectedServiceQuotaFetchers', () => {
-  it('defaults staleAfterMs to 30 minutes when unset', async () => {
-    const now = 1_000_000;
-    const fetchMock = vi.fn(async (_input: unknown) => ({
-      ok: true,
-      json: async () => ({
-        rate_limit: {
-          primary_window: { used_percent: 5, reset_at: 1_700_000_000 },
-          secondary_window: { used_percent: 10, reset_at: 1_700_100_000 },
-        },
-      }),
-    }));
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+  it('schedules provider-neutral descriptors with shared stale and user-agent options', () => {
+    const descriptorCalls: ConnectedServiceQuotaFetcherDescriptorParams[] = [];
 
-    const fetchers = createConnectedServiceQuotaFetchers({});
-    const openAiFetcher = fetchers.find((fetcher) => fetcher.serviceId === 'openai-codex');
-    expect(openAiFetcher).toBeTruthy();
-
-    const record = buildConnectedServiceCredentialRecord({
-      now,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      kind: 'oauth',
-      expiresAt: now + 60_000,
-      oauth: {
-        accessToken: 'at',
-        refreshToken: 'rt',
-        idToken: null,
-        scope: null,
-        tokenType: null,
-        providerAccountId: null,
-        providerEmail: null,
+    const fetchers = createConnectedServiceQuotaFetchers({
+      HAPPIER_CONNECTED_SERVICES_QUOTAS_STALE_AFTER_MS: '120000',
+      HAPPIER_CONNECTED_SERVICES_QUOTAS_USER_AGENT: 'happier-test',
+      HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_USAGE_URL: 'https://provider-owned.example.test/ignored-by-core',
+    }, [{
+      id: 'test-descriptor',
+      createFetcher: (params) => {
+        descriptorCalls.push(params);
+        return {
+          serviceId: 'github',
+          loadQuota: async () => null,
+        };
       },
-    });
+    }]);
 
-    const snapshot = await openAiFetcher!.loadQuota({ record, now, signal: new AbortController().signal });
-    expect(snapshot?.staleAfterMs).toBe(30 * 60_000);
+    expect(fetchers).toHaveLength(1);
+    expect(descriptorCalls).toEqual([
+      expect.objectContaining({
+        staleAfterMs: 120_000,
+        userAgent: 'happier-test',
+        env: expect.objectContaining({
+          HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_USAGE_URL: 'https://provider-owned.example.test/ignored-by-core',
+        }),
+      }),
+    ]);
   });
 });

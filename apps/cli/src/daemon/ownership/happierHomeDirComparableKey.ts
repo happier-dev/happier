@@ -9,6 +9,13 @@ export function resolveHappierHomeDirComparableKey(homeDir: string | null | unde
     return null;
   }
 
+  const posixWindowsDriveMatch = /^\/([a-zA-Z])\/(.*)$/u.exec(value);
+  if (posixWindowsDriveMatch) {
+    const driveLetter = posixWindowsDriveMatch[1]?.toLowerCase() ?? '';
+    const remainder = String(posixWindowsDriveMatch[2] ?? '').replace(/[\\]+/g, '/');
+    value = `${driveLetter}:/${remainder}`;
+  }
+
   const isWindowsishPath =
     /^[a-zA-Z]:[\\/]/.test(value)
     || value.startsWith('\\\\')

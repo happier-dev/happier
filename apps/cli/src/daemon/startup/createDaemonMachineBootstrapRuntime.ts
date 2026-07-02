@@ -52,12 +52,19 @@ export function createDaemonMachineBootstrapRuntime(
     directPeerServerLifecycle: BootstrapRuntime['directPeerServerLifecycle'];
     directTransferPromptAssetAdapterRegistry: BootstrapRuntime['directTransferPromptAssetAdapterRegistry'];
     directTransferPromptRegistryRegistry: BootstrapRuntime['directTransferPromptRegistryRegistry'];
+    daemonServerWorkScheduler: BootstrapRuntime['daemonServerWorkScheduler'];
+    retryTemporaryThrottleNow?: BootstrapRuntime['retryTemporaryThrottleNow'];
+    setDaemonServerWorkOnline: BootstrapRuntime['setDaemonServerWorkOnline'];
+    onMachineConnectionOnline: NonNullable<BootstrapRuntime['onMachineConnectionOnline']>;
     isShuttingDown: BootstrapRuntime['isShuttingDown'];
   }>,
 ): BootstrapRuntime {
   return {
     cliVersion: packageJson.version,
     credentials: params.credentials,
+    daemonServerWorkScheduler: params.daemonServerWorkScheduler,
+    setDaemonServerWorkOnline: params.setDaemonServerWorkOnline,
+    onMachineConnectionOnline: params.onMachineConnectionOnline,
     isShuttingDown: params.isShuttingDown,
     createConnectedApiMachine: (registeredMachine) =>
       params.diagnosticSubsystemGates.disableMachineSync
@@ -115,6 +122,9 @@ export function createDaemonMachineBootstrapRuntime(
     directPeerServerLifecycle: params.directPeerServerLifecycle,
     directTransferPromptAssetAdapterRegistry: params.directTransferPromptAssetAdapterRegistry,
     directTransferPromptRegistryRegistry: params.directTransferPromptRegistryRegistry,
+    ...(params.retryTemporaryThrottleNow
+      ? { retryTemporaryThrottleNow: params.retryTemporaryThrottleNow }
+      : {}),
     peerMediationMachineRpc: {
       stream: {
         captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(),

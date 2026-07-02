@@ -32,10 +32,36 @@ function isRuntimeExecutablePath(pathLike: string): boolean {
   );
 }
 
+function isPackagedEntrypointPath(pathLike: string): boolean {
+  const normalized = String(pathLike ?? '').trim().replaceAll('\\', '/').toLowerCase();
+  return normalized.endsWith('/package-dist/index.mjs') || normalized.endsWith('/dist/index.mjs');
+}
+
+function hasDaemonStackContext(): boolean {
+  return Boolean(
+    process.env.HAPPIER_STACK_REPO_DIR ||
+    process.env.HAPPIER_STACK_CLI_ROOT_DIR ||
+    process.env.HAPPIER_STACK_STACK
+  );
+}
+
+function shouldPreferDaemonTsxSourceEntrypoint(): boolean {
+  if (
+    typeof process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string'
+    && process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim().length > 0
+  ) {
+    return false;
+  }
+  const explicitPreference = parseOptionalBooleanEnv(process.env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX);
+  if (explicitPreference !== null) return explicitPreference;
+  return process.env.HAPPIER_VARIANT === 'dev' || hasDaemonStackContext();
+}
+
 function resolveBundledCurrentProcessLaunchSpec(cliArgs: readonly string[]): DaemonLaunchSpec | null {
   const currentExecPath = String(process.execPath ?? '').trim();
   if (!currentExecPath) return null;
 
+  const bundledScriptPath = String(process.argv[1] ?? '').trim();
   if (!isRuntimeExecutablePath(currentExecPath)) {
     return {
       filePath: currentExecPath,
@@ -43,7 +69,19 @@ function resolveBundledCurrentProcessLaunchSpec(cliArgs: readonly string[]): Dae
     };
   }
 
-  const bundledScriptPath = String(process.argv[1] ?? '').trim();
+  // When we are already running through a managed JS runtime wrapper with a concrete packaged
+  // entrypoint, keep using the same executable + entrypoint pair. This prevents detached daemon
+  // relaunch from drifting to a runtime resolved from a different home/profile.
+  if (isPackagedEntrypointPath(bundledScriptPath) && !shouldPreferDaemonTsxSourceEntrypoint()) {
+    const currentExecBase = normalizeExecutableBase(currentExecPath);
+    if (currentExecBase !== 'bun' && currentExecBase !== 'bun.exe') {
+      return {
+        filePath: currentExecPath,
+        args: [bundledScriptPath, ...cliArgs],
+      };
+    }
+  }
+
   if (!isEmbeddedBunBundlePath(bundledScriptPath)) {
     return null;
   }
@@ -67,15 +105,31 @@ function resolveBundledCurrentProcessLaunchSpec(cliArgs: readonly string[]): Dae
 function shouldAllowDaemonTsxFallback(): boolean {
   const explicit = parseOptionalBooleanEnv(process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK);
   if (explicit !== null) return explicit;
-  return process.env.HAPPIER_VARIANT === 'dev' || Boolean(
-    process.env.HAPPIER_STACK_REPO_DIR ||
-    process.env.HAPPIER_STACK_CLI_ROOT_DIR ||
-    process.env.HAPPIER_STACK_STACK
-  );
+  return process.env.HAPPIER_VARIANT === 'dev' || hasDaemonStackContext();
 }
 
 function resolveSourceEntrypoint(): string {
   return join(projectPath(), 'src', 'index.ts');
+}
+
+function resolveDaemonTsxSourceLaunchSpec(
+  runtimeExecutable: string,
+  cliArgs: readonly string[],
+): DaemonLaunchSpec | null {
+  const sourceEntrypoint = resolveSourceEntrypoint();
+  if (!existsSync(sourceEntrypoint)) return null;
+
+  const tsxHookSpecifier = resolveTsxImportHookSpecifier();
+  if (!tsxHookSpecifier) {
+    throw new Error('Daemon launch requires tsx for source fallback, but tsx could not be resolved');
+  }
+  return {
+    filePath: runtimeExecutable,
+    args: ['--no-warnings', '--no-deprecation', '--import', tsxHookSpecifier, sourceEntrypoint, ...cliArgs],
+    env: {
+      TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
+    },
+  };
 }
 
 function shouldPreferWindowsPackagedBinaryForEmbeddedBunLaunch(): boolean {
@@ -141,6 +195,11 @@ export async function resolveDaemonLaunchSpec(cliArgs: readonly string[]): Promi
     throw new Error('Daemon launch requires a JavaScript runtime, but none could be resolved');
   }
 
+  if (shouldPreferDaemonTsxSourceEntrypoint()) {
+    const sourceLaunchSpec = resolveDaemonTsxSourceLaunchSpec(runtimeExecutable, cliArgs);
+    if (sourceLaunchSpec) return sourceLaunchSpec;
+  }
+
   const packagedEntrypointIsWindowsEmbeddedBundle =
     process.platform === 'win32' && isEmbeddedBunBundlePath(packagedEntrypoint);
   if (existsSync(packagedEntrypoint) && !packagedEntrypointIsWindowsEmbeddedBundle) {
@@ -150,19 +209,9 @@ export async function resolveDaemonLaunchSpec(cliArgs: readonly string[]): Promi
     };
   }
 
-  const sourceEntrypoint = resolveSourceEntrypoint();
-  if (shouldAllowDaemonTsxFallback() && existsSync(sourceEntrypoint)) {
-    const tsxHookSpecifier = resolveTsxImportHookSpecifier();
-    if (!tsxHookSpecifier) {
-      throw new Error('Daemon launch requires tsx for source fallback, but tsx could not be resolved');
-    }
-    return {
-      filePath: runtimeExecutable,
-      args: ['--no-warnings', '--no-deprecation', '--import', tsxHookSpecifier, sourceEntrypoint, ...cliArgs],
-      env: {
-        TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
-      },
-    };
+  if (shouldAllowDaemonTsxFallback()) {
+    const sourceLaunchSpec = resolveDaemonTsxSourceLaunchSpec(runtimeExecutable, cliArgs);
+    if (sourceLaunchSpec) return sourceLaunchSpec;
   }
 
   throw new Error(`Daemon packaged entrypoint is missing: ${packagedEntrypoint}`);

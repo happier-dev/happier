@@ -12,3 +12,14 @@ export type ConnectedServiceQuotaFetcher = Readonly<{
     signal: AbortSignal;
   }>) => Promise<ConnectedServiceQuotaSnapshotV1 | null>;
 }>;
+
+export type ConnectedServiceQuotaFetcherDescriptorParams = Readonly<{
+  env: NodeJS.ProcessEnv;
+  staleAfterMs: number;
+  userAgent?: string;
+}>;
+
+export type ConnectedServiceQuotaFetcherDescriptor = Readonly<{
+  id: string;
+  createFetcher: (params: ConnectedServiceQuotaFetcherDescriptorParams) => ConnectedServiceQuotaFetcher;
+}>;

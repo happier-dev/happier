@@ -2,6 +2,10 @@ import { redactBugReportSensitiveText, SessionSummaryShardV1Schema, SessionSynop
 
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
 
+import {
+  extractMemoryIndexableTranscriptItemFromDecryptedRow,
+} from '../transcript/extractIndexableItem';
+import type { MemoryIndexableTranscriptItem } from '../transcript/indexableItem';
 import { buildMemoryHintsPrompt } from './buildMemoryHintsPrompt';
 import { parseMemoryHintsOutput } from './parseMemoryHintsOutput';
 
@@ -19,33 +23,6 @@ export type GenerateMemoryHintsShardResult =
   | Readonly<{ ok: true; shard: GeneratedMemoryHintShard; synopsis: GeneratedMemoryHintSynopsis | null }>
   | Readonly<{ ok: false; errorCode: 'no_indexable_messages' | 'invalid_model_output' | 'schema_validation_failed'; error: string }>;
 
-function isMemoryArtifactMeta(meta: unknown): boolean {
-  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
-  const happier = (meta as Record<string, unknown>).happier;
-  if (!happier || typeof happier !== 'object' || Array.isArray(happier)) return false;
-  const kind = (happier as Record<string, unknown>).kind;
-  return kind === 'session_summary_shard.v1' || kind === 'session_synopsis.v1';
-}
-
-function extractIndexableText(row: DecryptedTranscriptRow): string | null {
-  if (!row.content || typeof row.content !== 'object' || Array.isArray(row.content)) return null;
-  const type = (row.content as Record<string, unknown>).type;
-  if (type === 'text') {
-    const text = (row.content as Record<string, unknown>).text;
-    return typeof text === 'string' ? text : null;
-  }
-  if (row.role === 'agent' && type === 'acp') {
-    const data = (row.content as Record<string, unknown>).data;
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
-    const t = (data as Record<string, unknown>).type;
-    if (t === 'message' || t === 'reasoning') {
-      const message = (data as Record<string, unknown>).message;
-      return typeof message === 'string' ? message : null;
-    }
-  }
-  return null;
-}
-
 function trimToMaxChars(text: string, maxChars: number): string {
   const normalized = String(text ?? '');
   if (normalized.length <= maxChars) return normalized;
@@ -54,26 +31,23 @@ function trimToMaxChars(text: string, maxChars: number): string {
 
 export async function generateMemoryHintsShard(params: Readonly<{
   sessionId: string;
-  rows: ReadonlyArray<DecryptedTranscriptRow>;
+  rows?: ReadonlyArray<DecryptedTranscriptRow>;
+  items?: ReadonlyArray<MemoryIndexableTranscriptItem>;
   previousSynopsis: string | null;
   budgets: Readonly<{ windowSizeMessages: number; maxShardChars: number }>;
   hintSettings: Readonly<{ maxSummaryChars: number; maxKeywords: number; maxEntities: number; maxDecisions: number }>;
   run: (prompt: string) => Promise<string>;
 }>): Promise<GenerateMemoryHintsShardResult> {
   const sessionId = String(params.sessionId ?? '').trim();
-  const indexable: Array<{ seq: number; createdAtMs: number; role: 'user' | 'assistant'; text: string }> = [];
-
-  for (const row of params.rows) {
-    if (isMemoryArtifactMeta(row.meta)) continue;
-    const text = extractIndexableText(row);
-    if (!text || text.trim().length === 0) continue;
-    indexable.push({
-      seq: row.seq,
-      createdAtMs: row.createdAtMs,
-      role: row.role === 'user' ? 'user' : 'assistant',
-      text: redactBugReportSensitiveText(text).trim(),
-    });
-  }
+  const indexable = (params.items ?? (params.rows ?? [])
+    .map((row, index) => extractMemoryIndexableTranscriptItemFromDecryptedRow({ sessionId, row, index }))
+    .filter((item): item is MemoryIndexableTranscriptItem => item !== null))
+    .map((item) => ({
+      seq: item.seq,
+      createdAtMs: item.createdAtMs,
+      role: item.role,
+      text: redactBugReportSensitiveText(item.text).trim(),
+    }));
 
   if (indexable.length === 0) {
     return { ok: false, errorCode: 'no_indexable_messages', error: 'No indexable transcript messages.' };

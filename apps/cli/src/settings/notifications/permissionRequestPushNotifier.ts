@@ -22,6 +22,8 @@ export class PermissionRequestPushNotifier {
   private readonly pushSender: PermissionRequestPushSender;
   private readonly getSettings: () => AccountSettings | null;
   private readonly getSettingsSecretsReadKeys: () => ReadonlyArray<Uint8Array | null | undefined>;
+  private readonly getSessionTitle: () => string | null;
+  private readonly getAgentDisplayName: () => string | null;
   private readonly sessionId: string;
   private readonly logPrefix: string;
   private readonly retryDelaysMs: readonly number[];
@@ -36,6 +38,8 @@ export class PermissionRequestPushNotifier {
     pushSender: PermissionRequestPushSender;
     getSettings: () => AccountSettings | null;
     getSettingsSecretsReadKeys?: () => ReadonlyArray<Uint8Array | null | undefined>;
+    getSessionTitle?: () => string | null;
+    getAgentDisplayName?: () => string | null;
     sessionId: string;
     logPrefix: string;
     retryDelaysMs?: readonly number[];
@@ -47,6 +51,8 @@ export class PermissionRequestPushNotifier {
     this.pushSender = params.pushSender;
     this.getSettings = params.getSettings;
     this.getSettingsSecretsReadKeys = params.getSettingsSecretsReadKeys ?? (() => []);
+    this.getSessionTitle = params.getSessionTitle ?? (() => null);
+    this.getAgentDisplayName = params.getAgentDisplayName ?? (() => null);
     this.sessionId = params.sessionId;
     this.logPrefix = params.logPrefix;
     this.retryDelaysMs = params.retryDelaysMs ?? configuration.permissionRequestPushRetryDelaysMs;
@@ -150,6 +156,8 @@ export class PermissionRequestPushNotifier {
     const result = await sendAgentRequestPushNotificationAsync({
       pushSender: this.pushSender,
       sessionId: this.sessionId,
+      sessionTitle: this.readSessionTitle(),
+      agentDisplayName: this.readAgentDisplayName(),
       requestId: permissionId,
       toolName: entry.toolName,
       kind: entry.kind,
@@ -195,5 +203,21 @@ export class PermissionRequestPushNotifier {
       attempt: after.attempts,
       retryDelayMs,
     });
+  }
+
+  private readSessionTitle(): string | null {
+    try {
+      return this.getSessionTitle();
+    } catch {
+      return null;
+    }
+  }
+
+  private readAgentDisplayName(): string | null {
+    try {
+      return this.getAgentDisplayName();
+    } catch {
+      return null;
+    }
   }
 }

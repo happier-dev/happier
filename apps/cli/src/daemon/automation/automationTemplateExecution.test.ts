@@ -324,6 +324,28 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.value.codexBackendMode).toBe('appServer');
   });
 
+  it('normalizes legacy codexBackendMode from plaintext templates', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Legacy Codex backend mode',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            agent: 'codex',
+            codexBackendMode: 'mcp',
+          }),
+        },
+      }),
+      undefined,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.codexBackendMode).toBe('appServer');
+  });
+
   it('rejects workspace-linked plaintext templates', () => {
     const parsed = parseAutomationTemplateExecution(
       buildClaimedRun({

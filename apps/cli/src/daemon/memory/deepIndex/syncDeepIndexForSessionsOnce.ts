@@ -1,4 +1,5 @@
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
+import type { MemoryContentPolicyV1, MemoryCoveragePolicyV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 
@@ -6,10 +7,15 @@ import type { SummaryShardIndexDbHandle } from '../summaryShardIndexDb';
 import type { DeepIndexDbHandle } from './deepIndexDb';
 import { chunkTranscriptRows } from './chunkTranscriptRows';
 import type { OperationalMemoryEmbeddingsSettings } from '../resolveOperationalMemoryEmbeddingsSettings';
+import {
+  extractMemoryIndexableTranscriptItemFromDecryptedRow,
+} from '../transcript/extractIndexableItem';
 
 export type SyncDeepIndexSettings = Readonly<{
   enabled: boolean;
   indexMode: 'deep';
+  coveragePolicy?: MemoryCoveragePolicyV1;
+  contentPolicy?: MemoryContentPolicyV1;
   deep: Readonly<{
     maxChunkChars: number;
     maxChunkMessages: number;
@@ -21,35 +27,19 @@ export type SyncDeepIndexSettings = Readonly<{
   embeddings?: OperationalMemoryEmbeddingsSettings | null;
 }>;
 
-function isMemoryArtifactMeta(meta: unknown): boolean {
-  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
-  const happier = (meta as Record<string, unknown>).happier;
-  if (!happier || typeof happier !== 'object' || Array.isArray(happier)) return false;
-  const kind = (happier as Record<string, unknown>).kind;
-  return kind === 'session_summary_shard.v1' || kind === 'session_synopsis.v1';
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function extractTextFromContent(
-  role: 'user' | 'agent',
+function shouldSkipAssistantAcpPayload(
   content: unknown,
-  opts: Readonly<{ includeAssistantAcpMessage: boolean }>,
-): string | null {
-  if (!content || typeof content !== 'object' || Array.isArray(content)) return null;
-  const type = (content as Record<string, unknown>).type;
-  if (type === 'text') {
-    const text = (content as Record<string, unknown>).text;
-    return typeof text === 'string' ? text : null;
-  }
-  if (opts.includeAssistantAcpMessage && role === 'agent' && type === 'acp') {
-    const data = (content as Record<string, unknown>).data;
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
-    const t = (data as Record<string, unknown>).type;
-    if (t === 'message' || t === 'reasoning') {
-      const message = (data as Record<string, unknown>).message;
-      return typeof message === 'string' ? message : null;
-    }
-  }
-  return null;
+  includeAssistantAcpMessage: boolean,
+): boolean {
+  if (includeAssistantAcpMessage) return false;
+  if (!isRecord(content)) return false;
+  if (content.type !== 'acp' && content.type !== 'codex') return false;
+  const data = isRecord(content.data) ? content.data : null;
+  return data?.type === 'message' || data?.type === 'reasoning';
 }
 
 export async function syncDeepIndexForSessionsOnce(params: Readonly<{
@@ -65,10 +55,20 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
   if (params.settings.indexMode !== 'deep') return;
   const nowMs = Math.max(0, Math.trunc(params.now()));
   const pageLimit = Math.max(1, Math.min(500, Math.trunc(configuration.memoryMaxTranscriptWindowMessages)));
+  const run = {
+    sessionsConsidered: 0,
+    sessionsProcessed: 0,
+    sessionsIndexed: 0,
+    sessionsFailed: 0,
+    rawRowsFetched: 0,
+    semanticRowsFound: 0,
+    deepChunksCreated: 0,
+  };
 
   for (const rawSessionId of params.sessionIds) {
     const sessionId = String(rawSessionId ?? '').trim();
     if (!sessionId) continue;
+    run.sessionsConsidered += 1;
 
     const cursors = params.tier1.getSessionCursors({ sessionId, nowMs });
     if (cursors.nextDeepEligibleAtMs > nowMs) continue;
@@ -84,20 +84,33 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
         backoffBaseMs: params.settings.deep.failureBackoffBaseMs,
         backoffMaxMs: params.settings.deep.failureBackoffMaxMs,
       });
+      run.sessionsFailed += 1;
       continue;
     }
+    run.rawRowsFetched += rows.length;
+    if (rows.length > 0) run.sessionsProcessed += 1;
     const lastScannedSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : afterSeq;
 
     try {
-      const indexable: Array<{ seq: number; createdAtMs: number; text: string; role: 'user' | 'agent' }> = [];
-      for (const row of rows) {
-        if (isMemoryArtifactMeta(row.meta)) continue;
-        const text = extractTextFromContent(row.role, row.content, {
-          includeAssistantAcpMessage: params.settings.deep.includeAssistantAcpMessage,
-        });
-        if (!text || text.trim().length === 0) continue;
-        indexable.push({ seq: row.seq, createdAtMs: row.createdAtMs, text: text.trim(), role: row.role });
-      }
+      const indexable = rows
+        .filter((row) => !shouldSkipAssistantAcpPayload(
+          row.content,
+          params.settings.deep.includeAssistantAcpMessage,
+        ))
+        .map((row, index) => extractMemoryIndexableTranscriptItemFromDecryptedRow({
+          sessionId,
+          row,
+          index,
+          contentPolicy: params.settings.contentPolicy,
+        }))
+        .filter((item): item is NonNullable<typeof item> => item !== null)
+        .map((item) => ({
+          seq: item.seq,
+          createdAtMs: item.createdAtMs,
+          text: item.text,
+          role: item.role === 'user' ? 'user' as const : 'agent' as const,
+        }));
+      run.semanticRowsFound += indexable.length;
 
       const chunks = chunkTranscriptRows({
         rows: indexable,
@@ -118,6 +131,7 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
           text: chunk.text,
         });
       }
+      run.deepChunksCreated += chunks.length;
 
       const emb = params.settings.embeddings;
       const provider = String(emb?.providerKind ?? '').trim();
@@ -163,6 +177,26 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
       if (rows.length > 0) {
         params.tier1.markDeepIndexSuccess({ sessionId, seqTo: lastScannedSeq, nowMs });
       }
+      if (chunks.length > 0) {
+        run.sessionsIndexed += 1;
+        params.tier1.recordMemorySessionIndexState({
+          sessionId,
+          coveragePolicyJson: JSON.stringify(params.settings.coveragePolicy ?? { type: 'full' }),
+          status: 'indexed',
+          lastSuccessAtMs: nowMs,
+          lastAttemptAtMs: nowMs,
+          lastCompletedAtMs: nowMs,
+          lastObservedSeq: lastScannedSeq,
+          lastScannedSeq,
+          lastSemanticSeq: indexable[indexable.length - 1]!.seq,
+          lastDeepIndexedSeq: lastScannedSeq,
+          rawRowsFetched: rows.length,
+          semanticRowsFound: indexable.length,
+          semanticRowsIndexedDeep: indexable.length,
+          deepChunkCount: chunks.length,
+          updatedAtMs: nowMs,
+        });
+      }
     } catch {
       params.tier1.markDeepIndexFailure({
         sessionId,
@@ -170,6 +204,22 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
         backoffBaseMs: params.settings.deep.failureBackoffBaseMs,
         backoffMaxMs: params.settings.deep.failureBackoffMaxMs,
       });
+      run.sessionsFailed += 1;
     }
   }
+
+  params.tier1.recordMemoryWorkerRun({
+    runId: `deep-${nowMs}`,
+    startedAtMs: nowMs,
+    finishedAtMs: nowMs,
+    trigger: 'sync_deep',
+    indexMode: 'deep',
+    sessionsConsidered: run.sessionsConsidered,
+    sessionsProcessed: run.sessionsProcessed,
+    sessionsIndexed: run.sessionsIndexed,
+    sessionsFailed: run.sessionsFailed,
+    rawRowsFetched: run.rawRowsFetched,
+    semanticRowsFound: run.semanticRowsFound,
+    deepChunksCreated: run.deepChunksCreated,
+  });
 }

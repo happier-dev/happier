@@ -45,6 +45,7 @@ function createParams(overrides: Partial<Parameters<typeof import('./spawnWindow
     reservedSessionId: 'reserved-session',
     directoryCreated: false,
     extraEnvForChildWithMessage: {},
+    processEnv: process.env,
     happyHomeDir: 'C:\\Users\\test\\.happier',
     pidToTrackedSession: new Map(),
     pidToAwaiter: new Map(),
@@ -129,6 +130,44 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
           'windows_console',
         ]),
       }));
+    });
+  });
+
+  it('builds visible console launch env from the daemon-owned process env', async () => {
+    await withPackagedWindowsCli(async () => {
+      envScope.patch({
+        HAPPIER_WINDOWS_HOSTED_AMBIENT_ONLY_TEST: 'ambient-only',
+        HAPPIER_WINDOWS_HOSTED_SHARED_TEST: 'ambient',
+      });
+      const { spawnWindowsHostedSessionAndWaitForWebhook } = await import('./spawnWindowsHostedSessionAndWaitForWebhook');
+
+      await expect(spawnWindowsHostedSessionAndWaitForWebhook(createParams({
+        processEnv: {
+          ...process.env,
+          HAPPIER_WINDOWS_HOSTED_AMBIENT_ONLY_TEST: undefined,
+          HAPPIER_WINDOWS_HOSTED_DAEMON_ONLY_TEST: 'daemon-only',
+          HAPPIER_WINDOWS_HOSTED_SHARED_TEST: 'daemon',
+        },
+        extraEnvForChildWithMessage: {
+          HAPPIER_WINDOWS_HOSTED_SHARED_TEST: 'message',
+          HAPPIER_WINDOWS_HOSTED_MESSAGE_ONLY_TEST: 'message-only',
+        },
+      }))).resolves.toEqual({
+        type: 'success',
+        sessionId: 'session-7777',
+      });
+
+      expect(mocks.startHappySessionInVisibleWindowsConsole).toHaveBeenCalledTimes(1);
+      const visibleConsoleCalls = mocks.startHappySessionInVisibleWindowsConsole.mock.calls as unknown as
+        Array<[{ env?: NodeJS.ProcessEnv }]>;
+      const launchArgs = visibleConsoleCalls[0]?.[0];
+      const launchedEnv = launchArgs?.env;
+      expect(launchedEnv).toMatchObject({
+        HAPPIER_WINDOWS_HOSTED_DAEMON_ONLY_TEST: 'daemon-only',
+        HAPPIER_WINDOWS_HOSTED_SHARED_TEST: 'message',
+        HAPPIER_WINDOWS_HOSTED_MESSAGE_ONLY_TEST: 'message-only',
+      });
+      expect(launchedEnv?.HAPPIER_WINDOWS_HOSTED_AMBIENT_ONLY_TEST).toBeUndefined();
     });
   });
 

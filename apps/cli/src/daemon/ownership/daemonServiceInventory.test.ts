@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
+import type { DaemonServiceCliRuntime } from '@/daemon/service/cli';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -494,6 +495,179 @@ describe('daemonServiceInventory', () => {
             const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
 
             expect(services).toEqual([]);
+        });
+    });
+
+    it('treats an installed service as current installation when service env home matches runtime home', async () => {
+        await withTempDir('happier-daemon-service-conflict-current-home-', async (homeDir) => {
+            const runtimeHomeDir = join(homeDir, '.happier');
+            const foreignServicePath = join(homeDir, 'foreign-services', 'happier-daemon.default.ps1');
+            mkdirSync(dirname(foreignServicePath), { recursive: true });
+            writeFileSync(
+                foreignServicePath,
+                [
+                    '$env:HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = "' + runtimeHomeDir.replaceAll('\\', '\\\\') + '"',
+                    '$env:HAPPIER_DAEMON_STARTUP_SOURCE = "background-service"',
+                    '& "C:\\Users\\tester\\.happier\\bin\\happier.exe" "daemon" "start-sync"',
+                ].join('\n'),
+                'utf-8',
+            );
+
+            envScope.patch({
+                HAPPIER_HOME_DIR: runtimeHomeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
+                HAPPIER_PUBLIC_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+                HAPPIER_DAEMON_SERVICE_PLATFORM: 'win32',
+                HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
+                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: runtimeHomeDir,
+                HAPPIER_DAEMON_SERVICE_CHANNEL: 'preview',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+            });
+            vi.resetModules();
+
+            const [{ resolveDaemonServiceCliRuntimeFromEnv }, { hasInstalledBackgroundServiceConflictForCurrentInstallation }] = await Promise.all([
+                import('@/daemon/service/cli'),
+                import('./daemonServiceInventory'),
+            ]);
+            const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
+
+            const result = hasInstalledBackgroundServiceConflictForCurrentInstallation({
+                runtime,
+                services: [
+                    {
+                        serverId: 'default',
+                        name: 'Default automatic startup',
+                        relayUrl: null,
+                        installed: true,
+                        path: foreignServicePath,
+                        platform: 'win32',
+                        releaseChannel: 'preview',
+                        label: 'Happier\\happier-daemon.default',
+                        targetMode: 'default-following',
+                    },
+                ],
+            });
+
+            expect(result).toBe(true);
+        });
+    });
+
+    it('does not treat an installed service as current installation when service env home differs', async () => {
+        await withTempDir('happier-daemon-service-conflict-foreign-home-', async (homeDir) => {
+            const runtimeHomeDir = join(homeDir, '.happier');
+            const foreignHomeDir = join(homeDir, '.happier-foreign');
+            const foreignServicePath = join(homeDir, 'foreign-services', 'happier-daemon.default.ps1');
+            mkdirSync(dirname(foreignServicePath), { recursive: true });
+            writeFileSync(
+                foreignServicePath,
+                [
+                    '$env:HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = "' + foreignHomeDir.replaceAll('\\', '\\\\') + '"',
+                    '$env:HAPPIER_DAEMON_STARTUP_SOURCE = "background-service"',
+                    '& "C:\\Users\\tester\\.happier\\bin\\happier.exe" "daemon" "start-sync"',
+                ].join('\n'),
+                'utf-8',
+            );
+
+            envScope.patch({
+                HAPPIER_HOME_DIR: runtimeHomeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
+                HAPPIER_PUBLIC_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+                HAPPIER_DAEMON_SERVICE_PLATFORM: 'win32',
+                HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
+                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: runtimeHomeDir,
+                HAPPIER_DAEMON_SERVICE_CHANNEL: 'preview',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+            });
+            vi.resetModules();
+
+            const [{ resolveDaemonServiceCliRuntimeFromEnv }, { hasInstalledBackgroundServiceConflictForCurrentInstallation }] = await Promise.all([
+                import('@/daemon/service/cli'),
+                import('./daemonServiceInventory'),
+            ]);
+            const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
+
+            const result = hasInstalledBackgroundServiceConflictForCurrentInstallation({
+                runtime,
+                services: [
+                    {
+                        serverId: 'default',
+                        name: 'Default automatic startup',
+                        relayUrl: null,
+                        installed: true,
+                        path: foreignServicePath,
+                        platform: 'win32',
+                        releaseChannel: 'preview',
+                        label: 'Happier\\happier-daemon.default',
+                        targetMode: 'default-following',
+                    },
+                ],
+            });
+
+            expect(result).toBe(false);
+        });
+    });
+
+    it('treats POSIX-style runtime home and Windows-style service home as the same installation', async () => {
+        await withTempDir('happier-daemon-service-conflict-msys-home-', async (homeDir) => {
+            const runtimeHomeDir = '/c/Users/test_qa/.happier';
+            const serviceHomeDir = 'C:\\Users\\test_qa\\.happier';
+            const foreignServicePath = join(homeDir, 'foreign-services', 'happier-daemon.default.ps1');
+            mkdirSync(dirname(foreignServicePath), { recursive: true });
+            writeFileSync(
+                foreignServicePath,
+                [
+                    '$env:HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = "' + serviceHomeDir.replaceAll('\\', '\\\\') + '"',
+                    '$env:HAPPIER_DAEMON_STARTUP_SOURCE = "background-service"',
+                    '& "C:\\Users\\tester\\.happier\\bin\\happier.exe" "daemon" "start-sync"',
+                ].join('\n'),
+                'utf-8',
+            );
+
+            vi.resetModules();
+
+            const [{ hasInstalledBackgroundServiceConflictForCurrentInstallation }] = await Promise.all([
+                import('./daemonServiceInventory'),
+            ]);
+            const runtime: DaemonServiceCliRuntime = {
+                platform: 'win32',
+                channel: 'preview',
+                targetMode: 'default-following',
+                instanceId: 'cloud',
+                uid: null,
+                userHomeDir: '/c/Users/test_qa',
+                happierHomeDir: runtimeHomeDir,
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                publicServerUrl: 'https://api.happier.dev',
+                nodePath: 'C:\\Users\\test_qa\\.happier\\tools\\js-runtime\\current\\runtime\\node.exe',
+                entryPath: 'C:\\Users\\test_qa\\.happier\\cli-preview\\current\\package-dist\\index.mjs',
+            };
+
+            const result = hasInstalledBackgroundServiceConflictForCurrentInstallation({
+                runtime,
+                services: [
+                    {
+                        serverId: 'default',
+                        name: 'Default automatic startup',
+                        relayUrl: null,
+                        installed: true,
+                        path: foreignServicePath,
+                        platform: 'win32',
+                        happierHomeDir: serviceHomeDir,
+                        releaseChannel: 'preview',
+                        label: 'Happier\\happier-daemon.default',
+                        targetMode: 'default-following',
+                    },
+                ],
+            });
+
+            expect(result).toBe(true);
         });
     });
 });

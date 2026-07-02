@@ -114,6 +114,8 @@ export class TmuxUtilities {
     window?: string,
     pane?: string,
     socketPath?: string,
+    stdin?: string,
+    options?: Readonly<{ timeoutMs?: number }>,
   ): Promise<TmuxCommandResult | null> {
     const targetSession = session || this.sessionName;
 
@@ -129,17 +131,23 @@ export class TmuxUtilities {
     // Handle send-keys with proper target specification
     if (cmd.length > 0 && cmd[0] === 'send-keys') {
       const fullCmd = [...baseCmd, cmd[0]];
+      const hasExplicitTarget = cmd.slice(1).includes('-t');
 
       // Add target specification immediately after send-keys
-      let target = targetSession;
-      if (window) target += `:${window}`;
-      if (pane) target += `.${pane}`;
-      fullCmd.push('-t', target);
+      if (!hasExplicitTarget) {
+        let target = targetSession;
+        if (window) target += `:${window}`;
+        if (pane) target += `.${pane}`;
+        fullCmd.push('-t', target);
+      }
 
       // Add keys and control sequences
       fullCmd.push(...cmd.slice(1));
 
-      return this.executeCommand(fullCmd);
+      return this.executeCommand(fullCmd, {
+        ...(stdin !== undefined ? { stdin } : {}),
+        ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      });
     }
 
     // Non-send-keys commands
@@ -154,20 +162,27 @@ export class TmuxUtilities {
       fullCmd.push('-t', target);
     }
 
-    return this.executeCommand(fullCmd);
+    return this.executeCommand(fullCmd, {
+      ...(stdin !== undefined ? { stdin } : {}),
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    });
   }
 
   /**
    * Execute command with subprocess and return result
    */
-  private async executeCommand(cmd: string[]): Promise<TmuxCommandResult | null> {
+  private async executeCommand(cmd: string[], options?: Readonly<{ stdin?: string; timeoutMs?: number }>): Promise<TmuxCommandResult | null> {
     try {
-      const result = await this.runCommand(cmd);
+      const result = await this.runCommand(cmd, {
+        ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
+        ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      });
       return {
         returncode: result.exitCode,
         stdout: result.stdout || '',
         stderr: result.stderr || '',
         command: cmd,
+        ...(result.timedOut ? { timedOut: true } : {}),
       };
     } catch (error) {
       logTmuxDebug('[TMUX] Command execution failed:', error);
@@ -178,12 +193,16 @@ export class TmuxUtilities {
   /**
    * Run command using Node.js child_process.spawn
    */
-  private runCommand(args: string[], options: SpawnOptions = {}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  private runCommand(
+    args: string[],
+    options: SpawnOptions & { stdin?: string; timeoutMs?: number } = {},
+  ): Promise<{ exitCode: number; stdout: string; stderr: string; timedOut?: boolean }> {
     return new Promise((resolve, reject) => {
+      const { stdin, timeoutMs, ...spawnOptions } = options;
       const mergedEnv = {
         ...process.env,
         ...(this.tmuxCommandEnv ?? {}),
-        ...(options.env ?? {}),
+        ...(spawnOptions.env ?? {}),
       };
       // If we are intentionally targeting a specific tmux server (via TMUX_TMPDIR or -S socket),
       // do not inherit an ambient tmux client context from the parent process.
@@ -196,16 +215,27 @@ export class TmuxUtilities {
         delete (mergedEnv as Record<string, unknown>).TMUX_PANE;
       }
 
+      const commandTimeoutMs = timeoutMs ?? resolveTmuxCommandTimeoutMs();
       const child = spawn(args[0], args.slice(1), {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: resolveTmuxCommandTimeoutMs(),
+        stdio: stdin !== undefined ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
         shell: false,
-        ...options,
+        ...spawnOptions,
         env: mergedEnv,
       });
 
+      if (stdin !== undefined) {
+        child.stdin?.end(stdin);
+      }
+
       let stdout = '';
       let stderr = '';
+      let timedOut = false;
+      const timeoutHandle = commandTimeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            child.kill();
+          }, commandTimeoutMs)
+        : undefined;
 
       child.stdout?.on('data', (data) => {
         stdout += data.toString();
@@ -216,14 +246,17 @@ export class TmuxUtilities {
       });
 
       child.on('close', (code) => {
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
         resolve({
           exitCode: normalizeExitCode(code),
           stdout,
           stderr,
+          ...(timedOut ? { timedOut: true } : {}),
         });
       });
 
       child.on('error', (error) => {
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
         reject(error);
       });
     });
@@ -311,38 +344,24 @@ export class TmuxUtilities {
   }
 
   /**
-   * Capture current input from tmux pane
+   * Capture the FULL pane contents from tmux.
+   *
+   * Returns the whole captured screen (trailing blank rows trimmed), NOT just the bottom
+   * line. The multi-line Claude screen parser (`parseClaudeScreenState` /
+   * `resolveClaudeScreenInFlightSteerVeto`) inspects boxed composers, dialogs, permission
+   * prompts, and spinner lines that sit ABOVE the bottom composer; returning only the last
+   * line blinded every steer veto on tmux (a permission prompt above `│ > │` was invisible,
+   * so a steer could be wrongly allowed into a dialog). zellij already returns the full
+   * `dumpScreen`; this keeps tmux at parity.
    */
   async captureCurrentInput(session?: string, window?: string, pane?: string): Promise<string> {
-    const result = await this.executeTmuxCommand(['capture-pane', '-p'], session, window, pane);
+    // `-e` preserves SGR styling (ported S-8): the dim-placeholder composer detection needs the
+    // raw SGR codes; parseClaudeScreenState strips ANSI internally for all text matching.
+    const result = await this.executeTmuxCommand(['capture-pane', '-p', '-e'], session, window, pane);
     if (result && result.returncode === 0) {
-      const lines = result.stdout.trim().split('\n');
-      return lines[lines.length - 1] || '';
+      return result.stdout.replace(/\s+$/, '');
     }
     return '';
-  }
-
-  /**
-   * Check if user is actively typing
-   */
-  async isUserTyping(
-    checkInterval = 500,
-    maxChecks = 3,
-    session?: string,
-    window?: string,
-    pane?: string,
-  ): Promise<boolean> {
-    const initialInput = await this.captureCurrentInput(session, window, pane);
-
-    for (let i = 0; i < maxChecks - 1; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, checkInterval));
-      const currentInput = await this.captureCurrentInput(session, window, pane);
-      if (currentInput !== initialInput) {
-        return true;
-      }
-    }
-
-    return false;
   }
 
   /**

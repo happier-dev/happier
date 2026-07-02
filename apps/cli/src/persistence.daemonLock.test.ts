@@ -69,4 +69,36 @@ describe('acquireDaemonLock', () => {
     expect(existsSync(configuration.daemonLockFile)).toBe(true);
     await fileHandle?.close();
   });
+
+  it('can clear live daemon state without removing the held singleton lock', async () => {
+    const { configuration } = await import('@/configuration');
+    await mkdir(dirname(configuration.daemonStateFile), { recursive: true });
+    await writeFile(configuration.daemonStateFile, '{}', 'utf8');
+    await mkdir(dirname(configuration.daemonLockFile), { recursive: true });
+    await writeFile(configuration.daemonLockFile, String(process.pid), 'utf8');
+
+    const { clearDaemonState } = await import('@/persistence');
+
+    await clearDaemonState({ includeLockFile: false });
+
+    expect(existsSync(configuration.daemonStateFile)).toBe(false);
+    expect(existsSync(configuration.daemonLockFile)).toBe(true);
+  });
+
+  it('does not remove a successor-owned lock file when releasing an old lock handle', async () => {
+    vi.doMock('@/daemon/doctor', () => ({
+      findHappyProcessByPid: async () => null,
+    }));
+
+    const { configuration } = await import('@/configuration');
+    const { acquireDaemonLock, releaseDaemonLock } = await import('@/persistence');
+
+    const fileHandle = await acquireDaemonLock(1, 1);
+    expect(fileHandle).not.toBeNull();
+    await writeFile(configuration.daemonLockFile, '999999', 'utf8');
+
+    await releaseDaemonLock(fileHandle!);
+
+    expect(existsSync(configuration.daemonLockFile)).toBe(true);
+  });
 });

@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import {
+    decodePeerTcpTunnelBinaryFrameV2,
+    encodePeerTcpTunnelBinaryFrameV2,
+    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+} from '@happier-dev/protocol';
 
 import { createPeerMediationLoopbackApp } from '../loopback/server';
 
@@ -186,6 +191,215 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
 
         expect(app.server.listenerCount('upgrade')).toBe(listenerCountBefore);
 
+        await app.close();
+    });
+
+    it('bridges binary_frame_v2 loopback websocket frames without JSON/base64 socket payloads', async () => {
+        const mod = await loadRegisterRoutesModule();
+        const app = createPeerMediationLoopbackApp(loopbackOptions);
+        const writes: string[] = [];
+        let resolveFirstWrite: (() => void) | undefined;
+        const firstWrite = new Promise<void>((resolve) => {
+            resolveFirstWrite = resolve;
+        });
+        let dataHandler: ((bytes: Uint8Array) => Promise<void> | void) | undefined;
+        const connection = {
+            write: vi.fn((bytes: Uint8Array) => {
+                writes.push(Buffer.from(bytes).toString('utf8'));
+                resolveFirstWrite?.();
+            }),
+            onData: vi.fn((handler: (bytes: Uint8Array) => Promise<void> | void) => {
+                dataHandler = handler;
+            }),
+            close: vi.fn(async () => undefined),
+        };
+        const openTunnel = vi.fn(async () => ({
+            ok: true as const,
+            response: {
+                v: 1 as const,
+                tunnelId: 'tun_binary',
+                streamPath: '/peer-mediation/v1/tunnel/stream' as const,
+                encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+                initialWindowBytes: 1024 * 1024,
+                maxFrameBytes: 64 * 1024,
+            },
+            receipt: 'peer.tunnel.opened' as const,
+            connection,
+            limits: testTunnelLimits,
+        }));
+
+        mod?.registerPeerTcpTunnelLoopbackRoutes(app, {
+            nowMs: loopbackOptions.nowMs,
+            expected: {
+                accountId: 'account_1',
+                machineId: 'machine_1',
+                endpointFingerprint: 'endpoint_1',
+            },
+            trustRoots: [],
+            connectTcp: async () => connection,
+            openTunnel,
+        });
+
+        await app.inject({
+            method: 'POST',
+            url: '/peer-mediation/v1/tunnel/open',
+            payload: {
+                v: 1,
+                kind: 'open',
+                tunnelId: 'tun_binary',
+                targetMachineId: 'machine_1',
+                routeKind: 'loopback_direct',
+                destination: { host: '127.0.0.1', port: 3000 },
+                selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+            },
+        });
+        await app.ready();
+
+        const ws = await (app as unknown as {
+            injectWS: (path: string) => Promise<{
+                send: (payload: Uint8Array) => void;
+                once: (event: 'message', handler: (payload: Buffer) => void) => void;
+                terminate: () => void;
+            }>;
+        }).injectWS('/peer-mediation/v1/tunnel/stream');
+        ws.send(encodePeerTcpTunnelBinaryFrameV2({
+            header: {
+                version: 2,
+                kind: 'data',
+                tunnelId: 'tun_binary',
+                direction: 'client_to_daemon',
+                sequence: 0,
+                payloadLength: 5,
+            },
+            payload: Buffer.from('hello'),
+        }));
+
+        await firstWrite;
+        expect(writes).toEqual(['hello']);
+        expect(dataHandler).toBeTypeOf('function');
+        const responseFrame = new Promise<Buffer>((resolve) => {
+            ws.once('message', resolve);
+        });
+        await dataHandler?.(Buffer.from('world'));
+        const decoded = decodePeerTcpTunnelBinaryFrameV2({
+            frame: await responseFrame,
+            maxHeaderBytes: 1024,
+            maxPayloadBytes: 1024,
+        });
+        expect(decoded.ok ? Buffer.from(decoded.payload).toString('utf8') : null).toBe('world');
+
+        ws.terminate();
+        await app.close();
+    });
+
+    it('bridges binary_frame_v2 loopback substreams over separate TCP connections', async () => {
+        const mod = await loadRegisterRoutesModule();
+        const app = createPeerMediationLoopbackApp(loopbackOptions);
+        const writesByConnection: string[][] = [];
+        const dataHandlers: Array<(bytes: Uint8Array) => Promise<void> | void> = [];
+        let resolveFirstWrite: (() => void) | undefined;
+        const firstWrite = new Promise<void>((resolve) => {
+            resolveFirstWrite = resolve;
+        });
+        const baseConnection = {
+            close: vi.fn(async () => undefined),
+        };
+        const connectTcp = vi.fn(async () => {
+            const index = writesByConnection.length;
+            writesByConnection.push([]);
+            return {
+                write: vi.fn((bytes: Uint8Array) => {
+                    writesByConnection[index]?.push(Buffer.from(bytes).toString('utf8'));
+                    resolveFirstWrite?.();
+                }),
+                onData: vi.fn((handler: (bytes: Uint8Array) => Promise<void> | void) => {
+                    dataHandlers[index] = handler;
+                }),
+                close: vi.fn(async () => undefined),
+            };
+        });
+        const openTunnel = vi.fn(async () => ({
+            ok: true as const,
+            response: {
+                v: 1 as const,
+                tunnelId: 'tun_mux',
+                streamPath: '/peer-mediation/v1/tunnel/stream' as const,
+                encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+                initialWindowBytes: 1024 * 1024,
+                maxFrameBytes: 64 * 1024,
+            },
+            receipt: 'peer.tunnel.opened' as const,
+            connection: baseConnection,
+            limits: testTunnelLimits,
+        }));
+
+        mod?.registerPeerTcpTunnelLoopbackRoutes(app, {
+            nowMs: loopbackOptions.nowMs,
+            expected: {
+                accountId: 'account_1',
+                machineId: 'machine_1',
+                endpointFingerprint: 'endpoint_1',
+            },
+            trustRoots: [],
+            connectTcp,
+            openTunnel,
+        });
+
+        await app.inject({
+            method: 'POST',
+            url: '/peer-mediation/v1/tunnel/open',
+            payload: {
+                v: 1,
+                kind: 'open',
+                tunnelId: 'tun_mux',
+                targetMachineId: 'machine_1',
+                routeKind: 'loopback_direct',
+                destination: { host: '127.0.0.1', port: 3000 },
+                selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+            },
+        });
+        await app.ready();
+
+        const ws = await (app as unknown as {
+            injectWS: (path: string) => Promise<{
+                send: (payload: Uint8Array) => void;
+                once: (event: 'message', handler: (payload: Buffer) => void) => void;
+                terminate: () => void;
+            }>;
+        }).injectWS('/peer-mediation/v1/tunnel/stream');
+        ws.send(encodePeerTcpTunnelBinaryFrameV2({
+            header: { version: 2, kind: 'open', tunnelId: 'tun_mux', substreamId: 'sub_a', payloadLength: 0 },
+        }));
+        ws.send(encodePeerTcpTunnelBinaryFrameV2({
+            header: {
+                version: 2,
+                kind: 'data',
+                tunnelId: 'tun_mux',
+                substreamId: 'sub_a',
+                direction: 'client_to_daemon',
+                sequence: 0,
+                payloadLength: 5,
+            },
+            payload: Buffer.from('hello'),
+        }));
+
+        await firstWrite;
+        expect(connectTcp).toHaveBeenCalledOnce();
+        expect(writesByConnection).toEqual([['hello']]);
+
+        const responseFrame = new Promise<Buffer>((resolve) => {
+            ws.once('message', resolve);
+        });
+        await dataHandlers[0]?.(Buffer.from('world'));
+        const decoded = decodePeerTcpTunnelBinaryFrameV2({
+            frame: await responseFrame,
+            maxHeaderBytes: 1024,
+            maxPayloadBytes: 1024,
+        });
+        expect(decoded.ok ? decoded.header.substreamId : null).toBe('sub_a');
+        expect(decoded.ok ? Buffer.from(decoded.payload).toString('utf8') : null).toBe('world');
+
+        ws.terminate();
         await app.close();
     });
 

@@ -101,11 +101,11 @@ describe('computeDaemonSpawnRequestKey', () => {
     expect(a.key).not.toBe(b.key);
   });
 
-  it('includes codexBackendMode in the new-session key', () => {
+  it('includes canonical codexBackendMode in the new-session key', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      codexBackendMode: 'mcp',
+      codexBackendMode: 'acp',
     } satisfies SpawnSessionOptions);
     const b = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
@@ -115,6 +115,22 @@ describe('computeDaemonSpawnRequestKey', () => {
     expect(a.kind).toBe('new');
     expect(b.kind).toBe('new');
     expect(a.key).not.toBe(b.key);
+  });
+
+  it('coalesces retired mcp backend mode with canonical app-server', () => {
+    const legacy = computeDaemonSpawnRequestKey({
+      directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      codexBackendMode: 'mcp',
+    } as unknown as SpawnSessionOptions);
+    const canonical = computeDaemonSpawnRequestKey({
+      directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      codexBackendMode: 'appServer',
+    } satisfies SpawnSessionOptions);
+    expect(legacy.kind).toBe('new');
+    expect(canonical.kind).toBe('new');
+    expect(legacy.key).toBe(canonical.key);
   });
 
   it('treats legacy experimentalCodexAcp requests as canonical acp for the new-session key', () => {

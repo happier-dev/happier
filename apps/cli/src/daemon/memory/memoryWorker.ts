@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
+
+import type { SessionSummaryShardV1 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 import { DEFAULT_MEMORY_SETTINGS, readMemorySettingsFromDisk, type MemorySettingsV1 } from '@/settings/memorySettings';
@@ -10,18 +11,22 @@ import { resolveMemoryIndexPaths } from './memoryIndexPaths';
 import { openSummaryShardIndexDb, type SummaryShardIndexDbHandle } from './summaryShardIndexDb';
 import { openDeepIndexDb, type DeepIndexDbHandle } from './deepIndex/deepIndexDb';
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
-import { ingestSummaryShardsFromDecryptedTranscriptRows } from './ingestSummaryShardsFromDecryptedTranscriptRows';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { resolveSessionEncryptionContextFromCredentials, type SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
-import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
+import {
+  resolveSessionEncryptionContextFromCredentials,
+  resolveSessionStoredContentEncryptionMode,
+  type SessionEncryptionContext,
+  type SessionStoredContentEncryptionMode,
+} from '@/session/transport/encryption/sessionEncryptionContext';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
+import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { logger } from '@/ui/logger';
 import { startSingleFlightIntervalLoop, type SingleFlightIntervalLoopHandle } from '@/daemon/lifecycle/singleFlightIntervalLoop';
 import { fetchSessionsPage } from '@/session/transport/http/sessionsHttp';
 import { syncMemoryHintsForSessionsOnce } from './syncMemoryHintsForSessionsOnce';
 import { runMemoryHintsExecutionRun } from './hints/runMemoryHintsExecutionRun';
-import { commitMemoryHintArtifacts } from './hints/commitMemoryHintArtifacts';
-import { updateMemorySynopsisPointerBestEffort } from './artifacts/updateMemorySynopsisPointerBestEffort';
+import { commitMemorySystemRecords } from '@/session/systemRecords/memory/commitMemorySystemRecords';
+import { fetchMemorySummaryShardSystemRecords } from '@/session/systemRecords/memory/fetchMemorySystemRecords';
 import { chunkTranscriptRows } from './deepIndex/chunkTranscriptRows';
 import { syncDeepIndexForSessionsOnce } from './deepIndex/syncDeepIndexForSessionsOnce';
 import { resolveEmbeddingsProvider } from './deepIndex/embeddings/resolveEmbeddingsProvider';
@@ -35,6 +40,11 @@ import { selectSessionsForBackfill } from './inventory/selectSessionsForBackfill
 import { enforceMemoryDiskBudgets } from './enforceMemoryDiskBudgets';
 import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import type { EmbeddingsProviderResolution } from './deepIndex/embeddings/embeddingsProviderTypes';
+import { fetchMemorySemanticTranscriptPage } from './transcript/fetchSemanticPage';
+import {
+  extractMemoryIndexableTranscriptItemFromDecryptedRow,
+} from './transcript/extractIndexableItem';
+import { isLegacyUnclassifiedTranscriptRow } from './transcript/legacyUnclassifiedTranscriptRows';
 
 export type MemoryWorkerHandle = Readonly<{
   stop: () => void;
@@ -42,36 +52,16 @@ export type MemoryWorkerHandle = Readonly<{
   ensureUpToDate: (sessionId?: string) => Promise<void>;
   getSettings: () => MemorySettingsV1;
   getEmbeddingsDiagnostics: () => OperationalMemoryEmbeddingsDiagnostics;
+  getWorkerStatus: () => Readonly<{
+    state: 'disabled' | 'idle' | 'inventorying' | 'indexing' | 'waiting' | 'backoff' | 'error';
+    lastTickAtMs: number | null;
+    lastInventoryAtMs: number | null;
+    currentSessionId: string | null;
+    currentPhase: string | null;
+  }>;
   getTier1DbPath: () => string | null;
   getDeepDbPath: () => string | null;
 }>;
-
-function isMemoryArtifactMeta(meta: unknown): boolean {
-  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
-  const happier = (meta as Record<string, unknown>).happier;
-  if (!happier || typeof happier !== 'object' || Array.isArray(happier)) return false;
-  const kind = (happier as Record<string, unknown>).kind;
-  return kind === 'session_summary_shard.v1' || kind === 'session_synopsis.v1';
-}
-
-function extractTextFromContent(role: 'user' | 'agent', content: unknown, opts: Readonly<{ includeAssistantAcpMessage: boolean }>): string | null {
-  if (!content || typeof content !== 'object' || Array.isArray(content)) return null;
-  const type = (content as Record<string, unknown>).type;
-  if (type === 'text') {
-    const text = (content as Record<string, unknown>).text;
-    return typeof text === 'string' ? text : null;
-  }
-  if (opts.includeAssistantAcpMessage && role === 'agent' && type === 'acp') {
-    const data = (content as Record<string, unknown>).data;
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
-    const t = (data as Record<string, unknown>).type;
-    if (t === 'message' || t === 'reasoning') {
-      const message = (data as Record<string, unknown>).message;
-      return typeof message === 'string' ? message : null;
-    }
-  }
-  return null;
-}
 
 function bestEffortChmod700(dir: string): void {
   if (process.platform === 'win32') return;
@@ -96,6 +86,7 @@ export async function startMemoryWorker(params: Readonly<{
   env?: NodeJS.ProcessEnv;
   deps?: Readonly<{
     fetchDecryptedTranscriptPageAfterSeq: (args: Readonly<{ sessionId: string; afterSeq: number; limit: number }>) => Promise<DecryptedTranscriptRow[]>;
+    fetchCommittedSummaryShards?: (sessionId: string) => Promise<SessionSummaryShardV1[]>;
   }>;
 }>): Promise<MemoryWorkerHandle> {
   let stopped = false;
@@ -114,10 +105,19 @@ export async function startMemoryWorker(params: Readonly<{
   let inventoryHasNext = true;
   let inventoryBackfillPolicy: MemorySettingsV1['backfillPolicy'] = 'new_only';
   const inventorySeenSessionIds = new Set<string>();
+  const candidateObservedSeqBySessionId = new Map<string, number>();
   const sessionCtxCache = new Map<string, SessionEncryptionContext>();
+  const sessionModeCache = new Map<string, SessionStoredContentEncryptionMode>();
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
   let embeddingsDiagnostics: OperationalMemoryEmbeddingsDiagnostics =
     buildUnavailableMemoryEmbeddingsDiagnostics(DEFAULT_MEMORY_SETTINGS.embeddings);
+  let workerStatus: ReturnType<MemoryWorkerHandle['getWorkerStatus']> = {
+    state: 'idle',
+    lastTickAtMs: null,
+    lastInventoryAtMs: null,
+    currentSessionId: null,
+    currentPhase: null,
+  };
 
   const refreshEmbeddingsDiagnostics = async (): Promise<EmbeddingsProviderResolution | null> => {
     const embeddings = resolveOperationalMemoryEmbeddingsSettings(settings.embeddings);
@@ -162,16 +162,32 @@ export async function startMemoryWorker(params: Readonly<{
             if (!raw) return [];
             ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
             sessionCtxCache.set(args.sessionId, ctx);
+            sessionModeCache.set(args.sessionId, resolveSessionStoredContentEncryptionMode(raw));
           }
 
-          const encrypted = await fetchEncryptedTranscriptPageAfterSeq({
+          const roleFiltered = await fetchEncryptedTranscriptMessagesPage({
             token: params.credentials.token,
             sessionId: args.sessionId,
             afterSeq: args.afterSeq,
             limit: args.limit,
+            roles: ['user', 'agent'],
+            scope: 'main',
+          });
+          const legacy = await fetchEncryptedTranscriptMessagesPage({
+            token: params.credentials.token,
+            sessionId: args.sessionId,
+            afterSeq: args.afterSeq,
+            limit: args.limit,
+            scope: 'main',
           });
 
-          return decryptTranscriptRows({ ctx, rows: encrypted });
+          return decryptTranscriptRows({
+            ctx,
+            rows: [
+              ...roleFiltered.messages,
+              ...legacy.messages.filter(isLegacyUnclassifiedTranscriptRow),
+            ],
+          });
         } catch (error) {
           logger.debug('[memoryWorker] Failed to fetch/decrypt transcript page (best-effort)', {
             message: error instanceof Error ? error.message : String(error),
@@ -191,6 +207,7 @@ export async function startMemoryWorker(params: Readonly<{
     candidateSessionIds = [];
     candidateCursor = 0;
     candidateAllowInitialBackfillSessionIds.clear();
+    candidateObservedSeqBySessionId.clear();
     inventoryCursor = null;
     inventoryHasNext = true;
     inventoryBackfillPolicy = 'new_only';
@@ -229,6 +246,7 @@ export async function startMemoryWorker(params: Readonly<{
       ...(options?.allowInitialBackfillWhenUninitializedSessionIds
         ? { allowInitialBackfillWhenUninitializedSessionIds: options.allowInitialBackfillWhenUninitializedSessionIds }
         : {}),
+      initialCursorSeqBySessionId: candidateObservedSeqBySessionId,
       tier1,
       settings: {
         enabled: settings.enabled,
@@ -248,6 +266,8 @@ export async function startMemoryWorker(params: Readonly<{
           failureBackoffBaseMs: settings.hints.failureBackoffBaseMs,
           failureBackoffMaxMs: settings.hints.failureBackoffMaxMs,
         },
+        coveragePolicy: settings.coveragePolicy,
+        contentPolicy: settings.contentPolicy,
       },
       now: () => Date.now(),
       fetchRecentDecryptedRows: async (sessionId) => {
@@ -257,16 +277,42 @@ export async function startMemoryWorker(params: Readonly<{
           if (!raw) return [];
           ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
           sessionCtxCache.set(sessionId, ctx);
+          sessionModeCache.set(sessionId, resolveSessionStoredContentEncryptionMode(raw));
         }
-        const encrypted = await fetchEncryptedTranscriptPageLatest({
-          token: params.credentials.token,
-          sessionId,
-          limit: configuration.memoryMaxTranscriptWindowMessages,
-        });
-        const decrypted = decryptTranscriptRows({ ctx, rows: encrypted });
-        // Latest API returns newest first; normalize to chronological.
-        return decrypted.slice().sort((a, b) => a.seq - b.seq);
+        const rawPageLimit = Math.max(1, Math.trunc(configuration.memoryMaxTranscriptWindowMessages));
+        const rows: DecryptedTranscriptRow[] = [];
+        let beforeSeq: number | undefined;
+        const maxPages = settings.coveragePolicy?.type === 'latest_messages' ? 1 : 100;
+        for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+          const page = await fetchMemorySemanticTranscriptPage({
+            token: params.credentials.token,
+            sessionId,
+            ctx,
+            limit: rawPageLimit,
+            rawPageLimit,
+            maxRawRowsToScan: rawPageLimit * 4,
+            direction: 'before',
+            ...(typeof beforeSeq === 'number' ? { beforeSeq } : {}),
+            contentPolicy: settings.contentPolicy,
+          });
+          if (page.items.length > 0) {
+            for (const item of page.items) {
+              rows.push({
+                seq: item.seq,
+                createdAtMs: item.createdAtMs,
+                role: item.role === 'user' ? 'user' : 'agent',
+                content: { type: 'text', text: item.text },
+                meta: null,
+              });
+            }
+          }
+          if (!page.hasMore || !page.nextCursor) break;
+          beforeSeq = Number.parseInt(page.nextCursor, 10);
+          if (!Number.isFinite(beforeSeq)) break;
+        }
+        return rows.sort((a, b) => a.seq - b.seq);
       },
+      fetchCommittedSummaryShards,
       runSummarizer: async (prompt, sessionId) => {
         return await runMemoryHintsExecutionRun({
           cwd: configuration.activeServerDir,
@@ -284,24 +330,67 @@ export async function startMemoryWorker(params: Readonly<{
           if (!raw) return;
           ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
           sessionCtxCache.set(sessionId, ctx);
+          sessionModeCache.set(sessionId, resolveSessionStoredContentEncryptionMode(raw));
         }
-        await commitMemoryHintArtifacts({
+        const mode = sessionModeCache.get(sessionId) ?? 'e2ee';
+        await commitMemorySystemRecords({
           credentials: params.credentials,
           sessionId,
+          mode,
           ctx,
           shard: { sessionId, payload: shardPayload },
           synopsis: synopsisPayload ? { sessionId, payload: synopsisPayload } : null,
         });
-
-        if (synopsisPayload) {
-          await updateMemorySynopsisPointerBestEffort({
-            credentials: params.credentials,
-            sessionId,
-            synopsis: { seqTo: synopsisPayload.seqTo, updatedAtMs: synopsisPayload.updatedAtMs },
-          });
-        }
       },
     });
+  };
+
+  const fetchCommittedSummaryShards = async (sessionId: string): Promise<SessionSummaryShardV1[]> => {
+    if (deps.fetchCommittedSummaryShards) {
+      return await deps.fetchCommittedSummaryShards(sessionId);
+    }
+    try {
+      let ctx = sessionCtxCache.get(sessionId);
+      let mode = sessionModeCache.get(sessionId);
+      if (!ctx || !mode) {
+        const raw = await fetchSessionById({ token: params.credentials.token, sessionId });
+        if (!raw) return [];
+        ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
+        mode = resolveSessionStoredContentEncryptionMode(raw);
+        sessionCtxCache.set(sessionId, ctx);
+        sessionModeCache.set(sessionId, mode);
+      }
+      return await fetchMemorySummaryShardSystemRecords({
+        token: params.credentials.token,
+        sessionId,
+        mode,
+        ctx,
+      });
+    } catch (error) {
+      logger.debug('[memoryWorker] Failed to fetch memory summary system records (best-effort)', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  };
+
+  const ingestCommittedSummaryShards = async (sessionId: string): Promise<void> => {
+    if (!tier1) return;
+    const nowMs = Date.now();
+    for (const shard of await fetchCommittedSummaryShards(sessionId)) {
+      tier1.insertSummaryShard({
+        sessionId,
+        seqFrom: shard.seqFrom,
+        seqTo: shard.seqTo,
+        createdAtFromMs: shard.createdAtFromMs,
+        createdAtToMs: shard.createdAtToMs,
+        summary: shard.summary,
+        keywords: shard.keywords ?? [],
+        entities: shard.entities ?? [],
+        decisions: shard.decisions ?? [],
+      });
+      tier1.markHintRunSuccess({ sessionId, seqTo: shard.seqTo, nowMs });
+    }
   };
 
   const syncDeepForSessions = async (sessionIds: readonly string[]): Promise<void> => {
@@ -324,12 +413,14 @@ export async function startMemoryWorker(params: Readonly<{
         indexMode: 'deep',
         deep: {
           maxChunkChars: settings.deep.maxChunkChars,
-          maxChunkMessages: settings.deep.maxChunkMessages,
+        maxChunkMessages: settings.deep.maxChunkMessages,
           minChunkMessages: settings.deep.minChunkMessages,
           includeAssistantAcpMessage: settings.deep.includeAssistantAcpMessage,
           failureBackoffBaseMs: settings.deep.failureBackoffBaseMs,
           failureBackoffMaxMs: settings.deep.failureBackoffMaxMs,
         },
+        coveragePolicy: settings.coveragePolicy,
+        contentPolicy: settings.contentPolicy,
         ...(embeddings ? { embeddings } : {}),
       },
       now: () => Date.now(),
@@ -368,6 +459,7 @@ export async function startMemoryWorker(params: Readonly<{
     }
 
     embeddingsDiagnostics = buildUnavailableMemoryEmbeddingsDiagnostics(settings.embeddings);
+    workerStatus = { ...workerStatus, state: 'idle' };
 
     mkdirSync(paths.memoryDir, { recursive: true });
     bestEffortChmod700(paths.memoryDir);
@@ -381,6 +473,7 @@ export async function startMemoryWorker(params: Readonly<{
       candidateSessionIds = [];
       candidateCursor = 0;
       candidateAllowInitialBackfillSessionIds.clear();
+      candidateObservedSeqBySessionId.clear();
     }
 
     if (!tier1) {
@@ -415,6 +508,7 @@ export async function startMemoryWorker(params: Readonly<{
           task: async () => {
             if (stopped) return;
             if (!settings.enabled) return;
+            workerStatus = { ...workerStatus, state: 'inventorying', lastInventoryAtMs: Date.now(), currentPhase: 'inventory' };
             if (settings.backfillPolicy === 'new_only') {
               const page = await fetchSessionsPage({
                 token: params.credentials.token,
@@ -423,10 +517,15 @@ export async function startMemoryWorker(params: Readonly<{
               });
               const enabledAtMs = Math.max(0, Math.trunc(settings.enabledAtMs ?? 0));
               candidateAllowInitialBackfillSessionIds.clear();
+              candidateObservedSeqBySessionId.clear();
               candidateSessionIds = page.sessions
                 .map((session) => {
                   const id = typeof session.id === 'string' ? String(session.id).trim() : '';
                   if (!id) return null;
+                  const seq = typeof session.seq === 'number' && Number.isFinite(session.seq)
+                    ? Math.max(0, Math.trunc(session.seq))
+                    : 0;
+                  candidateObservedSeqBySessionId.set(id, seq);
                   if (enabledAtMs > 0 && readSessionCreatedAtMs(session) >= enabledAtMs) {
                     candidateAllowInitialBackfillSessionIds.add(id);
                   }
@@ -459,6 +558,11 @@ export async function startMemoryWorker(params: Readonly<{
             for (const id of selected.sessionIds) {
               if (inventorySeenSessionIds.has(id)) continue;
               inventorySeenSessionIds.add(id);
+              const row = page.sessions.find((session) => session.id === id);
+              const seq = typeof row?.seq === 'number' && Number.isFinite(row.seq)
+                ? Math.max(0, Math.trunc(row.seq))
+                : 0;
+              candidateObservedSeqBySessionId.set(id, seq);
               candidateSessionIds.push(id);
             }
 
@@ -494,6 +598,7 @@ export async function startMemoryWorker(params: Readonly<{
             if (!settings.enabled) return;
             if (!tier1) return;
             if (candidateSessionIds.length === 0) return;
+            workerStatus = { ...workerStatus, state: 'indexing', lastTickAtMs: Date.now(), currentPhase: 'tick' };
 
             const maxSessions = Math.max(1, Math.trunc(settings.worker.maxSessionsPerTick));
             const sessionIds: string[] = [];
@@ -511,8 +616,10 @@ export async function startMemoryWorker(params: Readonly<{
             }
 
             if (sessionIds.length === 0) return;
+            workerStatus = { ...workerStatus, currentSessionId: sessionIds[0] ?? null };
             await syncHintsForSessions(sessionIds, { allowInitialBackfillWhenUninitializedSessionIds });
             await syncDeepForSessions(sessionIds);
+            workerStatus = { ...workerStatus, state: 'idle', currentSessionId: null, currentPhase: null };
 
             if (tier1) {
               const mbToBytes = (mb: number): number => Math.max(0, Math.trunc(mb)) * 1024 * 1024;
@@ -549,26 +656,45 @@ export async function startMemoryWorker(params: Readonly<{
     if (stopped) return;
     await reloadSettings();
     if (!settings.enabled) return;
-    if (!_sessionId) return;
     if (!tier1) return;
+    if (!_sessionId) {
+      const page = await fetchSessionsPage({
+        token: params.credentials.token,
+        activeOnly: false,
+        limit: settings.worker.sessionListPageLimit,
+      });
+      const sessionIds = page.sessions
+        .map((session) => typeof session.id === 'string' ? session.id.trim() : '')
+        .filter((sessionId) => sessionId.length > 0);
+      if (sessionIds.length === 0) return;
+      await syncHintsForSessions(sessionIds);
+      await syncDeepForSessions(sessionIds);
+      return;
+    }
 
-    // Phase 3+: ingest any already-written summary shard artifacts from transcript history.
-    // This is a building block for lazy/local index rebuilds without re-running the summarizer.
+    await ingestCommittedSummaryShards(_sessionId);
+
     const rows = await deps.fetchDecryptedTranscriptPageAfterSeq({
       sessionId: _sessionId,
       afterSeq: 0,
       limit: 500,
     });
-    ingestSummaryShardsFromDecryptedTranscriptRows({ sessionId: _sessionId, rows, tier1 });
 
     if (settings.indexMode === 'deep' && deep) {
-      const indexable: Array<{ seq: number; createdAtMs: number; text: string; role: 'user' | 'agent' }> = [];
-      for (const row of rows) {
-        if (isMemoryArtifactMeta(row.meta)) continue;
-        const text = extractTextFromContent(row.role, row.content, { includeAssistantAcpMessage: settings.deep.includeAssistantAcpMessage });
-        if (!text || text.trim().length === 0) continue;
-        indexable.push({ seq: row.seq, createdAtMs: row.createdAtMs, text: text.trim(), role: row.role });
-      }
+      const indexable = rows
+        .map((row, index) => extractMemoryIndexableTranscriptItemFromDecryptedRow({
+          sessionId: _sessionId,
+          row,
+          index,
+          contentPolicy: settings.contentPolicy,
+        }))
+        .filter((item): item is NonNullable<typeof item> => item !== null)
+        .map((item) => ({
+          seq: item.seq,
+          createdAtMs: item.createdAtMs,
+          text: item.text,
+          role: item.role === 'user' ? 'user' as const : 'agent' as const,
+        }));
       for (const chunk of chunkTranscriptRows({
         rows: indexable,
         settings: {
@@ -610,6 +736,7 @@ export async function startMemoryWorker(params: Readonly<{
     ensureUpToDate,
     getSettings: () => settings,
     getEmbeddingsDiagnostics: () => embeddingsDiagnostics,
+    getWorkerStatus: () => workerStatus,
     getTier1DbPath: () => (tier1 ? paths.tier1DbPath : null),
     getDeepDbPath: () => (deep ? paths.deepDbPath : null),
   };

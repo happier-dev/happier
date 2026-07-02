@@ -10,6 +10,7 @@ import {
 
 import { logger } from '@/ui/logger';
 import { dispatchActivityNotificationAsync } from './dispatchActivityNotification';
+import type { ActivityNotificationEvent } from './activityNotificationEvent';
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -67,6 +68,291 @@ describe('dispatchActivityNotificationAsync', () => {
       { sound: 'happier_soft.wav', priority: 'high', androidSoundId: 'soft' },
     );
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('dispatches connected-service account switch notifications with structured quota context', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+
+    const result = await dispatchActivityNotificationAsync({
+      settings: accountSettingsParse({}),
+      expoPushSender: { sendToAllDevicesAsync },
+      event: {
+        topic: 'connected_service_account_switch',
+        sessionId: 'session-switch',
+        sessionTitle: 'Review branch',
+        serviceId: 'openai-codex',
+        serviceDisplayName: 'OpenAI',
+        groupId: 'main',
+        fromProfileId: 'primary',
+        toProfileId: 'backup',
+        fromProfileLabel: 'main@example.test',
+        toProfileLabel: 'backup@example.test',
+        fromUsagePercent: 100,
+        toUsagePercent: 20,
+        reason: 'usage_limit',
+        limitCategory: 'usage_limit',
+        retryAfterMs: 60_000,
+        quotaScope: 'account',
+        providerLimitId: 'weekly',
+        action: { kind: 'open_url', url: 'https://chatgpt.com/codex/settings/usage' },
+      },
+    });
+
+    expect(result).toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
+    expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
+      'Review branch',
+      expect.stringContaining('OpenAI'),
+      expect.objectContaining({
+        sessionId: 'session-switch',
+        serviceId: 'openai-codex',
+        serviceDisplayName: 'OpenAI',
+        groupId: 'main',
+        fromProfileId: 'primary',
+        toProfileId: 'backup',
+        fromProfileLabel: 'main@example.test',
+        toProfileLabel: 'backup@example.test',
+        fromUsagePercent: 100,
+        toUsagePercent: 20,
+        limitCategory: 'usage_limit',
+        retryAfterMs: 60_000,
+        quotaScope: 'account',
+        providerLimitId: 'weekly',
+        action: { kind: 'open_url', url: 'https://chatgpt.com/codex/settings/usage' },
+      }),
+      { sound: 'happier_soft.wav', priority: 'high', androidSoundId: 'soft' },
+    );
+    const firstSendCall = sendToAllDevicesAsync.mock.calls[0] as unknown[] | undefined;
+    const body = firstSendCall?.[1];
+    expect(body).toContain('provider reported');
+    expect(body).toContain('main@example.test');
+    expect(body).toContain('backup@example.test');
+    expect(body).not.toContain('openai-codex');
+  });
+
+  it('dispatches connected-service credential health notifications without raw provider details', async () => {
+    const sendToAllDevicesAsync = vi.fn(async (
+      _title: string,
+      _body: string,
+      _data: Record<string, unknown>,
+      _options?: unknown,
+    ) => {});
+
+    const result = await dispatchActivityNotificationAsync({
+      settings: accountSettingsParse({}),
+      expoPushSender: { sendToAllDevicesAsync },
+      event: {
+        topic: 'connected_service_credential_health',
+        sessionId: 'session-credential',
+        sessionTitle: 'Investigate auth',
+        serviceId: 'openai-codex',
+        serviceDisplayName: 'OpenAI',
+        profileId: 'work',
+        profileLabel: 'work@example.test',
+        status: 'reconnect_required',
+        reason: JSON.stringify({
+          error: 'invalid_grant',
+          refresh_token: 'secret-refresh-token',
+          access_token: 'secret-access-token',
+          authorization: 'Bearer secret-authorization-token',
+        }),
+        providerStatus: 400,
+        providerErrorCode: [
+          "Cannot find module '/private/node_modules/provider-adapter.js'",
+          'Require stack:',
+          '/private/app/node_modules/@happier-dev/provider/index.js',
+          'OAuth error: invalid_grant',
+        ].join('\n'),
+        action: {
+          kind: 'open_url',
+          url: 'https://provider.example.test/reconnect?access_token=secret-url-token',
+        },
+      } satisfies ActivityNotificationEvent,
+    });
+
+    expect(result).toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
+    expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+    const [title, body, data] = sendToAllDevicesAsync.mock.calls[0] ?? [];
+    expect(title).toBe('Investigate auth');
+    expect(body).toContain('OpenAI');
+    expect(body).not.toContain('openai-codex');
+    expect(body).toContain('work@example.test');
+    expect(body).toContain('reconnect');
+    expect(body).toContain('invalid_grant');
+    const delivered = JSON.stringify({ body, data });
+    expect(delivered).not.toContain('secret-refresh-token');
+    expect(delivered).not.toContain('secret-access-token');
+    expect(delivered).not.toContain('secret-authorization-token');
+    expect(delivered).not.toContain('secret-url-token');
+    expect(delivered).not.toContain('node_modules');
+    expect(delivered).not.toContain('Require stack');
+    expect(data).toMatchObject({
+      topic: 'connected_service_credential_health',
+      sessionId: 'session-credential',
+      serviceId: 'openai-codex',
+      serviceDisplayName: 'OpenAI',
+      profileId: 'work',
+      profileLabel: 'work@example.test',
+      status: 'reconnect_required',
+      reason: 'invalid_grant',
+      providerStatus: 400,
+      providerErrorCode: 'invalid_grant',
+      action: { kind: 'open_url', url: 'https://provider.example.test/reconnect' },
+    });
+  });
+
+  it('dedupes connected-service account switch notifications inside the dedupe window', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const event = {
+      topic: 'connected_service_account_switch' as const,
+      sessionId: 'session-switch',
+      serviceId: 'openai-codex',
+      groupId: 'dedupe-main',
+      fromProfileId: 'primary',
+      toProfileId: 'backup',
+      reason: 'usage_limit',
+    };
+
+    await dispatchActivityNotificationAsync({
+      settings: accountSettingsParse({}),
+      expoPushSender: { sendToAllDevicesAsync },
+      nowMs: () => 1_000,
+      dedupeWindowMs: 60_000,
+      event,
+    });
+    const duplicate = await dispatchActivityNotificationAsync({
+      settings: accountSettingsParse({}),
+      expoPushSender: { sendToAllDevicesAsync },
+      nowMs: () => 2_000,
+      dedupeWindowMs: 60_000,
+      event,
+    });
+
+    expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+    expect(duplicate).toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+  });
+
+  it('does not dedupe connected-service account switches with different reasons or target profiles', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const event = {
+      topic: 'connected_service_account_switch' as const,
+      sessionId: 'session-switch',
+      serviceId: 'openai-codex',
+      serviceDisplayName: 'OpenAI',
+      groupId: 'dedupe-variant',
+      fromProfileId: 'primary',
+      toProfileId: 'backup',
+      reason: 'usage_limit',
+    };
+
+    await dispatchActivityNotificationAsync({
+      settings: accountSettingsParse({}),
+      expoPushSender: { sendToAllDevicesAsync },
+      nowMs: () => 1_000,
+      dedupeWindowMs: 60_000,
+      event,
+    });
+    await dispatchActivityNotificationAsync({
+      settings: accountSettingsParse({}),
+      expoPushSender: { sendToAllDevicesAsync },
+      nowMs: () => 2_000,
+      dedupeWindowMs: 60_000,
+      event: {
+        ...event,
+        fromProfileId: 'backup',
+        toProfileId: 'tertiary',
+        reason: 'soft_threshold',
+      },
+    });
+
+    expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('suppresses disabled connected-service account switch Expo push topics', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const settings = accountSettingsParse({
+      notificationChannelsV1: [
+        {
+          v: 1,
+          id: 'expo-primary',
+          kind: 'expo_push',
+          enabled: true,
+          topics: {
+            ready: true,
+            permissionRequest: true,
+            userActionRequest: true,
+            connectedServiceAccountSwitch: false,
+            connectedServiceQuotaBlocked: true,
+            connectedServiceQuotaRecovered: true,
+          },
+        },
+      ],
+    });
+
+    const result = await dispatchActivityNotificationAsync({
+      settings,
+      expoPushSender: { sendToAllDevicesAsync },
+      dedupeWindowMs: 0,
+      event: {
+        topic: 'connected_service_account_switch',
+        sessionId: 'session-switch-disabled',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        fromProfileId: 'primary',
+        toProfileId: 'backup',
+        reason: 'usage_limit',
+      },
+    });
+
+    expect(result).toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+  });
+
+  it('dispatches connected-service quota blocked and recovered notifications', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+
+    await dispatchActivityNotificationAsync({
+      settings: accountSettingsParse({}),
+      expoPushSender: { sendToAllDevicesAsync },
+      event: {
+        topic: 'connected_service_quota_blocked',
+        sessionId: 'session-quota',
+        serviceId: 'openai-codex',
+        serviceDisplayName: 'OpenAI',
+        issueFingerprint: 'issue-1',
+        groupId: 'main',
+        profileId: 'primary',
+        limitCategory: 'usage_limit',
+      },
+    });
+    await dispatchActivityNotificationAsync({
+      settings: accountSettingsParse({}),
+      expoPushSender: { sendToAllDevicesAsync },
+      event: {
+        topic: 'connected_service_quota_recovered',
+        sessionId: 'session-quota',
+        serviceId: 'openai-codex',
+        serviceDisplayName: 'OpenAI',
+        issueFingerprint: 'issue-1',
+        groupId: 'main',
+        profileId: 'primary',
+        limitCategory: 'usage_limit',
+      },
+    });
+
+    expect(sendToAllDevicesAsync).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('OpenAI'),
+      expect.stringContaining('OpenAI'),
+      expect.objectContaining({ topic: 'connected_service_quota_blocked', issueFingerprint: 'issue-1', serviceDisplayName: 'OpenAI' }),
+      { sound: 'happier_soft.wav', priority: 'high', androidSoundId: 'soft' },
+    );
+    expect(sendToAllDevicesAsync).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('OpenAI'),
+      expect.stringContaining('OpenAI'),
+      expect.objectContaining({ topic: 'connected_service_quota_recovered', issueFingerprint: 'issue-1', serviceDisplayName: 'OpenAI' }),
+      { sound: 'happier_soft.wav', priority: 'high', androidSoundId: 'soft' },
+    );
   });
 
   it('suppresses Expo push delivery during account quiet hours', async () => {
@@ -412,7 +698,7 @@ describe('dispatchActivityNotificationAsync', () => {
     });
 
     expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
-      'Permission Request',
+      'Review branch',
       expect.stringContaining('Bash'),
       expect.objectContaining({ sessionId: 'session-custom-sound', kind: 'permission' }),
       { sound: null, priority: 'high', androidSoundId: 'none' },

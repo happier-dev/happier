@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
@@ -10,12 +11,22 @@ import type { DirectTransferServerLifecycle } from '@/machines/transfer/directTr
 import { resolvePromptAssetDownloadSource } from '@/transfers/targets/resolvePromptAssetDownloadSource';
 import { resolvePromptRegistryItemDownloadSource } from '@/transfers/targets/resolvePromptRegistryItemDownloadSource';
 import { resolveWorkspaceFileDownloadSource } from '@/transfers/targets/resolveWorkspaceFileDownloadSource';
-import type { PromptAssetReadRequest, PromptRegistryFetchItemRequestV1 } from '@happier-dev/protocol';
+import type {
+  MachineLiveStreamStartRequestV1,
+  PromptAssetReadRequest,
+  PromptRegistryFetchItemRequestV1,
+} from '@happier-dev/protocol';
+import {
+  readServerEnabledBit,
+  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
+  SessionUsageLimitRecoveryV1Schema,
+} from '@happier-dev/protocol';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import type { AutomationWorkerHandle } from '../automation/automationWorker';
 import type { MemoryWorkerHandle } from '../memory/memoryWorker';
 import type { VoiceInferenceWorkerHandle } from '../voiceInference/voiceInferenceWorker';
+import type { DaemonServerWorkScheduler } from '../serverWork';
 import { createDaemonConnectivityCoordinator } from '../connection/createDaemonConnectivityCoordinator';
 import type { ConnectedServiceQuotasLoopHandle } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { logger } from '@/ui/logger';
@@ -27,14 +38,26 @@ import type { Credentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
+import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import type { FeaturesResponse, PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol';
+import type { PeerTcpTunnelRelayEnvelope } from '@happier-dev/protocol';
 import {
   startPeerMediationLoopback,
   type StartPeerMediationLoopbackInput,
   type StartedPeerMediationLoopback,
 } from '../peer/mediation/rpc/startLoopback';
+import { createMachineLiveStreamRelayTerminator } from '../peer/mediation/stream';
+import { registerPeerTcpTunnelRelayTerminator } from '../peer/mediation/tunnel/relay';
+import { connectPeerTcpTunnelTcp } from '../peer/mediation/tunnel/open';
+import { resolveDaemonSpawnSessionByNonce } from '../controlClient';
+import {
+  UsageLimitRecoveryScheduler,
+  type UsageLimitRecoveryIntentStore,
+} from '../connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
+import { buildInactiveUsageLimitResumeSpawnOptions } from '../sessions/runtimeSnapshot/buildInactiveUsageLimitResumeSpawnOptions';
+import { createRecoveryIntentFileStore } from '../connectedServices/recoveryScheduler/recoveryIntentFileStore';
 
 function readAccountSettingsChangedHintVersion(update: unknown): number | null {
   if (!update || typeof update !== 'object') return null;
@@ -78,6 +101,11 @@ type PeerMediationMachineRpcBootstrapConfig = Readonly<{
   startPeerMediationLoopbackServer?: StartPeerMediationLoopbackInput['startPeerMediationLoopbackServer'];
 }>;
 
+type PeerTcpTunnelRelayBootstrapContext = Readonly<{
+  accountId: string;
+  serverFeatures: FeaturesResponse;
+}>;
+
 type SavePreparedTargetLocalMetadataInput = Readonly<{
   remoteSessionId: string;
   exportMetadataOverlay: Record<string, unknown>;
@@ -94,6 +122,22 @@ function resolveAccountIdFromCredentials(credentials: Credentials | undefined): 
   if (!credentials) return null;
   const payload = decodeJwtPayload(credentials.token);
   return typeof payload?.sub === 'string' ? normalizeNonEmptyString(payload.sub) : null;
+}
+
+function readUsageLimitRecoveryResultStatus(result: unknown): string | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const status = (result as Record<string, unknown>).status;
+  return typeof status === 'string' ? status : null;
+}
+
+function readUsageLimitRecoveryIntentFromControlResult(result: unknown) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const metadata = (result as Record<string, unknown>).metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(
+    (metadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
+  );
+  return parsed.success ? parsed.data : null;
 }
 
 function resolveAccountSigningSeed(params: Readonly<{
@@ -191,6 +235,31 @@ async function maybeStartPeerMediationLoopback(params: Readonly<{
   });
 }
 
+async function resolvePeerTcpTunnelRelayBootstrapContext(params: Readonly<{
+  config: PeerMediationMachineRpcBootstrapConfig | undefined;
+  credentials: Credentials | undefined;
+}>): Promise<PeerTcpTunnelRelayBootstrapContext | null> {
+  const serverFeatures = await resolvePeerMediationMachineRpcServerFeatures(params.config);
+  if (!serverFeatures) return null;
+  if (readServerEnabledBit(serverFeatures, 'machines.tunnel.serverRouted') !== true) return null;
+  const accountId = normalizeNonEmptyString(params.config?.accountId)
+    ?? resolveAccountIdFromCredentials(params.credentials);
+  if (!accountId) return null;
+  return { accountId, serverFeatures };
+}
+
+function resolvePeerTcpTunnelRelayTrustRoots(input: Readonly<{
+  serverFeatures: FeaturesResponse;
+  nowMs: number;
+}>): Array<Readonly<{ keyId: string; publicKeyBase64Url: string }>> {
+  return input.serverFeatures.capabilities.machines.peerMediation.grantSigningKeys
+    .filter((key) => key.expiresAt == null || key.expiresAt > input.nowMs)
+    .map((key) => ({
+      keyId: key.keyId,
+      publicKeyBase64Url: key.publicKey,
+    }));
+}
+
 export type BootstrapMachineSyncRuntimeResult = Readonly<{
   apiMachine: ApiMachineClient | null;
   apiMachineForSessions: ApiMachineClient | null;
@@ -229,8 +298,13 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   directTransferPromptRegistryRegistry: PromptRegistryRegistry;
   connectedServiceRefreshLoopHandle: ConnectedServiceRefreshLoopHandle | null;
   connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null;
+  daemonServerWorkScheduler: DaemonServerWorkScheduler;
+  retryTemporaryThrottleNow?: (input: Readonly<{ sessionId: string }>) => Promise<unknown> | unknown;
+  setDaemonServerWorkOnline?: (online: boolean) => void;
+  onMachineConnectionOnline?: () => void | Promise<void>;
   startVoiceInferenceWorkerForMachine: (machineId: string) => Promise<VoiceInferenceWorkerHandle | null>;
   peerMediationMachineRpc?: PeerMediationMachineRpcBootstrapConfig;
+  inactiveUsageLimitRecoveryStore?: UsageLimitRecoveryIntentStore;
 }>;
 
 export async function bootstrapMachineSyncRuntime(
@@ -375,6 +449,54 @@ export async function bootstrapMachineSyncRuntime(
   let machineConnectionStateCleanup: (() => void) | null = null;
   let peerMediationLoopback: StartedPeerMediationLoopback | null = null;
   let stopPeerMediationLoopbackServer: () => Promise<void> = async () => {};
+  let cleanupMachineLiveStreamRelay: (() => void) | null = null;
+  let cleanupPeerTcpTunnelRelay: (() => void) | null = null;
+  const inactiveUsageLimitRecoveryCheckRunners = new Map<string, () => Promise<unknown>>();
+  const inactiveUsageLimitRecoveryScheduler = new UsageLimitRecoveryScheduler({
+    nowMs: () => Date.now(),
+    store: params.inactiveUsageLimitRecoveryStore ?? createRecoveryIntentFileStore(join(
+      configuration.activeServerDir,
+      'connected-services',
+      'inactive-usage-limit-recovery.json',
+    )),
+    recover: async (_intent, context) => {
+      const runCheckNow = inactiveUsageLimitRecoveryCheckRunners.get(context.sessionId);
+      if (!runCheckNow) {
+        return {
+          status: 'wait',
+          nextCheckAtMs: Date.now() + 60_000,
+          lastProbeError: 'usage_limit_recovery_runner_unavailable',
+        };
+      }
+      const result = await runCheckNow();
+      const status = readUsageLimitRecoveryResultStatus(result);
+      if (status === 'ready' || status === 'resumed') {
+        return { status: 'ready' };
+      }
+      const recovery = readUsageLimitRecoveryIntentFromControlResult(result);
+      if (recovery?.status === 'waiting') {
+        return {
+          status: 'wait',
+          nextCheckAtMs: recovery.nextCheckAtMs ?? recovery.resetAtMs ?? Date.now() + 60_000,
+          lastProbeError: recovery.lastProbeError,
+        };
+      }
+      if (status === 'exhausted' || recovery?.status === 'exhausted') {
+        return { status: 'exhausted', lastProbeError: recovery?.lastProbeError };
+      }
+      if (recovery?.status === 'cancelled') {
+        // The probe proved the persisted intent is stale (turn completed or the
+        // intent was cleared out-of-band): stop the wake loop terminally.
+        return { status: 'superseded', lastProbeError: recovery.lastProbeError };
+      }
+      return {
+        status: 'wait',
+        nextCheckAtMs: Date.now() + 60_000,
+        lastProbeError: typeof status === 'string' ? status : 'usage_limit_recovery_probe_unavailable',
+      };
+    },
+  });
+  inactiveUsageLimitRecoveryScheduler.hydrate();
 
   if (connectedApiMachine) {
     automationWorker = params.startAutomationWorkerForMachine(params.machineId);
@@ -385,6 +507,7 @@ export async function bootstrapMachineSyncRuntime(
     connectedApiMachine.setRPCHandlers(
       {
         spawnSession: params.spawnSession,
+        resolveSpawnSessionByNonce: resolveDaemonSpawnSessionByNonce,
         stopSession: params.stopSession,
         isSessionActive: params.isSessionAlreadyRunning,
         loadLocalSessionMetadata: params.loadLocalSessionMetadataForHandoff,
@@ -398,6 +521,7 @@ export async function bootstrapMachineSyncRuntime(
           void params.beforeShutdown().finally(() => params.requestShutdown('happier-app'));
         },
         ...(memoryWorker ? { memory: memoryWorker } : {}),
+        daemonServerWorkScheduler: params.daemonServerWorkScheduler,
         ...(voiceInferenceWorker ? { voiceInference: voiceInferenceWorker } : {}),
         machineTransferChannel: {
           onEnvelope: (listener) => connectedApiMachine.onMachineTransferEnvelope(listener),
@@ -424,6 +548,28 @@ export async function bootstrapMachineSyncRuntime(
       },
       {
         emitExternalSessionTranscriptUpdate: (payload) => connectedApiMachine.emitExternalSessionTranscriptUpdate(payload),
+        resumeInactiveSessionWhenUsageLimitReady: async ({ sessionId, rawSession, metadata }) => {
+          const options = buildInactiveUsageLimitResumeSpawnOptions({
+            sessionId,
+            fallbackMachineId: params.machineId,
+            rawSession,
+            metadata,
+          });
+          if (!options) return false;
+          const result = await params.spawnSession(options);
+          return result.type === 'success';
+        },
+        scheduleInactiveSessionUsageLimitRecoveryCheck: ({ sessionId, recovery, runCheckNow }) => {
+          inactiveUsageLimitRecoveryCheckRunners.set(sessionId, runCheckNow);
+          inactiveUsageLimitRecoveryScheduler.upsert({ sessionId, intent: recovery });
+        },
+        cancelInactiveSessionUsageLimitRecoveryCheck: ({ sessionId }) => {
+          inactiveUsageLimitRecoveryCheckRunners.delete(sessionId);
+          void inactiveUsageLimitRecoveryScheduler.cancel({ sessionId });
+        },
+        ...(params.retryTemporaryThrottleNow
+          ? { retryTemporaryThrottleNow: params.retryTemporaryThrottleNow }
+          : {}),
       },
     );
 
@@ -439,6 +585,85 @@ export async function bootstrapMachineSyncRuntime(
     });
     if (peerMediationLoopback) {
       stopPeerMediationLoopbackServer = peerMediationLoopback.stop;
+    }
+
+    const peerTcpTunnelRelayContext = await resolvePeerTcpTunnelRelayBootstrapContext({
+      config: params.peerMediationMachineRpc,
+      credentials: params.credentials,
+    }).catch((error) => {
+      logger.warn('[DAEMON RUN] Failed to resolve peer TCP tunnel relay context', error);
+      return null;
+    });
+    if (peerTcpTunnelRelayContext) {
+      const nowMs = params.peerMediationMachineRpc?.nowMs ?? (() => Date.now());
+      const serverRoutedCaps = peerTcpTunnelRelayContext.serverFeatures.capabilities.machines.tunnel.serverRouted;
+      const relayAuthorizationTrustRoots = resolvePeerTcpTunnelRelayTrustRoots({
+        serverFeatures: peerTcpTunnelRelayContext.serverFeatures,
+        nowMs: nowMs(),
+      });
+      if (relayAuthorizationTrustRoots.length > 0) {
+        let cleanupRelaySubscription: (() => void) | null = null;
+        const relaySocket = {
+          on: (_event: string, handler: (payload?: unknown) => void | Promise<void>) => (
+            cleanupRelaySubscription = connectedApiMachine.onPeerTcpTunnelRelayEnvelope((payload) => {
+              void Promise.resolve(handler(payload)).catch((error) => {
+                logger.warn('[DAEMON RUN] Peer TCP tunnel relay handler failed', error);
+              });
+            })
+          ),
+          emit: (_event: string, payload: unknown) => {
+            connectedApiMachine.sendPeerTcpTunnelRelayEnvelope(payload as PeerTcpTunnelRelayEnvelope);
+          },
+        };
+        registerPeerTcpTunnelRelayTerminator({
+          accountId: peerTcpTunnelRelayContext.accountId,
+          machineId: params.machineId,
+          socket: relaySocket,
+          nowMs,
+          relayAuthorizationTrustRoots,
+          connectTcp: connectPeerTcpTunnelTcp,
+          maxFrameBytes: serverRoutedCaps.maxFrameBytes,
+          maxActiveTunnels: serverRoutedCaps.maxActiveTunnelsPerSocket,
+        });
+        cleanupPeerTcpTunnelRelay = () => {
+          cleanupRelaySubscription?.();
+          cleanupRelaySubscription = null;
+          cleanupPeerTcpTunnelRelay = null;
+        };
+      }
+    }
+
+    const liveStreamCaptureAdapter = params.peerMediationMachineRpc?.stream?.captureAdapter;
+    if (liveStreamCaptureAdapter) {
+      const liveStreamRelayTerminator = createMachineLiveStreamRelayTerminator({
+        machineId: params.machineId,
+        captureAdapter: liveStreamCaptureAdapter,
+        nowMs: params.peerMediationMachineRpc?.nowMs ?? (() => Date.now()),
+        emitEnvelope: (payload) => connectedApiMachine.sendMachineLiveStreamRelayEnvelope(payload),
+      });
+      cleanupMachineLiveStreamRelay = connectedApiMachine.onMachineLiveStreamRelayEnvelope((payload) => {
+        if (payload.message.kind === 'start') {
+          const startRequest = payload.message.startRequest as MachineLiveStreamStartRequestV1;
+          void liveStreamRelayTerminator.start(startRequest).then((result) => {
+            if (result.ok) return;
+            logger.warn('[DAEMON RUN] Failed to start relayed live-stream capture source', {
+              reasonCode: result.reasonCode,
+              streamId: startRequest.streamId,
+            });
+          }).catch((error) => {
+            logger.warn('[DAEMON RUN] Live-stream relay start handler failed', error);
+          });
+          return;
+        }
+
+        if (payload.message.kind !== 'control' && payload.message.kind !== 'sideband_control') return;
+        const result = liveStreamRelayTerminator.applyControl(payload);
+        if (result.ok) return;
+        logger.warn('[DAEMON RUN] Live-stream relay control denied', {
+          reasonCode: result.reasonCode,
+          streamId: payload.message.control.streamId,
+        });
+      });
     }
 
     if (params.credentials) {
@@ -515,6 +740,13 @@ export async function bootstrapMachineSyncRuntime(
 
     const cleanupPluginConnectionStateSource = bindPluginDaemonConnectionStateSource(connectedApiMachine);
     const cleanupDaemonConnectivityState = connectedApiMachine.onConnectionStateChange((state) => {
+      const online = state.phase === 'online';
+      params.setDaemonServerWorkOnline?.(online);
+      if (online) {
+        void Promise.resolve(params.onMachineConnectionOnline?.()).catch((error) => {
+          logger.warn('[DAEMON RUN] Failed to wake quota persistence on machine reconnect', error);
+        });
+      }
       void daemonConnectivityCoordinator!.applyState(state).catch((error) => {
         logger.warn('[DAEMON RUN] Failed to apply daemon connectivity state', error);
       });
@@ -527,6 +759,8 @@ export async function bootstrapMachineSyncRuntime(
       didCleanupMachineConnectionState = true;
       cleanupDaemonConnectivityState();
       cleanupPluginConnectionStateSource();
+      cleanupMachineLiveStreamRelay?.();
+      cleanupPeerTcpTunnelRelay?.();
     };
 
     let didRefreshMachineMetadata = false;
@@ -534,6 +768,16 @@ export async function bootstrapMachineSyncRuntime(
       takeover: params.takeoverRequested,
       onConnect: async () => {
         if (params.isShuttingDown()) return;
+
+        // Incident Jun-11 H-A / FIX-1a: best-effort snapshot warm on every machine (re)connect.
+        // The changes catch-up only emits a hint when account changes exist past the persisted
+        // cursor, so a freshly restarted daemon can connect and still hold a NULL snapshot.
+        if (params.credentials) {
+          void warmActiveAccountSettingsSnapshotBestEffort({
+            credentials: params.credentials,
+            logger,
+          });
+        }
 
         const activePeerMediationLoopback = peerMediationLoopback;
         if (activePeerMediationLoopback) {
@@ -593,6 +837,10 @@ export async function bootstrapMachineSyncRuntime(
       onOwnershipConflict: (conflict) => {
         logger.warn('[DAEMON RUN] Relay ownership conflict prevented machine connection', conflict);
         params.requestShutdown('happier-app', 'machine-owner-conflict');
+      },
+      onMachineReplaced: (event) => {
+        logger.warn('[DAEMON RUN] Machine was replaced by the server; shutting down stale daemon connection', event);
+        params.requestShutdown('happier-app', 'machine-replaced');
       },
     });
   } else {

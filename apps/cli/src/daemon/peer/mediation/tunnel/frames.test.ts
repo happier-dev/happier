@@ -1,3 +1,9 @@
+import {
+    decodePeerTcpTunnelBinaryFrameV2,
+    encodePeerTcpTunnelBinaryFrameV2,
+    type PeerTcpTunnelDestinationV1,
+    type PeerTcpTunnelSubstreamCapsV2,
+} from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 type FramesModule = typeof import('./frames');
@@ -11,6 +17,26 @@ type CreateStreamSessionForTest = (
         nowMs?: () => number;
     }>,
 ) => ReturnType<FramesModule['createPeerTcpTunnelStreamSession']>;
+type TestTunnelConnection = Readonly<{
+    write?: (bytes: Uint8Array) => Promise<void> | void;
+    onData?: (handler: (bytes: Uint8Array) => Promise<void> | void) => (() => void) | void;
+    close: () => Promise<void> | void;
+}>;
+type CreateSubstreamMuxSessionForTest = (input: Readonly<{
+    tunnelId: string;
+    destination: PeerTcpTunnelDestinationV1;
+    initialWindowBytes: number;
+    maxFrameBytes: number;
+    maxBinaryHeaderBytes: number;
+    maxRawPayloadBytes: number;
+    caps: PeerTcpTunnelSubstreamCapsV2;
+    connectTcp: (target: PeerTcpTunnelDestinationV1) => Promise<TestTunnelConnection>;
+    sendBinaryFrame: (frame: Uint8Array) => Promise<void> | void;
+    nowMs?: () => number;
+}>) => Readonly<{
+    acceptBinaryFrame: (frame: Uint8Array) => Promise<unknown>;
+    close: () => Promise<void>;
+}>;
 
 async function loadFramesModule(): Promise<FramesModule | null> {
     const modulePath = './frames.js';
@@ -18,6 +44,238 @@ async function loadFramesModule(): Promise<FramesModule | null> {
 }
 
 describe('peer TCP tunnel frame accounting', () => {
+    it('multiplexes binary_frame_v2 substreams over separate TCP connections in one tunnel session', async () => {
+        const mod = await loadFramesModule();
+        const createMux = (mod as (FramesModule & Partial<{
+            createPeerTcpTunnelSubstreamMuxSession: CreateSubstreamMuxSessionForTest;
+        }> | null))?.createPeerTcpTunnelSubstreamMuxSession;
+        expect(createMux).toBeTypeOf('function');
+        if (!createMux) return;
+
+        const sent: Uint8Array[] = [];
+        const writesByConnection: string[][] = [];
+        const dataHandlers: Array<(bytes: Uint8Array) => Promise<void> | void> = [];
+        const connectTcp = vi.fn(async (target: PeerTcpTunnelDestinationV1) => {
+            const index = writesByConnection.length;
+            writesByConnection.push([]);
+            return {
+                write: async (bytes: Uint8Array) => {
+                    writesByConnection[index]?.push(Buffer.from(bytes).toString('utf8'));
+                },
+                onData: (handler: (bytes: Uint8Array) => Promise<void> | void) => {
+                    dataHandlers[index] = handler;
+                },
+                close: vi.fn(),
+            };
+        });
+        const mux = createMux({
+            tunnelId: 'tun_mux',
+            destination: { host: '127.0.0.1', port: 3000 },
+            initialWindowBytes: 64,
+            maxFrameBytes: 1024,
+            maxBinaryHeaderBytes: 1024,
+            maxRawPayloadBytes: 1024,
+            caps: {
+                maxConcurrentSubstreams: 2,
+                maxTotalSubstreams: 4,
+                maxBytesPerSubstream: 64,
+                maxAggregateBytes: 128,
+                maxSubstreamIdleMs: 30_000,
+                maxSessionIdleMs: 60_000,
+            },
+            connectTcp,
+            sendBinaryFrame: (frame) => {
+                sent.push(frame);
+            },
+        });
+
+        for (const substreamId of ['sub_a', 'sub_b']) {
+            await mux.acceptBinaryFrame(encodePeerTcpTunnelBinaryFrameV2({
+                header: { version: 2, kind: 'open', tunnelId: 'tun_mux', substreamId, payloadLength: 0 },
+            }));
+        }
+        await mux.acceptBinaryFrame(encodePeerTcpTunnelBinaryFrameV2({
+            header: {
+                version: 2,
+                kind: 'data',
+                tunnelId: 'tun_mux',
+                substreamId: 'sub_a',
+                direction: 'client_to_daemon',
+                sequence: 0,
+                payloadLength: 5,
+            },
+            payload: Buffer.from('alpha'),
+        }));
+        await mux.acceptBinaryFrame(encodePeerTcpTunnelBinaryFrameV2({
+            header: {
+                version: 2,
+                kind: 'data',
+                tunnelId: 'tun_mux',
+                substreamId: 'sub_b',
+                direction: 'client_to_daemon',
+                sequence: 0,
+                payloadLength: 4,
+            },
+            payload: Buffer.from('beta'),
+        }));
+        await dataHandlers[0]?.(Buffer.from('one'));
+        await dataHandlers[1]?.(Buffer.from('two'));
+
+        expect(connectTcp).toHaveBeenCalledTimes(2);
+        expect(connectTcp).toHaveBeenNthCalledWith(1, { host: '127.0.0.1', port: 3000 });
+        expect(writesByConnection).toEqual([['alpha'], ['beta']]);
+        const decodedOutbound = sent
+            .map((frame) => decodePeerTcpTunnelBinaryFrameV2({
+                frame,
+                maxHeaderBytes: 1024,
+                maxPayloadBytes: 1024,
+            }))
+            .filter((decoded) => decoded.ok && decoded.header.kind === 'data');
+        expect(decodedOutbound.map((decoded) => decoded.ok ? [
+            decoded.header.substreamId,
+            Buffer.from(decoded.payload).toString('utf8'),
+        ] : null)).toEqual([
+            ['sub_a', 'one'],
+            ['sub_b', 'two'],
+        ]);
+    });
+
+    it('enforces substream concurrency caps before opening another TCP connection', async () => {
+        const mod = await loadFramesModule();
+        const createMux = (mod as (FramesModule & Partial<{
+            createPeerTcpTunnelSubstreamMuxSession: CreateSubstreamMuxSessionForTest;
+        }> | null))?.createPeerTcpTunnelSubstreamMuxSession;
+        expect(createMux).toBeTypeOf('function');
+        if (!createMux) return;
+
+        const sent: Uint8Array[] = [];
+        const mux = createMux({
+            tunnelId: 'tun_mux',
+            destination: { host: '127.0.0.1', port: 3000 },
+            initialWindowBytes: 64,
+            maxFrameBytes: 1024,
+            maxBinaryHeaderBytes: 1024,
+            maxRawPayloadBytes: 1024,
+            caps: {
+                maxConcurrentSubstreams: 1,
+                maxTotalSubstreams: 4,
+                maxBytesPerSubstream: 64,
+                maxAggregateBytes: 128,
+                maxSubstreamIdleMs: 30_000,
+                maxSessionIdleMs: 60_000,
+            },
+            connectTcp: vi.fn(async () => ({
+                close: vi.fn(),
+            })),
+            sendBinaryFrame: (frame) => {
+                sent.push(frame);
+            },
+        });
+
+        await mux.acceptBinaryFrame(encodePeerTcpTunnelBinaryFrameV2({
+            header: { version: 2, kind: 'open', tunnelId: 'tun_mux', substreamId: 'sub_a', payloadLength: 0 },
+        }));
+        await expect(mux.acceptBinaryFrame(encodePeerTcpTunnelBinaryFrameV2({
+            header: { version: 2, kind: 'open', tunnelId: 'tun_mux', substreamId: 'sub_b', payloadLength: 0 },
+        }))).resolves.toEqual({
+            ok: false,
+            reasonCode: 'substream_cap_exceeded',
+            substreamId: 'sub_b',
+        });
+
+        const aborts = sent
+            .map((frame) => decodePeerTcpTunnelBinaryFrameV2({ frame, maxHeaderBytes: 1024, maxPayloadBytes: 1024 }))
+            .filter((decoded) => decoded.ok && decoded.header.kind === 'abort');
+        expect(aborts.map((decoded) => decoded.ok ? decoded.header.substreamId : null)).toContain('sub_b');
+    });
+
+    it('translates binary_frame_v2 data frames to V1 logical frames without losing raw bytes', async () => {
+        const mod = await loadFramesModule();
+        expect(mod?.decodePeerTcpTunnelBinaryFrameForSession).toBeTypeOf('function');
+        if (!mod?.decodePeerTcpTunnelBinaryFrameForSession) return;
+
+        const encoded = mod.encodePeerTcpTunnelBinaryFrameForSession?.({
+            v: 1,
+            kind: 'data',
+            tunnelId: 'tun_1',
+            direction: 'client_to_daemon',
+            sequence: 0,
+            payloadBase64: Buffer.from('hello').toString('base64'),
+        });
+        expect(encoded).toBeInstanceOf(Uint8Array);
+
+        const decoded = mod.decodePeerTcpTunnelBinaryFrameForSession({
+            frame: encoded ?? new Uint8Array(),
+            maxBinaryHeaderBytes: 1024,
+            maxRawPayloadBytes: 1024,
+        });
+
+        expect(decoded).toEqual({
+            ok: true,
+            frame: {
+                v: 1,
+                kind: 'data',
+                tunnelId: 'tun_1',
+                direction: 'client_to_daemon',
+                sequence: 0,
+                payloadBase64: Buffer.from('hello').toString('base64'),
+            },
+            rawPayloadBytes: 5,
+        });
+    });
+
+    it('translates V1 ack and abort frames to binary_frame_v2 control headers', async () => {
+        const mod = await loadFramesModule();
+        expect(mod?.encodePeerTcpTunnelBinaryFrameForSession).toBeTypeOf('function');
+        if (!mod?.encodePeerTcpTunnelBinaryFrameForSession || !mod.decodePeerTcpTunnelBinaryFrameForSession) return;
+
+        const ack = mod.decodePeerTcpTunnelBinaryFrameForSession({
+            frame: mod.encodePeerTcpTunnelBinaryFrameForSession({
+                v: 1,
+                kind: 'ack',
+                tunnelId: 'tun_1',
+                direction: 'client_to_daemon',
+                nextSequence: 5,
+                windowBytes: 4096,
+            }),
+            maxBinaryHeaderBytes: 1024,
+            maxRawPayloadBytes: 1024,
+        });
+        const abort = mod.decodePeerTcpTunnelBinaryFrameForSession({
+            frame: mod.encodePeerTcpTunnelBinaryFrameForSession({
+                v: 1,
+                kind: 'abort',
+                tunnelId: 'tun_1',
+                reasonCode: 'relay_cap_exceeded',
+            }),
+            maxBinaryHeaderBytes: 1024,
+            maxRawPayloadBytes: 1024,
+        });
+
+        expect(ack).toEqual({
+            ok: true,
+            frame: {
+                v: 1,
+                kind: 'ack',
+                tunnelId: 'tun_1',
+                direction: 'client_to_daemon',
+                nextSequence: 5,
+                windowBytes: 4096,
+            },
+            rawPayloadBytes: 0,
+        });
+        expect(abort).toEqual({
+            ok: true,
+            frame: {
+                v: 1,
+                kind: 'abort',
+                tunnelId: 'tun_1',
+                reasonCode: 'relay_cap_exceeded',
+            },
+            rawPayloadBytes: 0,
+        });
+    });
+
     it('enforces sliding receive credit per direction', async () => {
         const mod = await loadFramesModule();
         const accounting = mod?.createPeerTcpTunnelFrameAccounting({

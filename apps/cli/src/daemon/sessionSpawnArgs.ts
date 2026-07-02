@@ -1,5 +1,5 @@
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
-import { normalizeClaudeHappyCliSessionControlPermissionMode } from '@/backends/claude/utils/permissionMode';
+import { normalizeSessionControlPermissionModeForBackendTarget } from '@/backends/catalog';
 import { normalizeDaemonBackendTargetV2Input } from './backendTargetRouting';
 
 export function buildHappySessionControlArgs(opts: Readonly<{
@@ -35,9 +35,10 @@ export function buildHappySessionControlArgs(opts: Readonly<{
 
   const permissionMode = typeof opts.permissionMode === 'string' ? opts.permissionMode.trim() : '';
   if (permissionMode) {
-    const normalizedPermissionMode = backendTarget?.sourceKind === 'built_in' && backendTarget.backendId === 'claude'
-      ? normalizeClaudeHappyCliSessionControlPermissionMode(permissionMode)
-      : permissionMode;
+    const normalizedPermissionMode = normalizeSessionControlPermissionModeForBackendTarget({
+      backendTarget: backendTarget ?? undefined,
+      permissionMode,
+    });
     args.push('--permission-mode', normalizedPermissionMode);
     if (typeof opts.permissionModeUpdatedAt === 'number') {
       args.push('--permission-mode-updated-at', `${opts.permissionModeUpdatedAt}`);

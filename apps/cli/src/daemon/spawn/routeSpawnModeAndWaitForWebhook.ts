@@ -30,6 +30,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   modelUpdatedAt?: number;
   directoryCreated: boolean;
   extraEnvForChildWithMessage: Record<string, string>;
+  processEnv: NodeJS.ProcessEnv;
   happyHomeDir: string;
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
@@ -114,7 +115,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   const windowsLaunchMode = resolveWindowsRemoteSessionConsoleMode({
     platform: process.platform,
     requested: params.options.windowsRemoteSessionLaunchMode ?? params.options.windowsRemoteSessionConsole,
-    env: process.env,
+    env: params.processEnv,
   });
   if (windowsLaunchMode === 'windows_terminal' || windowsLaunchMode === 'console') {
     return await spawnWindowsHostedSessionAndWaitForWebhook({
@@ -129,6 +130,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
       reservedSessionId: params.reservedSessionId,
       directoryCreated: params.directoryCreated,
       extraEnvForChildWithMessage: params.extraEnvForChildWithMessage,
+      processEnv: params.processEnv,
       happyHomeDir: params.happyHomeDir,
       pidToTrackedSession: params.pidToTrackedSession,
       pidToAwaiter: params.pidToAwaiter,
@@ -152,6 +154,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
     effectiveResume: params.effectiveResume,
     directoryCreated: params.directoryCreated,
     extraEnvForChildWithMessage: params.extraEnvForChildWithMessage,
+    processEnv: params.processEnv,
     pidToTrackedSession: params.pidToTrackedSession,
     pidToAwaiter: params.pidToAwaiter,
     pidToSpawnResultResolver: params.pidToSpawnResultResolver,

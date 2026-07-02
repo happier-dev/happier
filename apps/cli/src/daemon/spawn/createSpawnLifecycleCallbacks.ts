@@ -13,18 +13,23 @@ export function createSpawnLifecycleCallbacks<
   ConnectedServicesBindingsRaw,
 >(params: Readonly<{
   connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;
+  connectedServiceSelectionsEnvRaw?: string;
   catalogAgentId: CatalogAgentId;
+  sessionId?: string;
   materializationKey: string;
   hasConnectedServiceAuth: () => boolean;
   registerConnectedServiceRefreshTarget?: (target: Readonly<{
     pid: number;
     agentId: CatalogAgentId;
+    sessionId?: string;
     connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;
     materializationKey: string;
   }>) => void;
   registerConnectedServiceQuotaTarget?: (target: Readonly<{
     pid: number;
+    sessionId?: string;
     connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;
+    connectedServiceSelectionsEnvRaw?: string;
   }>) => void;
   getSpawnResourceCleanupOnExit: () => SpawnResourceCleanup | null;
   onSpawnResourceCleanupArmed: () => void;
@@ -40,12 +45,24 @@ export function createSpawnLifecycleCallbacks<
     params.registerConnectedServiceRefreshTarget?.({
       pid,
       agentId: params.catalogAgentId,
+      ...(typeof params.sessionId === 'string' && params.sessionId.trim().length > 0
+        ? { sessionId: params.sessionId.trim() }
+        : {}),
       connectedServicesBindingsRaw: params.connectedServicesBindingsRaw,
+      ...(typeof params.connectedServiceSelectionsEnvRaw === 'string'
+        ? { connectedServiceSelectionsEnvRaw: params.connectedServiceSelectionsEnvRaw }
+        : {}),
       materializationKey: params.materializationKey,
     });
     params.registerConnectedServiceQuotaTarget?.({
       pid,
+      ...(typeof params.sessionId === 'string' && params.sessionId.trim().length > 0
+        ? { sessionId: params.sessionId.trim() }
+        : {}),
       connectedServicesBindingsRaw: params.connectedServicesBindingsRaw,
+      ...(typeof params.connectedServiceSelectionsEnvRaw === 'string'
+        ? { connectedServiceSelectionsEnvRaw: params.connectedServiceSelectionsEnvRaw }
+        : {}),
     });
   };
 

@@ -1,4 +1,9 @@
 import { openSqliteDatabaseSync, type SqliteDatabaseSync } from './sqliteSync';
+import {
+  createMemoryIndexQueueDb,
+  ensureMemoryIndexQueueSchema,
+} from './queue/memoryIndexQueueDb';
+import type { MemoryIndexQueueDbHandle } from './queue/memoryIndexQueueTypes';
 
 export type MemorySearchScope =
   | Readonly<{ type: 'global' }>
@@ -15,6 +20,14 @@ export type SummaryShardSearchHit = Readonly<{
   score: number;
 }>;
 
+export type SummaryIndexStats = Readonly<{
+  lightShardCount: number;
+  lightTermCount: number;
+  searchableSessionCount: number;
+  lastIndexedAtMs: number | null;
+  latestIndexedMessageAtMs: number | null;
+}>;
+
 export type SummaryShardIndexDbHandle = Readonly<{
   init: () => void;
   insertSummaryShard: (args: Readonly<{
@@ -29,6 +42,7 @@ export type SummaryShardIndexDbHandle = Readonly<{
     decisions: ReadonlyArray<string>;
   }>) => void;
   search: (args: Readonly<{ query: string; scope: MemorySearchScope; maxResults: number }>) => SummaryShardSearchHit[];
+  getSummaryIndexStats: () => SummaryIndexStats;
   getLatestShardSeqTo: (args: Readonly<{ sessionId: string }>) => number;
   getSessionCursors: (args: Readonly<{ sessionId: string; nowMs: number }>) => Readonly<{
     lastObservedSeq: number;
@@ -52,7 +66,7 @@ export type SummaryShardIndexDbHandle = Readonly<{
   deleteOldestSummaryShards: (args: Readonly<{ limit: number }>) => number;
   checkpointAndVacuum: () => void;
   close: () => void;
-}>;
+}> & MemoryIndexQueueDbHandle;
 
 function normalizeQuery(raw: string): string {
   return String(raw ?? '')
@@ -78,6 +92,17 @@ function tokenize(text: string): string[] {
 }
 
 const HINT_RUN_WINDOW_MS = 60 * 60 * 1000;
+const MULTI_TERM_QUERY_MIN_MATCH_RATIO = 0.5;
+
+function nullableInt(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : null;
+}
+
+function intOrZero(value: unknown): number {
+  return nullableInt(value) ?? 0;
+}
 
 function ensureSchemaV2(db: SqliteDatabaseSync): void {
   db.exec(`PRAGMA journal_mode=WAL;`);
@@ -151,15 +176,26 @@ function ensureSchema(db: SqliteDatabaseSync): void {
   const userVersion = typeof versionRow?.user_version === 'number' ? versionRow.user_version : 0;
   if (userVersion === 0) {
     ensureSchemaV2(db);
-    db.exec('PRAGMA user_version=2');
+    ensureMemoryIndexQueueSchema(db);
+    db.exec('PRAGMA user_version=3');
     return;
   }
   if (userVersion === 1) {
     migrateV1ToV2(db);
-    db.exec('PRAGMA user_version=2');
+    ensureMemoryIndexQueueSchema(db);
+    db.exec('PRAGMA user_version=3');
     return;
   }
-  if (userVersion === 2) return;
+  if (userVersion === 2) {
+    ensureMemoryIndexQueueSchema(db);
+    db.exec('PRAGMA user_version=3');
+    return;
+  }
+  if (userVersion === 3) {
+    ensureSchemaV2(db);
+    ensureMemoryIndexQueueSchema(db);
+    return;
+  }
   throw new Error(`Unsupported memory DB schema version: ${userVersion}`);
 }
 
@@ -194,6 +230,15 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
   `);
   const insertTermStmt = db.prepare(`INSERT OR IGNORE INTO summary_terms (term, shardId) VALUES (?, ?);`);
   const latestSeqToStmt = db.prepare(`SELECT MAX(seqTo) AS maxSeqTo FROM summary_shards WHERE sessionId = ?;`);
+  const summaryIndexStatsStmt = db.prepare(`
+    SELECT
+      COUNT(*) AS lightShardCount,
+      COUNT(DISTINCT sessionId) AS searchableSessionCount,
+      MAX(createdAtToMs) AS latestIndexedMessageAtMs
+    FROM summary_shards;
+  `);
+  const summaryTermCountStmt = db.prepare(`SELECT COUNT(*) AS lightTermCount FROM summary_terms;`);
+  const summaryLastIndexedAtStmt = db.prepare(`SELECT MAX(updatedAtMs) AS lastIndexedAtMs FROM session_cursors;`);
 
   const ensureCursorStmt = db.prepare(`INSERT OR IGNORE INTO session_cursors (sessionId, updatedAtMs) VALUES (?, ?);`);
   const getCursorStmt = db.prepare(`
@@ -315,6 +360,7 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
       LIMIT ?
     );
   `);
+  const queueDb = createMemoryIndexQueueDb(db);
 
   return {
     init: () => {
@@ -376,11 +422,14 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
       params.push(limit);
       const rows = stmt.all(...params) as any[];
 
-      return rows.map((row) => {
+      return rows.flatMap((row) => {
         const hitCount = Number(row.hitCount ?? 0);
         const score = terms.length > 0 ? hitCount / terms.length : 0;
+        if (terms.length > 1 && score <= MULTI_TERM_QUERY_MIN_MATCH_RATIO) {
+          return [];
+        }
         const rank = hitCount > 0 ? -hitCount : 0;
-        return {
+        return [{
           sessionId: String(row.sessionId),
           seqFrom: Number(row.seqFrom),
           seqTo: Number(row.seqTo),
@@ -389,8 +438,20 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
           summary: String(row.summary ?? ''),
           rank,
           score,
-        } satisfies SummaryShardSearchHit;
+        } satisfies SummaryShardSearchHit];
       });
+    },
+    getSummaryIndexStats: () => {
+      const stats = summaryIndexStatsStmt.get() as any;
+      const termStats = summaryTermCountStmt.get() as any;
+      const cursorStats = summaryLastIndexedAtStmt.get() as any;
+      return {
+        lightShardCount: intOrZero(stats?.lightShardCount),
+        lightTermCount: intOrZero(termStats?.lightTermCount),
+        searchableSessionCount: intOrZero(stats?.searchableSessionCount),
+        lastIndexedAtMs: nullableInt(cursorStats?.lastIndexedAtMs),
+        latestIndexedMessageAtMs: nullableInt(stats?.latestIndexedMessageAtMs),
+      };
     },
     getLatestShardSeqTo: ({ sessionId }) => {
       const row = latestSeqToStmt.get(String(sessionId ?? '').trim()) as any;
@@ -550,6 +611,9 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
       const nextEligibleAt = now + Math.max(0, Math.trunc(backoff));
       deepFailureStmt.run(now, nextEligibleAt, now, id);
     },
+    recordMemorySessionIndexState: queueDb.recordMemorySessionIndexState,
+    recordMemoryWorkerRun: queueDb.recordMemoryWorkerRun,
+    getMemoryIndexQueueTelemetry: queueDb.getMemoryIndexQueueTelemetry,
     deleteOldestSummaryShards: ({ limit }) => {
       const n = Number.isFinite(limit) ? Math.max(0, Math.trunc(limit)) : 0;
       if (n <= 0) return 0;

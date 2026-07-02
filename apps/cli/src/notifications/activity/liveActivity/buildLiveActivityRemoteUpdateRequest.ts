@@ -76,12 +76,20 @@ function resolveSubtitle(params: Readonly<{
   if (event.topic === 'ready') {
     return normalizeText(event.waitingForCommandLabel);
   }
-  return normalizeText(event.toolName);
+  if (event.topic === 'permission_request' || event.topic === 'user_action_request') {
+    return normalizeText(event.toolName);
+  }
+  if (event.topic === 'connected_service_account_switch') return 'Provider account switched';
+  if (event.topic === 'connected_service_quota_recovered') return 'Provider quota recovered';
+  return 'Provider quota blocked';
 }
 
 function resolveGenericStatusText(event: ActivityNotificationEvent): string {
   if (event.topic === 'ready') return 'Ready';
   if (event.topic === 'permission_request') return 'Permission required';
+  if (event.topic === 'connected_service_account_switch') return 'Provider account switched';
+  if (event.topic === 'connected_service_quota_blocked') return 'Provider quota blocked';
+  if (event.topic === 'connected_service_quota_recovered') return 'Provider quota recovered';
   return 'Action required';
 }
 

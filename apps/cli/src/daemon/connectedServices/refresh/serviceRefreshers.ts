@@ -3,6 +3,7 @@ import { URLSearchParams } from 'node:url';
 import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
+import { readSafeOauthProviderErrorCode } from '@/cloud/safeOauthProviderError';
 import { mapConnectedAccountOauthPayload } from '@/daemon/connectedServices/descriptors/buildConnectedAccountCredentialRecord';
 import { resolveConnectedAccountOauthConfig } from '@/daemon/connectedServices/descriptors/connectedAccountOauthConfig';
 import { resolveGeminiOauthClientSecret } from '@/daemon/connectedServices/shared/oauthConfig';
@@ -17,6 +18,8 @@ export async function refreshConnectedAccountOauthTokens(params: Readonly<{
   accessToken: string;
   refreshToken: string;
   idToken: string | null;
+  scope: string | null;
+  tokenType: string | null;
   expiresAt: number | null;
 }>> {
   const config = resolveConnectedAccountOauthConfig({
@@ -57,7 +60,9 @@ export async function refreshConnectedAccountOauthTokens(params: Readonly<{
   );
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Connected account refresh failed (${params.serviceId}, ${response.status}): ${body || response.statusText}`);
+    const providerErrorCode = readSafeOauthProviderErrorCode(body);
+    const safeError = providerErrorCode ?? response.statusText;
+    throw new Error(`Connected account refresh failed (${params.serviceId}, ${response.status}): ${safeError || 'provider_error'}`);
   }
   const json: unknown = await response.json();
   const mapped = mapConnectedAccountOauthPayload({
@@ -76,6 +81,8 @@ export async function refreshConnectedAccountOauthTokens(params: Readonly<{
     accessToken,
     refreshToken: mapped.refreshToken.trim() ? mapped.refreshToken : params.refreshToken,
     idToken: mapped.idToken,
+    scope: mapped.scope,
+    tokenType: mapped.tokenType,
     expiresAt: mapped.expiresAt,
   };
 }

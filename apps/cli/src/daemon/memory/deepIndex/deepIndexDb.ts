@@ -15,6 +15,13 @@ export type DeepIndexSearchHit = Readonly<{
   score: number;
 }>;
 
+export type DeepIndexStats = Readonly<{
+  deepChunkCount: number;
+  deepEmbeddingCount: number;
+  searchableSessionCount: number;
+  latestIndexedMessageAtMs: number | null;
+}>;
+
 export type DeepIndexDbHandle = Readonly<{
   init: () => void;
   insertChunk: (args: Readonly<{
@@ -50,6 +57,7 @@ export type DeepIndexDbHandle = Readonly<{
     seqTo: number;
     text: string;
   }>>;
+  getDeepIndexStats: () => DeepIndexStats;
   search: (args: Readonly<{ query: string; scope: DeepIndexSearchScope; maxResults: number }>) => DeepIndexSearchHit[];
   deleteOldestChunks: (args: Readonly<{ limit: number }>) => number;
   checkpointAndVacuum: () => void;
@@ -77,6 +85,16 @@ function tokenize(text: string): string[] {
     out.push(part);
   }
   return out;
+}
+
+function nullableInt(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : null;
+}
+
+function intOrZero(value: unknown): number {
+  return nullableInt(value) ?? 0;
 }
 
 function ensureSchemaV1(db: SqliteDatabaseSync): void {
@@ -220,6 +238,14 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
     ORDER BY c.createdAtToMs ASC, c.seqTo ASC
     LIMIT ?;
   `);
+  const deepIndexStatsStmt = db.prepare(`
+    SELECT
+      COUNT(*) AS deepChunkCount,
+      COUNT(DISTINCT sessionId) AS searchableSessionCount,
+      MAX(createdAtToMs) AS latestIndexedMessageAtMs
+    FROM message_chunks;
+  `);
+  const deepEmbeddingStatsStmt = db.prepare(`SELECT COUNT(*) AS deepEmbeddingCount FROM chunk_embeddings;`);
 
   const embeddingKey = (sessionId: string, seqFrom: number, seqTo: number): string => `${sessionId}:${seqFrom}-${seqTo}`;
 
@@ -336,6 +362,16 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
           text: typeof row?.text === 'string' ? row.text : '',
         }))
         .filter((row) => row.sessionId && Number.isFinite(row.seqFrom) && Number.isFinite(row.seqTo) && row.text.trim().length > 0);
+    },
+    getDeepIndexStats: () => {
+      const stats = deepIndexStatsStmt.get() as any;
+      const embeddingStats = deepEmbeddingStatsStmt.get() as any;
+      return {
+        deepChunkCount: intOrZero(stats?.deepChunkCount),
+        deepEmbeddingCount: intOrZero(embeddingStats?.deepEmbeddingCount),
+        searchableSessionCount: intOrZero(stats?.searchableSessionCount),
+        latestIndexedMessageAtMs: nullableInt(stats?.latestIndexedMessageAtMs),
+      };
     },
     search: ({ query, scope, maxResults }) => {
       const normalized = normalizeQuery(query);

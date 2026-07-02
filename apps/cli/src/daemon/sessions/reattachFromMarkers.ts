@@ -175,6 +175,15 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
       typeof incompleteMarker?.happySessionId === 'string' ? incompleteMarker.happySessionId.trim() : '';
     const incompleteMarkerStartedBy =
       typeof incompleteMarker?.startedBy === 'string' ? incompleteMarker.startedBy.trim() : '';
+    const incompleteMarkerHasRespawnDescriptor = !!(incompleteMarker && typeof incompleteMarker.respawn === 'object' && incompleteMarker.respawn !== null);
+    const normalizedProcessCommand = processInfo.command.trim().toLowerCase();
+    const liveCommandLooksLikeBareRuntime =
+      normalizedProcessCommand === 'node'
+      || normalizedProcessCommand === 'bun'
+      || normalizedProcessCommand === 'tsx'
+      || normalizedProcessCommand === 'node.exe'
+      || normalizedProcessCommand === 'bun.exe'
+      || normalizedProcessCommand === 'tsx.exe';
     const canRecoverFromIncompleteMarker =
       incompleteMarker &&
       isGenericHappySession &&
@@ -185,7 +194,8 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
       (
         processInfo.type === 'daemon-spawned-session' ||
         processInfo.type === 'dev-daemon-spawned' ||
-        indicatesDaemonStartedSessionCommand(processInfo.command)
+        indicatesDaemonStartedSessionCommand(processInfo.command) ||
+        (isGenericHappySession && incompleteMarkerHasRespawnDescriptor && liveCommandLooksLikeBareRuntime)
       ) &&
       incompleteMarkerStartedBy === 'daemon' &&
       !!incompleteMarkerSessionId;
@@ -302,14 +312,26 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     }
     const { adopted } = adoptSessionsFromMarkers({ markers: aliveMarkers, happyProcesses, pidToTrackedSession, credentials });
     if (adopted > 0) logger.debug(`[DAEMON RUN] Reattached ${adopted} sessions from disk markers`);
-    const markedPids = new Set(
+    const adoptedPidSet = new Set(pidToTrackedSession.keys());
+    const safetyBlockedMarkerPidSet = new Set(
       aliveMarkers
-        .filter((marker) => typeof marker.processCommandHash === 'string' && marker.processCommandHash.trim().length > 0)
+        .filter((marker) => !adoptedPidSet.has(marker.pid))
+        .filter((marker) => {
+          const hasProcessCommandHash = typeof marker.processCommandHash === 'string' && marker.processCommandHash.trim().length > 0;
+          const hasRespawnDescriptor = typeof marker.respawn === 'object' && marker.respawn !== null;
+          return hasProcessCommandHash && !hasRespawnDescriptor;
+        })
         .map((marker) => marker.pid),
     );
+    const markerlessRecoveryBlockedPidSet = new Set<number>([...adoptedPidSet, ...safetyBlockedMarkerPidSet]);
     const incompleteMarkerByPid = new Map(
       aliveMarkers
-        .filter((marker) => typeof marker.processCommandHash !== 'string' || marker.processCommandHash.trim().length === 0)
+        .filter((marker) => {
+          if (adoptedPidSet.has(marker.pid)) return false;
+          const hasProcessCommandHash = typeof marker.processCommandHash === 'string' && marker.processCommandHash.trim().length > 0;
+          const hasRespawnDescriptor = typeof marker.respawn === 'object' && marker.respawn !== null;
+          return !hasProcessCommandHash || hasRespawnDescriptor;
+        })
         .map((marker) => [
           marker.pid,
           {
@@ -323,7 +345,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     const liveRecovered = await recoverMarkerlessDaemonSpawnedSessions({
       happyProcesses,
       incompleteMarkerByPid,
-      markedPids,
+      markedPids: markerlessRecoveryBlockedPidSet,
       pidToTrackedSession,
       credentials,
     });
@@ -332,7 +354,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     }
     const liveRecoveredWithoutMarkers = await adoptLiveDaemonSessionsFromProcesses({
       happyProcesses,
-      markedPids,
+      markedPids: markerlessRecoveryBlockedPidSet,
       pidToTrackedSession,
     });
     if (liveRecoveredWithoutMarkers > 0) {

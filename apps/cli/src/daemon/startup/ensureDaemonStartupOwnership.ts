@@ -1,6 +1,6 @@
 import type { DaemonState } from '@/api/types';
 import { logger } from '@/ui/logger';
-import { stopDaemon } from '@/daemon/controlClient';
+import { forceStopKnownDaemonPid, stopDaemon } from '@/daemon/controlClient';
 import { resolveDaemonServiceCliRuntimeFromEnv } from '@/daemon/service/cli';
 import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
 import { DaemonOwnershipConflictError } from '@/daemon/ownership/DaemonOwnershipConflictError';
@@ -74,6 +74,9 @@ export async function ensureDaemonStartupOwnership(params: Readonly<{
       },
     );
     await stopDaemon();
+    if (takeoverDecision.owner.source === 'process') {
+      await forceStopKnownDaemonPid(takeoverDecision.owner.state.pid);
+    }
   }
 
   return { action: 'continue' };

@@ -126,4 +126,26 @@ describe('resolveCliFeatureDecision', () => {
     expect(decision.blockedBy).toBe('dependency');
     expect(decision.blockerCode).toBe('dependency_disabled');
   });
+
+  it('keeps local service inventory opt-in through local CLI policy', () => {
+    expect(resolveCliFeatureDecision({
+      featureId: 'localServices.inventory',
+      env: {} as NodeJS.ProcessEnv,
+    })).toMatchObject({
+      state: 'disabled',
+      blockedBy: 'dependency',
+      blockerCode: 'dependency_disabled',
+    });
+
+    expect(resolveCliFeatureDecision({
+      featureId: 'localServices.inventory',
+      env: {
+        HAPPIER_FEATURE_LOCAL_SERVICES__ENABLED: '1',
+        HAPPIER_FEATURE_LOCAL_SERVICES_INVENTORY__ENABLED: '1',
+      } as NodeJS.ProcessEnv,
+    })).toMatchObject({
+      state: 'enabled',
+      blockedBy: null,
+    });
+  });
 });

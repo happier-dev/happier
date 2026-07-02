@@ -7,14 +7,14 @@ import {
     type SessionHandoffLocalMetadataSource,
 } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
+import { buildRuntimeLocalHandoffMetadataForAgent } from '@/backends/catalog';
 import type { TrackedSession } from '../types';
-import { buildClaudeRuntimeLocalHandoffMetadata } from '@/backends/claude/handoff/buildClaudeRuntimeLocalHandoffMetadata';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import {
     getAgentResumeConfig,
     isAgentId,
 } from '@happier-dev/agents';
-import { buildVendorSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { buildProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 function asMetadataRecord(value: unknown): Metadata | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -138,22 +138,20 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
         if (vendorResumeIdField && !(runtimeLocalMetadata as Record<string, unknown>)[vendorResumeIdField]) {
             Object.assign(
                 runtimeLocalMetadata,
-                buildVendorSessionIdSessionMetadata({
+                buildProviderSessionIdSessionMetadata({
                     metadataKey: vendorResumeIdField,
                     value: vendorResumeId,
                 }),
             );
         }
-    }
-
-    if (agentId === 'claude') {
-        const claudeMetadata = buildClaudeRuntimeLocalHandoffMetadata({
-                metadata,
-                trackedSession: params.trackedSession,
-                vendorResumeId,
+        const providerRuntimeLocalMetadata = buildRuntimeLocalHandoffMetadataForAgent(agentId, {
+            metadata,
+            trackedSession: params.trackedSession,
+            vendorResumeId,
         });
-        const { claudeSessionId: _genericResumeMarker, ...claudeRuntimeLocalMetadata } = claudeMetadata;
-        Object.assign(runtimeLocalMetadata, claudeRuntimeLocalMetadata);
+        if (providerRuntimeLocalMetadata) {
+            Object.assign(runtimeLocalMetadata, providerRuntimeLocalMetadata);
+        }
     }
 
     return createSessionHandoffMetadataSplit({

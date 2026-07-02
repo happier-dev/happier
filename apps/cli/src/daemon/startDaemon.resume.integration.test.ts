@@ -256,36 +256,51 @@ vi.mock('./platform/windows/spawnHappyCliWindowsTerminal', () => ({
   startHappySessionInWindowsTerminal: vi.fn(async () => ({ ok: true, pid: 8888 })),
 }));
 
-vi.mock('@/backends/catalog', () => ({
-  AGENTS: {
-    codex: {
+vi.mock('@/backends/catalog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/backends/catalog')>();
+  return {
+    ...actual,
+    AGENTS: {
+      ...actual.AGENTS,
+      codex: {
+        ...actual.AGENTS.codex,
+        id: 'codex',
+        cliSubcommand: 'codex',
+        vendorResumeSupport: 'supported',
+      },
+    },
+    requireCatalogEntry: vi.fn(() => ({
       id: 'codex',
       cliSubcommand: 'codex',
       vendorResumeSupport: 'supported',
-    },
-  },
-  requireCatalogEntry: vi.fn(() => ({
-    id: 'codex',
-    cliSubcommand: 'codex',
-    vendorResumeSupport: 'supported',
-  })),
-  getVendorResumeSupport: vi.fn(async () => () => true),
-  getManagedServerShutdownCleanup: vi.fn(async () => null),
-  resolveAgentCliSubcommand: vi.fn(() => 'codex'),
-  resolveCatalogAgentId: vi.fn(() => 'codex'),
-}));
+    })),
+    getVendorResumeSupport: vi.fn(async () => () => true),
+    getManagedServerShutdownCleanup: vi.fn(async () => null),
+    resolveAgentCliSubcommand: vi.fn(() => 'codex'),
+    resolveCatalogAgentId: vi.fn(() => 'codex'),
+  };
+});
 
 vi.mock('@/persistence', () => ({
   writeDaemonState: vi.fn(),
   acquireDaemonLock: vi.fn(async () => ({ release: vi.fn(async () => {}) })),
   releaseDaemonLock: vi.fn(async () => {}),
   readCredentials: vi.fn(async () => null),
+  readSettings: vi.fn(async () => ({ machineId: 'machine-1' })),
 }));
 
 vi.mock('./controlClient', () => ({
   cleanupDaemonState: vi.fn(async () => {}),
   isDaemonRunningCurrentlyInstalledHappyVersion: vi.fn(async () => false),
   stopDaemon: vi.fn(async () => {}),
+  // The daemon's SSH-tunnel system-task wiring (unrelated to spawn/resume) binds these
+  // control-client functions when the live system-tasks runner is constructed during daemon
+  // startup. Provide no-ops so the suite loads; this test exercises session spawn/resume only
+  // and never drives SSH tunnels, so SSH behavior is intentionally left untouched.
+  ensureDaemonSshTunnel: vi.fn(async () => ({ error: 'ssh_tunnel_unavailable_in_test' })),
+  listDaemonSshTunnels: vi.fn(async () => ({ error: 'ssh_tunnel_unavailable_in_test' })),
+  releaseDaemonSshTunnel: vi.fn(async () => ({ error: 'ssh_tunnel_unavailable_in_test' })),
+  stopDaemonSshTunnel: vi.fn(async () => ({ error: 'ssh_tunnel_unavailable_in_test' })),
 }));
 
 vi.mock('./controlServer', () => ({
@@ -1149,7 +1164,6 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     try {
       const backendsCatalog = await import('@/backends/catalog');
       const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
-      const { claudeDaemonSpawnHooks } = await import('@/backends/claude/daemon/spawnHooks');
 
       const trackedSessionCapture: {
         current: Map<number, {
@@ -1165,8 +1179,11 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         cliSubcommand: 'claude',
         vendorResumeSupport: 'supported',
         getDaemonSpawnHooks: async () => ({
-          ...claudeDaemonSpawnHooks,
-          validateSpawn: async () => ({ ok: true as const }),
+          resolveRuntimePrerequisites: async () => ({ ok: true as const }),
+          augmentEnv: (): Record<string, string> => {
+            const claudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+            return claudeConfigDir ? { CLAUDE_CONFIG_DIR: claudeConfigDir } : {};
+          },
         }),
       }));
       vi.mocked(backendsCatalog.resolveCatalogAgentId).mockReturnValue('claude');

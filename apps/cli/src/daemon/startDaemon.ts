@@ -49,6 +49,7 @@ import { startVoiceInferenceWorker, type VoiceInferenceWorkerHandle } from './vo
 import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
 import type { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import type { DaemonServerWorkScheduler } from './serverWork';
 import type { ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
@@ -61,6 +62,9 @@ import { prepareDaemonBootstrapContext } from './startup/prepareDaemonBootstrapC
 import { createDaemonMachineBootstrapRuntime } from './startup/createDaemonMachineBootstrapRuntime';
 import { stopManagedServersOnDaemonShutdownBestEffort } from './managedServers/stopManagedServersOnDaemonShutdown';
 import { createSshTunnelSupervisor } from './ssh/tunnels';
+import { createConnectedServiceGroupHomeCleanupScheduler } from './connectedServices/homes/createConnectedServiceGroupHomeCleanupScheduler';
+import { createConnectedServiceMaterializedHomeCleanupScheduler } from './connectedServices/materialize/cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
+import { readRetainedConnectedServiceMaterializationKeys } from './connectedServices/materialize/cleanup/readRetainedConnectedServiceMaterializationKeys';
 
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
   const value = (raw ?? '').trim();
@@ -150,6 +154,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     }> | null = null;
     let connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null = null;
     let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null = null;
+    let daemonServerWorkScheduler: DaemonServerWorkScheduler | null = null;
     let apiMachineForSessions: ApiMachineClient | null = null;
     let automationWorker: AutomationWorkerHandle | null = null;
     let memoryWorker: MemoryWorkerHandle | null = null;
@@ -165,6 +170,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
     const connectedServicesRestartRequestedPids = new Set<number>();
     const connectedServicesMaterializationBaseDir = join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized');
+    let connectedServiceMaterializedHomeCleanupInterval: NodeJS.Timeout | null = null;
     const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
     const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
     const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
@@ -188,6 +194,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
         errorMessage,
       }),
+      drainBackgroundServerWork: async () => {
+        if (connectedServiceMaterializedHomeCleanupInterval) {
+          clearInterval(connectedServiceMaterializedHomeCleanupInterval);
+          connectedServiceMaterializedHomeCleanupInterval = null;
+        }
+        await connectedServiceQuotasCoordinator?.flushInBandQuotaPersistence(2_000);
+        await daemonServerWorkScheduler?.flushAll(2_000);
+      },
     });
     const {
       loadLocalSessionMetadataForHandoff,
@@ -221,6 +235,55 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       setRespawnDescriptorEncryptionMaterialForRestore(null);
     }
 
+    const connectedServiceGroupHomeCleanupScheduler = createConnectedServiceGroupHomeCleanupScheduler({
+      activeServerDir: configuration.activeServerDir,
+      pidToTrackedSession,
+      groupExists: async ({ serviceId, groupId }) => (await api.getConnectedServiceAuthGroup({ serviceId, groupId })) !== null,
+    });
+    void connectedServiceGroupHomeCleanupScheduler.reconcileDeletedGroupHomes({
+      groupExists: async ({ serviceId, groupId }) => (await api.getConnectedServiceAuthGroup({ serviceId, groupId })) !== null,
+    }).catch((error) => {
+      logger.debug('[DAEMON RUN] Connected-service group home startup reconciliation failed (non-fatal)', error);
+    });
+    const connectedServiceMaterializedHomeCleanupScheduler = createConnectedServiceMaterializedHomeCleanupScheduler({
+      baseDir: connectedServicesMaterializationBaseDir,
+      pidToTrackedSession,
+      orphanTtlMs: resolvePositiveIntEnv(
+        process.env.HAPPIER_CONNECTED_SERVICES_MATERIALIZED_HOME_ORPHAN_TTL_MS,
+        7 * 24 * 60 * 60_000,
+        { min: 60_000, max: 90 * 24 * 60 * 60_000 },
+      ),
+      attemptTtlMs: resolvePositiveIntEnv(
+        process.env.HAPPIER_CONNECTED_SERVICES_MATERIALIZED_HOME_ATTEMPT_TTL_MS,
+        60 * 60_000,
+        { min: 60_000, max: 7 * 24 * 60 * 60_000 },
+      ),
+      maxCleanupRetries: resolvePositiveIntEnv(
+        process.env.HAPPIER_CONNECTED_SERVICES_MATERIALIZED_HOME_CLEANUP_MAX_RETRIES,
+        3,
+        { min: 1, max: 20 },
+      ),
+      getRetainedMaterializationKeys: async () => await readRetainedConnectedServiceMaterializationKeys({
+        credentials,
+      }).catch((error) => {
+        logger.debug('[DAEMON RUN] Connected-service materialized home retained-session scan failed (non-fatal)', error);
+        return [];
+      }),
+    });
+    void connectedServiceMaterializedHomeCleanupScheduler.reconcile().catch((error) => {
+      logger.debug('[DAEMON RUN] Connected-service materialized home startup reconciliation failed (non-fatal)', error);
+    });
+    connectedServiceMaterializedHomeCleanupInterval = setInterval(() => {
+      void connectedServiceMaterializedHomeCleanupScheduler.cleanupPendingMaterializedHomes().catch((error) => {
+        logger.debug('[DAEMON RUN] Connected-service materialized home periodic cleanup failed (non-fatal)', error);
+      });
+    }, resolvePositiveIntEnv(
+      process.env.HAPPIER_CONNECTED_SERVICES_MATERIALIZED_HOME_CLEANUP_INTERVAL_MS,
+      60 * 60_000,
+      { min: 60_000, max: 24 * 60 * 60_000 },
+    ));
+    connectedServiceMaterializedHomeCleanupInterval.unref?.();
+
     const onHappySessionWebhook = createOnHappySessionWebhook({ pidToTrackedSession, pidToAwaiter });
     const {
       spawnSession,
@@ -230,6 +293,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       controlPort,
       controlToken,
       stopControlServer,
+      connectedServiceAuthGroupPreTurnSwitchCoordinator,
+      connectedServiceRecoverySwitchGuard,
+      requestConnectedServiceRefreshRestartSignal,
+      retryTemporaryThrottleNow,
+      connectedServiceRuntimeQuotaSnapshots,
     } = await startDaemonSessionControlRuntime({
       machineId,
       credentials,
@@ -246,10 +314,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       spawnResourceCleanupByPid,
       sessionAttachCleanupByPid,
       connectedServicesRestartRequestedPids,
+      connectedServiceGroupHomeCleanupScheduler,
+      connectedServiceMaterializedHomeCleanupScheduler,
       beforeShutdown,
       onHappySessionWebhook,
       sshTunnelSupervisor,
       requestShutdown,
+      isShuttingDown: () => shutdownInitiated,
       processEnv: process.env,
     });
     const filesystemAccessPolicy = resolveFilesystemAccessPolicy({ env: process.env });
@@ -273,6 +344,13 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       publicReleaseChannel,
       connectedServicesRestartRequestedPids,
       pidToTrackedSession,
+      // K2: FSM-routed proactive quota coordinator (built by the session-control runtime).
+      connectedServiceAuthGroupPreTurnSwitchCoordinator,
+      connectedServiceRecoverySoftSwitchGuard: connectedServiceRecoverySwitchGuard,
+      // K3: gated credential-refresh / reconnect restart adapter.
+      requestConnectedServiceRefreshRestartSignal,
+      // K2: shared single runtime quota-snapshot store (proactive selection + quotas coordinator).
+      connectedServiceRuntimeQuotaSnapshots,
     });
     const {
       fileState,
@@ -288,6 +366,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
     connectedServiceRefreshLoopHandle = runtimeBootstrap.connectedServiceRefreshLoopHandle;
     connectedServiceQuotasCoordinator = runtimeBootstrap.connectedServiceQuotasCoordinator;
     connectedServiceQuotasLoopHandle = runtimeBootstrap.connectedServiceQuotasLoopHandle;
+    daemonServerWorkScheduler = runtimeBootstrap.daemonServerWorkScheduler;
 
     startDaemonMachineRegistrationRuntime({
       api,
@@ -295,6 +374,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       initialDaemonState,
       processEnv: process.env,
       resolvePositiveIntEnv,
+      resolvesWhenShutdownRequested,
       initialPreflightMachineRegistration: preflightMachineRegistration,
       resolveMachineId: () => machineId,
       setMachineId: (resolvedMachineId) => {
@@ -324,6 +404,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         directPeerServerLifecycle,
         directTransferPromptAssetAdapterRegistry,
         directTransferPromptRegistryRegistry,
+        daemonServerWorkScheduler,
+        retryTemporaryThrottleNow,
+        setDaemonServerWorkOnline: runtimeBootstrap.setDaemonServerWorkOnline,
+        onMachineConnectionOnline: async () => {
+          await connectedServiceQuotasCoordinator?.flushInBandQuotaPersistence(0);
+        },
         isShuttingDown: () => shutdownInitiated,
       }),
       onMachineSyncRuntime: (machineSyncRuntime) => {
@@ -380,6 +466,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       restartOnStaleVersionAndHeartbeat,
       connectedServiceRefreshLoopHandle,
       connectedServiceQuotasLoopHandle,
+      beforeShutdown,
       apiMachine,
       machineConnectionStateCleanup,
       automationWorker,

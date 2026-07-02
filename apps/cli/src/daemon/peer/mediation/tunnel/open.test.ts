@@ -4,6 +4,7 @@ import tweetnacl from 'tweetnacl';
 import {
     createPeerRouteNonceSigningInputV1,
     createDirectRouteGrantSigningInputV1,
+    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
     type DirectRouteGrantPayloadV1,
     type PeerTcpTunnelOpenV1,
 } from '@happier-dev/protocol';
@@ -118,6 +119,35 @@ describe('openPeerTcpTunnel', () => {
         });
 
         expect(connectTcp).toHaveBeenCalledWith({ host: '127.0.0.1', port: 3000 });
+    });
+
+    it('returns binary_frame_v2 in the open response when the loopback tunnel selected binary encoding', async () => {
+        const mod = await loadOpenModule();
+        const connectTcp = vi.fn(async () => ({ close: vi.fn() }));
+        expect(mod?.openPeerTcpTunnel).toBeTypeOf('function');
+
+        await expect(mod?.openPeerTcpTunnel({
+            open: createOpen({
+                selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+                supportedEncodings: ['json_base64_v1', PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2],
+            }),
+            nowMs: 2_000,
+            expected: {
+                accountId: 'account_1',
+                machineId: 'machine_1',
+                endpointFingerprint: 'endpoint_1',
+                accountPublicKey: toBase64Url(accountKeyPair.publicKey),
+            },
+            trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            connectTcp,
+        })).resolves.toMatchObject({
+            ok: true,
+            response: {
+                streamPath: '/peer-mediation/v1/tunnel/stream',
+                encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+            },
+            receipt: 'peer.tunnel.opened',
+        });
     });
 
     it('rejects disallowed destinations before opening a TCP connection', async () => {

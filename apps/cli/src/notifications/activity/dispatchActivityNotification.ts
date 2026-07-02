@@ -31,12 +31,84 @@ function isTopicEnabled(channel: {
     ready: boolean;
     permissionRequest: boolean;
     userActionRequest: boolean;
+    connectedServiceAccountSwitch?: boolean;
+    connectedServiceQuotaBlocked?: boolean;
+    connectedServiceQuotaRecovered?: boolean;
   };
 }, topic: ActivityNotificationEvent['topic']): boolean {
   if (channel.enabled !== true) return false;
   if (topic === 'ready') return channel.topics.ready === true;
   if (topic === 'permission_request') return channel.topics.permissionRequest === true;
-  return channel.topics.userActionRequest === true;
+  if (topic === 'user_action_request') return channel.topics.userActionRequest === true;
+  if (topic === 'connected_service_account_switch') return channel.topics.connectedServiceAccountSwitch === true;
+  if (topic === 'connected_service_credential_health') return channel.topics.connectedServiceAccountSwitch === true;
+  if (topic === 'connected_service_quota_blocked') return channel.topics.connectedServiceQuotaBlocked === true;
+  if (topic === 'connected_service_quota_recovered') return channel.topics.connectedServiceQuotaRecovered === true;
+  return false;
+}
+
+const recentDispatchesByKey = new Map<string, number>();
+
+function notificationDedupeKey(event: ActivityNotificationEvent): string | null {
+  if (event.topic === 'connected_service_account_switch') {
+    return [
+      event.topic,
+      event.sessionId,
+      event.serviceId,
+      event.groupId,
+      event.fromProfileId ?? '',
+      event.toProfileId ?? '',
+      event.reason,
+      event.limitCategory ?? '',
+      event.providerLimitId ?? '',
+    ].join('\0');
+  }
+  if (event.topic === 'connected_service_quota_blocked' || event.topic === 'connected_service_quota_recovered') {
+    return [
+      event.topic,
+      event.serviceId,
+      event.groupId ?? '',
+      event.profileId ?? '',
+      event.nativeAuth === true ? 'native' : '',
+      event.sessionId,
+      event.issueFingerprint,
+    ].join('\0');
+  }
+  if (event.topic === 'connected_service_credential_health') {
+    return [
+      event.topic,
+      event.sessionId,
+      event.serviceId,
+      event.profileId,
+      event.status,
+      event.reason ?? '',
+      event.providerErrorCode ?? '',
+    ].join('\0');
+  }
+  return null;
+}
+
+function isSuppressedDuplicate(input: Readonly<{
+  event: ActivityNotificationEvent;
+  nowMs: number;
+  dedupeWindowMs: number;
+}>): boolean {
+  if (input.dedupeWindowMs <= 0) return false;
+  const key = notificationDedupeKey(input.event);
+  if (!key) return false;
+  const lastDispatchedAtMs = recentDispatchesByKey.get(key);
+  return typeof lastDispatchedAtMs === 'number' && input.nowMs - lastDispatchedAtMs < input.dedupeWindowMs;
+}
+
+function recordDeliveredNotificationForDedupe(input: Readonly<{
+  event: ActivityNotificationEvent;
+  nowMs: number;
+  dedupeWindowMs: number;
+}>): void {
+  if (input.dedupeWindowMs <= 0) return;
+  const key = notificationDedupeKey(input.event);
+  if (!key) return;
+  recentDispatchesByKey.set(key, input.nowMs);
 }
 
 function resolveChannelDecision(params: Readonly<{
@@ -84,6 +156,9 @@ function buildCanonicalExpoPushChannel(decision: AttentionDeliveryDecision): Exp
       ready: true,
       permissionRequest: true,
       userActionRequest: true,
+      connectedServiceAccountSwitch: true,
+      connectedServiceQuotaBlocked: true,
+      connectedServiceQuotaRecovered: true,
     },
     readyIncludeMessageText: decision.previewBehavior === 'include_preview',
   };
@@ -96,10 +171,15 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
   expoPushSender?: ExpoPushActivityNotificationSender | null;
   liveActivityRemoteSender?: LiveActivityRemoteUpdateSender | null;
   nowMs?: () => number;
+  dedupeWindowMs?: number;
 }>): Promise<Readonly<{ attemptedChannels: number; deliveredChannels: number }>> {
   const settings = accountSettingsParse(params.settings ?? {});
   const channels = resolveNotificationChannelsV1FromAccountSettings(settings);
   const nowMs = params.nowMs?.() ?? Date.now();
+  const dedupeWindowMs = params.dedupeWindowMs ?? 60_000;
+  if (isSuppressedDuplicate({ event: params.event, nowMs, dedupeWindowMs })) {
+    return { attemptedChannels: 0, deliveredChannels: 0 };
+  }
   const policyNow = new Date(nowMs);
   let attemptedChannels = 0;
   let deliveredChannels = 0;
@@ -178,6 +258,10 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
     } catch (error) {
       logger.debug('[activityNotifications] Failed to dispatch outbound notification', serializeAxiosErrorForLog(error));
     }
+  }
+
+  if (deliveredChannels > 0) {
+    recordDeliveredNotificationForDedupe({ event: params.event, nowMs, dedupeWindowMs });
   }
 
   return {

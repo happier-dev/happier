@@ -23,8 +23,15 @@ function createFakeChildProcess(): SpawnMockChild {
 }
 
 describe('startHappySessionInVisibleWindowsConsole', () => {
+  const originalAmbientOnly = process.env.HAPPIER_VISIBLE_CONSOLE_AMBIENT_ONLY_TEST;
+
   afterEach(() => {
     vi.clearAllMocks();
+    if (originalAmbientOnly === undefined) {
+      delete process.env.HAPPIER_VISIBLE_CONSOLE_AMBIENT_ONLY_TEST;
+    } else {
+      process.env.HAPPIER_VISIBLE_CONSOLE_AMBIENT_ONLY_TEST = originalAmbientOnly;
+    }
   });
 
   it('returns pid when powershell prints it', async () => {
@@ -43,6 +50,33 @@ describe('startHappySessionInVisibleWindowsConsole', () => {
 
     await expect(p).resolves.toEqual({ ok: true, pid: 12345 });
     expect(spawn).toHaveBeenCalled();
+  });
+
+  it('uses the provided launch env as the complete PowerShell environment', async () => {
+    process.env.HAPPIER_VISIBLE_CONSOLE_AMBIENT_ONLY_TEST = 'ambient-only';
+    const child = createFakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);
+
+    const p = startHappySessionInVisibleWindowsConsole({
+      workingDirectory: 'C:\\repo',
+      env: {
+        HAPPIER_VISIBLE_CONSOLE_DAEMON_ONLY_TEST: 'daemon-only',
+        HAPPIER_VISIBLE_CONSOLE_SHARED_TEST: 'daemon',
+      },
+      filePath: 'C:\\node\\node.exe',
+      args: ['--version'],
+    });
+
+    child.stdout.emit('data', Buffer.from('12345\r\n'));
+    child.emit('close', 0);
+
+    await expect(p).resolves.toEqual({ ok: true, pid: 12345 });
+    const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[2];
+    expect(spawnOptions?.env).toMatchObject({
+      HAPPIER_VISIBLE_CONSOLE_DAEMON_ONLY_TEST: 'daemon-only',
+      HAPPIER_VISIBLE_CONSOLE_SHARED_TEST: 'daemon',
+    });
+    expect(spawnOptions?.env?.HAPPIER_VISIBLE_CONSOLE_AMBIENT_ONLY_TEST).toBeUndefined();
   });
 
   it('returns error when pid is missing', async () => {

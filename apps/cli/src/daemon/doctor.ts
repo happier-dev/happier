@@ -11,11 +11,102 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
+const DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS = [
+  'HAPPIER_HOME_DIR',
+  'HAPPIER_ACTIVE_SERVER_ID',
+  'HAPPIER_SERVER_URL',
+  'HAPPIER_WEBAPP_URL',
+  'HAPPIER_PUBLIC_SERVER_URL',
+] as const;
 const WINDOWS_HAPPY_HOST_PROCESS_NAMES = new Set(['happier', 'happier.exe', 'node', 'node.exe', 'bun', 'bun.exe', 'mainthread']);
 
-export type HappyProcessInfo = { pid: number; command: string; type: string };
+export type DaemonOwnershipEnvironmentVariables = Partial<Record<
+  typeof DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS[number],
+  string
+>>;
 
-async function getProcessInfoByPidProcfs(pid: number): Promise<{ pid: number; name?: string; cmd?: string } | null> {
+export type HappyProcessInfo = {
+  pid: number;
+  command: string;
+  type: string;
+  daemonOwnershipEnvironmentVariables?: DaemonOwnershipEnvironmentVariables;
+};
+
+type RawProcessInfo = {
+  pid: number;
+  name?: string;
+  cmd?: string;
+  daemonOwnershipEnvironmentVariables?: DaemonOwnershipEnvironmentVariables;
+};
+
+function parseEnvironmentEntries(entries: readonly string[]): Array<readonly [string, string]> {
+  return entries.flatMap((entry) => {
+    const index = entry.indexOf('=');
+    if (index <= 0) return [];
+    return [[entry.slice(0, index), entry.slice(index + 1)] as const];
+  });
+}
+
+function pickEnvironmentVariables<Key extends string>(
+  pairs: readonly (readonly [string, string])[],
+  keys: readonly Key[],
+): Partial<Record<Key, string>> | undefined {
+  const keySet = new Set<string>(keys);
+  const picked: Partial<Record<Key, string>> = {};
+  for (const [key, value] of pairs) {
+    if (!keySet.has(key)) continue;
+    const trimmed = value.trim();
+    if (trimmed) {
+      picked[key as Key] = trimmed;
+    }
+  }
+  return Object.keys(picked).length > 0 ? picked : undefined;
+}
+
+async function readProcessEnvironmentPairsFromProcfs(pid: number): Promise<Array<readonly [string, string]> | null> {
+  if (process.platform !== 'linux') return null;
+  try {
+    const raw = await readFile(`/proc/${pid}/environ`);
+    if (!raw || raw.length === 0) return null;
+    return parseEnvironmentEntries(raw.toString('utf8').split('\u0000').filter(Boolean));
+  } catch {
+    return null;
+  }
+}
+
+async function readDaemonOwnershipEnvironmentVariablesFromProcfs(
+  pid: number,
+): Promise<DaemonOwnershipEnvironmentVariables | undefined> {
+  const pairs = await readProcessEnvironmentPairsFromProcfs(pid);
+  return pairs
+    ? pickEnvironmentVariables(pairs, DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS)
+    : undefined;
+}
+
+function readDaemonOwnershipEnvironmentVariablesFromPosixPs(
+  pid: number,
+): DaemonOwnershipEnvironmentVariables | undefined {
+  if (process.platform === 'linux' || process.platform === 'win32') return undefined;
+  try {
+    const raw = execFileSync('ps', ['eww', '-p', String(pid), '-o', 'command='], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const pairs = parseEnvironmentEntries(raw.split(/\s+/u).filter(Boolean));
+    return pickEnvironmentVariables(pairs, DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS);
+  } catch {
+    return undefined;
+  }
+}
+
+async function readDaemonOwnershipEnvironmentVariablesByPid(
+  pid: number,
+): Promise<DaemonOwnershipEnvironmentVariables | undefined> {
+  return await readDaemonOwnershipEnvironmentVariablesFromProcfs(pid)
+    ?? readDaemonOwnershipEnvironmentVariablesFromPosixPs(pid);
+}
+
+async function getProcessInfoByPidProcfs(pid: number): Promise<RawProcessInfo | null> {
   // Prefer /proc on Linux: it's faster and avoids races/parsing issues from repeated `ps` calls.
   if (process.platform !== 'linux') return null;
   try {
@@ -28,7 +119,8 @@ async function getProcessInfoByPidProcfs(pid: number): Promise<{ pid: number; na
     if (parts.length === 0) return null;
     const cmd = parts.join(' ');
     const name = path.basename(parts[0] ?? '');
-    return { pid, name, cmd };
+    const daemonOwnershipEnvironmentVariables = await readDaemonOwnershipEnvironmentVariablesFromProcfs(pid);
+    return { pid, name, cmd, daemonOwnershipEnvironmentVariables };
   } catch {
     return null;
   }
@@ -125,7 +217,7 @@ async function getProcessInfoByPidWindows(pid: number): Promise<{ pid: number; n
   return (await getProcessInfosByPidWindows([pid])).get(pid) ?? null;
 }
 
-function getProcessInfoByPidPosix(pid: number): { pid: number; name?: string; cmd?: string } | null {
+function getProcessInfoByPidPosix(pid: number): RawProcessInfo | null {
   if (process.platform === 'linux' || process.platform === 'win32') return null;
 
   try {
@@ -139,10 +231,14 @@ function getProcessInfoByPidPosix(pid: number): { pid: number; name?: string; cm
     }).trim();
 
     if (!name && !cmd) return null;
+    const daemonOwnershipEnvironmentVariables = readDaemonOwnershipEnvironmentVariablesFromPosixPs(pid);
     return {
       pid,
       ...(name ? { name } : {}),
       ...(cmd ? { cmd } : {}),
+      ...(daemonOwnershipEnvironmentVariables
+        ? { daemonOwnershipEnvironmentVariables }
+        : {}),
     };
   } catch {
     return null;
@@ -152,7 +248,7 @@ function getProcessInfoByPidPosix(pid: number): { pid: number; name?: string; cm
 /**
  * Find all Happier CLI processes (including current process)
  */
-export function classifyHappyProcess(proc: { pid: number; name?: string; cmd?: string }): HappyProcessInfo | null {
+export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | null {
   const cmd = proc.cmd || '';
   const name = proc.name || '';
   const normalizedCommand = cmd.replaceAll('\\', '/');
@@ -202,10 +298,17 @@ export function classifyHappyProcess(proc: { pid: number; name?: string; cmd?: s
     type = cmd.includes('tsx') ? 'dev-related' : 'user-session';
   }
 
-  return { pid: proc.pid, command: cmd || name, type };
+  return {
+    pid: proc.pid,
+    command: cmd || name,
+    type,
+    ...(proc.daemonOwnershipEnvironmentVariables
+      ? { daemonOwnershipEnvironmentVariables: proc.daemonOwnershipEnvironmentVariables }
+      : {}),
+  };
 }
 
-export async function findAllHappyProcesses(): Promise<HappyProcessInfo[]> {
+async function findAllHappyProcessesSnapshot(): Promise<HappyProcessInfo[]> {
   try {
     const processes = await psList().catch((error: unknown) => {
       if (process.platform !== 'win32') throw error;
@@ -217,8 +320,15 @@ export async function findAllHappyProcesses(): Promise<HappyProcessInfo[]> {
     const allProcesses: HappyProcessInfo[] = [];
     
     for (const proc of processes) {
-      const classified = classifyHappyProcess(windowsProcessInfoByPid.get(proc.pid) ?? proc);
+      const procfsInfo = process.platform === 'linux' ? await getProcessInfoByPidProcfs(proc.pid) : null;
+      const classified = classifyHappyProcess(procfsInfo ?? windowsProcessInfoByPid.get(proc.pid) ?? proc);
       if (!classified) continue;
+      if (!classified.daemonOwnershipEnvironmentVariables) {
+        const daemonOwnershipEnvironmentVariables = await readDaemonOwnershipEnvironmentVariablesByPid(classified.pid);
+        if (daemonOwnershipEnvironmentVariables) {
+          classified.daemonOwnershipEnvironmentVariables = daemonOwnershipEnvironmentVariables;
+        }
+      }
       allProcesses.push(classified);
     }
 
@@ -233,6 +343,23 @@ export async function findAllHappyProcesses(): Promise<HappyProcessInfo[]> {
     return allProcesses;
   } catch (error) {
     return [];
+  }
+}
+
+let findAllHappyProcessesInFlight: Promise<HappyProcessInfo[]> | null = null;
+
+export async function findAllHappyProcesses(): Promise<HappyProcessInfo[]> {
+  if (findAllHappyProcessesInFlight) {
+    return await findAllHappyProcessesInFlight;
+  }
+  const snapshot = findAllHappyProcessesSnapshot();
+  findAllHappyProcessesInFlight = snapshot;
+  try {
+    return await snapshot;
+  } finally {
+    if (findAllHappyProcessesInFlight === snapshot) {
+      findAllHappyProcessesInFlight = null;
+    }
   }
 }
 

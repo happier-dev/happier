@@ -106,7 +106,9 @@ export function isPeerTcpTunnelLoopbackDestinationHost(host: string): boolean {
     return normalized === 'localhost' || normalized === '::1' || isIpv4LoopbackHost(normalized);
 }
 
-async function defaultConnectTcp(target: Readonly<{ host: string; port: number }>): Promise<PeerTcpTunnelTcpConnection> {
+export async function connectPeerTcpTunnelTcp(
+    target: Readonly<{ host: string; port: number }>,
+): Promise<PeerTcpTunnelTcpConnection> {
     const socket = await new Promise<Socket>((resolve, reject) => {
         const tcpSocket = connectSocket({ host: target.host, port: target.port }, () => resolve(tcpSocket));
         tcpSocket.once('error', reject);
@@ -204,7 +206,7 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
 
     let connection: PeerTcpTunnelTcpConnection;
     try {
-        connection = await (input.connectTcp ?? defaultConnectTcp)({
+        connection = await (input.connectTcp ?? connectPeerTcpTunnelTcp)({
             host: normalizeDestinationHost(open.destination.host),
             port: open.destination.port,
         });
@@ -218,7 +220,7 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
             v: 1,
             tunnelId: open.tunnelId,
             streamPath: PEER_TCP_TUNNEL_STREAM_PATH,
-            encoding: PEER_TCP_TUNNEL_ENCODING_V1,
+            encoding: open.selectedEncoding ?? PEER_TCP_TUNNEL_ENCODING_V1,
             initialWindowBytes: input.initialWindowBytes ?? PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES,
             maxFrameBytes: input.maxFrameBytes ?? PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
         }),

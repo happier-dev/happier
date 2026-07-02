@@ -6,6 +6,7 @@ import { resolveDaemonTakeoverDecision } from './resolveDaemonTakeoverDecision';
 function buildOwner(overrides: Partial<CurrentDaemonOwner> = {}): CurrentDaemonOwner {
     return {
         status: 'running',
+        source: 'state',
         state: {
             pid: 1,
             httpPort: 43111,
@@ -84,6 +85,29 @@ describe('resolveDaemonTakeoverDecision', () => {
                 serviceManaged: false,
                 startupSource: 'manual',
                 versionMatches: false,
+            }),
+        });
+    });
+
+    it('keeps process-only owner conflicts closed without an explicit takeover flag', () => {
+        expect(resolveDaemonTakeoverDecision({
+            ownership: buildEvaluation('conflict', buildOwner({
+                source: 'process',
+                serviceManaged: null,
+                startupSource: 'unknown',
+                versionMatches: false,
+                releaseChannelMatches: false,
+            })),
+            takeoverRequested: false,
+            startupSource: 'manual',
+        })).toEqual({
+            kind: 'conflict',
+            owner: buildOwner({
+                source: 'process',
+                serviceManaged: null,
+                startupSource: 'unknown',
+                versionMatches: false,
+                releaseChannelMatches: false,
             }),
         });
     });

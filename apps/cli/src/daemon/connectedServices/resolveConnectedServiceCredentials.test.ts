@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
@@ -53,5 +53,151 @@ describe('resolveConnectedServiceCredentials', () => {
 
     expect(opened.get('openai-codex')?.serviceId).toBe('openai-codex');
     expect(opened.get('openai-codex')?.profileId).toBe('work');
+  });
+
+  it('fetches plaintext connected service credentials for plaintext accounts', async () => {
+    const now = Date.now();
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      oauth: {
+        accessToken: 'plain-at',
+        refreshToken: 'plain-rt',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    };
+
+    const credentials: Credentials = {
+      token: 't',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(9) },
+    };
+
+    await expect(resolveConnectedServiceCredentials({
+      credentials,
+      api: api as unknown as ApiClient,
+      bindings: [{ serviceId: 'openai-codex', profileId: 'work' }],
+    })).resolves.toEqual(new Map([['openai-codex', record]]));
+
+    expect(api.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    });
+    expect(api.getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
+  });
+
+  it('falls back to plaintext credentials when the account-mode probe errors', async () => {
+    const now = Date.now();
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      oauth: {
+        accessToken: 'plain-at',
+        refreshToken: 'plain-rt',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => {
+        throw new Error('mode probe failed');
+      }),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    };
+
+    const credentials: Credentials = {
+      token: 't',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(9) },
+    };
+
+    await expect(resolveConnectedServiceCredentials({
+      credentials,
+      api: api as unknown as ApiClient,
+      bindings: [{ serviceId: 'openai-codex', profileId: 'work' }],
+    })).resolves.toEqual(new Map([['openai-codex', record]]));
+
+    expect(api.getAccountEncryptionMode).toHaveBeenCalledTimes(1);
+    expect(api.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    });
+    expect(api.getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
+  });
+
+  it('falls back to sealed credentials when unknown account mode cannot read plaintext credentials', async () => {
+    const now = Date.now();
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      oauth: {
+        accessToken: 'sealed-at',
+        refreshToken: 'sealed-rt',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+      payload: record,
+      randomBytes: (len) => new Uint8Array(len).fill(1),
+    });
+
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => {
+        throw new Error('mode probe failed');
+      }),
+      getConnectedServiceCredentialPlain: vi.fn(async () => {
+        throw new Error('plain read failed');
+      }),
+      getConnectedServiceCredentialSealed: vi.fn(async () => ({
+        sealed: { format: 'account_scoped_v1' as const, ciphertext },
+        metadata: { kind: 'oauth' as const },
+      })),
+    };
+
+    const credentials: Credentials = {
+      token: 't',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(9) },
+    };
+
+    await expect(resolveConnectedServiceCredentials({
+      credentials,
+      api: api as unknown as ApiClient,
+      bindings: [{ serviceId: 'openai-codex', profileId: 'work' }],
+    })).resolves.toEqual(new Map([['openai-codex', record]]));
+
+    expect(api.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    });
+    expect(api.getConnectedServiceCredentialSealed).toHaveBeenCalledWith({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    });
   });
 });

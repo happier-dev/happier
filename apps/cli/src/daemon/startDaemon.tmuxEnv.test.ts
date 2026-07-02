@@ -15,4 +15,16 @@ describe('daemon tmux env building', () => {
         expect('AWS_SESSION_TOKEN' in merged).toBe(false);
         expect('UNDEFINED' in merged).toBe(false);
     }, 10000);
+
+    it('preserves Windows Path casing for tmux windows', async () => {
+        const spawnConfigModule = (await import('@/daemon/platform/tmux/spawnConfig')) as typeof import('@/daemon/platform/tmux/spawnConfig');
+        const merged = spawnConfigModule.buildTmuxWindowEnv(
+            { Path: 'C:\\Windows\\System32', HOME: 'C:\\Users\\tester', PATH: undefined },
+            {},
+            'win32',
+        );
+
+        expect(merged.Path).toBe('C:\\Windows\\System32');
+        expect('PATH' in merged).toBe(false);
+    }, 10000);
 });

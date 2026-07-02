@@ -1,7 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { DaemonRunningInspection } from './controlClient';
 
 const stopDaemonMock = vi.fn(async () => undefined);
 const checkIfDaemonRunningMock = vi.fn(async () => true);
+const inspectDaemonRunningStateMock = vi.fn<() => Promise<DaemonRunningInspection>>(async () => ({
+    status: 'running' as const,
+    state: {
+        pid: 1234,
+        startedAt: 100,
+        httpPort: 9400,
+        startedWithCliVersion: '0.2.8',
+        startedWithPublicReleaseChannel: 'preview',
+        startupSource: 'manual',
+        controlToken: 'token-1',
+    },
+}));
 const spawnDetachedDaemonStartSyncMock = vi.fn<(params?: Record<string, unknown>) => Promise<{ unref: () => void }>>(async () => ({ unref: vi.fn() }));
 const waitForDaemonRunningWithinBudgetMock = vi.fn(async () => true);
 
@@ -9,10 +22,12 @@ describe('restartDaemonAndWait', () => {
     afterEach(() => {
         stopDaemonMock.mockReset();
         checkIfDaemonRunningMock.mockReset();
+        inspectDaemonRunningStateMock.mockReset();
         spawnDetachedDaemonStartSyncMock.mockReset();
         waitForDaemonRunningWithinBudgetMock.mockReset();
         vi.restoreAllMocks();
         vi.resetModules();
+        delete process.env.HAPPIER_DAEMON_RESTART_STABILITY_TIMEOUT_MS;
     });
 
     async function importSubject() {
@@ -22,6 +37,7 @@ describe('restartDaemonAndWait', () => {
                 ...actual,
                 stopDaemon: stopDaemonMock,
                 checkIfDaemonRunningAndCleanupStaleState: checkIfDaemonRunningMock,
+                inspectDaemonRunningStateAndCleanupStaleState: inspectDaemonRunningStateMock,
             };
         });
         vi.doMock('@/daemon/runtime/spawnDetachedDaemonStartSync', () => ({
@@ -33,8 +49,33 @@ describe('restartDaemonAndWait', () => {
 
         stopDaemonMock.mockImplementation(async () => undefined);
         checkIfDaemonRunningMock.mockImplementation(async () => true);
+        inspectDaemonRunningStateMock.mockImplementationOnce(async () => ({
+            status: 'running',
+            state: {
+                pid: 1234,
+                startedAt: 100,
+                httpPort: 9400,
+                startedWithCliVersion: '0.2.8',
+                startedWithPublicReleaseChannel: 'preview',
+                startupSource: 'manual',
+                controlToken: 'token-1',
+            },
+        }));
+        inspectDaemonRunningStateMock.mockImplementation(async () => ({
+            status: 'running',
+            state: {
+                pid: 5678,
+                startedAt: 200,
+                httpPort: 9500,
+                startedWithCliVersion: '0.2.8',
+                startedWithPublicReleaseChannel: 'preview',
+                startupSource: 'self-restart',
+                controlToken: 'token-2',
+            },
+        }));
         spawnDetachedDaemonStartSyncMock.mockImplementation(async () => ({ unref: vi.fn() }));
         waitForDaemonRunningWithinBudgetMock.mockImplementation(async () => true);
+        process.env.HAPPIER_DAEMON_RESTART_STABILITY_TIMEOUT_MS = '1';
 
         return await import('./restartDaemonAndWait');
     }
@@ -92,5 +133,51 @@ describe('restartDaemonAndWait', () => {
         expect(stopDaemonMock).toHaveBeenCalledWith({ stopSessions: true });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledTimes(1);
         expect(waitForDaemonRunningWithinBudgetMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not report success when restart keeps the same daemon identity', async () => {
+        const { restartDaemonAndWait } = await importSubject();
+        inspectDaemonRunningStateMock.mockReset();
+        inspectDaemonRunningStateMock
+            .mockResolvedValueOnce({
+                status: 'running',
+                state: {
+                    pid: 2222,
+                    startedAt: 500,
+                    httpPort: 9400,
+                    startedWithCliVersion: '0.2.8',
+                    startedWithPublicReleaseChannel: 'preview',
+                    startupSource: 'manual',
+                    controlToken: 'same-token',
+                },
+            })
+            .mockResolvedValueOnce({
+                status: 'running',
+                state: {
+                    pid: 2222,
+                    startedAt: 500,
+                    httpPort: 9400,
+                    startedWithCliVersion: '0.2.8',
+                    startedWithPublicReleaseChannel: 'preview',
+                    startupSource: 'manual',
+                    controlToken: 'same-token',
+                },
+            });
+
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toBe(false);
+    });
+
+    it('does not report success when daemon is not stable after restart wait', async () => {
+        const { restartDaemonAndWait } = await importSubject();
+        inspectDaemonRunningStateMock.mockReset();
+        inspectDaemonRunningStateMock
+            .mockResolvedValueOnce({
+                status: 'not-running',
+            })
+            .mockResolvedValueOnce({
+                status: 'not-running',
+            });
+
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toBe(false);
     });
 });

@@ -2,7 +2,10 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { resolveConnectedServiceHomeDir } from './resolveConnectedServiceHomeDir';
+import {
+  resolveConnectedServiceGroupHomeDir,
+  resolveConnectedServiceHomeDir,
+} from './resolveConnectedServiceHomeDir';
 
 describe('resolveConnectedServiceHomeDir', () => {
   it('scopes homes under the active server dir', () => {
@@ -35,5 +38,23 @@ describe('resolveConnectedServiceHomeDir', () => {
     expect(resolve(derived).startsWith(resolve(base))).toBe(true);
     expect(derived).not.toContain('evil');
   });
-});
 
+  it('separates profile homes from account group homes with a reserved segment', () => {
+    const profileHome = resolveConnectedServiceHomeDir({
+      activeServerDir: join('/', 'tmp', 'happier-server'),
+      serviceId: 'openai-codex',
+      profileId: 'groups',
+      agentId: 'codex',
+    });
+    const groupHome = resolveConnectedServiceGroupHomeDir({
+      activeServerDir: join('/', 'tmp', 'happier-server'),
+      serviceId: 'openai-codex',
+      groupId: 'groups',
+      agentId: 'codex',
+    });
+
+    expect(profileHome).toBe(join('/', 'tmp', 'happier-server', 'daemon', 'connected-services', 'homes', 'openai-codex', 'groups', 'codex'));
+    expect(groupHome).toBe(join('/', 'tmp', 'happier-server', 'daemon', 'connected-services', 'homes', 'openai-codex', '__groups', 'groups', 'codex'));
+    expect(profileHome).not.toBe(groupHome);
+  });
+});

@@ -2,11 +2,12 @@ import { z } from 'zod';
 import {
   AcpConfigOptionOverridesV1Schema,
   BackendTargetRefV2Schema,
+  type CodexBackendMode,
   normalizeBackendTargetRefV2InputToV2,
+  normalizeCodexBackendMode,
   openAccountScopedBlobCiphertext,
   SessionMcpSelectionV1Schema,
 } from '@happier-dev/protocol';
-import type { CodexBackendMode } from '@happier-dev/agents';
 
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import {
@@ -233,6 +234,7 @@ export function parseAutomationTemplateExecution(
   }
 
   const template = parsed.data;
+  const codexBackendMode = normalizeCodexBackendMode(template.codexBackendMode);
 
   if (payload.automation.targetType === 'existing_session' && !template.existingSessionId) {
     return { ok: false, error: 'Invalid automation template: existingSessionId is required for existing_session target' };
@@ -280,7 +282,7 @@ export function parseAutomationTemplateExecution(
         ? { windowsTerminalWindowName: template.windowsTerminalWindowName }
         : {}),
       ...(template.experimentalCodexAcp !== undefined ? { experimentalCodexAcp: template.experimentalCodexAcp } : {}),
-      ...(template.codexBackendMode !== undefined ? { codexBackendMode: template.codexBackendMode } : {}),
+      ...(codexBackendMode !== null ? { codexBackendMode } : {}),
       ...(template.agentModeId ? { agentModeId: template.agentModeId } : {}),
       ...(template.existingSessionId ? { existingSessionId: template.existingSessionId } : {}),
       ...(template.sessionEncryptionMode ? { sessionEncryptionMode: template.sessionEncryptionMode } : {}),

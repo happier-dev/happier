@@ -532,4 +532,160 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       ]);
     });
   });
+
+  it('uses schtasks LIST fallback wrapper path when XML task export is unavailable', async () => {
+    await withTempDir('happier-discover-service-entry-windows-list-fallback-', async (homeDir) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      mkdirSync(join(happierHomeDir, 'services'), { recursive: true });
+
+      spawnSyncMock.mockImplementation((command, args) => {
+        if (command !== 'schtasks') {
+          return { status: 1, stdout: '', stderr: '' } as never;
+        }
+        const normalizedArgs = Array.isArray(args) ? args.map((value) => String(value)) : [];
+        if (normalizedArgs.join(' ') === '/Query /FO CSV /NH') {
+          return {
+            status: 0,
+            stdout: '"\\\\Happier\\\\happier-daemon.default","N/A"\r\n',
+            stderr: '',
+          } as never;
+        }
+        if (normalizedArgs.join(' ') === '/Query /TN Happier\\happier-daemon.default /XML') {
+          return {
+            status: 1,
+            stdout: '',
+            stderr: 'xml unavailable',
+          } as never;
+        }
+        if (normalizedArgs.join(' ') === '/Query /TN Happier\\happier-daemon.default /FO LIST /V') {
+          return {
+            status: 0,
+            stdout: [
+              'TaskName: Happier\\happier-daemon.default',
+              'Task To Run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\\Users\\tester\\.happier-l21-alt\\services\\happier-daemon.default.ps1"',
+              '',
+            ].join('\r\n'),
+            stderr: '',
+          } as never;
+        }
+        return { status: 1, stdout: '', stderr: 'unexpected schtasks call' } as never;
+      });
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'win32',
+        userHomeDir: homeDir,
+        happierHomeDir,
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          serverId: 'default',
+          name: 'Default automatic startup',
+          happierHomeDir: 'C:\\Users\\tester\\.happier-l21-alt',
+          targetMode: 'default-following',
+          releaseChannel: 'stable',
+          label: 'Happier\\happier-daemon.default',
+          path: 'C:\\Users\\tester\\.happier-l21-alt\\services\\happier-daemon.default.ps1',
+        }),
+      ]);
+    });
+  });
+
+  it('does not fabricate a local wrapper path when Windows task wrapper path cannot be resolved', async () => {
+    await withTempDir('happier-discover-service-entry-windows-unresolved-task-', async (homeDir) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      mkdirSync(join(happierHomeDir, 'services'), { recursive: true });
+
+      spawnSyncMock.mockImplementation((command, args) => {
+        if (command !== 'schtasks') {
+          return { status: 1, stdout: '', stderr: '' } as never;
+        }
+        const normalizedArgs = Array.isArray(args) ? args.map((value) => String(value)) : [];
+        if (normalizedArgs.join(' ') === '/Query /FO CSV /NH') {
+          return {
+            status: 0,
+            stdout: '"\\\\Happier\\\\happier-daemon.default","N/A"\r\n',
+            stderr: '',
+          } as never;
+        }
+        if (normalizedArgs.join(' ') === '/Query /TN Happier\\happier-daemon.default /XML') {
+          return {
+            status: 1,
+            stdout: '',
+            stderr: 'xml unavailable',
+          } as never;
+        }
+        if (normalizedArgs.join(' ') === '/Query /TN Happier\\happier-daemon.default /FO LIST /V') {
+          return {
+            status: 1,
+            stdout: '',
+            stderr: 'list unavailable',
+          } as never;
+        }
+        return { status: 1, stdout: '', stderr: 'unexpected schtasks call' } as never;
+      });
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'win32',
+        userHomeDir: homeDir,
+        happierHomeDir,
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(entries).toEqual([]);
+    });
+  });
+
+  it('applies a timeout to Windows schtasks discovery calls', async () => {
+    await withTempDir('happier-discover-service-entry-windows-timeout-', async (homeDir) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      mkdirSync(join(happierHomeDir, 'services'), { recursive: true });
+
+      const observedTimeouts: number[] = [];
+      spawnSyncMock.mockImplementation((command, args, options) => {
+        if (command !== 'schtasks') {
+          return { status: 1, stdout: '', stderr: '' } as never;
+        }
+        observedTimeouts.push(Number((options as { timeout?: number } | undefined)?.timeout ?? 0));
+        const normalizedArgs = Array.isArray(args) ? args.map((value) => String(value)) : [];
+        if (normalizedArgs.join(' ') === '/Query /FO CSV /NH') {
+          return {
+            status: 0,
+            stdout: '"\\\\Happier\\\\happier-daemon.default","N/A"\r\n',
+            stderr: '',
+          } as never;
+        }
+        if (normalizedArgs.join(' ') === '/Query /TN Happier\\happier-daemon.default /XML') {
+          return {
+            status: 0,
+            stdout: `
+              <Task>
+                <Actions>
+                  <Exec>
+                    <Arguments>-NoProfile -ExecutionPolicy Bypass -File "C:\\Users\\tester\\.happier\\services\\happier-daemon.default.ps1"</Arguments>
+                  </Exec>
+                </Actions>
+              </Task>
+            `,
+            stderr: '',
+          } as never;
+        }
+        return { status: 1, stdout: '', stderr: 'unexpected schtasks call' } as never;
+      });
+
+      await discoverInstalledDaemonServiceEntries({
+        platform: 'win32',
+        userHomeDir: homeDir,
+        happierHomeDir,
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(observedTimeouts.length).toBeGreaterThan(0);
+      expect(observedTimeouts.every((timeout) => timeout > 0)).toBe(true);
+    });
+  });
 });

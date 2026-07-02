@@ -9,6 +9,9 @@ import {
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
+const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
+  'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
+
 describe('sessionRunnerRespawnDescriptor', () => {
   it('canonicalizes legacy agentRuntimeDescriptorV1 respawn carriers onto runtimeDescriptorV1', () => {
     const descriptor = SessionRunnerRespawnDescriptorV1Schema.parse({
@@ -19,7 +22,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'runtime-thread',
+          providerSessionId: 'runtime-thread',
         },
       },
     });
@@ -32,7 +35,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'runtime-thread',
+          providerSessionId: 'runtime-thread',
         },
       },
     });
@@ -46,7 +49,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'runtime-thread',
+          providerSessionId: 'runtime-thread',
         },
       },
     });
@@ -91,6 +94,43 @@ describe('sessionRunnerRespawnDescriptor', () => {
         forceIncludeServerIds: ['portable-playwright'],
         forceExcludeServerIds: ['workspace-db'],
       },
+    });
+  });
+
+  it('round-trips connected-service materialization identity through the respawn descriptor', () => {
+    const identity = {
+      v: 1,
+      id: 'csm_respawn',
+      createdAt: 123,
+    };
+    const identityJson = JSON.stringify(identity);
+    const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
+      directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      connectedServiceMaterializationIdentityV1: identity,
+      environmentVariables: {
+        [HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY]: identityJson,
+      },
+    } as SpawnSessionOptions & Record<string, unknown>);
+
+    expect(descriptor).toMatchObject({
+      version: 1,
+      directory: '/tmp/repo',
+      connectedServiceMaterializationIdentityV1: identity,
+      environmentVariables: {
+        [HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY]: identityJson,
+      },
+    });
+
+    const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
+    expect(restored).toMatchObject({
+      directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      connectedServiceMaterializationIdentityV1: identity,
+      environmentVariables: {
+        [HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY]: identityJson,
+      },
+      approvedNewDirectoryCreation: true,
     });
   });
 
@@ -399,6 +439,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
   });
 
   it('builds tracked respawn environment variables from expanded env plus safe child runtime locators only', () => {
+    const identityJson = JSON.stringify({ v: 1, id: 'csm_child_env', createdAt: 321 });
     expect(buildTrackedSessionRespawnEnvironmentVariables({
       expandedEnvironmentVariables: {
         OPENAI_API_KEY: 'sk-openai',
@@ -407,6 +448,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       },
       extraEnvForChild: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+        [HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY]: identityJson,
         HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON: '["OPENAI_API_KEY"]',
         HAPPIER_SESSION_REQUESTED_DIRECTORY: '/tmp/repo',
         HAPPIER_CODEX_BACKEND_MODE: 'acp',
@@ -416,6 +458,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       ANTHROPIC_AUTH_TOKEN: 'sk-anthropic',
       CODEX_HOME: '/tmp/codex-home',
       CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+      [HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY]: identityJson,
     });
   });
 });

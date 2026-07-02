@@ -1,0 +1,234 @@
+import {
+  ConnectedServiceBindingsV1Schema,
+  type ConnectedServiceBindingSelectionV1,
+  type ConnectedServiceId,
+  type ConnectedServiceProfileId,
+} from '@happier-dev/protocol';
+
+import type { ConnectedServiceResolvedSelection } from './materialization/materializer';
+
+export const HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY = 'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON';
+export const HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY =
+  'HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON';
+export const HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY =
+  'HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT';
+
+type SerializedConnectedServiceSelection =
+  | Readonly<{
+      kind: 'profile';
+      serviceId: ConnectedServiceId;
+      profileId: string;
+    }>
+  | Readonly<{
+      kind: 'group';
+      serviceId: ConnectedServiceId;
+      groupId: string;
+      activeProfileId: string;
+      fallbackProfileId: string;
+      generation: number;
+      policy: unknown;
+    }>;
+
+export type ConnectedServiceChildSelection = SerializedConnectedServiceSelection;
+
+export type ConnectedServiceRuntimeAuthContext = Readonly<{
+  serviceId: ConnectedServiceId;
+  profileId: string | null;
+  groupId: string | null;
+}>;
+
+export type ConnectedServiceRuntimeAuthMetadataSession = Readonly<{
+  getMetadataSnapshot?: () => unknown;
+}>;
+
+function serializeSelection(selection: ConnectedServiceResolvedSelection): SerializedConnectedServiceSelection {
+  if (selection.kind === 'profile') {
+    return {
+      kind: 'profile',
+      serviceId: selection.serviceId,
+      profileId: selection.profileId,
+    };
+  }
+  return {
+    kind: 'group',
+    serviceId: selection.serviceId,
+    groupId: selection.groupId,
+    activeProfileId: selection.activeProfileId,
+    fallbackProfileId: selection.fallbackProfileId,
+    generation: selection.generation,
+    policy: selection.policy,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function parseSelection(value: unknown): SerializedConnectedServiceSelection | null {
+  if (!isRecord(value)) return null;
+  const kind = value.kind;
+  const serviceId = readTrimmedString(value.serviceId) as ConnectedServiceId;
+  if (!serviceId) return null;
+  if (kind === 'profile') {
+    const profileId = readTrimmedString(value.profileId);
+    return profileId ? { kind, serviceId, profileId } : null;
+  }
+  if (kind !== 'group') return null;
+  const groupId = readTrimmedString(value.groupId);
+  const activeProfileId = readTrimmedString(value.activeProfileId);
+  const fallbackProfileId = readTrimmedString(value.fallbackProfileId);
+  const generation = typeof value.generation === 'number' && Number.isFinite(value.generation)
+    ? Math.trunc(value.generation)
+    : 0;
+  if (!groupId || !activeProfileId || !fallbackProfileId) return null;
+  return {
+    kind,
+    serviceId,
+    groupId,
+    activeProfileId,
+    fallbackProfileId,
+    generation,
+    policy: value.policy ?? null,
+  };
+}
+
+export function serializeConnectedServiceChildSelections(
+  selectionsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection> | undefined,
+): string | null {
+  if (!selectionsByServiceId || selectionsByServiceId.size === 0) return null;
+  return JSON.stringify([...selectionsByServiceId.values()].map(serializeSelection));
+}
+
+export function readConnectedServiceChildSelectionsFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): Map<ConnectedServiceId, SerializedConnectedServiceSelection> | null {
+  const raw = env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const selections = new Map<ConnectedServiceId, SerializedConnectedServiceSelection>();
+  for (const item of parsed) {
+    const selection = parseSelection(item);
+    if (selection) selections.set(selection.serviceId, selection);
+  }
+  return selections.size > 0 ? selections : null;
+}
+
+export function serializeConnectedServiceMaterializedEnvKeys(
+  env: Readonly<Record<string, string>>,
+): string | null {
+  const keys = Object.keys(env)
+    .map((key) => key.trim())
+    .filter(Boolean);
+  return keys.length > 0 ? JSON.stringify(Array.from(new Set(keys)).sort()) : null;
+}
+
+export function readConnectedServiceMaterializedEnvKeysFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): string[] {
+  const raw = env[HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY];
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return Array.from(new Set(parsed
+    .filter((key): key is string => typeof key === 'string')
+    .map((key) => key.trim())
+    .filter(Boolean)));
+}
+
+export function findConnectedServiceChildSelection(
+  env: Readonly<Record<string, string | undefined>>,
+  serviceId: ConnectedServiceId,
+): ConnectedServiceChildSelection | null {
+  return readConnectedServiceChildSelectionsFromEnv(env)?.get(serviceId) ?? null;
+}
+
+export function resolveConnectedServiceRuntimeAuthContextFromSelection(
+  selection: unknown,
+  fallbackServiceId: ConnectedServiceId,
+): ConnectedServiceRuntimeAuthContext {
+  if (!isRecord(selection)) {
+    return { serviceId: fallbackServiceId, profileId: null, groupId: null };
+  }
+  const serviceId = (readTrimmedString(selection.serviceId) || fallbackServiceId) as ConnectedServiceId;
+  if (selection.kind === 'group') {
+    return {
+      serviceId,
+      profileId: readTrimmedString(selection.activeProfileId) || null,
+      groupId: readTrimmedString(selection.groupId) || null,
+    };
+  }
+  if (selection.kind === 'profile') {
+    return {
+      serviceId,
+      profileId: readTrimmedString(selection.profileId) || null,
+      groupId: null,
+    };
+  }
+  return {
+    serviceId,
+    profileId: readTrimmedString(selection.profileId) || readTrimmedString(selection.activeProfileId) || null,
+    groupId: readTrimmedString(selection.groupId) || null,
+  };
+}
+
+export function resolveConnectedServiceRuntimeAuthContextFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  serviceId: ConnectedServiceId,
+): ConnectedServiceRuntimeAuthContext {
+  return resolveConnectedServiceRuntimeAuthContextFromSelection(
+    readConnectedServiceChildSelectionsFromEnv(env)?.get(serviceId),
+    serviceId,
+  );
+}
+
+export function findConnectedServiceBindingSelectionFromSessionMetadata(
+  session: ConnectedServiceRuntimeAuthMetadataSession,
+  serviceId: ConnectedServiceId,
+): ConnectedServiceBindingSelectionV1 | null {
+  const metadata = typeof session.getMetadataSnapshot === 'function' ? session.getMetadataSnapshot() : null;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+
+  const parsed = ConnectedServiceBindingsV1Schema.safeParse((metadata as Record<string, unknown>).connectedServices);
+  if (!parsed.success) return null;
+
+  return parsed.data.bindingsByServiceId[serviceId] ?? null;
+}
+
+export function resolveConnectedServiceRuntimeAuthContextFromSessionMetadata(
+  session: ConnectedServiceRuntimeAuthMetadataSession,
+  serviceId: ConnectedServiceId,
+): ConnectedServiceRuntimeAuthContext {
+  const binding = findConnectedServiceBindingSelectionFromSessionMetadata(session, serviceId);
+  if (!binding || binding.source !== 'connected') {
+    return { serviceId, profileId: null, groupId: null };
+  }
+
+  if (binding.selection === 'group') {
+    return {
+      serviceId,
+      profileId: binding.profileId ?? null,
+      groupId: binding.groupId,
+    };
+  }
+
+  return {
+    serviceId,
+    profileId: binding.profileId as ConnectedServiceProfileId,
+    groupId: null,
+  };
+}

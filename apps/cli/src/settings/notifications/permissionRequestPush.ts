@@ -1,6 +1,4 @@
-import axios from 'axios';
 import {
-  buildAgentRequestNotificationContent,
   summarizeToolInputForNotification,
   type AccountSettings,
 } from '@happier-dev/protocol';
@@ -33,6 +31,8 @@ export type AgentRequestPushNotificationResult = Readonly<{
 export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
   pushSender: PermissionRequestPushSender;
   sessionId: string;
+  sessionTitle?: string | null;
+  agentDisplayName?: string | null;
   requestId: string;
   toolName: string;
   kind: AgentRequestKind;
@@ -53,6 +53,8 @@ export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
       event: {
         topic: params.kind === 'user_action' ? 'user_action_request' : 'permission_request',
         sessionId: params.sessionId,
+        sessionTitle: params.sessionTitle,
+        agentDisplayName: params.agentDisplayName,
         requestId: params.requestId,
         toolName: params.toolName,
         toolInput: params.toolInput,
@@ -65,7 +67,7 @@ export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
   } catch (error) {
     logger.debug(
       '[permissionRequestPush] Failed to send request push',
-      axios.isAxiosError(error) ? serializeAxiosErrorForLog(error) : error,
+      serializeAxiosErrorForLog(error),
     );
     return { status: 'failed' };
   }
@@ -74,6 +76,8 @@ export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
 export async function sendPermissionRequestPushNotificationAsync(params: Readonly<{
   pushSender: PermissionRequestPushSender;
   sessionId: string;
+  sessionTitle?: string | null;
+  agentDisplayName?: string | null;
   permissionId: string;
   toolName: string;
   settings: AccountSettings | null;
@@ -84,6 +88,8 @@ export async function sendPermissionRequestPushNotificationAsync(params: Readonl
   const result = await sendAgentRequestPushNotificationAsync({
     pushSender: params.pushSender,
     sessionId: params.sessionId,
+    sessionTitle: params.sessionTitle,
+    agentDisplayName: params.agentDisplayName,
     requestId: params.permissionId,
     toolName: params.toolName,
     kind: 'permission',
@@ -98,6 +104,8 @@ export async function sendPermissionRequestPushNotificationAsync(params: Readonl
 export function sendPermissionRequestPushNotification(params: Readonly<{
   pushSender: PermissionRequestPushSender;
   sessionId: string;
+  sessionTitle?: string | null;
+  agentDisplayName?: string | null;
   permissionId: string;
   toolName: string;
   settings?: AccountSettings | null;
@@ -114,6 +122,8 @@ export function sendPermissionRequestPushNotification(params: Readonly<{
 export function sendPermissionRequestPushNotificationBestEffort(params: Readonly<{
   pushSender: PermissionRequestPushSender;
   sessionId: string;
+  sessionTitle?: string | null;
+  agentDisplayName?: string | null;
   permissionId: string;
   toolName: string;
   settings: AccountSettings | null;
@@ -138,6 +148,8 @@ function isAutoApprovedByMode(permissionMode: PermissionMode | null | undefined,
 export function sendPermissionRequestPushNotificationForActiveAccount(params: Readonly<{
   pushSender: PermissionRequestPushSender;
   sessionId: string;
+  sessionTitle?: string | null;
+  agentDisplayName?: string | null;
   permissionId: string;
   toolName: string;
   permissionMode?: PermissionMode | null;

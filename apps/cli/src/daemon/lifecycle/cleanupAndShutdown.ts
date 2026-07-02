@@ -22,6 +22,7 @@ export type CleanupAndShutdownParams = Readonly<{
     restartOnStaleVersionAndHeartbeat: NodeJS.Timeout | null;
     connectedServiceRefreshLoopHandle: ConnectedServiceRefreshLoopHandle | null;
     connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null;
+    beforeShutdown?: () => Promise<void>;
     apiMachine: ApiMachineClient | null;
     machineConnectionStateCleanup: (() => void) | null;
     automationWorker: AutomationWorkerHandle | null;
@@ -57,7 +58,7 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
     // Clear daemon.state.json early in shutdown so callers observing "stop" don't race a later
     // heartbeat tick or long tail cleanup work (and to satisfy daemon stop integration tests).
     try {
-        await clearDaemonState();
+        await clearDaemonState({ includeLockFile: false });
         logger.debug('[DAEMON RUN] Daemon state file removed');
     } catch (error) {
         logger.debug('[DAEMON RUN] Error cleaning up daemon metadata', error);
@@ -68,6 +69,13 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
     }
     if (params.connectedServiceQuotasLoopHandle) {
         params.connectedServiceQuotasLoopHandle.stop();
+    }
+    if (params.beforeShutdown) {
+        try {
+            await params.beforeShutdown();
+        } catch (error) {
+            logger.debug('[DAEMON RUN] Error draining shutdown work during cleanup (best-effort)', error);
+        }
     }
 
     if (params.apiMachine) {

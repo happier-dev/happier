@@ -18,6 +18,7 @@ export function startDaemonMachineRegistrationRuntime(
         initialDaemonState: Parameters<typeof startDaemonMachineRegistration>[0]['initialDaemonState'];
         processEnv: NodeJS.ProcessEnv;
         resolvePositiveIntEnv: ResolvePositiveIntEnv;
+        resolvesWhenShutdownRequested: Promise<unknown>;
         initialPreflightMachineRegistration: Parameters<typeof startDaemonMachineRegistration>[0]['initialPreflightMachineRegistration'];
         resolveMachineId: () => string;
         setMachineId: (resolvedMachineId: string) => void;
@@ -49,10 +50,25 @@ export function startDaemonMachineRegistrationRuntime(
         10_000,
         { min: 250, max: 120_000 },
     );
-    const machineRegistrationRetryDelayMs = params.resolvePositiveIntEnv(
-        params.processEnv.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS,
+    const machineRegistrationRetryBaseDelayMs = params.resolvePositiveIntEnv(
+        params.processEnv.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_BASE_DELAY_MS
+            ?? params.processEnv.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS,
         10_000,
         { min: 0, max: 5 * 60_000 },
+    );
+    const machineRegistrationRetryMaxDelayMs = params.resolvePositiveIntEnv(
+        params.processEnv.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_MAX_DELAY_MS,
+        5 * 60_000,
+        { min: 0, max: 30 * 60_000 },
+    );
+    const machineRegistrationRetryJitterMs = params.resolvePositiveIntEnv(
+        params.processEnv.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_JITTER_MS,
+        1_000,
+        { min: 0, max: 60_000 },
+    );
+    const machineRegistrationRetryEffectiveMaxDelayMs = Math.max(
+        machineRegistrationRetryBaseDelayMs,
+        machineRegistrationRetryMaxDelayMs,
     );
     const machineRegistrationMaxAttempts = params.resolvePositiveIntEnv(
         params.processEnv.HAPPIER_DAEMON_MACHINE_REGISTRATION_MAX_ATTEMPTS,
@@ -65,8 +81,11 @@ export function startDaemonMachineRegistrationRuntime(
         metadataForRegistration: params.metadataForRegistration,
         initialDaemonState: params.initialDaemonState,
         machineRegistrationTimeoutMs,
-        machineRegistrationRetryDelayMs,
+        machineRegistrationRetryBaseDelayMs,
+        machineRegistrationRetryMaxDelayMs: machineRegistrationRetryEffectiveMaxDelayMs,
+        machineRegistrationRetryJitterMs,
         machineRegistrationMaxAttempts,
+        resolvesWhenShutdownRequested: params.resolvesWhenShutdownRequested,
         initialPreflightMachineRegistration: params.initialPreflightMachineRegistration,
         resolveMachineId: params.resolveMachineId,
         setMachineId: params.setMachineId,

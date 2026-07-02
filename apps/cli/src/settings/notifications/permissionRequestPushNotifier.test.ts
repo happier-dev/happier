@@ -195,12 +195,15 @@ describe('PermissionRequestPushNotifier', () => {
       .mockResolvedValueOnce(undefined);
 
     const onNotifiedAt = vi.fn();
+    let sessionTitle = 'Initial session title';
     const notifier = new PermissionRequestPushNotifier({
       pushSender: { sendToAllDevicesAsync },
       getSettings: () =>
         accountSettingsParse({
           notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
         }),
+      getSessionTitle: () => sessionTitle,
+      getAgentDisplayName: () => 'Codex',
       sessionId: 's1',
       logPrefix: '[test]',
       retryDelaysMs: [100, 200],
@@ -215,18 +218,22 @@ describe('PermissionRequestPushNotifier', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+    expect(sendToAllDevicesAsync.mock.calls[0]?.[0]).toBe('Initial session title');
 
     // Advance to first retry.
+    sessionTitle = 'Retried session title';
     await vi.advanceTimersByTimeAsync(100);
     await Promise.resolve();
     await Promise.resolve();
     expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(2);
+    expect(sendToAllDevicesAsync.mock.calls[1]?.[0]).toBe('Retried session title');
 
     // Advance to second retry, which succeeds.
     await vi.advanceTimersByTimeAsync(200);
     await Promise.resolve();
     await Promise.resolve();
     expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(3);
+    expect(sendToAllDevicesAsync.mock.calls[2]?.[1]).toBe('Codex asks permission to use Write');
     expect(onNotifiedAt).toHaveBeenCalledTimes(1);
 
     notifier.markCompleted('p1');
@@ -252,6 +259,40 @@ describe('PermissionRequestPushNotifier', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+    notifier.dispose();
+  });
+
+  it('falls back when display context callbacks throw', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const notifier = new PermissionRequestPushNotifier({
+      pushSender: { sendToAllDevicesAsync },
+      getSettings: () =>
+        accountSettingsParse({
+          notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
+        }),
+      getSessionTitle: () => {
+        throw new Error('metadata unavailable');
+      },
+      getAgentDisplayName: () => {
+        throw new Error('metadata unavailable');
+      },
+      sessionId: 's1',
+      logPrefix: '[test]',
+      retryDelaysMs: [],
+      maxRetryMs: 10_000,
+      maxEntries: 10,
+    });
+
+    notifier.notify({ permissionId: 'p1', toolName: 'Write' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
+      'Session s1',
+      'Agent asks permission to use Write',
+      expect.objectContaining({ sessionId: 's1', requestId: 'p1' }),
+      { sound: 'happier_urgent.wav', priority: 'high', androidSoundId: 'urgent' },
+    );
     notifier.dispose();
   });
 });

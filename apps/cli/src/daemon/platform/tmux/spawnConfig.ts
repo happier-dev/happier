@@ -1,11 +1,13 @@
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import type { CatalogAgentId } from '@/backends/types';
+import { createAllowedEnvKeySet, isAllowedEnvKey } from '@/utils/env/envKeyAllowlist';
 
 type TmuxSpawnAgentId = CatalogAgentId | 'acp-catalog';
 
 export function buildTmuxWindowEnv(
   daemonEnv: NodeJS.ProcessEnv,
   extraEnv: Record<string, string>,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
   const essentialKeys = [
     'PATH',
@@ -21,10 +23,14 @@ export function buildTmuxWindowEnv(
     'LOGNAME',
   ] as const;
 
+  const allowedKeys = createAllowedEnvKeySet(essentialKeys, platform);
   const filteredDaemonEnv = Object.fromEntries(
-    essentialKeys
-      .map((key) => [key, daemonEnv[key]] as const)
-      .filter(([, value]) => typeof value === 'string' && value.length > 0),
+    Object.entries(daemonEnv)
+      .filter(([key, value]) => (
+        isAllowedEnvKey(key, allowedKeys, platform)
+        && typeof value === 'string'
+        && value.length > 0
+      )),
   ) as Record<string, string>;
 
   return { ...filteredDaemonEnv, ...extraEnv };

@@ -49,7 +49,7 @@ describe('resolveVendorResumeIdForExistingSession', () => {
         agentRuntimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
-          provider: { backendMode: 'appServer', vendorSessionId: 'vendor-compat-1' },
+          provider: { backendMode: 'appServer', providerSessionId: 'vendor-compat-1' },
         },
         codexSessionId: 'vendor-compat-1',
       }),

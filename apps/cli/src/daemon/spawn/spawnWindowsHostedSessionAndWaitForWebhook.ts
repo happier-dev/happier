@@ -29,6 +29,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
     reservedSessionId?: string;
     directoryCreated: boolean;
     extraEnvForChildWithMessage: Record<string, string>;
+    processEnv: NodeJS.ProcessEnv;
     happyHomeDir: string;
     pidToTrackedSession: Map<number, TrackedSession>;
     pidToAwaiter: Map<number, (session: TrackedSession) => void>;
@@ -42,7 +43,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
     warn: (message: string) => void;
 }>): Promise<SpawnSessionResult> {
     const buildWindowsHostedLaunchEnv = (launchSpec: ReturnType<typeof buildHappyCliSubprocessLaunchSpec>) => ({
-        ...process.env,
+        ...params.processEnv,
         ...params.extraEnvForChildWithMessage,
         ...(launchSpec.env ?? {}),
     });
@@ -69,8 +70,8 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         params.spawnLifecycleCallbacks.registerConnectedServiceSpawnTarget(waitParams.pid);
         params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid(waitParams.pid);
 
-        const pollMsRaw = typeof process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS === 'string'
-            ? process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS.trim()
+        const pollMsRaw = typeof params.processEnv.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS === 'string'
+            ? params.processEnv.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS.trim()
             : '';
         const pollMsParsed = pollMsRaw ? Number(pollMsRaw) : Number.NaN;
         const pollMs = Number.isFinite(pollMsParsed) && pollMsParsed > 0 ? pollMsParsed : 5000;
@@ -125,7 +126,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         agentCommand: params.agentCommand,
         windowName: resolveWindowsTerminalWindowName({
             requested: params.options.windowsTerminalWindowName,
-            env: process.env,
+            env: params.processEnv,
         }),
     });
 

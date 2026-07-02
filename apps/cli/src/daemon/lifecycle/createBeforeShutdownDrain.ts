@@ -12,6 +12,7 @@ export type CreateBeforeShutdownDrainParams = Readonly<{
     shutdownSpawnDrainPollMs: number;
     getApiMachineForSessions: () => ApiMachineClient | null;
     buildUnexpectedSpawnResult: (errorMessage: string) => SpawnSessionResult;
+    drainBackgroundServerWork?: () => Promise<void>;
 }>;
 
 export function createBeforeShutdownDrain(
@@ -22,6 +23,14 @@ export function createBeforeShutdownDrain(
     return async (): Promise<void> => {
         if (beforeShutdownOnce) return await beforeShutdownOnce;
         beforeShutdownOnce = (async () => {
+            if (params.drainBackgroundServerWork) {
+                try {
+                    await params.drainBackgroundServerWork();
+                } catch (error) {
+                    logger.debug('[DAEMON RUN] Background server-work drain failed during shutdown (best-effort)', error);
+                }
+            }
+
             const initialInFlightSpawns = params.pidToAwaiter.size;
             const hasPendingRpcRequests = params.getApiMachineForSessions() !== null;
             if (initialInFlightSpawns === 0 && !hasPendingRpcRequests) return;

@@ -19,5 +19,6 @@ export function applyInitialTranscriptAfterSeqToAttachPayload(
   return {
     ...payload,
     lastObservedMessageSeq: normalizedInitialTranscriptAfterSeq,
+    initialTranscriptAfterSeq: normalizedInitialTranscriptAfterSeq,
   };
 }

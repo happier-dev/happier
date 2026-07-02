@@ -50,8 +50,11 @@ describe('resolveExistingSessionAttachContext', () => {
       createSessionRecordFixture({
         id: 'sess_plain',
         seq: 42,
+        metadataVersion: 7,
+        agentStateVersion: 3,
         encryptionMode: 'plain',
         metadata: JSON.stringify({ flavor: 'codex', path: '/tmp', codexSessionId: 'vendor-plain-1' }),
+        agentState: JSON.stringify({ controlledByUser: true }),
         dataEncryptionKey: null,
       }),
     );
@@ -59,11 +62,56 @@ describe('resolveExistingSessionAttachContext', () => {
     const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_plain', credentials: null });
     expect(out).toEqual({
       ok: true,
-      attachPayload: { v: 2, encryptionMode: 'plain', lastObservedMessageSeq: 42 },
+      attachPayload: {
+        v: 2,
+        encryptionMode: 'plain',
+        lastObservedMessageSeq: 42,
+        snapshot: {
+          metadata: { flavor: 'codex', path: '/tmp', codexSessionId: 'vendor-plain-1' },
+          metadataVersion: 7,
+          agentState: { controlledByUser: true },
+          agentStateVersion: 3,
+        },
+      },
       vendorResumeId: 'vendor-plain-1',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
     });
     expect(vi.mocked(fetchSessionByIdCompat)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetchSessionByIdCompat)).toHaveBeenCalledWith({
+      token: 't',
+      sessionId: 'sess_plain',
+      reason: 'manual-recovery',
+    });
+  });
+
+  it('limits concurrent session-detail reads during existing-session reattach bursts', async () => {
+    let active = 0;
+    let maxActive = 0;
+    vi.mocked(fetchSessionByIdCompat).mockImplementation(async ({ sessionId }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return createSessionRecordFixture({
+        id: sessionId,
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({ flavor: 'codex', path: '/tmp' }),
+        dataEncryptionKey: null,
+      });
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, (_, index) =>
+        resolveExistingSessionAttachContext({
+          token: 't',
+          sessionId: `sess_${index}`,
+          credentials: null,
+        }),
+      ),
+    );
+
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(maxActive).toBeLessThanOrEqual(4);
   });
 
   it('prefers the direct-session provider id when the stored metadata has no top-level flavor', async () => {
@@ -91,7 +139,24 @@ describe('resolveExistingSessionAttachContext', () => {
 
     expect(out).toEqual({
       ok: true,
-      attachPayload: { v: 2, encryptionMode: 'plain', lastObservedMessageSeq: 0 },
+      attachPayload: {
+        v: 2,
+        encryptionMode: 'plain',
+        lastObservedMessageSeq: 0,
+        snapshot: {
+          metadata: {
+            externalSessionV1: {
+              v: 1,
+              providerId: 'claude',
+              remoteSessionId: 'sess-direct-1',
+            },
+            claudeSessionId: 'sess-direct-1',
+          },
+          metadataVersion: 1,
+          agentState: null,
+          agentStateVersion: 0,
+        },
+      },
       vendorResumeId: 'sess-direct-1',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
     });
@@ -124,7 +189,26 @@ describe('resolveExistingSessionAttachContext', () => {
 
     expect(out).toEqual({
       ok: true,
-      attachPayload: { v: 2, encryptionMode: 'plain', lastObservedMessageSeq: 0 },
+      attachPayload: {
+        v: 2,
+        encryptionMode: 'plain',
+        lastObservedMessageSeq: 0,
+        snapshot: {
+          metadata: {
+            flavor: 'acp:review-bot',
+            path: '/tmp',
+            acpConfiguredBackendV1: {
+              v: 1,
+              updatedAt: 1,
+              backendId: 'review-bot',
+              title: 'Review Bot',
+            },
+          },
+          metadataVersion: 1,
+          agentState: null,
+          agentStateVersion: 0,
+        },
+      },
       vendorResumeId: null,
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
     });
@@ -178,6 +262,12 @@ describe('resolveExistingSessionAttachContext', () => {
     expect(out.attachPayload.v).toBe(2);
     expect(out.attachPayload.encryptionMode).toBe('e2ee');
     expect(out.attachPayload.lastObservedMessageSeq).toBe(77);
+    expect(out.attachPayload.snapshot).toEqual({
+      metadata: { flavor: 'codex', codexSessionId: 'vendor-e2ee-1' },
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 0,
+    });
     expect(out.vendorResumeId).toBe('vendor-e2ee-1');
     expect(out.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
 

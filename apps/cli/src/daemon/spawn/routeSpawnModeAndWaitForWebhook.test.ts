@@ -45,6 +45,7 @@ function createParams() {
     },
     directoryCreated: false,
     extraEnvForChildWithMessage: {},
+    processEnv: process.env,
     happyHomeDir: '/tmp/happier-home',
     pidToTrackedSession: new Map(),
     pidToAwaiter: new Map(),

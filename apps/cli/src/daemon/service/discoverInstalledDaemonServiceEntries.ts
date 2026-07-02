@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { basename, join, win32 as win32Path } from 'node:path';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
 import type { DaemonServiceMode, DaemonServiceTargetMode } from './plan';
 
@@ -179,19 +180,49 @@ function parseWindowsScheduledTaskWrapperPathFromXml(contents: string): string |
   return bareMatch?.[1]?.trim() || null;
 }
 
+function parseWindowsScheduledTaskWrapperPathFromTaskToRun(taskToRunText: string): string | null {
+  const taskToRun = String(taskToRunText ?? '').trim();
+  if (!taskToRun) {
+    return null;
+  }
+  const quotedMatch = /-File\s+"([^"]+\.ps1)"/iu.exec(taskToRun);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1].trim();
+  }
+  const bareMatch = /-File\s+([^\s]+\.ps1)/iu.exec(taskToRun);
+  return bareMatch?.[1]?.trim() || null;
+}
+
+function runWindowsSchtasksCommand(args: readonly string[]): ReturnType<typeof spawnSync> {
+  const timeoutMs = readPositiveIntEnv('HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS', 15_000);
+  return spawnSync('schtasks', [...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: timeoutMs,
+  });
+}
+
 function readWindowsScheduledTaskWrapperPath(taskName: string): string | null {
   const normalizedTaskName = normalizeWindowsScheduledTaskName(taskName);
   if (!normalizedTaskName) return null;
 
   try {
-    const result = spawnSync('schtasks', ['/Query', '/TN', normalizedTaskName, '/XML'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const result = runWindowsSchtasksCommand(['/Query', '/TN', normalizedTaskName, '/XML']);
     if (result.status !== 0) {
-      return null;
+      const fallback = runWindowsSchtasksCommand(['/Query', '/TN', normalizedTaskName, '/FO', 'LIST', '/V']);
+      if (fallback.status !== 0) {
+        return null;
+      }
+      return parseWindowsScheduledTaskWrapperPathFromTaskToRun(String(fallback.stdout ?? ''));
     }
-    return parseWindowsScheduledTaskWrapperPathFromXml(String(result.stdout ?? ''));
+    return parseWindowsScheduledTaskWrapperPathFromXml(String(result.stdout ?? ''))
+      ?? (() => {
+        const fallback = runWindowsSchtasksCommand(['/Query', '/TN', normalizedTaskName, '/FO', 'LIST', '/V']);
+        if (fallback.status !== 0) {
+          return null;
+        }
+        return parseWindowsScheduledTaskWrapperPathFromTaskToRun(String(fallback.stdout ?? ''));
+      })();
   } catch {
     return null;
   }
@@ -201,9 +232,11 @@ function deriveWindowsScheduledTaskWrapperPath(taskName: string, servicesDir: st
   const normalizedTaskName = normalizeWindowsScheduledTaskName(taskName);
   if (!normalizedTaskName) return null;
 
-  const taskLeaf = normalizedTaskName.split('\\').filter(Boolean).at(-1);
-  if (!taskLeaf) return null;
-  return readWindowsScheduledTaskWrapperPath(normalizedTaskName) || join(servicesDir, `${taskLeaf}.ps1`);
+  const resolvedWrapperPath = readWindowsScheduledTaskWrapperPath(normalizedTaskName);
+  if (resolvedWrapperPath) {
+    return resolvedWrapperPath;
+  }
+  return null;
 }
 
 function deriveWindowsServiceHomeDirFromWrapperPath(wrapperPath: string | null): string | null {
@@ -220,10 +253,7 @@ function deriveWindowsServiceHomeDirFromWrapperPath(wrapperPath: string | null):
 
 function listWindowsScheduledTaskWrapperPaths(servicesDir: string): readonly string[] {
   try {
-    const result = spawnSync('schtasks', ['/Query', '/FO', 'CSV', '/NH'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const result = runWindowsSchtasksCommand(['/Query', '/FO', 'CSV', '/NH']);
     if (result.status !== 0) {
       return [];
     }

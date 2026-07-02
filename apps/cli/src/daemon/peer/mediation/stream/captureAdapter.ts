@@ -1,10 +1,13 @@
 import type {
   MachineLiveStreamCapsV1,
+  MachineLiveStreamControlSidebandV1,
   MachineLiveStreamControlV1,
   MachineLiveStreamFrameV1,
   MachineLiveStreamReceiptV1,
   MachineLiveStreamStartRequestV1,
 } from '@happier-dev/protocol';
+
+import type { MachineLiveStreamCaptureRegistry } from './captureRegistry';
 
 export type MachineLiveStreamFrameOfferResult = Readonly<
   { ok: true } | { ok: false; reasonCode: string }
@@ -16,6 +19,7 @@ export type MachineLiveStreamControlApplyResult = Readonly<
 
 export type MachineLiveStreamCaptureSession = Readonly<{
   stop: () => void | Promise<void>;
+  applySidebandControl?: (control: MachineLiveStreamControlSidebandV1) => MachineLiveStreamControlApplyResult;
 }>;
 
 export type MachineLiveStreamCaptureStartInput = Readonly<{
@@ -42,7 +46,23 @@ export type MachineLiveStreamCaptureAdapter = Readonly<{
   start: (input: MachineLiveStreamCaptureStartInput) => Promise<MachineLiveStreamCaptureStartResult>;
 }>;
 
-export function createDaemonMachineLiveStreamCaptureAdapter(): MachineLiveStreamCaptureAdapter {
+export function createDaemonMachineLiveStreamCaptureAdapter(
+  registry?: MachineLiveStreamCaptureRegistry,
+): MachineLiveStreamCaptureAdapter {
+  if (registry) {
+    return {
+      start: async (input) => {
+        const source = registry.resolve({ streamFamily: input.streamFamily });
+        if (!source.ok) {
+          return {
+            ok: false,
+            reasonCode: source.diagnostic.reasonCode,
+          };
+        }
+        return await source.source.adapter.start(input);
+      },
+    };
+  }
   return unavailableMachineLiveStreamCaptureAdapter;
 }
 

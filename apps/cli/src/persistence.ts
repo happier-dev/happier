@@ -467,6 +467,36 @@ export async function updateSettings(
 ): Promise<Settings> {
   const { findHappyProcessByPid } = await import('@/daemon/doctor');
 
+  const isTransientSettingsRenameError = (error: unknown): boolean => {
+    const code = typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code ?? '').trim()
+      : '';
+    return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
+  };
+
+  const renameSettingsFileWithRetry = async (sourcePath: string, targetPath: string): Promise<void> => {
+    const MAX_RENAME_ATTEMPTS = 30;
+    const RENAME_RETRY_INTERVAL_MS = 100;
+
+    let attempt = 0;
+    while (true) {
+      try {
+        await rename(sourcePath, targetPath);
+        return;
+      } catch (error) {
+        if (
+          !isTransientSettingsRenameError(error)
+          || attempt >= MAX_RENAME_ATTEMPTS - 1
+        ) {
+          throw error;
+        }
+      }
+
+      attempt += 1;
+      await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_INTERVAL_MS));
+    }
+  };
+
   // Timing constants
   const LOCK_RETRY_INTERVAL_MS = 100;  // How long to wait between lock attempts
   const MAX_LOCK_ATTEMPTS = 50;        // Maximum number of attempts (5 seconds total)
@@ -564,7 +594,7 @@ export async function updateSettings(
 
     // Write atomically using rename
     await writeFile(tmpFile, JSON.stringify(serializeSettingsForDisk(updated), null, 2), { mode: 0o600 });
-    await rename(tmpFile, configuration.settingsFile); // Atomic on POSIX
+    await renameSettingsFileWithRetry(tmpFile, configuration.settingsFile); // Atomic on POSIX, retried for transient Windows file locks
     await bestEffortChmod(configuration.settingsFile, 0o600)
 
     return updated;
@@ -910,16 +940,17 @@ export function writeDaemonState(state: DaemonLocallyPersistedState): void {
 }
 
 /**
- * Clean up daemon state file and lock file
+ * Clean up daemon state file and, for stale cleanup paths, the lock file.
  */
-export async function clearDaemonState(): Promise<void> {
+export async function clearDaemonState(options: Readonly<{ includeLockFile?: boolean }> = {}): Promise<void> {
+  const includeLockFile = options.includeLockFile ?? true;
   if (existsSync(configuration.daemonStateFile)) {
     await unlink(configuration.daemonStateFile);
   }
   await cleanupAtomicWriteTempFiles(configuration.daemonStateFile);
   await cleanupLegacyDaemonStateFilesBestEffort();
   // Also clean up lock file if it exists (for stale cleanup)
-  if (existsSync(configuration.daemonLockFile)) {
+  if (includeLockFile && existsSync(configuration.daemonLockFile)) {
     try {
       await unlink(configuration.daemonLockFile);
     } catch {
@@ -1000,7 +1031,10 @@ export async function releaseDaemonLock(lockHandle: FileHandle): Promise<void> {
 
   try {
     if (existsSync(configuration.daemonLockFile)) {
-      unlinkSync(configuration.daemonLockFile);
+      const lockOwner = readFileSync(configuration.daemonLockFile, 'utf-8').trim();
+      if (lockOwner === String(process.pid)) {
+        unlinkSync(configuration.daemonLockFile);
+      }
     }
   } catch { }
 }

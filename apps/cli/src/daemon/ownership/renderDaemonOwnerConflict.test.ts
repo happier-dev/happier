@@ -5,6 +5,7 @@ import { renderDaemonOwnerConflict } from './renderDaemonOwnerConflict';
 describe('renderDaemonOwnerConflict', () => {
     const legacyOwner = {
         status: 'running' as const,
+        source: 'state' as const,
         state: {
             pid: 123,
             httpPort: 43110,

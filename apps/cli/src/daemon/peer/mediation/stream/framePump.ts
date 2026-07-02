@@ -3,6 +3,7 @@ import type {
     MachineLiveStreamControlV1,
     MachineLiveStreamFrameV1,
     MachineLiveStreamReceiptV1,
+    MachineLiveStreamRouteKindV1,
 } from '@happier-dev/protocol';
 import {
     createMachineLiveStreamMeter,
@@ -27,6 +28,7 @@ type FramePumpReasonCode =
 function createReceipt(input: Readonly<{
     id: typeof PEER_MEDIATION_RECEIPTS.streamPaused | typeof PEER_MEDIATION_RECEIPTS.streamBandwidthCapped;
     streamId: string;
+    routeKind: MachineLiveStreamRouteKindV1;
     reasonCode: string;
     caps: MachineLiveStreamCapsV1;
     bytesSent?: number;
@@ -36,7 +38,7 @@ function createReceipt(input: Readonly<{
         v: 1,
         id: input.id,
         streamId: input.streamId,
-        routeKind: 'loopback_direct',
+        routeKind: input.routeKind,
         flowKind: 'live_stream',
         reasonCode: input.reasonCode,
         maxBitrateBps: input.caps.maxBitrateBps,
@@ -51,6 +53,7 @@ function createReceipt(input: Readonly<{
 
 export function startMachineLiveStreamFramePump(_input: Readonly<{
     streamId: string;
+    routeKind?: MachineLiveStreamRouteKindV1;
     caps: MachineLiveStreamCapsV1;
     startedAtMs: number;
     nowMs: () => number;
@@ -69,6 +72,7 @@ export function startMachineLiveStreamFramePump(_input: Readonly<{
         caps: _input.caps,
         startedAtMs: _input.startedAtMs,
     });
+    const routeKind = _input.routeKind ?? 'loopback_direct';
 
     return {
         applyControl: (rawControl) => {
@@ -93,6 +97,7 @@ export function startMachineLiveStreamFramePump(_input: Readonly<{
                 _input.emitReceipt(createReceipt({
                     id: PEER_MEDIATION_RECEIPTS.streamPaused,
                     streamId: _input.streamId,
+                    routeKind,
                     reasonCode: 'non_monotonic_sequence',
                     caps: _input.caps,
                 }));
@@ -104,6 +109,7 @@ export function startMachineLiveStreamFramePump(_input: Readonly<{
                 _input.emitReceipt(createReceipt({
                     id: PEER_MEDIATION_RECEIPTS.streamBandwidthCapped,
                     streamId: _input.streamId,
+                    routeKind,
                     reasonCode: metered.reasonCode,
                     caps: _input.caps,
                     bytesSent: metered.metering.bytesSent,
@@ -117,6 +123,7 @@ export function startMachineLiveStreamFramePump(_input: Readonly<{
                 _input.emitReceipt(createReceipt({
                     id: PEER_MEDIATION_RECEIPTS.streamPaused,
                     streamId: _input.streamId,
+                    routeKind,
                     reasonCode: 'backpressure_window_exhausted',
                     caps: _input.caps,
                     bytesSent: metered.metering.bytesSent,

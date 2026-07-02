@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { configuration } from '@/configuration';
 
 import { findHappyProcessByPid } from './doctor';
+import { readProcessRunState as readProcessRunStateDefault, type ProcessRunState } from './processRunState';
 import { hashProcessCommand } from './sessionRegistry';
 
 type LockPayload = Readonly<{
@@ -49,13 +50,10 @@ export function sessionRunnerLockPathForSessionId(params: Readonly<{ happyHomeDi
   return join(sessionRunnerLocksDir(happyHomeDir), `${resolveLockFileBasename(sessionId)}.json`);
 }
 
-function isPidAliveDefault(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+function killWedgedPidDefault(pid: number): void {
+  // SIGKILL works on a SIGSTOPped process; this prevents a later SIGCONT from reviving a
+  // wedged runner after its lock has been handed to a replacement.
+  process.kill(pid, 'SIGKILL');
 }
 
 async function getCurrentProcessCommandHashDefault(pid: number): Promise<string | null> {
@@ -99,8 +97,9 @@ export async function acquireSessionRunnerLock(params: Readonly<{
   pid?: number;
   nowMs?: number;
   happyHomeDir?: string;
-  isPidAlive?: (pid: number) => boolean;
+  readProcessRunState?: (pid: number) => Promise<ProcessRunState>;
   getCurrentProcessCommandHash?: (pid: number) => Promise<string | null>;
+  killWedgedPid?: (pid: number) => void;
 }>): Promise<AcquireSessionRunnerLockResult> {
   const sessionId = normalizeSessionId(params.sessionId);
   if (!sessionId) return { ok: false, reason: 'invalid_session_id' };
@@ -159,7 +158,7 @@ export async function acquireSessionRunnerLock(params: Readonly<{
     return { ok: false, reason: 'io_error', errorMessage: e instanceof Error ? e.message : String(e) };
   }
 
-  // Existing lock. If it's held by a live safe Happy session process, deny; otherwise break stale and retry once.
+  // Existing lock. If it's held by a live servable Happy session process, deny; otherwise break stale and retry once.
   let existing: LockPayload | null = null;
   try {
     existing = safeParseLockPayload(await readFile(lockPath, 'utf8'));
@@ -167,22 +166,39 @@ export async function acquireSessionRunnerLock(params: Readonly<{
     existing = null;
   }
 
-  const isPidAlive = params.isPidAlive ?? isPidAliveDefault;
+  const readProcessRunState = params.readProcessRunState ?? readProcessRunStateDefault;
+  const killWedgedPid = params.killWedgedPid ?? killWedgedPidDefault;
+  const readHolderRunState = async (pid: number): Promise<ProcessRunState> =>
+    await readProcessRunState(pid).catch<ProcessRunState>(() => 'servable');
 
   if (existing && existing.sessionId !== sessionId) {
-    if (existing.pid && isPidAlive(existing.pid)) {
+    if (existing.pid && (await readHolderRunState(existing.pid)) !== 'dead') {
       return { ok: false, reason: 'already_running', heldByPid: existing.pid };
     }
     // payload mismatch but process isn't alive: treat as stale/invalid and overwrite.
     existing = null;
   }
 
-  if (existing?.pid && isPidAlive(existing.pid)) {
-    if (existing.processCommandHash) {
+  if (existing?.pid) {
+    const holderState = await readHolderRunState(existing.pid);
+    if (holderState === 'dead' || holderState === 'zombie') {
+      // Dead or defunct: cannot serve, safe to break below (a zombie needs no kill).
+    } else if (existing.processCommandHash) {
       const currentHash = await getCurrentProcessCommandHash(existing.pid).catch(() => null);
-      // If we can prove this PID is now a different process, treat the lock as stale and break it.
-      if (typeof currentHash === 'string' && /^[a-f0-9]{64}$/.test(currentHash) && currentHash !== existing.processCommandHash) {
-        // continue below to break the lock
+      const currentHashValid = typeof currentHash === 'string' && /^[a-f0-9]{64}$/.test(currentHash);
+      if (currentHashValid && currentHash !== existing.processCommandHash) {
+        // Provably a different process (PID reuse): treat the lock as stale and break it.
+      } else if (holderState === 'stopped' && currentHashValid && currentHash === existing.processCommandHash) {
+        // Proven same runner image but SIGSTOPped: it holds the lock and serves nothing
+        // (incident 2026-06-12 "already running" refusal while wedged). Kill it so a
+        // later SIGCONT cannot revive a duplicate, then break the lock.
+        try {
+          killWedgedPid(existing.pid);
+        } catch {
+          // Best-effort: if the kill fails we still cannot trust the holder to serve;
+          // fail closed and keep the lock.
+          return { ok: false, reason: 'already_running', heldByPid: existing.pid };
+        }
       } else {
         // Fail-closed: if the lock PID is alive and we cannot prove it's stale, deny.
         return { ok: false, reason: 'already_running', heldByPid: existing.pid };

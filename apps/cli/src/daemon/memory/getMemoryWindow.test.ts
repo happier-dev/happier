@@ -5,6 +5,47 @@ import { encryptSessionPayload, type SessionEncryptionContext } from '@/session/
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 describe('getMemoryWindow', () => {
+  it('uses semantic extraction for provider messages and excludes events', async () => {
+    const { getMemoryWindow } = await import('./getMemoryWindow');
+
+    const key = new Uint8Array(32).fill(7);
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: key } };
+
+    const window = await getMemoryWindow({
+      credentials,
+      sessionId: 'sess-provider',
+      seqFrom: 1,
+      seqTo: 3,
+      paddingMessages: 0,
+      deps: {
+        fetchSessionById: async () => createSessionRecordFixture({ id: 'sess-provider', active: true, activeAt: 1, metadata: '{}' }),
+        fetchEncryptedTranscriptMessagesPage: async () => ({
+          messages: [
+            {
+              seq: 1,
+              createdAt: 1000,
+              messageRole: 'agent',
+              content: { t: 'plain' as const, v: { role: 'agent', content: { type: 'codex', data: { type: 'message', message: 'semantic provider window text' } } } },
+            },
+            {
+              seq: 2,
+              createdAt: 2000,
+              messageRole: 'event',
+              content: { t: 'plain' as const, v: { role: 'agent', content: { type: 'codex', data: { type: 'token_count' } } } },
+            },
+          ],
+          hasMore: false,
+          nextBeforeSeq: null,
+          nextAfterSeq: null,
+        }),
+      },
+    });
+
+    expect(window.snippets).toHaveLength(1);
+    expect(window.snippets[0]!.text).toContain('Assistant: semantic provider window text');
+    expect(window.snippets[0]!.text).not.toContain('token_count');
+  });
+
   it('decrypts a bounded transcript range and returns a redacted snippet window', async () => {
     const { getMemoryWindow } = await import('./getMemoryWindow');
 
@@ -29,12 +70,14 @@ describe('getMemoryWindow', () => {
       paddingMessages: 0,
       deps: {
         fetchSessionById: async () => createSessionRecordFixture({ id: 'sess-1', active: true, activeAt: 1, metadata: 'b64' }),
-        fetchEncryptedTranscriptRange: async () => ({
-          ok: true as const,
-          rows: [
+        fetchEncryptedTranscriptMessagesPage: async () => ({
+          messages: [
             { seq: 1, createdAt: 1000, content: { t: 'encrypted' as const, c: ciphertext1 } },
             { seq: 2, createdAt: 2000, content: { t: 'encrypted' as const, c: ciphertext2 } },
           ],
+          hasMore: false,
+          nextBeforeSeq: null,
+          nextAfterSeq: null,
         }),
       },
     });
@@ -60,9 +103,8 @@ describe('getMemoryWindow', () => {
       paddingMessages: 0,
       deps: {
         fetchSessionById: async () => createSessionRecordFixture({ id: 'sess-plain', active: true, activeAt: 1, metadata: '{}' }),
-        fetchEncryptedTranscriptRange: async () => ({
-          ok: true as const,
-          rows: [
+        fetchEncryptedTranscriptMessagesPage: async () => ({
+          messages: [
             {
               seq: 1,
               createdAt: 1000,
@@ -74,6 +116,9 @@ describe('getMemoryWindow', () => {
               content: { t: 'plain' as const, v: { role: 'agent', content: { type: 'text', text: 'world' } } },
             },
           ],
+          hasMore: false,
+          nextBeforeSeq: null,
+          nextAfterSeq: null,
         }),
       },
     });

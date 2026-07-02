@@ -1,4 +1,7 @@
-import { reportDaemonObservedSessionExit } from '../sessionTermination';
+import {
+  reportDaemonObservedSessionExit,
+  type DaemonSessionEndPayload,
+} from '../sessionTermination';
 
 type OrphanedDeadDaemonSession = Readonly<{
   sessionId: string;
@@ -6,15 +9,25 @@ type OrphanedDeadDaemonSession = Readonly<{
 }>;
 
 export function publishOrphanedStartupSessionEnds(params: Readonly<{
-  apiMachine: { emitSessionEnd: (payload: any) => void };
+  apiMachine: {
+    emitSessionEnd: (payload: DaemonSessionEndPayload) => void;
+    enqueueSessionEndMutation?: (payload: DaemonSessionEndPayload) => void;
+  };
   orphanedDeadDaemonSessions: ReadonlyArray<OrphanedDeadDaemonSession>;
   now?: () => number;
 }>): void {
   const now = params.now ?? (() => Date.now());
+  const publishSessionEnd = (payload: DaemonSessionEndPayload): void => {
+    if (params.apiMachine.enqueueSessionEndMutation) {
+      params.apiMachine.enqueueSessionEndMutation(payload);
+      return;
+    }
+    params.apiMachine.emitSessionEnd(payload);
+  };
 
   for (const orphanedSession of params.orphanedDeadDaemonSessions) {
     reportDaemonObservedSessionExit({
-      apiMachine: params.apiMachine,
+      apiMachine: { emitSessionEnd: publishSessionEnd },
       trackedSession: {
         startedBy: 'daemon',
         happySessionId: orphanedSession.sessionId,

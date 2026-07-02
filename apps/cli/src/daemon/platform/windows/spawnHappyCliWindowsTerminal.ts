@@ -23,7 +23,7 @@ export async function startHappySessionInWindowsTerminal(params: {
 
     const child = spawn(invocation.command, invocation.args, {
       cwd: params.workingDirectory,
-      env: { ...process.env, ...params.env },
+      env: params.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });

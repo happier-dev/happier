@@ -28,7 +28,16 @@ export {
   validateTmuxSessionIdentifier,
 } from './identifiers';
 
-export { normalizeExitCode, resolveTmuxCommandTimeoutMs } from './env';
+export {
+  normalizeExitCode,
+  resolveTmuxCommandTimeoutMs,
+  resolveTmuxPromptSubmitDelayMs,
+  resolveTmuxSendKeysChunkSize,
+} from './env';
+
+export { typeTextViaSendKeys, type TmuxCommandExecutor, type TmuxTypeTextResult } from './typeText';
+export { evaluateTmuxPaneLiveness, type TmuxPaneLivenessExecutor } from './paneLiveness';
+export { createTmuxTerminalHostAdapter, type TmuxTerminalHostUtility } from './adapter';
 
 export { TmuxUtilities, type TmuxSpawnOptions } from './TmuxUtilities';
 

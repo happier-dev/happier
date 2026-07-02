@@ -33,6 +33,9 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       // Test fixture boundary: transfer registries are pass-through values and are not invoked by this test.
       directTransferPromptAssetAdapterRegistry: {} as never,
       directTransferPromptRegistryRegistry: {} as never,
+      daemonServerWorkScheduler: {} as never,
+      setDaemonServerWorkOnline: vi.fn(),
+      onMachineConnectionOnline: vi.fn(),
       isShuttingDown: () => false,
     });
 

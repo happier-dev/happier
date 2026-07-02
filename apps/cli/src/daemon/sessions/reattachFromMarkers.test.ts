@@ -205,6 +205,55 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     });
   });
 
+  it('recovers a daemon session from a non-adopted hashed marker when takeover adoption returns zero', async () => {
+    vi.mocked(listSessionMarkers).mockResolvedValue([
+      {
+        pid: 23456,
+        happySessionId: 'session-hash-fallback',
+        happyHomeDir: '/tmp/happy',
+        createdAt: 1,
+        updatedAt: 1,
+        startedBy: 'daemon',
+        cwd: '/tmp/project',
+        processCommandHash: 'a'.repeat(64),
+        respawn: {
+          version: 1,
+          directory: '/tmp/project',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        },
+      } as any,
+    ]);
+    vi.mocked(findAllHappyProcesses).mockResolvedValue([
+      {
+        pid: 23456,
+        type: 'daemon-spawned-session',
+        cwd: '/tmp/project',
+        command:
+          '/home/guest/.happier/cli-preview/current/happier claude --happy-starting-mode remote --started-by daemon --existing-session session-hash-fallback',
+      } as any,
+    ]);
+    vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+
+    const pidToTrackedSession = new Map<number, any>();
+    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+
+    expect(pidToTrackedSession.get(23456)).toEqual(
+      expect.objectContaining({
+        startedBy: 'daemon',
+        happySessionId: 'session-hash-fallback',
+        pid: 23456,
+        reattachedFromDiskMarker: true,
+      }),
+    );
+    expect(writeSessionMarker).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pid: 23456,
+        happySessionId: 'session-hash-fallback',
+        startedBy: 'daemon',
+      }),
+    );
+  });
+
   it('recovers a live daemon-spawned process from its marker when the live command lacks --existing-session', async () => {
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
@@ -548,6 +597,47 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         pid: 54321,
         happySessionId: 'session-123',
         startedBy: 'daemon',
+      }),
+    );
+  });
+
+  it('recovers incomplete daemon markers during takeover when the live command degrades to a bare runtime command', async () => {
+    isOwnedLiveDaemonSessionProcessCommandMock.mockReturnValue(false);
+    vi.mocked(listSessionMarkers).mockResolvedValue([
+      {
+        pid: 76543,
+        happySessionId: 'session-789',
+        happyHomeDir: '/tmp/happy',
+        createdAt: 1,
+        updatedAt: 1,
+        startedBy: 'daemon',
+        cwd: '/tmp/project',
+        respawn: {
+          version: 1,
+          directory: '/tmp/project',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        },
+      } as any,
+    ]);
+    vi.mocked(findAllHappyProcesses).mockResolvedValue([
+      {
+        pid: 76543,
+        type: 'user-session',
+        cwd: '/tmp/project',
+        command: 'node',
+      } as any,
+    ]);
+    vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+
+    const pidToTrackedSession = new Map<number, any>();
+    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+
+    expect(pidToTrackedSession.get(76543)).toEqual(
+      expect.objectContaining({
+        startedBy: 'daemon',
+        happySessionId: 'session-789',
+        pid: 76543,
+        reattachedFromDiskMarker: true,
       }),
     );
   });

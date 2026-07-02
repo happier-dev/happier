@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 
-import { resolveCanonicalCodexBackendModeFromCompatInput } from '@/backends/codex/daemon/backendMode';
+import { resolveCanonicalCodexBackendModeFromCompatInput } from '@happier-dev/plugins-codex/agent/lifecycle/backendMode';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 function sha256Hex(value: string): string {

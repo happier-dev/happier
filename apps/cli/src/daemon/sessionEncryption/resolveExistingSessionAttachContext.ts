@@ -1,16 +1,22 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { readAcpConfiguredBackendV1FromMetadata, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
+import type { AgentState, Metadata } from '@/api/types';
 import type { Credentials } from '@/persistence';
 import { encodeBase64 } from '@/api/encryption';
 import { resolveVendorResumeIdForExistingSession } from '@/daemon/spawn/resolveVendorResumeIdForExistingSession';
 import {
+  decryptStoredSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
   tryDecryptSessionMetadata,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
+
+const EXISTING_SESSION_ATTACH_DETAIL_CONCURRENCY = 4;
+let activeExistingSessionAttachDetailReads = 0;
+const pendingExistingSessionAttachDetailReadSlots: Array<() => void> = [];
 
 export type ExistingSessionAttachContext = Readonly<{
   ok: true;
@@ -36,9 +42,37 @@ function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function releaseExistingSessionAttachDetailReadSlot(): void {
+  activeExistingSessionAttachDetailReads = Math.max(0, activeExistingSessionAttachDetailReads - 1);
+  const next = pendingExistingSessionAttachDetailReadSlots.shift();
+  if (!next) return;
+  activeExistingSessionAttachDetailReads += 1;
+  next();
+}
+
+async function withExistingSessionAttachDetailReadSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (activeExistingSessionAttachDetailReads < EXISTING_SESSION_ATTACH_DETAIL_CONCURRENCY) {
+    activeExistingSessionAttachDetailReads += 1;
+  } else {
+    await new Promise<void>((resolve) => {
+      pendingExistingSessionAttachDetailReadSlots.push(resolve);
+    });
+  }
+
+  try {
+    return await fn();
+  } finally {
+    releaseExistingSessionAttachDetailReadSlot();
+  }
+}
+
 function resolveLastObservedMessageSeq(rawSession: Readonly<{ seq?: unknown }>): number | undefined {
   const seq = rawSession.seq;
   return typeof seq === 'number' && Number.isInteger(seq) && seq >= 0 ? seq : undefined;
+}
+
+function readNonNegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function tryReadExistingSessionMetadataRecord(params: Readonly<{
@@ -55,6 +89,63 @@ function tryReadExistingSessionMetadataRecord(params: Readonly<{
     credentials: params.credentials,
     rawSession: params.rawSession,
   });
+}
+
+function tryReadExistingSessionAgentState(params: Readonly<{
+  rawSession: Readonly<{ agentState?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown }>;
+  credentials: Credentials | null;
+}>): AgentState | null | undefined {
+  const rawAgentState = typeof params.rawSession.agentState === 'string' ? params.rawSession.agentState.trim() : '';
+  if (!rawAgentState) return null;
+
+  const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
+  if (mode === 'e2ee' && !params.credentials) return undefined;
+
+  try {
+    const value = decryptStoredSessionPayload({
+      mode,
+      ctx: mode === 'e2ee'
+        ? resolveSessionEncryptionContextFromCredentials(params.credentials!, params.rawSession)
+        : { encryptionKey: new Uint8Array(32), encryptionVariant: 'dataKey' },
+      value: rawAgentState,
+    });
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    return value as AgentState;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildAttachSnapshot(params: Readonly<{
+  rawSession: Readonly<{
+    metadata?: unknown;
+    metadataVersion?: unknown;
+    agentState?: unknown;
+    agentStateVersion?: unknown;
+    dataEncryptionKey?: unknown;
+    encryptionMode?: unknown;
+  }>;
+  credentials: Credentials | null;
+  metadataRecord: Record<string, unknown> | null;
+}>): SessionAttachFilePayload['snapshot'] | undefined {
+  const metadataVersion = readNonNegativeInteger(params.rawSession.metadataVersion);
+  const agentStateVersion = readNonNegativeInteger(params.rawSession.agentStateVersion);
+  if (!params.metadataRecord || metadataVersion === null || agentStateVersion === null) {
+    return undefined;
+  }
+
+  const agentState = tryReadExistingSessionAgentState({
+    rawSession: params.rawSession,
+    credentials: params.credentials,
+  });
+  if (agentState === undefined) return undefined;
+
+  return {
+    metadata: params.metadataRecord as Metadata,
+    metadataVersion,
+    agentState,
+    agentStateVersion,
+  };
 }
 
 function readConfiguredAcpBackendIdFromFlavor(metadata: Record<string, unknown>): string | null {
@@ -88,7 +179,15 @@ function resolveExistingSessionBackendTarget(metadataRecord: Record<string, unkn
 }
 
 function buildExistingSessionAttachContext(params: Readonly<{
-  rawSession: Readonly<{ metadata?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown; seq?: unknown }>;
+  rawSession: Readonly<{
+    metadata?: unknown;
+    metadataVersion?: unknown;
+    agentState?: unknown;
+    agentStateVersion?: unknown;
+    dataEncryptionKey?: unknown;
+    encryptionMode?: unknown;
+    seq?: unknown;
+  }>;
   credentials: Credentials | null;
 }>): ExistingSessionAttachContext | ExistingSessionAttachContextFailure {
   const metadataRecord = tryReadExistingSessionMetadataRecord({
@@ -98,6 +197,11 @@ function buildExistingSessionAttachContext(params: Readonly<{
   const backendTarget = resolveExistingSessionBackendTarget(metadataRecord);
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
   const lastObservedMessageSeq = resolveLastObservedMessageSeq(params.rawSession);
+  const snapshot = buildAttachSnapshot({
+    rawSession: params.rawSession,
+    credentials: params.credentials,
+    metadataRecord,
+  });
   if (mode === 'plain') {
     return {
       ok: true,
@@ -105,6 +209,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
         v: 2,
         encryptionMode: 'plain',
         ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
+        ...(snapshot ? { snapshot } : {}),
       },
       backendTarget,
       vendorResumeId: resolveVendorResumeIdForExistingSession({
@@ -129,6 +234,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
       encryptionKeyBase64: encodeBase64(ctx.encryptionKey, 'base64'),
       encryptionVariant: ctx.encryptionVariant,
       ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
+      ...(snapshot ? { snapshot } : {}),
     },
     backendTarget,
     vendorResumeId: resolveVendorResumeIdForExistingSession({
@@ -151,7 +257,9 @@ export async function resolveExistingSessionAttachContext(_params: Readonly<{
   if (!token) return { ok: false, reason: 'missingToken' };
 
   try {
-    const raw = await fetchSessionByIdCompat({ token, sessionId });
+    const raw = await withExistingSessionAttachDetailReadSlot(
+      () => fetchSessionByIdCompat({ token, sessionId, reason: 'manual-recovery' }),
+    );
     if (!raw) return { ok: false, reason: 'sessionNotFound' };
 
     return buildExistingSessionAttachContext({

@@ -38,6 +38,7 @@ const harness = vi.hoisted(() => {
   const apiMachine = {
     setRPCHandlers: vi.fn(),
     onUpdate: vi.fn(),
+    onAccountSettingsVersionHint: vi.fn(),
     onConnectionStateChange: vi.fn((listener: (state: any) => void) => {
       machineConnectionStateListener = listener;
       return () => {
@@ -185,8 +186,12 @@ vi.mock('@/persistence', () => ({
 
 vi.mock('./controlClient', () => ({
   cleanupDaemonState: vi.fn(async () => {}),
+  ensureDaemonSshTunnel: vi.fn(async () => ({ ok: true })),
   isDaemonRunningCurrentlyInstalledHappyVersion: vi.fn(async () => false),
+  listDaemonSshTunnels: vi.fn(async () => []),
+  releaseDaemonSshTunnel: vi.fn(async () => ({ ok: true })),
   stopDaemon: vi.fn(async () => {}),
+  stopDaemonSshTunnel: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock('./controlServer', () => ({
@@ -242,6 +247,10 @@ vi.mock('@/terminal/runtime/terminalConfig', () => ({
 
 vi.mock('@/terminal/runtime/envVarSanitization', () => ({
   validateEnvVarRecordStrict: vi.fn(() => ({ ok: true, env: {} })),
+}));
+
+vi.mock('@/features/serverFeaturesClient', () => ({
+  fetchServerFeaturesSnapshot: vi.fn(async () => ({ status: 'error', reason: 'network' })),
 }));
 
 vi.mock('./machine/metadata', () => ({
@@ -316,6 +325,14 @@ vi.mock('./automation/automationWorker', () => ({
   startAutomationWorker: harness.startAutomationWorker,
 }));
 
+vi.mock('./memory/memoryWorker', () => ({
+  startMemoryWorker: vi.fn(async () => null),
+}));
+
+vi.mock('./voiceInference/voiceInferenceWorker', () => ({
+  startVoiceInferenceWorker: vi.fn(async () => null),
+}));
+
 vi.mock('./connectedServices/quotas/ConnectedServiceQuotasCoordinator', () => ({
   ConnectedServiceQuotasCoordinator: vi.fn(),
 }));
@@ -369,9 +386,36 @@ vi.mock('@/machines/transfer/directPeerTransport', () => ({
   })),
 }));
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve: ((value: T) => void) | null = null;
+  let reject: ((error: unknown) => void) | null = null;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return {
+    promise,
+    resolve: (value) => resolve?.(value),
+    reject: (error) => reject?.(error),
+  };
+}
+
+function restoreEnvVar(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
+
 describe('startDaemon automation wiring (integration)', () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -441,37 +485,128 @@ describe('startDaemon automation wiring (integration)', () => {
     }
   });
 
-  it('retries machine registration after a transient failure', async () => {
+  it('backs off machine registration retries after transient failures', async () => {
     vi.useRealTimers();
+    harness.setAutoShutdownAfterAutomationStart(false);
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
+    const retryBaseDelayOriginal = process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_BASE_DELAY_MS;
     const retryDelayOriginal = process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS;
-    process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS = '0';
+    const retryMaxDelayOriginal = process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_MAX_DELAY_MS;
+    const retryJitterOriginal = process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_JITTER_MS;
+    delete process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_BASE_DELAY_MS;
+    process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS = '100';
+    process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_MAX_DELAY_MS = '1000';
+    process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_JITTER_MS = '0';
 
+    let run: Promise<void> | null = null;
     try {
       const { ensureMachineRegistered } = await import('@/api/machine/ensureMachineRegistered');
-      (ensureMachineRegistered as unknown as { mockRejectedValueOnce: (value: unknown) => void }).mockRejectedValueOnce(
-        new Error('transient machine registration failure'),
-      );
+      const ensureMachineRegisteredMock = vi.mocked(ensureMachineRegistered);
+      const firstAttempt = createDeferred<Awaited<ReturnType<typeof ensureMachineRegistered>>>();
+      const secondAttempt = createDeferred<Awaited<ReturnType<typeof ensureMachineRegistered>>>();
+      ensureMachineRegisteredMock
+        .mockImplementationOnce(() => firstAttempt.promise)
+        .mockImplementationOnce(() => secondAttempt.promise);
 
       const { startDaemon } = await import('./startDaemon');
 
-      const run = startDaemon();
+      run = startDaemon();
       await vi.waitFor(() => {
-        expect(ensureMachineRegistered).toHaveBeenCalledTimes(2);
-        expect(harness.apiMachine.connect).toHaveBeenCalledTimes(1);
-        expect(harness.startAutomationWorker).toHaveBeenCalledTimes(1);
+        expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
       });
+
+      vi.useFakeTimers();
+      firstAttempt.reject(new Error('transient machine registration failure 1'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(99);
+      expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(2);
+
+      secondAttempt.reject(new Error('transient machine registration failure 2'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(199);
+      expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(0);
+
+      harness.requestShutdown('happier-cli');
+      await vi.advanceTimersByTimeAsync(0);
+      await run;
+    } finally {
+      harness.requestShutdown('happier-cli');
+      if (run) {
+        if (vi.isFakeTimers()) {
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        await run;
+      }
+      restoreEnvVar('HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_BASE_DELAY_MS', retryBaseDelayOriginal);
+      restoreEnvVar('HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS', retryDelayOriginal);
+      restoreEnvVar('HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_MAX_DELAY_MS', retryMaxDelayOriginal);
+      restoreEnvVar('HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_JITTER_MS', retryJitterOriginal);
+      vi.useRealTimers();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('unrefs and cancels machine registration retry sleep on shutdown', async () => {
+    vi.useRealTimers();
+    harness.setAutoShutdownAfterAutomationStart(false);
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    const retryBaseDelayOriginal = process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_BASE_DELAY_MS;
+    const retryDelayOriginal = process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS;
+    const retryMaxDelayOriginal = process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_MAX_DELAY_MS;
+    const retryJitterOriginal = process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_JITTER_MS;
+    process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_BASE_DELAY_MS = '60000';
+    process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS = '60000';
+    process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_MAX_DELAY_MS = '60000';
+    process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_JITTER_MS = '0';
+
+    type TimeoutHandle = ReturnType<typeof setTimeout> & { hasRef?: () => boolean };
+    const retryTimeoutRef: { current: TimeoutHandle | null } = { current: null };
+    let run: Promise<void> | null = null;
+    try {
+      const { ensureMachineRegistered } = await import('@/api/machine/ensureMachineRegistered');
+      const ensureMachineRegisteredMock = vi.mocked(ensureMachineRegistered);
+      ensureMachineRegisteredMock.mockRejectedValueOnce(new Error('transient machine registration failure'));
+
+      const { startDaemon } = await import('./startDaemon');
+
+      run = startDaemon();
+      await vi.waitFor(() => {
+        const retryTimerIndex = setTimeoutSpy.mock.calls.findIndex(([, delay]) => delay === 60_000);
+        expect(retryTimerIndex).toBeGreaterThanOrEqual(0);
+        retryTimeoutRef.current = setTimeoutSpy.mock.results[retryTimerIndex]?.value as TimeoutHandle;
+      });
+
+      expect(retryTimeoutRef.current?.hasRef?.()).toBe(false);
 
       harness.requestShutdown('happier-cli');
       await run;
+      expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
     } finally {
-      if (retryDelayOriginal === undefined) {
-        delete process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS;
-      } else {
-        process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS = retryDelayOriginal;
+      harness.requestShutdown('happier-cli');
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
       }
+      if (run) {
+        await run;
+      }
+      restoreEnvVar('HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_BASE_DELAY_MS', retryBaseDelayOriginal);
+      restoreEnvVar('HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_DELAY_MS', retryDelayOriginal);
+      restoreEnvVar('HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_MAX_DELAY_MS', retryMaxDelayOriginal);
+      restoreEnvVar('HAPPIER_DAEMON_MACHINE_REGISTRATION_RETRY_JITTER_MS', retryJitterOriginal);
       exitSpy.mockRestore();
     }
   });

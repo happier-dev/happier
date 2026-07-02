@@ -16,7 +16,7 @@ describe('sessionRunnerLock', () => {
       pid: 123,
       nowMs: 10_000,
       getCurrentProcessCommandHash: async () => 'a'.repeat(64),
-      isPidAlive: () => true,
+      readProcessRunState: async () => 'servable',
     });
 
     expect(res.ok).toBe(true);
@@ -80,7 +80,7 @@ describe('sessionRunnerLock', () => {
       pid: 123,
       nowMs: 10_000,
       getCurrentProcessCommandHash: async (pid) => (pid === 999 ? 'a'.repeat(64) : 'b'.repeat(64)),
-      isPidAlive: () => true,
+      readProcessRunState: async () => 'servable',
     });
 
     expect(res.ok).toBe(false);
@@ -115,7 +115,7 @@ describe('sessionRunnerLock', () => {
       pid: 123,
       nowMs: 10_000,
       getCurrentProcessCommandHash: async () => 'b'.repeat(64),
-      isPidAlive: () => false,
+      readProcessRunState: async () => 'dead',
     });
 
     expect(res.ok).toBe(true);
@@ -143,7 +143,7 @@ describe('sessionRunnerLock', () => {
       pid: 123,
       nowMs: 10_000,
       getCurrentProcessCommandHash: async (pid) => (pid === 999 ? 'c'.repeat(64) : 'b'.repeat(64)),
-      isPidAlive: () => true,
+      readProcessRunState: async () => 'servable',
     });
 
     expect(res.ok).toBe(true);
@@ -172,7 +172,7 @@ describe('sessionRunnerLock', () => {
       pid: 123,
       nowMs: 10_000,
       getCurrentProcessCommandHash: async (pid) => (pid === 999 ? null : 'b'.repeat(64)),
-      isPidAlive: () => true,
+      readProcessRunState: async () => 'servable',
     });
 
     expect(res.ok).toBe(false);
@@ -198,7 +198,7 @@ describe('sessionRunnerLock', () => {
       pid: 123,
       nowMs: 10_000,
       getCurrentProcessCommandHash: async () => 'b'.repeat(64),
-      isPidAlive: () => true,
+      readProcessRunState: async () => 'servable',
     });
 
     expect(res.ok).toBe(false);
@@ -231,5 +231,100 @@ describe('sessionRunnerLock', () => {
     expect(released.ok).toBe(false);
     if (released.ok) return;
     expect(released.reason).toBe('not_owner');
+  });
+
+  it('breaks a lock held by a STOPPED pid with a proven-matching command hash, killing the wedged holder', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-runner-lock-'));
+    const lockPath = sessionRunnerLockPathForSessionId({ happyHomeDir, sessionId: 'sess_8' });
+    expect(lockPath).not.toBeNull();
+    if (!lockPath) return;
+
+    await mkdir(dirname(lockPath), { recursive: true });
+    await writeFile(
+      lockPath,
+      JSON.stringify({ sessionId: 'sess_8', pid: 999, acquiredAtMs: 1, processCommandHash: 'a'.repeat(64) }, null, 2),
+      'utf8',
+    );
+
+    const killedPids: number[] = [];
+    const res = await acquireSessionRunnerLock({
+      happyHomeDir,
+      sessionId: 'sess_8',
+      pid: 123,
+      nowMs: 10_000,
+      getCurrentProcessCommandHash: async (pid) => (pid === 999 ? 'a'.repeat(64) : 'b'.repeat(64)),
+      readProcessRunState: async (pid) => (pid === 999 ? 'stopped' : 'servable'),
+      killWedgedPid: (pid) => {
+        killedPids.push(pid);
+      },
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(killedPids).toEqual([999]);
+    const raw = await readFile(lockPath, 'utf8');
+    expect(JSON.parse(raw).pid).toBe(123);
+  });
+
+  it('does NOT break a lock held by a STOPPED pid when the command hash cannot prove identity', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-runner-lock-'));
+    const lockPath = sessionRunnerLockPathForSessionId({ happyHomeDir, sessionId: 'sess_9' });
+    expect(lockPath).not.toBeNull();
+    if (!lockPath) return;
+
+    await mkdir(dirname(lockPath), { recursive: true });
+    await writeFile(
+      lockPath,
+      JSON.stringify({ sessionId: 'sess_9', pid: 999, acquiredAtMs: 1, processCommandHash: 'a'.repeat(64) }, null, 2),
+      'utf8',
+    );
+
+    const killedPids: number[] = [];
+    const res = await acquireSessionRunnerLock({
+      happyHomeDir,
+      sessionId: 'sess_9',
+      pid: 123,
+      nowMs: 10_000,
+      getCurrentProcessCommandHash: async (pid) => (pid === 999 ? null : 'b'.repeat(64)),
+      readProcessRunState: async (pid) => (pid === 999 ? 'stopped' : 'servable'),
+      killWedgedPid: (pid) => {
+        killedPids.push(pid);
+      },
+    });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toBe('already_running');
+    expect(killedPids).toEqual([]);
+    const raw = await readFile(lockPath, 'utf8');
+    expect(JSON.parse(raw).pid).toBe(999);
+  });
+
+  it('breaks a lock held by a ZOMBIE pid without requiring a kill', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-runner-lock-'));
+    const lockPath = sessionRunnerLockPathForSessionId({ happyHomeDir, sessionId: 'sess_10' });
+    expect(lockPath).not.toBeNull();
+    if (!lockPath) return;
+
+    await mkdir(dirname(lockPath), { recursive: true });
+    await writeFile(
+      lockPath,
+      JSON.stringify({ sessionId: 'sess_10', pid: 999, acquiredAtMs: 1 }, null, 2),
+      'utf8',
+    );
+
+    const res = await acquireSessionRunnerLock({
+      happyHomeDir,
+      sessionId: 'sess_10',
+      pid: 123,
+      nowMs: 10_000,
+      getCurrentProcessCommandHash: async () => 'b'.repeat(64),
+      readProcessRunState: async (pid) => (pid === 999 ? 'zombie' : 'servable'),
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const raw = await readFile(lockPath, 'utf8');
+    expect(JSON.parse(raw).pid).toBe(123);
   });
 });

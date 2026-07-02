@@ -5,14 +5,20 @@ import type { ConnectedServiceId, ConnectedServiceProfileId } from '@happier-dev
 import type { CatalogAgentId } from '@/backends/types';
 import { normalizeMaterializationKeyForPath } from '../materialize/normalizeMaterializationKeyForPath';
 
+type JoinPath = (...paths: string[]) => string;
+
+const CONNECTED_SERVICE_GROUPS_HOME_SEGMENT = '__groups';
+
 export function resolveConnectedServiceHomeDir(params: Readonly<{
   activeServerDir: string;
   serviceId: ConnectedServiceId;
   profileId: ConnectedServiceProfileId;
   agentId: CatalogAgentId;
   providerScopedKey?: string | null;
+  pathJoin?: JoinPath;
 }>): string {
-  const base = join(
+  const pathJoin = params.pathJoin ?? join;
+  const base = pathJoin(
     params.activeServerDir,
     'daemon',
     'connected-services',
@@ -23,6 +29,29 @@ export function resolveConnectedServiceHomeDir(params: Readonly<{
   );
   const providerScopedKey = typeof params.providerScopedKey === 'string' ? params.providerScopedKey.trim() : '';
   if (!providerScopedKey) return base;
-  return join(base, normalizeMaterializationKeyForPath(providerScopedKey));
+  return pathJoin(base, normalizeMaterializationKeyForPath(providerScopedKey));
 }
 
+export function resolveConnectedServiceGroupHomeDir(params: Readonly<{
+  activeServerDir: string;
+  serviceId: ConnectedServiceId;
+  groupId: string;
+  agentId: CatalogAgentId;
+  providerScopedKey?: string | null;
+  pathJoin?: JoinPath;
+}>): string {
+  const pathJoin = params.pathJoin ?? join;
+  const base = pathJoin(
+    params.activeServerDir,
+    'daemon',
+    'connected-services',
+    'homes',
+    params.serviceId,
+    CONNECTED_SERVICE_GROUPS_HOME_SEGMENT,
+    params.groupId,
+    params.agentId,
+  );
+  const providerScopedKey = typeof params.providerScopedKey === 'string' ? params.providerScopedKey.trim() : '';
+  if (!providerScopedKey) return base;
+  return pathJoin(base, normalizeMaterializationKeyForPath(providerScopedKey));
+}

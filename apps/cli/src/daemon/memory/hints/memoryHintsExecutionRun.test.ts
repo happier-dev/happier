@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
 import type { MemoryHintsExecutionRunBackendFactory } from './runMemoryHintsExecutionRun';
 
 describe('runMemoryHintsExecutionRun', () => {

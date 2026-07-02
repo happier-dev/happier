@@ -7,6 +7,7 @@ import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 import { buildSpawnChildProcessEnv } from './buildSpawnChildProcessEnv';
+import { applySpawnedChildOomScoreAdjustment } from '../platform/linux/applySpawnedChildOomScoreAdjustment';
 import { buildCgroupSelfMigratingHappyCliLaunchSpec } from '../platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { waitForSessionWebhook } from './waitForSessionWebhook';
@@ -20,6 +21,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   effectiveResume: string;
   directoryCreated: boolean;
   extraEnvForChildWithMessage: Record<string, string>;
+  processEnv: NodeJS.ProcessEnv;
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
   pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
@@ -33,12 +35,12 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
 }>): Promise<SpawnSessionResult> {
   // NOTE: sessionId is reserved for future Happy session resume; we currently ignore it.
   const baseEnv = buildSpawnChildProcessEnv({
-    processEnv: process.env,
+    processEnv: params.processEnv,
     extraEnv: params.extraEnvForChildWithMessage,
   });
   const useLinuxCgroupSelfMigration =
     process.platform === 'linux'
-    && String(process.env.HAPPIER_DAEMON_STARTUP_SOURCE ?? '').trim() === 'background-service';
+    && String(params.processEnv.HAPPIER_DAEMON_STARTUP_SOURCE ?? '').trim() === 'background-service';
   const cgroupSelfMigratingLaunchSpec = useLinuxCgroupSelfMigration
     ? await buildCgroupSelfMigratingHappyCliLaunchSpec({
       args: Array.from(params.args),
@@ -88,6 +90,12 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   }
 
   params.logDebug(`[DAEMON RUN] Spawned process with PID ${pid}`);
+  void applySpawnedChildOomScoreAdjustment({
+    pid,
+    env: params.processEnv,
+    startupSource: String(params.processEnv.HAPPIER_DAEMON_STARTUP_SOURCE ?? '').trim() || undefined,
+    logDebug: params.logDebug,
+  });
   params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid(pid);
 
   const trackedSession: TrackedSession = {

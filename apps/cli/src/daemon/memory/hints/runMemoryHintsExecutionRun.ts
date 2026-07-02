@@ -1,4 +1,4 @@
-import type { EphemeralExecutionRunTextPromptRuntimeFactory } from '@/agent/executionRuns/runtime/ephemeralTextPrompt';
+import type { EphemeralExecutionRunTextPromptRuntimeFactory } from '@/agent/runtime/bridges/executionRun/runtime/textPrompt';
 import { runEphemeralExecutionRunTextPromptWithRunnerConfig } from '@/agent/executionRuns/tasks/textPromptWithRunnerConfig';
 
 export type MemoryHintsExecutionRunBackendFactory = EphemeralExecutionRunTextPromptRuntimeFactory;

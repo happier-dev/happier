@@ -9,10 +9,11 @@ import {
 import {
   resolveCanonicalCodexBackendMode,
   resolveCanonicalCodexBackendModeFromCompatInput,
-} from '@/backends/codex/daemon/backendMode';
+} from '@happier-dev/plugins-codex/agent/lifecycle/backendMode';
 import type { TerminalMode, TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import {
   BackendTargetRefV2Schema,
+  ConnectedServiceMaterializationIdentityV1Schema,
   openAccountScopedBlobCiphertext,
   RuntimeDescriptorV1Schema,
   normalizeBackendTargetRefV2InputToV2,
@@ -25,9 +26,14 @@ import {
   resolveConcreteBackendTargetRefV2,
   resolveConcreteCompatBackendTargetRefs,
 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
+import { HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY } from '@/agent/runtime/sessionConnectedServiceMaterializationIdentityEnv';
 
 const TERMINAL_MODES = ['plain', 'tmux', 'windows_terminal', 'windows_console'] as const satisfies readonly TerminalMode[];
-const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
+const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = [
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
+  HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
+] as const;
 const MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS = 65_536;
 
 type RespawnDescriptorEncryptionMaterial = AccountScopedCryptoMaterial;
@@ -191,6 +197,7 @@ export const SessionRunnerRespawnDescriptorV1Schema = z
     environmentVariables: z.record(z.string(), z.string()).optional(),
     sealedEnvironmentVariables: SealedRespawnEnvironmentVariablesSchema.optional(),
     connectedServices: z.unknown().optional(),
+    connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1Schema.optional(),
     mcpSelection: SessionMcpSelectionV1Schema.optional(),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
@@ -253,6 +260,9 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
     ...(safeEnvironmentVariables ? { environmentVariables: safeEnvironmentVariables } : {}),
     ...(sealedEnvironmentVariables ? { sealedEnvironmentVariables } : {}),
     ...(spawnOptions.connectedServices ? { connectedServices: spawnOptions.connectedServices } : {}),
+    ...(spawnOptions.connectedServiceMaterializationIdentityV1
+      ? { connectedServiceMaterializationIdentityV1: spawnOptions.connectedServiceMaterializationIdentityV1 }
+      : {}),
     ...(spawnOptions.mcpSelection ? { mcpSelection: spawnOptions.mcpSelection } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
@@ -299,6 +309,9 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
     ...(descriptor.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: descriptor.sessionConfigOptionOverrides as any } : {}),
     ...(environmentVariables ? { environmentVariables } : {}),
     ...(descriptor.connectedServices ? { connectedServices: descriptor.connectedServices } : {}),
+    ...(descriptor.connectedServiceMaterializationIdentityV1
+      ? { connectedServiceMaterializationIdentityV1: descriptor.connectedServiceMaterializationIdentityV1 }
+      : {}),
     ...(descriptor.mcpSelection ? { mcpSelection: descriptor.mcpSelection } : {}),
     ...(descriptor.runtimeDescriptorV1 ? { runtimeDescriptorV1: descriptor.runtimeDescriptorV1 } : {}),
     ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
