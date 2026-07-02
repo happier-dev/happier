@@ -1,5 +1,9 @@
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
 import {
+  createRelayAccessDeadline,
+  type RelayAccessDeadlineV1,
+} from '@happier-dev/cli-common/relayAccess';
+import {
   resolveTailscaleInstallStrategy,
   runTailscaleLogin,
   runTailscaleStatusJson,
@@ -25,6 +29,12 @@ export type TailscaleReadinessState = Readonly<{
   shareableHttpsUrl: string | null;
 }>;
 
+export type TailscaleReadinessInspectionOptions = Readonly<{
+  timeoutMs?: number;
+  deadline?: RelayAccessDeadlineV1;
+  signal?: AbortSignal;
+}>;
+
 export type TailscaleReadinessRuntimeDeps<TParams extends TailscaleReadinessBaseParams = TailscaleReadinessBaseParams> = Readonly<{
   ensureInstalled: (
     params: TParams,
@@ -40,8 +50,10 @@ export type TailscaleReadinessRuntimeDeps<TParams extends TailscaleReadinessBase
 
 export type TailscaleReadinessFlowDeps<TParams extends TailscaleReadinessBaseParams> =
   TailscaleReadinessRuntimeDeps<TParams> & Readonly<{
-    inspectState: (params: TParams) => Promise<TailscaleReadinessState>;
+    inspectState: (params: TParams, options?: TailscaleReadinessInspectionOptions) => Promise<TailscaleReadinessState>;
   }>;
+
+const MIN_TAILSCALE_POLL_COMMAND_TIMEOUT_MS = 1;
 
 export function createTailscaleReadinessRuntimeDeps<TParams extends TailscaleReadinessBaseParams>(
   overrides?: Partial<TailscaleReadinessRuntimeDeps<TParams>>,
@@ -78,7 +90,7 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
     message: 'Checking Tailscale secure-access status',
   };
 
-  let state = await deps.inspectState(params);
+  let state = await deps.inspectState(params, context?.signal ? { signal: context.signal } : undefined);
 
   if (params.mode === 'managedAdmin') {
     const installPrompt = await deps.resolveInstallPrompt(params);
@@ -147,7 +159,7 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
         );
       }
 
-      state = await deps.inspectState(params);
+      state = await deps.inspectState(params, context?.signal ? { signal: context.signal } : undefined);
     }
 
     if (!state.installed) {
@@ -204,7 +216,7 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
       };
     }
 
-    state = await deps.inspectState(params);
+    state = await deps.inspectState(params, context?.signal ? { signal: context.signal } : undefined);
     if (!state.loggedIn) {
       const loginPollTimeoutMs = readBoundedIntEnv(
         'HAPPIER_TAILSCALE_LOGIN_POLL_TIMEOUT_MS',
@@ -216,14 +228,28 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
         1_000,
         { min: 1, max: 60_000 },
       );
-      const maxAttempts = Math.max(1, Math.ceil(loginPollTimeoutMs / loginPollIntervalMs));
+      const loginPollDeadline = createRelayAccessDeadline({
+        timeoutMs: loginPollTimeoutMs,
+        now: deps.now,
+        ...(context?.signal ? { signal: context.signal } : {}),
+      });
+      const loginPollDeadlineMs = loginPollDeadline.deadlineAt;
+      let loginPollAttempt = 0;
 
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      while (true) {
         if (context?.signal?.aborted) {
           throw new systemTasks.SystemTaskExecutionError('cancelled', 'System task execution was cancelled.');
         }
+        const remainingPollMs = loginPollDeadlineMs - deps.now();
+        if (remainingPollMs < MIN_TAILSCALE_POLL_COMMAND_TIMEOUT_MS) {
+          break;
+        }
 
-        const refreshed = await deps.inspectState(params);
+        const refreshed = await deps.inspectState(params, {
+          timeoutMs: remainingPollMs,
+          deadline: loginPollDeadline,
+          ...(context?.signal ? { signal: context.signal } : {}),
+        });
         if (refreshed.loggedIn) {
           state = refreshed;
           break;
@@ -232,11 +258,14 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
         yield {
           type: 'progress',
           stepId: 'tailscale.login',
-          message: attempt === 0 ? 'Waiting for Tailscale sign-in' : 'Still waiting for Tailscale sign-in',
+          message: loginPollAttempt === 0 ? 'Waiting for Tailscale sign-in' : 'Still waiting for Tailscale sign-in',
         };
-        if (attempt < maxAttempts - 1) {
-          await deps.sleep(loginPollIntervalMs, context?.signal);
+        loginPollAttempt += 1;
+        const remainingSleepMs = loginPollDeadlineMs - deps.now();
+        if (remainingSleepMs <= 0) {
+          break;
         }
+        await deps.sleep(Math.min(loginPollIntervalMs, remainingSleepMs), context?.signal);
       }
 
       if (!state.loggedIn) {
@@ -251,9 +280,15 @@ export async function* runTailscaleReadinessFlow<TParams extends TailscaleReadin
   return state;
 }
 
-export async function inspectLocalTailscaleReadinessState(): Promise<TailscaleReadinessState> {
+export async function inspectLocalTailscaleReadinessState(
+  options?: TailscaleReadinessInspectionOptions,
+): Promise<TailscaleReadinessState> {
   try {
-    const status = await runTailscaleStatusJson();
+    const status = await runTailscaleStatusJson({
+      ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options?.deadline ? { deadline: options.deadline } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
     return {
       installed: true,
       loggedIn: status.loggedIn,

@@ -6,7 +6,7 @@ import {
   type RunTailscaleLoginResult,
 } from '@happier-dev/cli-common/tailscale';
 
-import type { TailscaleReadinessState } from './tailscaleReadinessFlow.js';
+import type { TailscaleReadinessInspectionOptions, TailscaleReadinessState } from './tailscaleReadinessFlow.js';
 import { isUnavailableTailscaleError } from './tailscaleReadinessFlow.js';
 
 type TailscaleInstallPrompt = Readonly<{
@@ -21,10 +21,16 @@ type TailscaleCommandDeps = Readonly<{
 
 export async function inspectTailscaleReadinessStateForExecutionContext(
   context: RelayAccessExecutionContext,
+  options?: TailscaleReadinessInspectionOptions,
 ): Promise<TailscaleReadinessState> {
   try {
     const status = await runTailscaleStatusJson(
-      { env: context.env },
+      {
+        env: context.env,
+        ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        ...(options?.deadline ? { deadline: options.deadline } : {}),
+        ...(options?.signal ? { signal: options.signal } : {}),
+      },
       createTailscaleCommandDeps(context),
     );
     return {

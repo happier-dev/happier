@@ -6,6 +6,7 @@ import {
   inspectLocalTailscaleReadinessState,
   runTailscaleReadinessFlow,
   type TailscaleReadinessBaseParams,
+  type TailscaleReadinessInspectionOptions,
   type TailscaleReadinessRuntimeDeps,
   type TailscaleReadinessState,
 } from './tailscaleReadinessFlow.js';
@@ -13,7 +14,7 @@ import {
 type TailscaleEnsureReadyParams = TailscaleReadinessBaseParams;
 
 type TailscaleEnsureReadyDeps = TailscaleReadinessRuntimeDeps & Readonly<{
-  inspectState: (params: TailscaleEnsureReadyParams) => Promise<TailscaleReadinessState>;
+  inspectState: (params: TailscaleEnsureReadyParams, options?: TailscaleReadinessInspectionOptions) => Promise<TailscaleReadinessState>;
 }>;
 
 export function createTailscaleEnsureReadyHandler(overrides?: Partial<TailscaleEnsureReadyDeps>) {
@@ -45,7 +46,7 @@ export function createTailscaleEnsureReadyHandler(overrides?: Partial<TailscaleE
 function createTailscaleEnsureReadyDeps(overrides?: Partial<TailscaleEnsureReadyDeps>): TailscaleEnsureReadyDeps {
   return {
     ...createTailscaleReadinessRuntimeDeps(overrides),
-    inspectState: overrides?.inspectState ?? (async () => await inspectLocalTailscaleReadinessState()),
+    inspectState: overrides?.inspectState ?? (async (_params, options) => await inspectLocalTailscaleReadinessState(options)),
   };
 }
 

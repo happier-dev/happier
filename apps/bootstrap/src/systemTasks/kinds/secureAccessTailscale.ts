@@ -8,6 +8,7 @@ import {
   type RelayAccessTaskTarget,
 } from '@happier-dev/cli-common/systemTasks';
 import {
+  createRelayAccessDeadline,
   getRelayAccessProvider,
   type RelayAccessConfig,
   type RelayAccessExecutionContext,
@@ -18,6 +19,7 @@ import {
   createTailscaleReadinessRuntimeDeps,
   readBoundedIntEnv,
   runTailscaleReadinessFlow,
+  type TailscaleReadinessInspectionOptions,
   type TailscaleReadinessRuntimeDeps,
   type TailscaleReadinessState,
 } from './tailscaleReadinessFlow.js';
@@ -38,13 +40,15 @@ type SecureAccessTailscaleParams = Readonly<{
 }>;
 
 type SecureAccessTailscaleDeps = Readonly<{
-  inspectState: (params: SecureAccessTailscaleParams) => Promise<TailscaleReadinessState>;
+  inspectState: (params: SecureAccessTailscaleParams, options?: TailscaleReadinessInspectionOptions) => Promise<TailscaleReadinessState>;
   relayAccess: Readonly<{
     getProvider: (providerId: RelayAccessProviderId) => RelayAccessProvider;
     writeConfig: (params: Readonly<{ target: RelayAccessTaskTarget; config: RelayAccessConfig | null }>) => Promise<void>;
     createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => RelayAccessExecutionContext;
   }>;
 } & TailscaleReadinessRuntimeDeps<SecureAccessTailscaleParams>>;
+
+const MIN_TAILSCALE_POLL_COMMAND_TIMEOUT_MS = 1;
 
 export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAccessTailscaleDeps>) {
   const deps = createSecureAccessTailscaleDeps(overrides);
@@ -106,6 +110,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
         providerId: parsed.providerId,
         config: { providerId: parsed.providerId },
       },
+      ...(context?.signal ? { signal: context.signal } : {}),
       emit: () => undefined,
       prompt: async () => {
         throw new systemTasks.SystemTaskExecutionError('prompt_required', 'Relay access configuration does not require prompts.');
@@ -135,14 +140,28 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
         1_000,
         { min: 1, max: 60_000 },
       );
-      const maxAttempts = Math.max(1, Math.ceil(approvalPollTimeoutMs / approvalPollIntervalMs));
+      const approvalPollDeadline = createRelayAccessDeadline({
+        timeoutMs: approvalPollTimeoutMs,
+        now: deps.now,
+        ...(context?.signal ? { signal: context.signal } : {}),
+      });
+      const approvalPollDeadlineMs = approvalPollDeadline.deadlineAt;
+      let approvalPollAttempt = 0;
 
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      while (true) {
         if (context?.signal?.aborted) {
           throw new systemTasks.SystemTaskExecutionError('cancelled', 'System task execution was cancelled.');
         }
+        const remainingPollMs = approvalPollDeadlineMs - deps.now();
+        if (remainingPollMs < MIN_TAILSCALE_POLL_COMMAND_TIMEOUT_MS) {
+          break;
+        }
 
-        const refreshed = await deps.inspectState(parsed);
+        const refreshed = await deps.inspectState(parsed, {
+          timeoutMs: remainingPollMs,
+          deadline: approvalPollDeadline,
+          ...(context?.signal ? { signal: context.signal } : {}),
+        });
         if (refreshed.shareableHttpsUrl) {
           approvedUrl = refreshed.shareableHttpsUrl;
           break;
@@ -151,11 +170,14 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
         yield {
           type: 'progress',
           stepId: 'tailscale.serveEnable',
-          message: attempt === 0 ? 'Waiting for Tailscale Serve approval' : 'Still waiting for Tailscale Serve approval',
+          message: approvalPollAttempt === 0 ? 'Waiting for Tailscale Serve approval' : 'Still waiting for Tailscale Serve approval',
         };
-        if (attempt < maxAttempts - 1) {
-          await deps.sleep(approvalPollIntervalMs, context?.signal);
+        approvalPollAttempt += 1;
+        const remainingSleepMs = approvalPollDeadlineMs - deps.now();
+        if (remainingSleepMs <= 0) {
+          break;
         }
+        await deps.sleep(Math.min(approvalPollIntervalMs, remainingSleepMs), context?.signal);
       }
 
       if (!approvedUrl) {
@@ -276,7 +298,7 @@ function createSecureAccessTailscaleDeps(overrides?: Partial<SecureAccessTailsca
         }),
       );
     }),
-    inspectState: overrides?.inspectState ?? ((params) => inspectSecureAccessTailscaleState(params, relayAccess)),
+    inspectState: overrides?.inspectState ?? ((params, options) => inspectSecureAccessTailscaleState(params, relayAccess, options)),
     relayAccess,
   };
 }
@@ -284,12 +306,13 @@ function createSecureAccessTailscaleDeps(overrides?: Partial<SecureAccessTailsca
 async function inspectSecureAccessTailscaleState(
   params: SecureAccessTailscaleParams,
   relayAccess: SecureAccessTailscaleDeps['relayAccess'],
+  options?: TailscaleReadinessInspectionOptions,
 ): Promise<TailscaleReadinessState> {
   const executionContext = relayAccess.createExecutionContext({
     target: params.target,
     upstreamUrl: params.upstreamUrl,
   });
-  const status = await inspectTailscaleReadinessStateForExecutionContext(executionContext);
+  const status = await inspectTailscaleReadinessStateForExecutionContext(executionContext, options);
   if (!status.installed || !status.loggedIn) {
     return {
       ...status,
@@ -300,6 +323,9 @@ async function inspectSecureAccessTailscaleState(
   const relayAccessStatus = await relayAccessProvider.status({
     config: { providerId: params.providerId },
     ctx: executionContext,
+    ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options?.deadline ? { deadline: options.deadline } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
   });
 
   return {
