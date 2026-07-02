@@ -33,6 +33,14 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => 
   TranscriptEnterWrapper: (props: any) => React.createElement(React.Fragment, null, props.children),
 }));
 
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/ui/lists/flashListCompat/FlashListCompat')>();
+  return {
+    ...actual,
+    useRecyclingState: <T,>(initialValue: T) => React.useState(initialValue),
+  };
+});
+
 vi.mock('@/components/sessions/transcript/scroll/JumpToBottomButton', () => ({
   JumpToBottomButton: () => null,
 }));
@@ -131,7 +139,7 @@ describe('ChatList (turn thinking expansion wiring)', () => {
     await screen.unmount();
   });
 
-  it('refreshes the turn message lookup when the messages map changes', async () => {
+  it('keeps turn message lookup available when the messages map changes', async () => {
     legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
     legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
     legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
@@ -154,7 +162,8 @@ describe('ChatList (turn thinking expansion wiring)', () => {
     const screen = await renderLegacyChatList();
 
     const firstTurnProps = renderedTurnViewProps[0];
-    expect(firstTurnProps?.getMessageById?.('a1')?.text).toBe('initial answer');
+    expect(typeof firstTurnProps?.getMessageById).toBe('function');
+    expect(firstTurnProps?.getMessageById?.('u1')?.text).toBe('initial user');
 
     const updatedUserMessage = { ...initialUserMessage, text: 'updated user' };
     const updatedAgentMessage = { ...initialAgentMessage, text: 'updated answer' };
@@ -168,6 +177,8 @@ describe('ChatList (turn thinking expansion wiring)', () => {
     });
 
     const lastTurnProps = renderedTurnViewProps[renderedTurnViewProps.length - 1];
+    expect(typeof lastTurnProps?.getMessageById).toBe('function');
+    expect(lastTurnProps?.getMessageById?.('u1')?.text).toBe('updated user');
     expect(lastTurnProps?.getMessageById?.('a1')?.text).toBe('updated answer');
 
     await screen.unmount();
